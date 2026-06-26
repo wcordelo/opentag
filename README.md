@@ -48,8 +48,8 @@ In ~250 lines of `app/`, OpenTag shows the whole shape of a CopilotKit bot:
 ## Quickstart
 
 ```bash
-git clone https://github.com/jerelvelarde/copilotkit-opentag.git
-cd copilotkit-opentag
+git clone https://github.com/jerelvelarde/opentag.git
+cd opentag
 npm install
 cp .env.example .env       # fill in SLACK_* + OPENAI_API_KEY (see below)
 
@@ -139,6 +139,14 @@ full kitchen sink:
 The reference implementation lives in CopilotKit's monorepo:
 **[`examples/slack`](https://github.com/CopilotKit/CopilotKit/tree/main/examples/slack)**.
 OpenTag is "here's how you start"; Kite.dev is "here's everything it can do."
+
+## Stay in the loop
+
+Want product updates, hands-on help, and **early access to rolling releases for
+more platforms** (Discord, Telegram, WhatsApp, Teams)?
+
+**→ [Sign up here](https://go.copilotkit.ai/beyond-the-web-form)** — for anyone
+building beyond the web form.
 
 ## Make it yours
 

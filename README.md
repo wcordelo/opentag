@@ -11,6 +11,19 @@ couple of minutes. It's the minimal sibling of **Kite.dev** — the viral on-cal
 triage bot — stripped to the smallest thing that still teaches the whole shape of
 a CopilotKit bot. (More on that [below](#where-this-leads).)
 
+## See it in action
+
+<video src="https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-slack-opentag.mp4" controls poster="https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-poster.jpg" width="100%"></video>
+
+▶️ **[Watch the demo](https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-slack-opentag.mp4)** (~50s) — a CopilotKit bot triaging GitHub issues in Slack: it renders a breakdown, a table, and a bar chart inline (**generative UI**) and files a Linear ticket only after an **Approve** gate (**human-in-the-loop**).
+
+> The clip is **Kite**, the full on-call triage bot — the kitchen sink (GitHub
+> triage, charts and tables, Linear & Notion over MCP), all on the same
+> `@copilotkit/bot` engine that powers OpenTag. **OpenTag is the minimal starting
+> point**: those same two building blocks — a human-in-the-loop gate and
+> generative UI — on a single tag. Clone OpenTag, grow toward Kite (see
+> [Where this leads](#where-this-leads)).
+
 It's built on:
 
 - **[`@copilotkit/bot`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot)** — the platform-agnostic bot engine.

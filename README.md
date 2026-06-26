@@ -140,13 +140,10 @@ The reference implementation lives in CopilotKit's monorepo:
 **[`examples/slack`](https://github.com/CopilotKit/CopilotKit/tree/main/examples/slack)**.
 OpenTag is "here's how you start"; Kite.dev is "here's everything it can do."
 
-## Stay in the loop
+## Learn more
 
-Want product updates, hands-on help, and **early access to rolling releases for
-more platforms** (Discord, Telegram, WhatsApp, Teams)?
-
-**→ [Sign up here](https://go.copilotkit.ai/beyond-the-web-form)** — for anyone
-building beyond the web form.
+The official **[CopilotKit Slack quickstart](https://docs.copilotkit.ai/slack)**
+is the canonical guide to building a Slack bot — read it alongside this starter.
 
 ## Make it yours
 

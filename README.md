@@ -13,9 +13,9 @@ a CopilotKit bot. (More on that [below](#where-this-leads).)
 
 ## See it in action
 
-<video src="https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-slack-opentag.mp4" controls poster="https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-poster.jpg" width="100%"></video>
+[![Watch the OpenTag demo — a CopilotKit triage bot in Slack](https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-poster.jpg)](https://github.com/jerelvelarde/copilotkit-opentag/blob/main/assets/demo-slack-opentag.mp4)
 
-▶️ **[Watch the demo](https://github.com/jerelvelarde/copilotkit-opentag/raw/main/assets/demo-slack-opentag.mp4)** (~50s) — a CopilotKit bot triaging GitHub issues in Slack: it renders a breakdown, a table, and a bar chart inline (**generative UI**) and files a Linear ticket only after an **Approve** gate (**human-in-the-loop**).
+▶️ **[Watch the demo](https://github.com/jerelvelarde/copilotkit-opentag/blob/main/assets/demo-slack-opentag.mp4)** (~50s) — a CopilotKit bot triaging GitHub issues in Slack: it renders a breakdown, a table, and a bar chart inline (**generative UI**) and files a Linear ticket only after an **Approve** gate (**human-in-the-loop**).
 
 > The clip is **Kite**, the full on-call triage bot — the kitchen sink (GitHub
 > triage, charts and tables, Linear & Notion over MCP), all on the same

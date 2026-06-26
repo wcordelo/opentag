@@ -3,21 +3,15 @@
  * `runtime.ts` holds the AG-UI agent backend (a CopilotKit `BuiltInAgent`);
  * this directory holds everything that runs on the chat-platform side.
  *
- * This starter runs on Slack. The `@copilotkit/bot` engine is platform-agnostic
- * — `createBot` takes an ARRAY of adapters and starts them all — so everything
- * in `app/` (the tools, the tag card, the confirm_tag HITL gate, the /tag
- * command) is platform-agnostic and shared verbatim. This is the directory you
- * copy to start your own bot.
- *
- * Add another surface (Discord, Telegram, WhatsApp) by dropping its adapter into
- * the secret-gated block below — e.g. `@copilotkit/bot-discord`. The full
- * multi-platform reference (Slack + Discord + Telegram + WhatsApp at once, plus
- * Linear/Notion over MCP) is the Kite.dev triage bot in CopilotKit's
- * `examples/slack`.
+ * This is the directory you copy to start your own bot. It runs on Slack via
+ * `@copilotkit/bot-slack` over Socket Mode (no public URL needed). Everything in
+ * `app/` (the tools, the tag card, the confirm_tag HITL gate, the /tag command)
+ * is platform-agnostic, so moving to another surface is just swapping the
+ * adapter — `@copilotkit/bot` ships `-discord`, `-telegram`, `-whatsapp`, and
+ * `-teams` adapters with the same shape. See the README ("Run it elsewhere").
  */
 import "dotenv/config";
 import { createBot } from "@copilotkit/bot";
-import type { PlatformAdapter, BotTool, ContextEntry } from "@copilotkit/bot";
 import {
   slack,
   defaultSlackTools,
@@ -32,15 +26,11 @@ import { senderContext } from "./sender-context.js";
 const required = (name: string): string => {
   const v = process.env[name];
   if (!v) {
-    console.error(`Missing required env var: ${name}`);
+    console.error(`Missing required env var: ${name} (see README / .env.example)`);
     process.exit(1);
   }
   return v;
 };
-
-/** True only when every named env var is set and non-empty. */
-const have = (...names: string[]): boolean =>
-  names.every((n) => Boolean(process.env[n]));
 
 async function main() {
   const agentUrl = required("AGENT_URL");
@@ -48,41 +38,23 @@ async function main() {
     ? { Authorization: process.env.AGENT_AUTH_HEADER }
     : undefined;
 
-  // Build the adapter list from whichever secrets are present. Each adapter
-  // contributes its own built-in tools (e.g. `lookup_slack_user`) and context
-  // (tagging + formatting guidance), added only when that platform is active.
-  // Adding a second platform later is just another `if (have(...))` block.
-  const adapters: PlatformAdapter[] = [];
-  const tools: BotTool[] = [...appTools];
-  const context: ContextEntry[] = [...appContext];
-
-  if (have("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")) {
-    adapters.push(
-      slack({
-        botToken: required("SLACK_BOT_TOKEN"),
-        appToken: required("SLACK_APP_TOKEN"),
-        // Assistant pane greeting + chips (shown when a user opens the pane).
-        assistant: {
-          greeting: "Hi! Mention me in a thread and I'll suggest a tag.",
-          suggestedPrompts: [
-            { title: "Tag this thread", message: "Tag this thread" },
-          ],
-        },
-      }),
-    );
-    tools.push(...defaultSlackTools);
-    context.push(...defaultSlackContext);
-  }
-
-  if (adapters.length === 0) {
-    console.error(
-      "No Slack secrets found. Set SLACK_BOT_TOKEN + SLACK_APP_TOKEN (see README).",
-    );
-    process.exit(1);
-  }
+  // The Slack adapter. It contributes its own built-in tools (`lookup_slack_user`)
+  // and context (Slack tagging + formatting guidance), which we add alongside
+  // OpenTag's own tools/context below.
+  const slackAdapter = slack({
+    botToken: required("SLACK_BOT_TOKEN"),
+    appToken: required("SLACK_APP_TOKEN"),
+    // Assistant pane greeting + chips (shown when a user opens the pane).
+    assistant: {
+      greeting: "Hi! Mention me in a thread and I'll suggest a tag.",
+      suggestedPrompts: [
+        { title: "Tag this thread", message: "Tag this thread" },
+      ],
+    },
+  });
 
   const bot = createBot({
-    adapters,
+    adapters: [slackAdapter],
     // One AG-UI agent per conversation, pointed at the runtime. The backend is a
     // CopilotKit `BuiltInAgent` (CopilotSseRuntime), which does NOT require a
     // UUID-format threadId, so the raw conversation thread id is fine.
@@ -97,9 +69,10 @@ async function main() {
     },
     // `appTools` adds OpenTag's tools (read_thread, confirm_tag, tag_card);
     // `defaultSlackTools` adds `lookup_slack_user`. `defaultSlackContext` ships
-    // tagging/mrkdwn guidance; `appContext` adds OpenTag's identity + policy.
-    tools,
-    context,
+    // Slack tagging/mrkdwn guidance; `appContext` adds OpenTag's identity +
+    // policy.
+    tools: [...appTools, ...defaultSlackTools],
+    context: [...appContext, ...defaultSlackContext],
     // The `/tag` slash command. On Slack it must ALSO be declared in the app
     // config (paste `slack-app-manifest.yaml`) — Slack won't deliver an
     // unregistered command, even over Socket Mode.
@@ -107,8 +80,8 @@ async function main() {
   });
 
   // One handler covers explicit @-mentions and DMs. `senderContext` names the
-  // requesting user per `thread.platform`. Wrap the run so a failed turn is
-  // logged and surfaced instead of crashing the process.
+  // requesting user. Wrap the run so a failed turn is logged and surfaced
+  // instead of crashing the process.
   bot.onMention(async ({ thread, message }) => {
     try {
       await thread.runAgent({
@@ -122,7 +95,7 @@ async function main() {
     }
   });
 
-  // Set the assistant-pane prompt chips when a pane opens (Slack assistant view).
+  // Set the assistant-pane prompt chips when a Slack pane opens.
   bot.onThreadStarted(async ({ thread }) => {
     await thread.setSuggestedPrompts([
       { title: "Tag this thread", message: "Tag this thread" },
@@ -130,9 +103,7 @@ async function main() {
   });
 
   await bot.start();
-  console.log(
-    `[opentag] started on: ${adapters.map((a) => a.platform).join(", ")}`,
-  );
+  console.log("[opentag] started on: slack");
 
   const shutdown = async (signal: string) => {
     console.log(`\n[opentag] received ${signal}, stopping…`);

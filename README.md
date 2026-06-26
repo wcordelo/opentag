@@ -35,8 +35,8 @@ In ~250 lines of `app/`, OpenTag shows the whole shape of a CopilotKit bot:
 ## Quickstart
 
 ```bash
-git clone https://github.com/CopilotKit/OpenTag.git
-cd OpenTag
+git clone https://github.com/jerelvelarde/copilotkit-opentag.git
+cd copilotkit-opentag
 npm install
 cp .env.example .env       # fill in SLACK_* + OPENAI_API_KEY (see below)
 
@@ -135,10 +135,14 @@ OpenTag is "here's how you start"; Kite.dev is "here's everything it can do."
   update, a row in your DB.
 - **Change the taxonomy.** Edit the label list in the `runtime.ts` system prompt
   and the colors in `app/components/tag-card.tsx`.
-- **Add a platform.** Drop another adapter into the secret-gated block in
-  `app/index.ts` — e.g.
-  [`@copilotkit/bot-discord`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-discord).
-  Everything in `app/` is platform-agnostic and shared verbatim.
+- **Run it elsewhere.** Everything in `app/` is platform-agnostic — swap the
+  `slack()` adapter in `app/index.ts` for
+  [`@copilotkit/bot-discord`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-discord),
+  [`-telegram`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-telegram),
+  [`-whatsapp`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-whatsapp),
+  or [`-teams`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-teams)
+  and provide that platform's secrets. `createBot` also takes several adapters
+  at once.
 - **Durable buttons.** Pass a `@copilotkit/bot-store-redis` store to `createBot`
   so an Apply/Cancel click still resolves after a restart.
 

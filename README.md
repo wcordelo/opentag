@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135
 
 ▶️ **[Watch the demo](https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135)** (~50s) — an OpenTag agent working a Slack thread: it renders a breakdown, a table, and a bar chart inline (**generative UI**) and files a ticket only after an **Approve** gate (**human-in-the-loop**).
 
-> **Two ways to run it:** **host it yourself** with the open-source SDK below — or skip the ops and **[sign up for the managed service →](https://go.copilotkit.ai/opentag-managed-gh)** coming soon from CopilotKit.
+> **Two ways to run it:** **host it on your own** with the open-source SDK below — or skip the ops and **[sign up for the managed service →](https://go.copilotkit.ai/opentag-managed-gh)** coming soon from CopilotKit. The managed service will be part of our Enterprise Intelligence platform. You'll be able to use our cloud-hosting or enterprises can host it on their own infra.
 
 ## Quick start (self-hosted)
 
@@ -56,7 +56,7 @@ pnpm --filter slack-example dev        # the bot
 That's the whole loop. To wire up Linear, Notion, inline charts, Redis persistence, or to run
 on Discord / Telegram / WhatsApp, see **[setup.md](./setup.md)**.  
 
-We won't lie to you, though. Setting up hosting for chat agents is not easy. To skip all of that heartache, go [join the waitlist](https://go.copilotkit.ai/opentag-managed-gh) for the CopilotKit managed service hosted on our Intelligence platform.
+We won't lie to you, though. Setting up hosting for chat agents is not easy. To skip all of that heartache, go [join the waitlist](https://go.copilotkit.ai/opentag-managed-gh) for the CopilotKit managed service as part of our Intelligence platform, both cloud-hosted or self-hosted.
 
 ## Make it your own
 

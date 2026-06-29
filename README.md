@@ -30,9 +30,7 @@ connection) — and set three secrets.
 
 ### The packages
 
-OpenTag is a thin layer over a handful of CopilotKit packages. The `pnpm install` in step 3
-installs all of them for you — this is what each one does, so you know what you're running and
-which pieces you can drop.
+OpenTag is a thin layer on top of a handful of CopilotKit packages. The `pnpm install` in step 3 installs all of them for you — this is what each one does, so you know what you're running and which ones are optional.
 
 **Required** — every OpenTag install needs these four:
 

@@ -57,7 +57,8 @@ edge/
 └── test/
     ├── sqlite-state-store.ts           # node:sqlite shim → exercises the real engine off-workerd
     ├── conformance.ts                  # the @copilotkit/bot StateStore conformance suite (vendored)
-    └── engine.test.ts                  # runs the suite against the engine (16 tests, green)
+    ├── engine.test.ts                  # runs the suite against the engine on node:sqlite (16 tests)
+    └── store.workers.test.ts           # runs the suite + DO integration checks INSIDE workerd (18 tests)
 ```
 
 ### Layering
@@ -89,11 +90,18 @@ The **engine is backend-blind** — it talks to a narrow `SqlExecutor` and a `tr
 
 ```bash
 npm install
-npm test            # 16 StateStore conformance tests against the real engine
+npm test            # 16 conformance tests against the engine on node:sqlite (fast, no workerd)
+npm run test:e2e    # 18 tests INSIDE workerd: same suite + DO integration, via the real Durable Object
+npm run test:all    # both
 npm run check-types # tsc --noEmit
 npm run dev         # wrangler dev — hit /health and /debug/store
 ```
 
-`/debug/store` round-trips kv, list, lock, dedup, and queue through a live Durable Object — an end-to-end smoke test of the SQLite backend. Remove or guard it in production.
+Two layers of testing:
+
+1. **Engine (`npm test`)** — the vendored `@copilotkit/bot` conformance suite against the real `SqlStateEngine` over `node:sqlite`. Fast, proves the SQL/TTL/atomicity logic.
+2. **End-to-end (`npm run test:e2e`)** — the *same* suite plus DO-specific checks (cross-instance isolation, cross-stub durability) run in **`workerd`** via `@cloudflare/vitest-pool-workers`, so `ConversationStateDO`, `ctx.storage.sql`, `transactionSync`, and `getByName` RPC routing are all exercised for real.
+
+`/debug/store` additionally round-trips every namespace through a live Durable Object under `wrangler dev`. Remove or guard it in production.
 
 > Edge ingress is HTTP-webhook driven (Slack Events API, Discord interactions, WhatsApp Cloud API), not the Node socket-mode / long-poll adapters. `worker.ts` sketches the `/webhook/:platform` wiring; the persistence swap is complete and the focus of this package.

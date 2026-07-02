@@ -58,7 +58,8 @@ edge/
     ├── sqlite-state-store.ts           # node:sqlite shim → exercises the real engine off-workerd
     ├── conformance.ts                  # the @copilotkit/bot StateStore conformance suite (vendored)
     ├── engine.test.ts                  # runs the suite against the engine on node:sqlite (16 tests)
-    └── store.workers.test.ts           # runs the suite + DO integration checks INSIDE workerd (18 tests)
+    ├── store.workers.test.ts           # runs the suite + DO integration checks INSIDE workerd (18 tests)
+    └── create-bot.integration.test.ts  # drives the store via the REAL createBot (auto-skips if unresolvable)
 ```
 
 ### Layering
@@ -105,3 +106,47 @@ Two layers of testing:
 `/debug/store` additionally round-trips every namespace through a live Durable Object under `wrangler dev`. Remove or guard it in production.
 
 > Edge ingress is HTTP-webhook driven (Slack Events API, Discord interactions, WhatsApp Cloud API), not the Node socket-mode / long-poll adapters. `worker.ts` sketches the `/webhook/:platform` wiring; the persistence swap is complete and the focus of this package.
+
+## Upstream status, gaps & edge-deployment compatibility
+
+The `@copilotkit/bot` ecosystem is mid-`0.x` and **not yet installable as a coherent set from npm**, which is why this package mirrors the `StateStore` interface locally instead of importing it. Verified state (as of this writing):
+
+### npm vs. monorepo source
+
+| Package | npm latest | monorepo source | OpenTag needs |
+| --- | --- | --- | --- |
+| `@copilotkit/bot` | `0.1.0` | `0.1.0` | `^0.1.0` ✅ |
+| `@copilotkit/bot-slack` | `0.1.0` | `0.1.0` | `^0.1.0` ✅ |
+| `@copilotkit/bot-ui` | `0.0.3` | `0.1.0` | `^0.1.0` ❌ |
+| `@copilotkit/bot-discord` | `0.0.1` | `0.0.2` | `^0.1.0` ❌ |
+| `@copilotkit/bot-telegram` | **404** | `0.0.3` | `^0.1.0` ❌ |
+| `@copilotkit/bot-whatsapp` | **404** | `0.0.1` | `^0.1.0` ❌ |
+| `@copilotkit/bot-store-redis` | **404** | **absent** | `^0.1.0` ❌ |
+
+### Why `npm install` fails today (incoherent dependency graph)
+
+These are a pnpm workspace using `workspace:` protocol deps, rewritten to concrete versions at publish time — and they were published from inconsistent states:
+
+- Published `bot@0.1.0` requires `@copilotkit/bot-ui@~0.1.0`, but the newest `bot-ui` on npm is `0.0.3` → **unsatisfiable**.
+- Published `bot-slack@0.1.0` requires `bot@~0.0.3` (no such version — `bot` is `0.1.0`) and `bot-ui@~0.0.3` → **unsatisfiable**, and contradicts what `bot@0.1.0` wants.
+
+So even the published packages can't form a valid tree. `bot-store-redis` doesn't exist publicly at all — a DO+SQLite store is plausibly the **first** durable store adapter.
+
+### A packaging bug worth flagging upstream
+
+`@copilotkit/bot`'s `index.ts` re-exports `runStateStoreConformance`, which does a **runtime** `import ... from "vitest"`. `vitest` isn't a runtime dependency, so `import { createBot } from "@copilotkit/bot"` throws `ERR_MODULE_NOT_FOUND: vitest` unless the consumer happens to have vitest installed. Testing helpers should move to a `./testing` subpath export (kept out of the main entry).
+
+### Running the bot **engine** in `workerd` (for a full edge migration)
+
+The store itself runs natively in `workerd` (proven by `test:e2e`). Running `createBot` *itself* on the edge has a small, well-scoped set of considerations:
+
+| Concern | Status | Mitigation |
+| --- | --- | --- |
+| `node:crypto` (`randomUUID`, `createHash`) | ✅ works | Global `crypto` / `nodejs_compat` |
+| Telemetry `node:fs` install-id | ✅ avoided | With a durable (non-`MemoryStore`) backend, the install-id is stored via `kv`; the `fs` path is never reached. Also fully disableable with `COPILOTKIT_TELEMETRY_DISABLED=true`. |
+| `createRequire(import.meta.url)("../package.json")` in `create-bot.ts` | ⚠️ blocker | Runs at module top-level to read the package version. `node:module`'s `createRequire` is unreliable in `workerd`. Needs a bundler inline/`define`, or an upstream change to import the version statically. |
+| Platform ingress | ⚠️ by design | Socket-mode (Slack) / long-poll (Telegram) adapters don't fit Workers; use webhook ingress (`worker.ts` `/webhook/:platform`). |
+
+### Verified integration despite the above
+
+`test/create-bot.integration.test.ts` drives this store through the **real `createBot`** and asserts the engine exercises it correctly (turn lock, event dedup, `thread.setState`). It auto-skips when `@copilotkit/bot` isn't resolvable (the default here) and was confirmed green against `@copilotkit/bot@0.1.0` built from source. Combined with the `workerd` suite (real DO) and the `node:sqlite` suite (fast engine), coverage spans: real engine in the real runtime **and** the real bot driving the real contract.

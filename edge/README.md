@@ -94,6 +94,7 @@ npm install
 npm test            # 16 conformance tests against the engine on node:sqlite (fast, no workerd)
 npm run test:e2e    # 18 tests INSIDE workerd: same suite + DO integration, via the real Durable Object
 npm run test:all    # both
+npm run test:e2e:full  # everything: typecheck + both suites + createBot + live wrangler dev
 npm run check-types # tsc --noEmit
 npm run dev         # wrangler dev — hit /health and /debug/store
 ```

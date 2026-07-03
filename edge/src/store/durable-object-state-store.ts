@@ -39,9 +39,20 @@ export class DurableObjectStateStore implements StateStore {
     this.route = opts.partition ?? singleGlobal;
   }
 
-  /** Resolve the owning Durable Object stub for `key`. */
+  /**
+   * Resolve the owning Durable Object stub for `key`.
+   *
+   * Prefer `getByName` (Workers runtime ≥ 2024). Older local Miniflare builds
+   * (e.g. wrangler 3.x `wrangler dev`) only expose `idFromName` + `get` — without
+   * this fallback `/debug/store` and local dev smoke tests 500.
+   */
   private stub(key: string): Stub {
-    return this.ns.getByName(this.route(key));
+    const name = this.route(key);
+    const ns = this.ns as DurableObjectNamespace<ConversationStateDO> & {
+      getByName?: (n: string) => Stub;
+    };
+    if (typeof ns.getByName === "function") return ns.getByName(name);
+    return ns.get(ns.idFromName(name));
   }
 
   kv: StateStore["kv"] = {

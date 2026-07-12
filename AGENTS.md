@@ -2,9 +2,11 @@
 
 ## Cursor Cloud / agent instructions
 
+- **Product docs:** [`PRODUCT.md`](./PRODUCT.md) · [`README.md`](./README.md) · [`docs/README.md`](./docs/README.md)
 - **Slack product surface:** Cloudflare edge (`edge/`) — Events API bot Worker + StateStore. Production Worker: `opentag-bot` (`npm run deploy:bot`). Channels deps: `edge/vendor/` tarball + npm.
 - **Agent brain:** root `pnpm runtime` (`runtime.ts`) — AG-UI on `:8200`; Worker `AGENT_URL` points here (public host in production).
 - **Research tasks:** optional `edge/wrangler.research.toml` (internal); not on the CI critical path.
+- **Technical locks:** [`DECISIONS.md`](./DECISIONS.md)
 
 ### Root `pnpm start` is not the Slack bot
 

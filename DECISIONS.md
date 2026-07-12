@@ -1,78 +1,71 @@
-# OpenTag 2.0 — Gate 0 Decisions (research-track technical)
+# OpenTag — technical decisions
 
-> **Product direction:** [`PRODUCT.md`](./PRODUCT.md) is authoritative.
-> This file records **technical CF invariants** and the historical
-> *research-task migration* Gate 0. Do **not** treat §3 “`/research`-only”
-> as the product scope — that clause is superseded (see bottom).
+Status: **APPROVED** for technical invariants.  
+Product direction: **[`PRODUCT.md`](./PRODUCT.md)** (authoritative).
 
-Status: **APPROVED** for technical invariants (DO naming, egress, Events API
-HMAC). Product surface = Claude Tag bot spine on CF (PRODUCT.md).
-
-Inputs reviewed (historical): `goal-prompt.md`, `opentag-2.0-analysis.md`,
-`opentag-2.0-impl-spec.md`, `lib/research/*`, `app/research-agent.ts`,
-`app/commands/index.ts`, `slack-app-manifest.yaml`.
+These decisions lock Cloudflare infrastructure choices for the bot spine and the
+optional research task plane.
 
 ---
 
-## 1. Durable Object naming granularity (research task plane)
+## 1. Durable Object naming
+
+### Bot plane
+
+| DO class | Key | Role |
+|---|---|---|
+| `ConversationStateDO` (`BOT_STATE`) | per conversation | HITL, turn locks, transcripts, dedup |
+| `WorkspaceConfigDO` | per `teamId` | prompts, access bundles, policies |
+| `KnowledgeDO` | per `teamId` | longer-term channel memory |
+
+### Research task plane
 
 | DO class | Key | Rationale |
 |---|---|---|
-| `OrchestratorDO` | `idFromName(teamId)` — **one per Slack workspace** | Hard invariant #6 in `goal-prompt.md`. |
-| `ResearcherDO` | `idFromName(taskId)` — one per task/session | Bounded fiber-step work for a single task. |
-| `VerifierDO` | `idFromName(taskId)` — one per task/session | Same reasoning as Researcher. |
-| Agent containers (PM/Impl/Verify) | rows in owning `OrchestratorDO` SQLite | Lifecycle with workspace task DO. |
+| `OrchestratorDO` | `idFromName(teamId)` — **one per Slack workspace** | Workspace-scoped task control plane |
+| `ResearcherDO` | `idFromName(taskId)` | Bounded fiber-step work for one task |
+| `VerifierDO` | `idFromName(taskId)` | Same as Researcher |
 
-**Resolution:** OrchestratorDO is per-workspace (`teamId`), not per-thread.
-Threads are rows keyed by `thread_key`. Bot plane uses separate DOs
-(`ConversationStateDO`, `WorkspaceConfigDO`, `KnowledgeDO`) — see PRODUCT.md.
+Threads are rows keyed by `thread_key` inside the orchestrator, not separate DOs.
 
 ---
 
-## 2. Egress Proxy Design (application-level)
+## 2. Egress proxy
 
-Application-level HTTP proxy Worker (`edge/workers/egress-proxy`), not
-transparent TCP interception. Containers hold no API keys — only short-lived
-`AGENT_TOKEN`. Proxy allowlists hosts, injects secrets, logs to OrchestratorDO.
-
----
-
-## 3. Slack Events API (historical research-track shape)
-
-**Historical note:** Gate 0 originally placed Slack HTTP on the Orchestrator
-Worker with `/research`-only scope. **Current product:** Slack Events /
-commands / interactions terminate on the **bot Worker** (`edge/src/worker.ts`).
-Research is invoked via TaskRuntime → `RESEARCH_TASKS` service binding →
-`POST /research` (internal). Orchestrator public `/slack/*` routes are
-removed (410 if hit).
-
-Technical still binding: HMAC verify with `SLACK_SIGNING_SECRET`, no Socket
-Mode, ack within 3s + `waitUntil` / `chat.postMessage` for results.
+Application-level HTTP proxy Worker (`edge/workers/egress-proxy`), not transparent
+TCP interception. Containers hold no long-lived API keys — only short-lived
+`AGENT_TOKEN`. The proxy allowlists hosts, injects secrets, and logs execution.
 
 ---
 
-## Sign-off (Gate 0 — technical)
+## 3. Slack Events API
 
-1. **DO granularity (§1):** APPROVED — per-workspace `OrchestratorDO` (research task plane).
-2. **Egress proxy (§2):** APPROVED — application-level HTTP proxy Worker.
-3. **Events API HMAC / no Socket Mode:** APPROVED.
-4. **Scope (original `/research`-only):** APPROVED for the *research migration track* only — **not** product direction.
+- **No Socket Mode** — incompatible with Workers.
+- Slack Events / commands / interactions terminate on the **bot Worker**
+  (`edge/src/worker.ts` / `opentag-bot`).
+- Research is invoked via TaskRuntime → `RESEARCH_TASKS` → internal `POST /research`.
+- HMAC verify with `SLACK_SIGNING_SECRET`; ack within ~3s; finish via `waitUntil` /
+  `chat.postMessage` / agent stream.
 
 ---
 
-## Product supersession (2026-07-11)
+## Product shape (current)
 
-**[`PRODUCT.md`](./PRODUCT.md) is authoritative for product direction.**
-
-| Prior (Gate 0 product reading) | Current (PRODUCT.md) |
+| Concern | Owner |
 |---|---|
-| Research Orchestrator is the CF product | Bot + StateStore is the CF product spine |
-| Only `/research` on CF | Full Slack bot on CF (mentions, commands, HITL) |
-| Research DOs = the system | Research DOs = long-running **task** runtime |
-| Bot StateStore = optional sibling | Bot StateStore = durability spine |
-| Orchestrator owns Slack HTTP | Bot Worker owns Slack HTTP; research is service-bound |
+| Slack HTTP | Bot Worker |
+| Claude Tag durability | Bot StateStore (`BOT_STATE`) |
+| Deep research | Optional research Worker (task flavor) |
+| LLM / MCP | Node `pnpm runtime` (`AGENT_URL`) |
 
-## Full cutover (2026-07-11)
+Discord / Telegram / WhatsApp are **out of scope** for this product track.
+Railway Socket Mode Slack has been **removed**.
 
-Railway Socket Mode Slack (`pnpm start`, `SLACK_APP_TOKEN`, `opentag-bot`) is **removed**.
-Discord / Telegram / WhatsApp are out of this product track. Slack = CF Worker only.
+---
+
+## Sign-off
+
+1. **DO granularity (§1):** APPROVED  
+2. **Egress proxy (§2):** APPROVED — application-level HTTP proxy  
+3. **Events API / no Socket Mode (§3):** APPROVED  
+4. **Research as task (not product spine):** APPROVED — see PRODUCT.md

@@ -4,7 +4,7 @@
  * sandboxes (pm/impl/verify flavors). Runs as the container's entrypoint
  * (see ./Dockerfile).
  *
- * Hard invariant (DECISIONS.md §2 / goal-prompt.md invariant #2): this
+ * Hard invariant (DECISIONS.md §2): this
  * process holds no API keys — only a short-lived AGENT_TOKEN. Every
  * outbound call to an external API MUST go through `proxiedFetch()` below,
  * which POSTs `{ url, method, headers, body }` to

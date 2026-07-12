@@ -1,7 +1,7 @@
 // OpenTag WASM dispatch core — TinyGo via syumai/workers.
 // Template lineage: github.com/syumai/workers/_templates/cloudflare/worker-tinygo
 //
-// CONSTRAINTS (goal-prompt.md invariant #4):
+// CONSTRAINTS (DECISIONS.md / PRODUCT.md — TinyGo WASM size limits):
 // - No goroutines (go func() is forbidden — Workers WASM has no scheduler).
 // - No WASI syscalls (no os.Getenv, no file I/O, no sockets).
 // - All inputs arrive via the HTTP request body.

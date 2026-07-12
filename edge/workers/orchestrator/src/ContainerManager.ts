@@ -1,7 +1,7 @@
 /**
  * ContainerManager — Sandbox SDK container lifecycle for agent flavors
  * (pm/impl/verify). See DECISIONS.md §2 (application-level egress proxy;
- * containers hold no API keys) and opentag-2.0-impl-spec.md Task 3.2.
+ * containers hold no API keys).
  *
  * Storage and the Sandbox factory are both injected (duck-typed) so this
  * class has zero import-time dependency on `lib/research/adapters/storage-do`
@@ -63,7 +63,7 @@ export interface AgentContainerRecord {
 
 /**
  * Duck-typed storage dependency. Mirrors the `agent_containers` methods
- * `opentag-2.0-impl-spec.md` Task 7.3 adds to `DurableObjectStorageAdapter`
+ * StorageAdapter methods for containers/handoffs (see lib/research/adapters)
  * (`createAgentContainer` / `getAgentContainer` / `updateAgentContainerStatus`),
  * named as a local interface so this file doesn't need to import that
  * adapter (or exist before Task 7.3 lands).

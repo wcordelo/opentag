@@ -8,9 +8,9 @@ Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 
 ## Overview
 
-- **Shared core** (`lib/research/`) — actor logic, fibers, OCC, outbox
+- **Shared core** (`lib/research/`) — actor logic, fibers, OCC, outbox, delivery
 - **Cloudflare** — Durable Objects + SQLite (`edge/wrangler.research.toml`), invoked via bot `RESEARCH_TASKS` binding
-- **Optional Railway** — Postgres + Node processes for local eval (not Slack ingress)
+- **Optional local Postgres** — `RESEARCH_MOCK=1 pnpm e2e:research` for adapter tests (not Slack ingress)
 
 ## Processes
 
@@ -19,29 +19,30 @@ Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 | Bot Worker | `cd edge && npm run dev` | Slack Events API (primary) |
 | Triage runtime | `pnpm runtime` | AG-UI agent (`AGENT_URL`) |
 | Research Worker | `cd edge && npm run dev:research` | Internal `/research` |
-| Optional: research runtime | `pnpm research:runtime` | Railway/Postgres AG-UI + delivery |
-| Optional: alarm worker | `pnpm research:worker` | Postgres alarm poller |
 
 ## Cloudflare research task Worker
 
 ```bash
 cd edge
-npm install   # requires sibling CopilotKit channels build — see edge/README.md
+npm ci
+# Match INTERNAL_SECRET with the bot Worker (.dev.vars)
 npm run dev:research   # wrangler.research.toml → opentag-orchestrator
-npm run dev            # wrangler.toml → binds RESEARCH_TASKS → orchestrator
+npm run deploy:research
 ```
 
 Internal kickoff: `POST /research` with `Authorization: Bearer $INTERNAL_SECRET`
-(body: `{ teamId, threadKey, objective }`).
+(body: `{ teamId, threadKey, objective }`). Prefer bot `POST /tasks/start` in
+normal operation so channel policies and Slack thread context apply.
 
 ## Environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `DATABASE_URL` | Postgres (optional Railway research) |
-| `AGENT_URL` | Triage AG-UI (bot Worker → Node runtime) |
-| `INTERNAL_SECRET` | Bearer for CF `/research` + `/internal/*` |
-| `PARALLEL_API_KEY` | Parallel web search |
+| `INTERNAL_SECRET` | Bearer for CF `/research` + `/internal/*` (must match bot) |
+| `SLACK_BOT_TOKEN` | Delivery of research summaries to Slack |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Research LLM (orchestrator secrets) |
+| `PARALLEL_API_KEY` | Optional Parallel web search |
+| `DATABASE_URL` | Optional Postgres track only |
 
 ## Testing
 
@@ -49,3 +50,5 @@ Internal kickoff: `POST /research` with `Authorization: Bearer $INTERNAL_SECRET`
 RESEARCH_MOCK=1 pnpm e2e:research
 cd edge && npm test && npm run test:e2e
 ```
+
+See also [evaluation.md](./evaluation.md).

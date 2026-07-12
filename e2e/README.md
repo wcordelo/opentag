@@ -1,85 +1,46 @@
-# `e2e/` — live end-to-end test harness
+# `e2e/` — end-to-end probes
 
-True end-to-end coverage for the Slack bridge: send real user messages
-in a real Slack workspace, sample the bot's reply _while it's streaming_,
-take screenshots in the middle of long streams, and verify what landed.
+Helpers for live Slack and research-loop checks against a real workspace or
+mock research adapters. Day-to-day bot coverage is **`cd edge && npm test`** and
+**`npm run test:e2e`** (StateStore on workerd).
 
-> **Why this exists.** Unit tests (under `src/__tests__/`) lock in the
-> internal contracts of each module — they don't catch issues that only
-> surface end-to-end: an open code fence leaking through the rest of the
-> Slack message during streaming, a mrkdwn translation that _looks_ right
-> in tests but renders weird in Slack's actual client, a Block Kit limit
-> we forgot about, a Bolt event that doesn't fire under some setting.
->
-> The catalog at `e2e/cases.ts` is the source of truth for what
-> "feature-complete" means.
-
-## What's in here
+## Layout
 
 ```
 e2e/
-├── README.md         this
-├── cases.ts          catalog of test cases (technical axes; expand liberally)
-├── slack-api.ts      Slack Web API helpers (history, thread replies, sampling)
-├── run.ts            harness entrypoint — sends prompts, samples, screenshots
-└── results/          per-run output: screenshots + JSON report
+├── README.md           this
+├── research-loop.ts    research actor loop (pnpm e2e:research)
+├── run.ts              optional live Slack harness entry
+├── cases.ts            Slack case catalog (legacy harness)
+├── slack-api.ts        Slack Web API helpers
+└── grab-user-token.ts  helper for user-token based probes
 ```
 
-## Running
+Telegram harness files (`telegram-*.ts`) are leftover from an abandoned multi-platform
+track and are not part of the Claude Tag product. Prefer Slack + Cloudflare.
+
+## Research mock loop
 
 ```bash
-# from packages/slack/
-
-# one-time: log into Slack once in the playwright browser profile.
-# Subsequent runs reuse that profile.
-pnpm exec playwright open --browser=chromium --user-data-dir=./e2e/.chrome-profile \
-  https://app.slack.com/client/T05QFA4BW9X/C0B49MEJ1HQ
-
-# then:
-pnpm e2e
+# from repo root
+RESEARCH_MOCK=1 pnpm e2e:research
 ```
 
-The runner expects `.env` to already contain `SLACK_BOT_TOKEN` (used for
-polling the channel history while the bot streams). Sending the user
-message happens through the playwright-driven Slack UI using Atai's
-session cookies from the persistent profile.
+## Live Slack (edge scripts)
 
-## How sampling works
+Prefer the edge local smoke path (signed Events API → real reply):
 
-For each case the harness:
+```bash
+cd edge
+./scripts/e2e-local.sh
+pnpm runtime                 # terminal A (repo root)
+npm run dev                  # terminal B
+./scripts/e2e-smoke-local.sh
+```
 
-1. Sends the prompt via the Slack UI (or `/agent` slash command).
-2. Polls `conversations.replies` (or `.history` for DMs / flat replies)
-   every `sampleIntervalMs` until `maxWaitMs` elapses.
-3. At each sample, records:
-   - elapsed time
-   - bot's reply text snapshot
-   - bracket-balance check (`isBalanced(text)`)
-4. At each `screenshots[i]` offset (ms after send), takes a screenshot of
-   the Slack thread pane via playwright.
-5. After the run, writes `results/<timestamp>/report.json` and the screenshots.
+See [edge/README.md](../edge/README.md) and [docs/evaluation.md](../docs/evaluation.md).
 
-## What this catches that unit tests don't
+## Env
 
-- Open code fences leaking through the rest of the Slack message
-- Slack's `chat.update` rate limits creating visible "jumps"
-- mrkdwn rendering differences vs. our translator's expectations
-- The bot's actual streaming cadence with the model
-- Thread vs DM rendering differences
-- Real concurrency from multiple users in the channel
-- Mid-stream cancellation / kill behaviour
-
-## Adding cases
-
-Edit `cases.ts`. The bar is low — anything you'd want to _see_ working in
-Slack belongs in the catalog. Don't be afraid of duplication with
-unit tests; the unit test proves the code is internally correct, the E2E
-proves Slack actually renders it that way.
-
-## Limitations (current)
-
-- Sending the user message still relies on UI automation (no user
-  token), so a one-time signin in the persistent profile is required.
-- A future enhancement: a long-lived user OAuth token would let us skip
-  the browser entirely for the _send_ step (screenshots still need the
-  browser, but sampling already uses pure API).
+Expect `SLACK_BOT_TOKEN` (and related secrets) in root `.env` / `edge/.dev.vars`.
+Never commit tokens.

@@ -29,7 +29,8 @@ npm run dev              # local bot spine (Slack Events API)
 npm run dev:research     # optional research task Worker
 ```
 
-Optional local sibling CopilotKit checkout is only needed when refreshing the vendor tarball (see `vendor/README.md`).
+Optional sibling CopilotKit checkout is only needed when refreshing the vendor
+tarball (see [`vendor/README.md`](./vendor/README.md)).
 
 ## Local E2E
 

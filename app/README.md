@@ -1,10 +1,11 @@
 # `app/`
 
-Legacy Node Slack bot entry is retired. `index.ts` exits with a pointer to:
+Legacy Node Slack bot entry is retired. `index.ts` exits with a pointer to the
+Cloudflare path:
 
 ```bash
 cd edge && npm run dev
 pnpm runtime
 ```
 
-Historical tools/components live under `archive/app-node-bot/`.
+See [README.md](../README.md) and [PRODUCT.md](../PRODUCT.md).

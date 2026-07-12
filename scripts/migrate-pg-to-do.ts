@@ -3,7 +3,7 @@
  *
  * SAFETY: This module never connects to production by default. Callers must
  * pass explicit connection strings / adapters. Running against a live DB
- * requires the Gate "external action" sign-off from goal-prompt.md.
+ * requires the Gate "external action" sign-off from DECISIONS.md / PRODUCT.md.
  */
 import type { StorageAdapter } from "../lib/research/adapters/storage.js";
 import type { TaskRecord, BlobRef } from "../lib/research/types.js";

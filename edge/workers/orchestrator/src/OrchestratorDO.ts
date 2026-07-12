@@ -1,6 +1,6 @@
 /**
  * OrchestratorDO — one Durable Object per Slack workspace (idFromName(teamId)).
- * See DECISIONS.md §1 / goal-prompt.md invariant #6.
+ * See DECISIONS.md §1 (per-workspace OrchestratorDO).
  *
  * Thin shell over lib/research OrchestratorCore + DurableObjectStorageAdapter.
  * Actor code never imports DurableObject directly (invariant #3).

@@ -1,6 +1,6 @@
 /**
  * PreviewUrlManager — validates and re-negotiates Sandbox SDK preview URLs.
- * See opentag-2.0-impl-spec.md Task 3.3.
+ * See DECISIONS.md / PRODUCT.md.
  *
  * Preview URLs do not survive a container restart, so every inter-container
  * call must go through `getValidUrl()` rather than trusting a cached URL

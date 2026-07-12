@@ -12,8 +12,8 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 ## Spine
 
 1. **Ingress** — Slack Events API + slash commands + interactions on the **bot Worker** (no Socket Mode).
-2. **Bot engine** — `createBot` + `CloudflareSlackAdapter` + `createDurableObjectStore(env.BOT_STATE)` + `HttpAgent` → `AGENT_URL`.
-3. **StateStore** (`edge/src/store/`, binding `BOT_STATE`) — durable HITL, turn locks, transcripts, dedup.
+2. **Bot engine** — `createBot` + `CloudflareSlackAdapter` + `createDurableObjectStore(env.BOT_STATE)` + `HttpAgent` via **`AGENT_RUNTIME` service binding** + `AGENT_URL` path.
+3. **StateStore** (`edge/src/store/`, binding `BOT_STATE`) — durable HITL (`hitl-id:`), thread memory (`threadmem:`), turn locks, transcripts, dedup.
 4. **Tenant keying** — workspace (`teamId`) with channel overrides.
 5. **AG-UI brain** — `opentag-agent` Cloudflare Container running Node `runtime.ts` (LLM + MCP).
 
@@ -23,8 +23,10 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 |---|---|
 | Channel / workspace prompts & config | Implemented (`WorkspaceConfigDO`) |
 | Access bundles (tool allowlist + secret *refs*) | Implemented; MCP clients open on Node runtime from refs |
-| Memory — thread + knowledge | Implemented (StateStore threadstate + `KnowledgeDO`) |
-| Durable HITL | Implemented (createBot ActionStore + Block Kit via Channels) |
+| Memory — thread + knowledge | Implemented (StateStore threadstate + `KnowledgeDO` + `threadmem:`) |
+| Durable HITL (cross-isolate Create/Cancel) | Implemented (`choiceId` + DO poll; see DECISIONS §5) |
+| Linear create with Slack email assignee | Implemented (`users:read.email` + structured `confirm_write`) |
+| Fuzzy ticket field labels | Implemented (`coerceTicketFields` / thread-memory) |
 | Reactions for thanks / explicit react intents | Implemented (`trivial-ack`, `react-intent`, `react_message`) |
 | Deep research | Task type via `RESEARCH_TASKS` → orchestrator |
 | Bundle → MCP | Runtime opens MCP from context `mcpEndpoints` + env `secretRefs` |
@@ -65,6 +67,7 @@ Point Slack Events / commands / interactions Request URLs at the bot. Production
 - Multi-agent PM / impl / verify sandbox pipeline (deferred).
 - Upstream `@copilotkit/channels` Workers fix (today: vendored tarball in `edge/vendor/`).
 - Chart/diagram image tools deferred on Workers (no Playwright in isolate).
+- Optional: skip the extra LLM hop after Create by saving Linear from the bot when approved.
 
 ## Doc map
 

@@ -60,19 +60,24 @@ npm run dev                      # terminal B
 ```
 
 **Smoke:** @mention → reply; thread follow-up without @; Linear `issue_list`;
-`confirm_write` across Worker restart; `/research` delivery; `remember:`.
+`confirm_write` Create/Cancel across isolates (new card after deploy);
+create Linear ticket with Slack profile email (no email prompt);
+typo’d `descripton` still splits title/description; `/research` delivery; `remember:`.
 
 **Workers note:** sibling `@copilotkit/channels` must not use `createRequire(import.meta.url)`
 (crashes workerd). Patch `create-bot.ts` to a static package version if rebuilding.
 
+**Slack API note:** bot Web API calls use form-urlencoded (`web-api.ts`). JSON
+`users.info` does not return profile email — see DECISIONS §8.
+
 ## Spine
 
 1. Slack → `src/worker.ts` → `CloudflareSlackAdapter` → `createBot` (`@copilotkit/channels`)
-2. StateStore `BOT_STATE` — HITL, locks, transcripts, dedup
+2. StateStore `BOT_STATE` — HITL (`hitl-id:`), thread memory (`threadmem:`), locks, transcripts, dedup
 3. `WORKSPACE_CONFIG` — prompts + access bundles
 4. `KNOWLEDGE` — longer-term memory
 5. `RESEARCH_TASKS` → orchestrator `POST /research`
-6. `AGENT_URL` → `opentag-agent` Container (`HttpAgent`)
+6. `AGENT_RUNTIME` service binding + `AGENT_URL` path → `opentag-agent` Container (`HttpAgent`)
 
 ## Layout
 

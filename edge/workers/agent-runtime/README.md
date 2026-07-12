@@ -2,9 +2,13 @@
 
 Production `AGENT_URL` target for `opentag-bot`. A thin Worker proxies HTTP to a
 single always-on Container running Node [`runtime.ts`](../../../runtime.ts)
-(and an optional Notion MCP sidecar).
+(and an optional Notion MCP sidecar). Prompt / MCP wiring:
+[`lib/triage-agent.ts`](../../../lib/triage-agent.ts).
 
 Requires **Workers Paid** (Cloudflare Containers).
+
+The bot reaches this Worker via the **`AGENT_RUNTIME` service binding** (not
+same-zone `workers.dev` fetch — that returns Cloudflare 1042).
 
 ## Deploy
 
@@ -14,7 +18,7 @@ npm ci
 
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put LINEAR_API_KEY
-npx wrangler secret put LINEAR_TEAM_KEY
+npx wrangler secret put LINEAR_TEAM_KEY   # team display name, e.g. Berendo
 # optional:
 # npx wrangler secret put AGENT_MODEL
 # npx wrangler secret put NOTION_TOKEN
@@ -31,17 +35,35 @@ printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/tr
   | npx wrangler secret put AGENT_URL --config ../../wrangler.bot.toml
 ```
 
+After changing `lib/triage-agent.ts` or `runtime.ts`, redeploy this package so
+the Container image rebuilds (Docker layer cache can stick an old prompt file —
+touch the file or bump the image if needed).
+
 ## Layout
 
 | File | Role |
 | --- | --- |
 | `src/index.ts` | Auth gate + `TRIAGE.getByName("triage").fetch` |
 | `src/container.ts` | `TriageContainer` — port 8200, always-on activity |
-| `Dockerfile` | Node 22 + `runtime.ts` + Notion launcher |
+| `Dockerfile` | Node 22 + `runtime.ts` + `lib/triage-agent.ts` + Notion launcher |
 | `entrypoint.sh` | Optional Notion sidecar, then AG-UI on `:8200` |
 
 Secrets are Worker secrets forwarded into the container as env vars (long-lived
 keys — distinct from sandbox egress-proxy containers; see [`DECISIONS.md`](../../../DECISIONS.md) §2 vs §4).
+
+### Pitfall: `envVars` class field
+
+`TriageContainer.envVars` must be assigned as a **class field**
+(`envVars = triageEnvVars()`), not a getter. The Containers base class sets
+`envVars = {}`, which shadows getters — the process then starts with no
+`OPENAI_API_KEY` / Linear secrets (DECISIONS §10).
+
+### Linear
+
+- `LINEAR_TEAM_KEY` = team **display name** or ID (`Berendo`), not a bare issue
+  prefix key like `CPK`.
+- After `confirm_write` returns APPROVED, the agent should call `save_issue`
+  immediately in the same turn, then `issue_card` with the URL.
 
 ## Local iteration
 

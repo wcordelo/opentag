@@ -1,16 +1,21 @@
 # OpenTag — setup & configuration
 
 > **Start here for product overview:** [README.md](./README.md) · [PRODUCT.md](./PRODUCT.md) · [edge/README.md](./edge/README.md).  
-> Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.
+> Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.  
+> Locked decisions: [DECISIONS.md](./DECISIONS.md).
 
 ## How it fits together
 
 ```
 Slack Events API ──▶  edge/ bot Worker (createBot + DO StateStore)
                               │
-                              ├── AG-UI ──▶  opentag-agent (CF Container)
+                              ├── AGENT_RUNTIME service binding ──▶  opentag-agent (CF Container)
                               └── RESEARCH_TASKS ──▶  research Worker (optional)
 ```
+
+The bot must call the agent via the **`AGENT_RUNTIME` service binding** (same-zone
+`workers.dev` fetch returns Cloudflare error 1042). `AGENT_URL` still supplies
+the request path.
 
 ## Production deploy
 
@@ -20,15 +25,18 @@ Requires **Workers Paid** (Cloudflare Containers).
 # 1. Triage agent Container
 cd edge/workers/agent-runtime
 npm ci
-# secrets: OPENAI_API_KEY, LINEAR_API_KEY, LINEAR_TEAM_KEY, optional Notion + AGENT_AUTH_HEADER
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put LINEAR_API_KEY
+npx wrangler secret put LINEAR_TEAM_KEY   # display name, e.g. Berendo — not a bare key like CPK
+# optional: AGENT_MODEL, NOTION_TOKEN, NOTION_MCP_AUTH_TOKEN, AGENT_AUTH_HEADER
 npm run deploy
 
-# 2. Point the bot at the agent
+# 2. Bot Worker
 cd ../..
 printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run' \
   | npx wrangler secret put AGENT_URL --config wrangler.bot.toml
+npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
+npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
 npm run deploy:bot
 ```
 
@@ -38,7 +46,7 @@ No laptop `pnpm runtime` or cloudflared tunnel is required for production Slack.
 
 ```bash
 # Agent (repo root) — optional when iterating on prompts without redeploying the image
-cp .env.example .env          # OPENAI_API_KEY, optional Linear/Notion
+cp .env.example .env          # OPENAI_API_KEY, LINEAR_*, optional Notion
 pnpm install && pnpm runtime  # :8200
 
 # Bot Worker
@@ -52,35 +60,75 @@ Point Slack Request URLs at the Worker (`/slack/events`, `/slack/commands`,
 For local Slack inbound, tunnel the wrangler port (often `:8787`) or deploy
 `npm run deploy:bot`.
 
-Refreshing the channels vendor tarball (optional): see [`edge/vendor/README.md`](./edge/vendor/README.md).
-
 ## 1. Create a Slack app
 
 1. [api.slack.com/apps](https://api.slack.com/apps?new_app=1) → **From a manifest** → paste
    [`slack-app-manifest.yaml`](./slack-app-manifest.yaml).
 2. **OAuth & Permissions** → Install → copy **Bot User OAuth Token** (`xoxb-…`) → `SLACK_BOT_TOKEN`.
 3. **Basic Information** → **Signing Secret** → `SLACK_SIGNING_SECRET`.
-4. Set Request URLs to your Worker (`socket_mode_enabled: false`). Reinstall after
-   scope changes (includes `reactions:write`).
+4. Set Request URLs to your Worker (`socket_mode_enabled: false`).
+5. **After any scope change, reinstall the app** and update `SLACK_BOT_TOKEN` in
+   both `edge/.dev.vars` and Cloudflare (`wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml`)
+   if Slack shows a new token.
+
+### Required bot scopes (manifest)
+
+Critical for Linear create-from-Slack:
+
+| Scope | Why |
+| --- | --- |
+| `users:read` | Resolve user IDs → names |
+| **`users:read.email`** | Default Linear assignee from Slack profile |
+| `files:read` | Download uploads for the agent |
+| `reactions:write` | Hourglass / thanks reactions |
+| `chat:write` (+ public / customize as needed) | Replies and cards |
+| `app_mentions:read`, `*:history`, `*:read` | Mentions + thread continuity |
+
+Verify the **installed** token (not just the manifest):
+
+```bash
+curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
+  -H "Authorization: Bearer $SLACK_BOT_TOKEN" | grep -i x-oauth-scopes
+# Expect users:read.email and files:read among others.
+```
 
 ## 2. Environment variables
 
 | Variable | Where | Purpose |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | `edge/.dev.vars` / secrets | Bot Web API |
-| `SLACK_SIGNING_SECRET` | `edge/.dev.vars` / secrets | Events HMAC verify |
-| `AGENT_URL` | bot secrets / `.dev.vars` | AG-UI triage endpoint (`opentag-agent` in prod) |
+| `SLACK_BOT_TOKEN` | bot secrets / `.dev.vars` | Bot Web API (must include `users:read.email` for assignee) |
+| `SLACK_SIGNING_SECRET` | bot secrets / `.dev.vars` | Events HMAC verify |
+| `AGENT_URL` | bot secrets / `.dev.vars` | AG-UI triage path (`opentag-agent` in prod) |
+| `AGENT_RUNTIME` | `wrangler.bot.toml` binding | Service binding to agent Worker (prod) |
 | `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
-| `LINEAR_API_KEY` / `NOTION_*` | agent secrets / root `.env` | Optional MCP tools |
+| `LINEAR_API_KEY` | agent secrets / root `.env` | Linear MCP |
+| `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `Berendo`) |
+| `NOTION_*` | agent secrets / root `.env` | Optional Notion MCP sidecar |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |
 
 See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 
-## 3. Integrations (runtime)
+## 3. Linear create flow (what to expect)
+
+1. `@bot create a linear ticket for me` → bot asks for title/description only
+   (assignee defaults to the requester’s Slack email).
+2. User sends fields (typos / missing colons OK) → `confirm_write` card with
+   structured Title / Description / Team / Assignee.
+3. **Create** → durable HITL (`choiceId` in `BOT_STATE`) → immediate
+   `⏳ Creating Linear issue…` → agent `save_issue` + `issue_card` + URL.
+
+If Create seems dead: confirm bot deploy includes `edge/src/hitl/durable-choice.ts`
+and that you clicked a card from a **new** turn (old cards lack `choiceId`).
+If assignee is always asked for: token is missing `users:read.email` (reinstall).
+
+## 4. Integrations (runtime)
 
 Linear and Notion MCP wiring lives in [`lib/triage-agent.ts`](./lib/triage-agent.ts) /
 [`runtime.ts`](./runtime.ts). In the Container, Notion starts as a sidecar when
 `NOTION_TOKEN` + `NOTION_MCP_AUTH_TOKEN` are set. Locally: `pnpm notion-mcp`.
+
+**Container pitfall:** `TriageContainer.envVars` must be a **class field**, not a
+getter — otherwise secrets never reach the process (see DECISIONS §10).
 
 ## Research tasks
 
@@ -97,6 +145,9 @@ See [docs/research-actors.md](./docs/research-actors.md).
 cd edge && npm test && npm run test:e2e && npm run typecheck
 pnpm test   # root lib/research unit tests
 ```
+
+HITL / ticket-field units: `edge/test/durable-choice.test.ts`,
+`edge/test/thread-memory.test.ts`.
 
 ## Doc index
 

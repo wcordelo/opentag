@@ -89,7 +89,8 @@ button value, persist clicks under `hitl-id:{choiceId}` (plus conversationKey
 fallback) in `BOT_STATE`, and race the in-memory waiter against a DO poll
 (`edge/src/hitl/durable-choice.ts`). Matching conversationKey is not required.
 ActionStore snapshots alone are not enough: they revive `onClick` handlers, not
-the waiter Promise.
+the waiter Promise. Poll interval is ~100ms. After Create, the bot posts
+`⏳ Creating Linear issue…` immediately while the agent calls `save_issue`.
 
 ---
 
@@ -100,16 +101,45 @@ the waiter Promise.
 prefix `BER-…`). A bare legacy key like `CPK` fails create/list. `get_team`
 still accepts UUID, key, or name.
 
-## 7. Mid-thread memory on Workers
+## 7. Mid-thread memory + structured confirm
 
 AG-UI agent message lists are isolate-local. Slack `conversations.replies` can
 also return empty. Persist recent user turns under `threadmem:{conversationKey}`
-in `BOT_STATE`, merge with Slack history in `runBundledAgentTurn`, inject a
-parsed **Pending Linear ticket draft** (raw candidate lines + untrusted
-heuristic — the LLM interprets messy/typo’d human input), and embed the
-transcript into the user prompt so create/file turns do not ask the user to
-restate title/description. `confirm_write` takes structured title / description /
-assigneeEmail / team so the model commits to fields instead of a mashed string.
+in `BOT_STATE`, merge with Slack history in `runBundledAgentTurn`, inject ticket
+field candidates + a fuzzy parse hint, and embed the transcript in the user
+prompt so create/file turns do not ask the user to restate fields.
+
+`confirm_write` takes structured `title` / `description` / `assigneeEmail` /
+`team`. Before posting the card, `coerceTicketFields` repairs mashed titles
+(e.g. `title: test descripton test test` → title `test`, description `test test`)
+via fuzzy label matching (prefix / edit-distance to canonical names — not a
+typo allowlist).
+
+## 8. Slack Web API encoding
+
+The bot’s Slack client (`edge/src/slack/web-api.ts`) must use
+**`application/x-www-form-urlencoded`** bodies. JSON bodies break several
+methods — notably `users.info` returns `user_not_found` and never includes
+`profile.email`. Nested fields (`blocks`, `attachments`) are JSON-stringified
+form values.
+
+## 9. Default Linear assignee = Slack profile email
+
+With bot scope `users:read.email`, every turn resolves the requester via
+`users.info` and injects **Linear assignee email for this conversation**.
+`confirm_write` / `save_issue` default to that email for “create a ticket for
+me”. Do not ask the requester for their own email when the profile email is
+set. After adding scopes, **reinstall** the Slack app and update
+`SLACK_BOT_TOKEN` on the bot Worker (local `.dev.vars` and Cloudflare secrets)
+if Slack issued a new token. Verify with the `x-oauth-scopes` response header
+on `auth.test`.
+
+## 10. Container `envVars` must be a class field
+
+`@cloudflare/containers` sets `envVars = {}` on the base class. A subclass
+**getter** is shadowed and the triage Container starts with no
+`OPENAI_API_KEY` / Linear secrets. Assign `envVars = triageEnvVars()` as a
+class field on `TriageContainer` (`edge/workers/agent-runtime/src/container.ts`).
 
 ---
 
@@ -119,4 +149,10 @@ assigneeEmail / team so the model commits to fields instead of a mashed string.
 2. **Egress proxy (§2):** APPROVED — application-level HTTP proxy (sandbox only)  
 3. **Events API / no Socket Mode (§3):** APPROVED  
 4. **Research as task (not product spine):** APPROVED — see PRODUCT.md  
-5. **Triage on CF Containers (§4):** APPROVED
+5. **Triage on CF Containers (§4):** APPROVED  
+6. **Cross-isolate HITL (§5):** APPROVED  
+7. **Linear team name (§6):** APPROVED  
+8. **Thread memory + structured confirm (§7):** APPROVED  
+9. **Slack form-urlencoded API (§8):** APPROVED  
+10. **Slack profile email assignee (§9):** APPROVED  
+11. **Container envVars class field (§10):** APPROVED

@@ -70,7 +70,12 @@ Local `pnpm runtime` is **dev-only** (iterate on prompts/MCP without rebuilding 
 - **DMs** and assistant-pane hooks (manifest includes App Home Messages + assistant view)
 - **Reactions over chat spam:** thanks / ok → ❤️ or 👍; long turns get a brief hourglass reaction; explicit “react to my message” / “react with heart” handled without an LLM round-trip
 - **`react_message` tool** for the agent when a reaction is better than a text reply
-- **HITL** via Block Kit (`confirm_write` and related cards) durable across Worker restarts
+- **HITL** via Block Kit (`confirm_write`) with **durable cross-isolate** Create/Cancel
+  (`choiceId` in `BOT_STATE` — clicks work even when a different Worker isolate handles the button)
+- **Linear create-from-Slack:** structured confirm card (title / description / team / assignee);
+  default assignee is the requester’s **Slack profile email** (`users:read.email`); fuzzy
+  repair of typo’d field labels before the card posts; after Create, immediate
+  `⏳ Creating…` then `save_issue` + issue URL card
 
 ### Agent & tools (bot Worker)
 
@@ -80,7 +85,7 @@ Client tools available to the model (gated by **access bundles**):
 | --- | --- |
 | `lookup_slack_user` | Resolve people in the workspace |
 | `read_thread` | Fetch thread history |
-| `confirm_write` | Human-in-the-loop approve-before-write |
+| `confirm_write` | Human-in-the-loop approve-before-write (structured title/description/assignee/team) |
 | `issue_card` / `issue_list` | Linear-style issue UI |
 | `page_list` | Notion-style page lists |
 | `show_status` / `show_links` / `show_incident` | Status / links / incident cards |
@@ -90,12 +95,13 @@ Client tools available to the model (gated by **access bundles**):
 
 Chart/diagram image tools are **not** available on the Workers bot (no Playwright in isolate).
 
-### Runtime (Node)
+### Runtime (Node / Container)
 
-- TanStack AI + OpenAI / Anthropic (and optional Google) via `runtime.ts`
+- TanStack AI + OpenAI / Anthropic (and optional Google) via `runtime.ts` / `lib/triage-agent.ts`
 - **Linear** and **Notion** MCP when credentials are present
-- Thread transcript + requester timezone injected every turn (stateless AG-UI agents stay oriented)
+- Thread transcript + requester timezone + Slack profile email injected every turn
 - Null-safe Linear tool args middleware for MCP quirks
+- Production brain: Cloudflare Container (`opentag-agent`); local `pnpm runtime` is dev-only
 
 ### Research (optional task plane)
 
@@ -127,7 +133,10 @@ inbound, expose the Worker (or deploy it) and point Slack Request URLs at it.
    - `https://<worker>/slack/events`
    - `https://<worker>/slack/commands`
    - `https://<worker>/slack/interactions`
-4. Reinstall / refresh scopes if you change the manifest (includes `reactions:write`).
+4. Reinstall / refresh scopes if you change the manifest (must include
+   `users:read.email` for Linear assignee-from-Slack, plus `reactions:write`,
+   `files:read`, etc.). Update `SLACK_BOT_TOKEN` on the bot Worker after reinstall.
+   Verify with `x-oauth-scopes` on `auth.test` — see [setup.md](./setup.md).
 
 Production example in this repo’s manifest: `https://opentag-bot.williamlopezc.workers.dev`.
 
@@ -138,7 +147,8 @@ Production example in this repo’s manifest: `https://opentag-bot.williamlopezc
 ```bash
 cp .env.example .env
 # OPENAI_API_KEY=...
-# LINEAR_API_KEY=...   # optional
+# LINEAR_API_KEY=...   # optional but needed for Linear create/list
+# LINEAR_TEAM_KEY=Berendo   # team display name (not a bare key like CPK)
 # NOTION_TOKEN=...     # optional
 ```
 

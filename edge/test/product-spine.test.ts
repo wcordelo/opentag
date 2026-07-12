@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { defineBotTool } from "@copilotkit/channels";
 import {
   DEFAULT_BUNDLE,
   resolveAllowedTools,
 } from "../src/config/access-bundle.js";
+import { guardToolsByBundle } from "../src/tools/guard.js";
 import { startTask } from "../src/tasks/runtime.js";
 
 describe("access bundle resolver", () => {
@@ -34,6 +37,46 @@ describe("access bundle resolver", () => {
   });
 });
 
+describe("bundle tool guard", () => {
+  const sampleTools = [
+    defineBotTool({
+      name: "memory_search",
+      description: "search",
+      parameters: z.object({}),
+      async handler() {
+        return "ok";
+      },
+    }),
+    defineBotTool({
+      name: "memory_write",
+      description: "write",
+      parameters: z.object({}),
+      async handler() {
+        return "wrote";
+      },
+    }),
+  ];
+
+  it("refuses disallowed tool handlers", async () => {
+    const guarded = guardToolsByBundle(sampleTools, new Set(["memory_search"]));
+    const denied = guarded.find((t) => t.name === "memory_write");
+    expect(denied).toBeTruthy();
+    const result = await denied!.handler({} as never, {
+      thread: {} as never,
+      platform: "slack",
+    });
+    expect(String(result)).toMatch(/not allowed/);
+  });
+
+  it("leaves allowed tools intact", async () => {
+    const guarded = guardToolsByBundle(sampleTools, new Set(["memory_search"]));
+    const ok = guarded.find((t) => t.name === "memory_search");
+    await expect(
+      ok!.handler({} as never, { thread: {} as never, platform: "slack" }),
+    ).resolves.toBe("ok");
+  });
+});
+
 describe("TaskRuntime", () => {
   it("errors when RESEARCH_TASKS is unbound", async () => {
     const result = await startTask({}, {
@@ -51,8 +94,7 @@ describe("TaskRuntime", () => {
     const result = await startTask(
       {
         RESEARCH_TASKS: {
-          fetch: async () =>
-            Response.json({ taskId: "task_forwarded" }),
+          fetch: async () => Response.json({ taskId: "task_forwarded" }),
         } as unknown as Fetcher,
         INTERNAL_SECRET: "sekrit",
       },
@@ -90,6 +132,26 @@ describe("TaskRuntime", () => {
       },
     );
     expect(sawAuth).toBe("Bearer sekrit");
+  });
+
+  it("surfaces orchestrator HTTP errors", async () => {
+    const result = await startTask(
+      {
+        RESEARCH_TASKS: {
+          fetch: async () =>
+            new Response("boom", { status: 503, statusText: "Unavailable" }),
+        } as unknown as Fetcher,
+      },
+      {
+        type: "research",
+        teamId: "T1",
+        threadKey: "slack:C1:1",
+        channelId: "C1",
+        payload: { objective: "x" },
+      },
+    );
+    expect(result.status).toBe("error");
+    expect(result.detail).toMatch(/503/);
   });
 });
 

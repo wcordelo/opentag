@@ -19,8 +19,6 @@
     "check-types": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.workers.bot-store.config.ts",
-    "test:workers": "vitest run --config vitest.workers.config.ts",
-    "test:all": "vitest run && vitest run --config vitest.workers.bot-store.config.ts && vitest run --config vitest.workers.config.ts",
     "test:e2e:full": "bash scripts/e2e-full.sh",
     "migrate:dry": "echo 'Migration is an external action — pass explicit adapters via scripts/migrate-pg-to-do.ts after sign-off'"
   },

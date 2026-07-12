@@ -59,5 +59,4 @@ Point Slack Events / commands / interactions Request URLs there. `AGENT_URL` is 
 - Chart/diagram image tools deferred on Workers (no Playwright in isolate).
 - Stable public `AGENT_URL` (Railway/Fly) — today a cloudflared quick tunnel to local runtime.
 - Re-apply Slack app manifest Request URLs to `opentag-bot` for true Slack→CF inbound.
-- Research Miniflare DO e2e (`WASM_DISPATCH` service) still `it.todo`.
 - Legacy `opentag-edge` Worker still on account (old DO history); production is `opentag-bot`.

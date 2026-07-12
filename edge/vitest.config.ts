@@ -1,18 +1,11 @@
 import { defineConfig } from "vitest/config";
 
-// Node unit tests: research Workers + bot-store engine (node:sqlite).
-// Workerd suites use vitest.workers*.config.ts.
+// Claude Tag bot-spine unit tests only (Node).
+// StateStore workerd suite: vitest.workers.bot-store.config.ts → npm run test:e2e
 export default defineConfig({
   test: {
     environment: "node",
-    include: [
-      "workers/**/*.test.ts",
-      "tests/**/*.test.ts",
-      "test/**/*.test.ts",
-    ],
-    exclude: [
-      "test/**/*.workers.test.ts",
-      "node_modules/**",
-    ],
+    include: ["test/**/*.test.ts"],
+    exclude: ["test/**/*.workers.test.ts", "node_modules/**"],
   },
 });

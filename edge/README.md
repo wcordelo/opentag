@@ -5,8 +5,9 @@ Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
 
 | Config | Role |
 | --- | --- |
-| **`wrangler.toml`** | **Default** — bot Worker + StateStore + config + knowledge + `RESEARCH_TASKS` |
-| `wrangler.research.toml` | Research **task** Worker (internal `/research` only — no public Slack) |
+| **`wrangler.bot.toml`** | **Production** — `opentag-bot` Claude Tag spine |
+| `wrangler.toml` | Local/dev bot Worker (`opentag-edge`) |
+| `wrangler.research.toml` | Research **task** Worker (internal `/research` only) |
 | `wrangler.bot-store.toml` | StateStore e2e alias |
 | `workers/egress-proxy/` | Shared egress for containers |
 
@@ -20,12 +21,12 @@ CI and local installs use npm + a Workers-safe vendored tarball:
 ```bash
 cd edge
 npm ci   # or npm install
-npm test
-npm run test:e2e         # StateStore workerd (primary)
-npm run test:workers     # research task smoke (Node; DO e2e still todo)
+npm test                 # bot-spine unit tests
+npm run test:e2e         # StateStore workerd
 npm run typecheck
-npm run dev              # bot spine (Slack Events API)
-npm run dev:research     # research task Worker
+npm run deploy:bot       # production Worker (opentag-bot)
+npm run dev              # local bot spine (Slack Events API)
+npm run dev:research     # optional research task Worker
 ```
 
 Optional local sibling CopilotKit checkout is only needed when refreshing the vendor tarball (see `vendor/README.md`).

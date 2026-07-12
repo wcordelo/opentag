@@ -1,4 +1,4 @@
-# OpenTag edge CI — bot spine first, research/WASM secondary.
+# OpenTag edge CI — Claude Tag bot spine only.
 # Does NOT deploy, migrate DBs, push Slack messages, or create PRs.
 name: edge-ci
 
@@ -6,17 +6,13 @@ on:
   push:
     paths:
       - "edge/**"
-      - "lib/research/**"
       - "PRODUCT.md"
-      - "DECISIONS.md"
-      - "scripts/migrate-pg-to-do.ts"
+      - ".github/workflows/edge-ci.yml"
   pull_request:
     paths:
       - "edge/**"
-      - "lib/research/**"
       - "PRODUCT.md"
-      - "DECISIONS.md"
-      - "scripts/migrate-pg-to-do.ts"
+      - ".github/workflows/edge-ci.yml"
 
 jobs:
   bot-spine:
@@ -36,53 +32,3 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:e2e
-
-  research-workers:
-    name: research-task workers (secondary)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: edge
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: edge/package-lock.json
-      - run: npm ci
-      - run: npm run test:workers
-
-  wasm:
-    runs-on: ubuntu-latest
-    # TinyGo optional — not on the Claude Tag critical path.
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: edge
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-          cache-dependency-path: edge/wasm-core/go.sum
-      - name: Install TinyGo
-        run: |
-          wget -q https://github.com/tinygo-org/tinygo/releases/download/v0.34.0/tinygo_0.34.0_amd64.deb
-          sudo dpkg -i tinygo_0.34.0_amd64.deb
-      - name: Install wasm-opt
-        run: sudo apt-get update && sudo apt-get install -y binaryen
-      - name: Build WASM
-        run: |
-          cd wasm-core
-          go mod download
-          tinygo build -o ../workers/wasm-dispatch/src/main.wasm -target wasm -no-debug .
-          wasm-opt -O3 ../workers/wasm-dispatch/src/main.wasm -o ../workers/wasm-dispatch/src/main.opt.wasm
-      - name: Enforce size budget (≤3 MB opt / ≤10 MB gzip Worker limit)
-        run: |
-          SIZE=$(wc -c < workers/wasm-dispatch/src/main.opt.wasm)
-          echo "main.opt.wasm bytes=$SIZE"
-          test "$SIZE" -le 3145728
-      - name: Go unit tests
-        run: cd wasm-core && go test ./...

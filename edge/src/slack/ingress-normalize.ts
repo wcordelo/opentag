@@ -90,6 +90,8 @@ export type SlackNeutralEvent =
       senderUserId?: string;
       eventId?: string;
       hasFiles: boolean;
+      /** Raw Slack file objects when hasFiles — adapter downloads to contentParts. */
+      files?: unknown[];
     }
   | {
       kind: "command";
@@ -164,6 +166,7 @@ export function normalizeSlackEvent(
         channel,
       ),
       hasFiles,
+      files: hasFiles ? (event.files as unknown[]) : undefined,
     };
   }
 
@@ -187,6 +190,7 @@ export function normalizeSlackEvent(
         senderUserId: event.user,
         eventId,
         hasFiles,
+        files: hasFiles ? event.files : undefined,
       };
     }
     if (!event.thread_ts) return undefined; // top-level channel chatter
@@ -210,6 +214,7 @@ export function normalizeSlackEvent(
       senderUserId: event.user,
       eventId,
       hasFiles,
+      files: hasFiles ? event.files : undefined,
     };
   }
 

@@ -81,30 +81,34 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
       const cached = userCache.get(userId);
       if (cached) return cached;
       let user: PlatformUser = { id: userId };
-      const r = await api<{
-        user?: {
-          id?: string;
-          name?: string;
-          real_name?: string;
-          profile?: {
+      try {
+        const r = await api<{
+          user?: {
+            id?: string;
+            name?: string;
             real_name?: string;
-            display_name?: string;
-            email?: string;
+            profile?: {
+              real_name?: string;
+              display_name?: string;
+              email?: string;
+            };
           };
-        };
-      }>("users.info", { user: userId });
-      const u = r.user;
-      if (r.ok && u?.id) {
-        user = {
-          id: u.id,
-          name:
-            u.real_name ??
-            u.profile?.real_name ??
-            u.profile?.display_name ??
-            u.name,
-          handle: u.name,
-          email: u.profile?.email,
-        };
+        }>("users.info", { user: userId });
+        const u = r.user;
+        if (r.ok && u?.id) {
+          user = {
+            id: u.id,
+            name:
+              u.real_name ??
+              u.profile?.real_name ??
+              u.profile?.display_name ??
+              u.name,
+            handle: u.name,
+            email: u.profile?.email,
+          };
+        }
+      } catch {
+        /* bare id on network / API failure */
       }
       userCache.set(userId, user);
       return user;
@@ -113,78 +117,86 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
       const query = rawQuery.trim().toLowerCase();
       if (!query) return undefined;
 
-      // Email fast-path
-      if (query.includes("@")) {
-        const r = await api<{
-          user?: {
-            id?: string;
-            name?: string;
-            real_name?: string;
-            profile?: { email?: string; display_name?: string };
-          };
-        }>("users.lookupByEmail", { email: rawQuery.trim() });
-        if (r.ok && r.user?.id) {
-          return {
-            id: r.user.id,
-            name: r.user.real_name ?? r.user.name,
-            handle: r.user.name,
-            email: r.user.profile?.email,
-          };
-        }
-      }
-
-      let cursor: string | undefined;
-      do {
-        const r = await api<{
-          members?: Array<{
-            id?: string;
-            name?: string;
-            real_name?: string;
-            deleted?: boolean;
-            is_bot?: boolean;
-            profile?: { display_name?: string; email?: string };
-          }>;
-          response_metadata?: { next_cursor?: string };
-        }>("users.list", { cursor, limit: 200 });
-        if (!r.ok) return undefined;
-        for (const m of r.members ?? []) {
-          if (!m.id || m.deleted || m.is_bot) continue;
-          const candidates = [
-            m.name,
-            m.real_name,
-            m.profile?.display_name,
-            m.profile?.email,
-          ]
-            .filter((s): s is string => Boolean(s))
-            .map((s) => s.toLowerCase());
-          if (candidates.some((c) => c === query || c.startsWith(query))) {
+      try {
+        // Email fast-path
+        if (query.includes("@")) {
+          const r = await api<{
+            user?: {
+              id?: string;
+              name?: string;
+              real_name?: string;
+              profile?: { email?: string; display_name?: string };
+            };
+          }>("users.lookupByEmail", { email: rawQuery.trim() });
+          if (r.ok && r.user?.id) {
             return {
-              id: m.id,
-              name: m.real_name ?? m.name,
-              handle: m.name,
-              email: m.profile?.email,
+              id: r.user.id,
+              name: r.user.real_name ?? r.user.name,
+              handle: r.user.name,
+              email: r.user.profile?.email,
             };
           }
         }
-        cursor = r.response_metadata?.next_cursor || undefined;
-      } while (cursor);
+
+        let cursor: string | undefined;
+        do {
+          const r = await api<{
+            members?: Array<{
+              id?: string;
+              name?: string;
+              real_name?: string;
+              deleted?: boolean;
+              is_bot?: boolean;
+              profile?: { display_name?: string; email?: string };
+            }>;
+            response_metadata?: { next_cursor?: string };
+          }>("users.list", { cursor, limit: 200 });
+          if (!r.ok) return undefined;
+          for (const m of r.members ?? []) {
+            if (!m.id || m.deleted || m.is_bot) continue;
+            const candidates = [
+              m.name,
+              m.real_name,
+              m.profile?.display_name,
+              m.profile?.email,
+            ]
+              .filter((s): s is string => Boolean(s))
+              .map((s) => s.toLowerCase());
+            if (candidates.some((c) => c === query || c.startsWith(query))) {
+              return {
+                id: m.id,
+                name: m.real_name ?? m.name,
+                handle: m.name,
+                email: m.profile?.email,
+              };
+            }
+          }
+          cursor = r.response_metadata?.next_cursor || undefined;
+        } while (cursor);
+      } catch {
+        return undefined;
+      }
       return undefined;
     },
     async getThreadMessages({ channel, threadTs, limit = 100 }) {
-      const r = await api<{
-        messages?: Array<{
-          text?: string;
-          ts?: string;
-          user?: string;
-          bot_id?: string;
-          subtype?: string;
-        }>;
-      }>("conversations.replies", {
-        channel,
-        ts: threadTs,
-        limit,
-      });
-      return r.ok ? (r.messages ?? []) : [];
+      try {
+        const r = await api<{
+          messages?: Array<{
+            text?: string;
+            ts?: string;
+            user?: string;
+            bot_id?: string;
+            subtype?: string;
+          }>;
+        }>("conversations.replies", {
+          channel,
+          ts: threadTs,
+          limit,
+        });
+        return r.ok ? (r.messages ?? []) : [];
+      } catch {
+        return [];
+      }
     },
   };
 }

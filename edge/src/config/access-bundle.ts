@@ -38,7 +38,12 @@ export const DEFAULT_BUNDLE: AccessBundle = {
     "start_task",
   ],
   mcpEndpoints: [],
-  secretRefs: ["OPENAI_API_KEY", "LITELLM_API_KEY", "LINEAR_API_KEY"],
+  secretRefs: [
+    "OPENAI_API_KEY",
+    "LITELLM_API_KEY",
+    "LINEAR_API_KEY",
+    "NOTION_MCP_AUTH_TOKEN",
+  ],
 };
 
 export const DEFAULT_SYSTEM_PROMPT =

@@ -11,24 +11,37 @@ import { resolveAllowedTools } from "./config/access-bundle.js";
 import { loadTurnAccess } from "./config/workspace-config-do.js";
 import { getCurrentTeamId } from "./request-context.js";
 import type { Env } from "./env.js";
+import type { AgentContentPart } from "./slack/download-files.js";
 
-type ThreadLike = {
+type Requester = {
+  id?: string;
+  name?: string;
+  handle?: string;
+  email?: string;
+};
+
+type AgentThread = {
   conversationKey?: string;
-  post: (content: unknown) => Promise<unknown>;
+  post: (ui: never) => Promise<unknown>;
   runAgent: (opts: {
-    prompt: string;
+    prompt: string | AgentContentPart[];
     context?: Array<{ description: string; value: string }>;
     tools?: ReturnType<typeof guardToolsByBundle>;
   }) => Promise<unknown>;
 };
 
+function channelFromThread(thread: { conversationKey?: string }): string {
+  return (thread.conversationKey ?? "").split("::")[0] ?? "";
+}
+
 export async function runBundledAgentTurn(
   env: Env,
-  thread: ThreadLike,
-  prompt: string,
+  thread: AgentThread,
+  prompt: string | AgentContentPart[],
+  requester?: Requester,
 ): Promise<void> {
   const teamId = getCurrentTeamId();
-  const channelId = (thread.conversationKey ?? "").split("::")[0] ?? "";
+  const channelId = channelFromThread(thread);
 
   const { config, bundle } = await loadTurnAccess(
     env.WORKSPACE_CONFIG,
@@ -64,6 +77,15 @@ export async function runBundledAgentTurn(
     },
     { description: "teamId", value: teamId },
     { description: "channelId", value: channelId },
+    {
+      description: "Requesting Slack user",
+      value: JSON.stringify({
+        id: requester?.id ?? "",
+        name: requester?.name ?? requester?.handle ?? "",
+        email: requester?.email ?? "",
+        handle: requester?.handle ?? "",
+      }),
+    },
   ];
 
   await thread.runAgent({

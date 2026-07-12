@@ -134,6 +134,13 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           threadTs,
           payload: { objective: objective || text },
         });
+        if (result.status === "error") {
+          await thread.post(
+            `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
+              `Hint: start \`npm run dev:research\` and match INTERNAL_SECRET.`,
+          );
+          return;
+        }
         await thread.post(
           `🔍 Research ${result.status}: \`${result.taskId}\`${result.detail ? ` — ${result.detail}` : ""}`,
         );
@@ -160,7 +167,14 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         return;
       }
 
-      await runBundledAgentTurn(env, thread, text);
+      await runBundledAgentTurn(
+        env,
+        thread as Parameters<typeof runBundledAgentTurn>[1],
+        message.contentParts && message.contentParts.length > 0
+          ? message.contentParts
+          : text,
+        message.user,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[bot] onMention failed", msg);

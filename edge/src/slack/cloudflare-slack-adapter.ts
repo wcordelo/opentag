@@ -37,6 +37,12 @@ import {
   createSlackWebClient,
   type SlackWebClient,
 } from "./web-api.js";
+import {
+  buildFileContentParts,
+  extractSlackFiles,
+  mergePromptParts,
+  type AgentContentPart,
+} from "./download-files.js";
 
 export type CloudflareSlackAdapterOptions = {
   botToken: string;
@@ -148,13 +154,27 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           recipientUserId: normalized.senderUserId,
         };
 
+    const user = normalized.senderUserId
+      ? await this.client.resolveUser(normalized.senderUserId)
+      : undefined;
+
+    let contentParts: AgentContentPart[] | undefined;
+    if (normalized.hasFiles && normalized.files?.length) {
+      const refs = extractSlackFiles({ files: normalized.files });
+      const { parts, notes } = await buildFileContentParts(
+        refs,
+        this.opts.botToken,
+      );
+      const merged = mergePromptParts(normalized.userText, parts, notes);
+      if (Array.isArray(merged)) contentParts = merged;
+    }
+
     const turn: IncomingTurn = {
       conversationKey,
       replyTarget,
       userText: normalized.userText,
-      user: normalized.senderUserId
-        ? { id: normalized.senderUserId }
-        : undefined,
+      contentParts,
+      user,
       eventId: normalized.eventId,
       platform: "slack",
     };
@@ -188,6 +208,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       channelId: normalized.channel,
       scope,
     });
+    const user = normalized.senderUserId
+      ? await this.client.resolveUser(normalized.senderUserId)
+      : undefined;
     const cmd: IncomingCommand = {
       command: normalized.command.replace(/^\//, ""),
       text: normalized.text,
@@ -196,9 +219,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         channel: normalized.channel,
         ...(threadTs ? { threadTs } : {}),
       },
-      user: normalized.senderUserId
-        ? { id: normalized.senderUserId }
-        : undefined,
+      user,
       eventId: normalized.eventId,
       platform: "slack",
       triggerId: normalized.triggerId,
@@ -300,6 +321,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       setStatus: (args) => this.client.setStatus(args),
       postMessage: async (args) => {
         const r = await this.client.postMessage(args);
+        if (!r.ok || !r.ts) {
+          console.error(
+            "[slack] chat.postMessage failed",
+            r.error ?? "no_ts",
+            args.channel,
+            args.thread_ts,
+          );
+        }
         return { ts: r.ts };
       },
       updateMessage: async (args) => {

@@ -15,6 +15,7 @@ import {
 import { memorySearch, memoryWrite } from "../memory/knowledge-do.js";
 import { startTask } from "../tasks/runtime.js";
 import type { Env } from "../env.js";
+import { getCurrentTeamId } from "../request-context.js";
 import {
   IssueCard,
   IssueList,
@@ -43,6 +44,22 @@ export function bindToolEnv(env: Env): void {
 function requireEnv(): Env {
   if (!boundEnv) throw new Error("tool env not bound — call bindToolEnv first");
   return boundEnv;
+}
+
+function conversationKeyOf(thread: unknown): string {
+  return (
+    (thread as { conversationKey?: string } | undefined)?.conversationKey ?? ""
+  );
+}
+
+function channelFromThread(thread: unknown): string {
+  return conversationKeyOf(thread).split("::")[0] ?? "";
+}
+
+function threadTsFromThread(thread: unknown): string | undefined {
+  const scope = conversationKeyOf(thread).split("::")[1];
+  if (!scope || scope === "dm" || scope.startsWith("slash::")) return undefined;
+  return scope;
 }
 
 function ConfirmWriteCard(props: { action: string; detail?: string }) {
@@ -200,11 +217,25 @@ export const showLinksTool = defineBotTool({
 export const showIncidentTool = defineBotTool({
   name: "show_incident",
   description:
-    "Render an interactive incident card with Acknowledge/Escalate buttons.",
+    "Render an interactive incident card with Acknowledge/Escalate buttons. " +
+    "BLOCKS until the user clicks; returns which action they took.",
   parameters: incidentSchema,
-  async handler(props, { thread }) {
-    await thread.post(IncidentCard(props));
-    return "Posted the incident card to the user.";
+  async handler(props, { thread, user }) {
+    const choice = await thread.awaitChoice<{ action?: string; id?: string }>(
+      IncidentCard(props),
+    );
+    if (choice?.action === "ack") {
+      const who = user?.name ?? user?.handle ?? user?.id ?? "someone";
+      await thread.post(`✅ Acknowledged *${props.title}* — ack'd by ${who}`);
+      return `The user ACKNOWLEDGED incident ${props.id}.`;
+    }
+    if (choice?.action === "escalate") {
+      await thread.post(
+        `🚨 Escalating *${props.title}* — paging the next on-call.`,
+      );
+      return `The user ESCALATED incident ${props.id}.`;
+    }
+    return "The user dismissed the incident card without choosing.";
   },
 });
 
@@ -225,11 +256,11 @@ export const memorySearchTool = defineBotTool({
   description: "Search channel knowledge memory for relevant notes.",
   parameters: z.object({
     query: z.string(),
-    teamId: z.string(),
-    channelId: z.string(),
   }),
-  async handler({ query, teamId, channelId }) {
+  async handler({ query }, { thread }) {
     const env = requireEnv();
+    const teamId = getCurrentTeamId();
+    const channelId = channelFromThread(thread);
     const hits = await memorySearch(env.KNOWLEDGE, teamId, channelId, query, 5);
     return hits.map((h) => ({ title: h.title, body: h.body.slice(0, 400) }));
   },
@@ -239,13 +270,13 @@ export const memoryWriteTool = defineBotTool({
   name: "memory_write",
   description: "Write a note into channel knowledge memory.",
   parameters: z.object({
-    teamId: z.string(),
-    channelId: z.string(),
     title: z.string(),
     body: z.string(),
   }),
-  async handler({ teamId, channelId, title, body }) {
+  async handler({ title, body }, { thread }) {
     const env = requireEnv();
+    const teamId = getCurrentTeamId();
+    const channelId = channelFromThread(thread);
     await memoryWrite(env.KNOWLEDGE, {
       id: crypto.randomUUID(),
       teamId,
@@ -263,12 +294,12 @@ export const startTaskTool = defineBotTool({
   description: "Start a long-running research task for the current thread.",
   parameters: z.object({
     objective: z.string(),
-    teamId: z.string(),
-    channelId: z.string(),
-    threadTs: z.string().optional(),
   }),
-  async handler({ objective, teamId, channelId, threadTs }, { thread }) {
+  async handler({ objective }, { thread }) {
     const env = requireEnv();
+    const teamId = getCurrentTeamId();
+    const channelId = channelFromThread(thread);
+    const threadTs = threadTsFromThread(thread);
     const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;
     const result = await startTask(env, {
       type: "research",
@@ -278,6 +309,13 @@ export const startTaskTool = defineBotTool({
       threadTs,
       payload: { objective },
     });
+    if (result.status === "error") {
+      await thread.post(
+        `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
+          `Hint: start the research Worker (\`npm run dev:research\`) and match INTERNAL_SECRET.`,
+      );
+      return result;
+    }
     await thread.post(
       `🔍 Research ${result.status}: \`${result.taskId}\`${result.detail ? ` — ${result.detail}` : ""}`,
     );

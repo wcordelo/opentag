@@ -7,6 +7,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
+import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { startTask } from "../tasks/runtime.js";
 import { getCurrentTeamId } from "../request-context.js";
 import { runBundledAgentTurn } from "../agent-turn.js";
@@ -40,28 +41,38 @@ function threadTsFromKey(conversationKey: string): string | undefined {
 export const edgeCommands = [
   defineBotCommand({
     name: "config",
-    description: "Set the channel system prompt.",
+    description: "Set the channel system prompt (preserves bundle + policies).",
     async handler({ thread, text }) {
       const env = requireEnv();
       const key = conversationKeyOf(thread as { conversationKey?: string });
       const channelId = channelFromKey(key);
       const teamId = getCurrentTeamId();
+      const { config: existing } = await loadTurnAccess(
+        env.WORKSPACE_CONFIG,
+        teamId,
+        channelId,
+      );
       const stub = env.WORKSPACE_CONFIG.get(
         env.WORKSPACE_CONFIG.idFromName(teamId),
       );
+      const next: WorkspaceChannelConfig = {
+        teamId,
+        channelId,
+        systemPrompt: text?.trim() || DEFAULT_SYSTEM_PROMPT,
+        // Preserve access setup — only the prompt changes via /config.
+        policies: existing.policies ?? {
+          allowMemoryWrite: true,
+          allowTasks: true,
+        },
+        accessBundleId: existing.accessBundleId || DEFAULT_BUNDLE.id,
+        updatedAt: new Date().toISOString(),
+      };
       await stub.fetch("https://do/putConfig", {
         method: "POST",
-        body: JSON.stringify({
-          teamId,
-          channelId,
-          systemPrompt: text || DEFAULT_SYSTEM_PROMPT,
-          policies: { allowMemoryWrite: true, allowTasks: true },
-          accessBundleId: DEFAULT_BUNDLE.id,
-          updatedAt: new Date().toISOString(),
-        } satisfies WorkspaceChannelConfig),
+        body: JSON.stringify(next),
       });
       await thread.post(
-        `Channel prompt updated (${(text ?? "").length} chars). Bundle: \`${DEFAULT_BUNDLE.id}\`.`,
+        `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
       );
     },
   }),
@@ -88,6 +99,13 @@ export const edgeCommands = [
         threadTs,
         payload: { objective: text.trim() },
       });
+      if (result.status === "error") {
+        await thread.post(
+          `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
+            `Hint: run \`npm run dev:research\` locally (or deploy opentag-orchestrator) and ensure INTERNAL_SECRET matches.`,
+        );
+        return;
+      }
       await thread.post(
         `🔍 Research ${result.status}: \`${result.taskId}\`${result.detail ? ` — ${result.detail}` : ""}`,
       );
@@ -97,14 +115,19 @@ export const edgeCommands = [
   defineBotCommand({
     name: "agent",
     description: "Talk to the agent without an @-mention.",
-    async handler({ thread, text }) {
+    async handler({ thread, text, user }) {
       const env = requireEnv();
       if (!text?.trim()) {
         await thread.post("Usage: `/agent <message>`");
         return;
       }
       try {
-        await runBundledAgentTurn(env, thread, text.trim());
+        await runBundledAgentTurn(
+          env,
+          thread as Parameters<typeof runBundledAgentTurn>[1],
+          text.trim(),
+          user,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         await thread.post(`⚠️ Something went wrong: ${msg.slice(0, 200)}`);

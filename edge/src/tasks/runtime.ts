@@ -45,7 +45,7 @@ export async function startTask(
       taskId,
       type: req.type,
       status: "error",
-      detail: "RESEARCH_TASKS binding missing — deploy orchestrator and bind in wrangler.toml",
+      detail: "RESEARCH_TASKS binding missing — start `npm run dev:research` (or deploy opentag-orchestrator) and ensure the service binding in wrangler.toml",
     };
   }
 

@@ -1,17 +1,19 @@
 /**
  * Request-scoped team id for commands/tools.
- * Uses AsyncLocalStorage so concurrent Slack turns don't cross workspaces.
+ * Stack-based (no node:async_hooks) so the Worker bundle stays free of
+ * createRequire(import.meta.url) shims that crash workerd.
+ *
+ * Handles both sync and async `fn` — the frame stays until a returned
+ * Promise settles.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
+type Store = { teamId: string };
 
-const als = new AsyncLocalStorage<{ teamId: string }>();
-
-/** Fallback when outside a request (tests / cold paths). */
+const stack: Store[] = [];
 let fallbackTeamId = "default";
 
 export function setCurrentTeamId(teamId: string): void {
   const id = teamId || "default";
-  const store = als.getStore();
+  const store = stack[stack.length - 1];
   if (store) {
     store.teamId = id;
   } else {
@@ -20,15 +22,45 @@ export function setCurrentTeamId(teamId: string): void {
 }
 
 export function getCurrentTeamId(): string {
-  return als.getStore()?.teamId ?? fallbackTeamId;
+  return stack[stack.length - 1]?.teamId ?? fallbackTeamId;
 }
 
-/** Run `fn` with an isolated team id for the async call tree. */
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "then" in v &&
+    typeof (v as { then: unknown }).then === "function"
+  );
+}
+
+/** Run `fn` with an isolated team id for the call tree (incl. awaited work). */
 export function runWithTeamId<T>(teamId: string, fn: () => T): T {
-  return als.run({ teamId: teamId || "default" }, fn);
+  stack.push({ teamId: teamId || "default" });
+  try {
+    const result = fn();
+    if (isThenable(result)) {
+      return result.then(
+        (v) => {
+          stack.pop();
+          return v;
+        },
+        (err) => {
+          stack.pop();
+          throw err;
+        },
+      ) as T;
+    }
+    stack.pop();
+    return result;
+  } catch (err) {
+    stack.pop();
+    throw err;
+  }
 }
 
 /** Reset fallback (tests). */
 export function resetRequestContext(): void {
   fallbackTeamId = "default";
+  stack.length = 0;
 }

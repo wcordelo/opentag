@@ -16,6 +16,13 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@copilotkit/bot-ui"
   },
-  "include": ["app/**/*.ts", "app/**/*.tsx", "runtime.ts"],
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "runtime.ts",
+    "runtime-research.ts",
+    "worker/**/*.ts",
+    "lib/**/*.ts"
+  ],
   "exclude": ["node_modules", "agent", "e2e"]
 }

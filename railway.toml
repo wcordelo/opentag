@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1
+
+# Railway: create three services from this repo:
+# 1. opentag-bot        → startCommand: pnpm start
+# 2. opentag-research   → startCommand: pnpm research:runtime
+# 3. opentag-worker     → startCommand: pnpm research:worker
+#
+# Attach Postgres plugin; set DATABASE_URL on research + worker services.
+# Set SLACK_* on bot service; set ANTHROPIC_API_KEY / OPENAI_API_KEY on research.

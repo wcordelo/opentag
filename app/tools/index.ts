@@ -19,6 +19,7 @@ import {
   showLinksTool,
 } from "./showcase-tools.js";
 import { confirmWriteTool } from "../human-in-the-loop/index.js";
+import { researchProgressTool } from "./research-progress.js";
 import type { BotTool } from "@copilotkit/bot";
 
 /**
@@ -41,6 +42,7 @@ export const appTools: BotTool[] = [
   showStatusTool,
   showLinksTool,
   confirmWriteTool,
+  researchProgressTool,
 ];
 
 export {
@@ -55,4 +57,5 @@ export {
   showStatusTool,
   showLinksTool,
   confirmWriteTool,
+  researchProgressTool,
 };

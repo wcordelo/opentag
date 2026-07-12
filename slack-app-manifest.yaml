@@ -39,6 +39,10 @@ features:
       description: Open a form to file a Linear issue
       usage_hint: ""
       should_escape: false
+    - command: /research
+      description: Run deep research on a topic (verified, cited summary)
+      usage_hint: "<topic>"
+      should_escape: false
 oauth_config:
   scopes:
     user:
@@ -72,17 +76,23 @@ oauth_config:
       # --- Slash commands ---
       - commands
 settings:
+  # OpenTag 2.0: Socket Mode is FORBIDDEN on the Cloudflare path (invariant #1).
+  # Dual-run: Railway may keep Socket Mode until cutover; the CF Worker uses
+  # Events API request URLs below. Replace REQUEST_URL hosts after wrangler deploy
+  # (requires external-action sign-off — do not deploy from CI without approval).
   event_subscriptions:
+    request_url: https://opentag-orchestrator.<account>.workers.dev/slack/events
     bot_events:
       - app_mention
       - assistant_thread_started # user opened the assistant pane
       - assistant_thread_context_changed # the channel/context the user is viewing
       - message.im # DMs to the bot + assistant-pane messages
       - message.mpim # messages in group DMs the bot is in
-      # Add message.channels/message.groups only when using
-      # respondTo.threadReplies: "afterBotReply" for legacy plain thread continuation.
   interactivity:
     is_enabled: true
-  socket_mode_enabled: true
+    request_url: https://opentag-orchestrator.<account>.workers.dev/slack/interactions
+  # Socket Mode disabled for the CF Events API deployment. Set true only on the
+  # legacy Railway bot during dual-run (see docs / DECISIONS.md scope).
+  socket_mode_enabled: false
   org_deploy_enabled: false
   token_rotation_enabled: false

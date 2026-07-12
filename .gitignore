@@ -8,3 +8,4 @@ e2e/results
 state.db
 state.db-shm
 state.db-wal
+data/blobs

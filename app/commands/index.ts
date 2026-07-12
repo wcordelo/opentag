@@ -16,6 +16,14 @@ import type { BotCommand } from "@copilotkit/bot";
 import { senderContext } from "../sender-context.js";
 import { IssueCard } from "../components/index.js";
 import { FileIssueModal } from "../modals/file-issue.js";
+import {
+  createResearchAgent,
+  extractResearchObjective,
+  isResearchIntent,
+  buildThreadKey,
+  pollDeliveries,
+  markDeliveryDelivered,
+} from "../research-agent.js";
 
 export const appCommands: BotCommand[] = [
   // `/agent <text>` — a mention-free entry point. (Previously hardcoded in the
@@ -130,6 +138,40 @@ export const appCommands: BotCommand[] = [
           `I couldn't open the form${res.error ? `: ${res.error}` : ""}.`,
         );
       }
+    },
+  }),
+
+  // `/research <topic>` — deep research pipeline (Orchestrator/Researcher/Verifier).
+  defineBotCommand({
+    name: "research",
+    description: "Run deep research on a topic (verified, cited summary).",
+    async handler({ thread, text, user }) {
+      if (!text) {
+        await thread.post("Usage: `/research <topic>`");
+        return;
+      }
+      const messages = await thread.getMessages();
+      const threadKey = buildThreadKey(thread.platform, thread.id, thread.id);
+      const researchAgent = createResearchAgent(thread.id);
+      await thread.runAgent({
+        agent: researchAgent,
+        prompt: `research ${text}`,
+        context: [
+          ...senderContext(user, thread.platform),
+          {
+            description: "threadKey",
+            value: threadKey,
+          },
+          {
+            description: "threadContext",
+            value: messages.map((m) => ({
+              user: m.user?.name ?? "unknown",
+              text: m.text,
+              ts: m.ts,
+            })),
+          },
+        ],
+      });
     },
   }),
 ];

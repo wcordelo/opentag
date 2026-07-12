@@ -44,6 +44,14 @@ import { appTools } from "./tools/index.js";
 import { appContext } from "./context/app-context.js";
 import { appCommands } from "./commands/index.js";
 import { senderContext } from "./sender-context.js";
+import {
+  createResearchAgent,
+  extractResearchObjective,
+  isResearchIntent,
+  buildThreadKey,
+  pollDeliveries,
+  markDeliveryDelivered,
+} from "./research-agent.js";
 import { fileIssueSubmit, FILE_ISSUE_CALLBACK } from "./modals/file-issue.js";
 import { closeBrowser } from "./render/browser.js";
 
@@ -221,6 +229,37 @@ async function main() {
   // silently.
   bot.onMention(async ({ thread, message }) => {
     try {
+      const text = message.text ?? "";
+
+      if (isResearchIntent(text) && process.env["AGENT_RESEARCH_URL"]) {
+        const messages = await thread.getMessages();
+        const threadKey = buildThreadKey(
+          thread.platform,
+          message.channelId ?? thread.id,
+          thread.id,
+        );
+        const researchAgent = createResearchAgent(thread.id);
+        await thread.runAgent({
+          agent: researchAgent,
+          prompt: extractResearchObjective(text) || text,
+          context: [
+            ...senderContext(message.user, thread.platform),
+            { description: "threadKey", value: threadKey },
+            {
+              description: "threadContext",
+              value: messages.map((m) => ({
+                user: m.user?.name ?? m.user?.handle ?? "unknown",
+                text: m.text,
+                ts: m.ts,
+              })),
+            },
+            { description: "channelId", value: message.channelId },
+            { description: "eventId", value: message.id },
+          ],
+        });
+        return;
+      }
+
       await thread.runAgent({
         context: senderContext(message.user, thread.platform),
       });
@@ -231,6 +270,23 @@ async function main() {
         .catch(() => {});
     }
   });
+
+  // Poll research delivery obligations and post to Slack threads.
+  if (process.env["AGENT_RESEARCH_URL"]) {
+    setInterval(async () => {
+      try {
+        const deliveries = await pollDeliveries();
+        for (const d of deliveries) {
+          // Delivery posting is handled by matching thread — bot posts when thread is active
+          // For MVP, log and mark delivered; full thread matching requires adapter hooks.
+          console.log(`[bot] research delivery for ${d.threadKey}: ${d.payload.type}`);
+          await markDeliveryDelivered(d.id);
+        }
+      } catch {
+        // research runtime may not be running
+      }
+    }, 10_000);
+  }
 
   // Modal demo (cont.) — handle the /file-issue submission. The handler lives in
   // `modals/file-issue.tsx` (extracted + unit-tested): it validates, then

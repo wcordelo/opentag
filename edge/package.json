@@ -1,0 +1,29 @@
+{
+  "name": "opentag-edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "npm run build:wasm && wrangler deploy",
+    "build:wasm": "cd wasm-core && tinygo build -o ../workers/wasm-dispatch/src/main.wasm -target wasm -no-debug . && wasm-opt -O3 ../workers/wasm-dispatch/src/main.wasm -o ../workers/wasm-dispatch/src/main.opt.wasm",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
+    "migrate:dry": "echo 'Migration is an external action — pass explicit adapters via scripts/migrate-pg-to-do.ts after sign-off'"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.1.0",
+    "hono": "^4.6.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@types/node": "^22.20.1",
+    "binaryen": "^122.0.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.3",
+    "wrangler": "^4.0.0"
+  }
+}

@@ -10,12 +10,15 @@
     "start": "tsx app/index.ts",
     "demo:restart": "tsx app/demo-restart.tsx",
     "runtime": "tsx runtime.ts",
+    "research:runtime": "tsx runtime-research.ts",
+    "research:worker": "tsx worker/research-alarm.ts",
     "notion-mcp": "tsx scripts/start-notion-mcp.ts",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "e2e": "tsx e2e/run.ts",
     "e2e:restart": "tsx e2e/restart-recovery.ts",
-    "e2e:telegram": "tsx e2e/telegram-run.ts"
+    "e2e:telegram": "tsx e2e/telegram-run.ts",
+    "e2e:research": "tsx e2e/research-loop.ts"
   },
   "dependencies": {
     "@copilotkit/bot": "^0.1.0",
@@ -31,12 +34,14 @@
     "@tanstack/ai-openai": "^0.15.2",
     "@slack/bolt": "^4.2.0",
     "@slack/types": "^2.21.1",
+    "pg": "^8.13.0",
     "playwright": "^1.49.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@notionhq/notion-mcp-server": "^2.2.1",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
     "dotenv": "^16.4.5",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",

@@ -95,8 +95,9 @@ describe("ContainerManager.start", () => {
     expect(envArg.EGRESS_PROXY_URL).toBe("https://egress.test");
     expect(envArg.HTTP_PROXY).toBe("https://egress.test");
     expect(envArg.HTTPS_PROXY).toBe("https://egress.test");
-    expect(typeof envArg.AGENT_TOKEN).toBe("string");
-    expect(envArg.AGENT_TOKEN!.length).toBeGreaterThan(0);
+    const token = envArg.AGENT_TOKEN;
+    expect(token).toEqual(expect.any(String));
+    expect(token!.length).toBeGreaterThan(0);
     // Containers hold no API keys (DECISIONS.md §2).
     expect(envArg.ANTHROPIC_API_KEY).toBeUndefined();
     expect(envArg.OPENAI_API_KEY).toBeUndefined();

@@ -107,10 +107,6 @@ export class Orchestrator {
       eventId: req.eventId,
     });
 
-    if (req.eventId) {
-      await this.deps.storage.markSlackEventProcessed(req.eventId, now);
-    }
-
     await this.deps.storage.appendDeliveryObligation({
       id: `del_${generateRequestId()}`,
       threadKey: req.threadKey,
@@ -136,10 +132,17 @@ export class Orchestrator {
     if (req.useDeepResearch) {
       await this.researcher.startTask(startReq);
       await this.researcher.startDeepResearchJob(taskId, req.objective);
+      if (req.eventId) {
+        await this.deps.storage.markSlackEventProcessed(req.eventId, now);
+      }
       return { status: "continuing", taskId };
     }
 
-    return this.researcher.startTask(startReq);
+    const result = await this.researcher.startTask(startReq);
+    if (req.eventId) {
+      await this.deps.storage.markSlackEventProcessed(req.eventId, now);
+    }
+    return result;
   }
 
   async processOutbox(sessionId: string): Promise<void> {

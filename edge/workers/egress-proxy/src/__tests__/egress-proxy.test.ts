@@ -7,6 +7,7 @@ import worker from "../index";
 import type { Env } from "../index";
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
+  const agentTokens = new Map<string, string>();
   return {
     ALLOWED_HOSTS: [
       "api.anthropic.com",
@@ -18,6 +19,15 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     ANTHROPIC_API_KEY: "sk-ant-test",
     OPENAI_API_KEY: "sk-openai-test",
     GITHUB_TOKEN: "ghp-test",
+    AGENT_STATE: {
+      get: vi.fn(async (key: string) => agentTokens.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        agentTokens.set(key, value);
+      }),
+      delete: vi.fn(async (key: string) => {
+        agentTokens.delete(key);
+      }),
+    } as unknown as KVNamespace,
     ORCHESTRATOR_SERVICE: {
       fetch: vi.fn(async () => Response.json({ ok: true })),
     } as unknown as Fetcher,
@@ -25,10 +35,23 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
   };
 }
 
+const VALID_AGENT_TOKEN = "test-agent-token";
+
+function proxyRequest(body: Record<string, unknown>, token = VALID_AGENT_TOKEN): Request {
+  return new Request("https://egress/proxy", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-agent-token": token,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("egress proxy", () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init);
       return new Response(JSON.stringify({ proxied: true, url: req.url }), {
@@ -44,16 +67,16 @@ describe("egress proxy", () => {
 
   it("rejects disallowed hosts with 403", async () => {
     const env = makeEnv();
+    await env.AGENT_STATE.put(
+      `agent_token:${VALID_AGENT_TOKEN}`,
+      JSON.stringify({ teamId: "T123", containerId: "c1", sessionId: "s1" }),
+    );
     const res = await worker.fetch(
-      new Request("https://egress/proxy", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          url: "https://evil.com/steal",
-          method: "GET",
-          teamId: "T123",
-          containerId: "c1",
-        }),
+      proxyRequest({
+        url: "https://evil.com/steal",
+        method: "GET",
+        teamId: "T123",
+        containerId: "c1",
       }),
       env,
     );
@@ -66,18 +89,18 @@ describe("egress proxy", () => {
 
   it("proxies allowed hosts and injects Anthropic auth", async () => {
     const env = makeEnv();
+    await env.AGENT_STATE.put(
+      `agent_token:${VALID_AGENT_TOKEN}`,
+      JSON.stringify({ teamId: "T123", containerId: "c1", sessionId: "s1" }),
+    );
     const res = await worker.fetch(
-      new Request("https://egress/proxy", {
+      proxyRequest({
+        url: "https://api.anthropic.com/v1/messages",
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          url: "https://api.anthropic.com/v1/messages",
-          method: "POST",
-          headers: { Authorization: "Bearer stolen" },
-          body: "{}",
-          teamId: "T123",
-          containerId: "c1",
-        }),
+        headers: { Authorization: "Bearer stolen" },
+        body: "{}",
+        teamId: "T123",
+        containerId: "c1",
       }),
       env,
     );
@@ -89,6 +112,19 @@ describe("egress proxy", () => {
     const headers = new Headers(upstreamInit.headers);
     expect(headers.get("Authorization")).toBe("Bearer sk-ant-test");
     expect(headers.get("x-api-key")).toBe("sk-ant-test");
+  });
+
+  it("rejects requests without a valid agent token", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch(
+      proxyRequest({
+        url: "https://api.anthropic.com/v1/messages",
+        method: "POST",
+        body: "{}",
+      }, "invalid-token"),
+      env,
+    );
+    expect(res.status).toBe(401);
   });
 
   it("GET /health returns ok", async () => {

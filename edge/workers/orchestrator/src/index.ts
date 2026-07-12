@@ -7,6 +7,7 @@
  * - Events API + slash commands, no Socket Mode
  */
 import { Hono } from "hono";
+import type { Context, Next } from "hono";
 import { OrchestratorDO } from "./OrchestratorDO";
 import { ResearcherDO } from "./ResearcherDO";
 import { VerifierDO } from "./VerifierDO";
@@ -19,6 +20,23 @@ export type { AppEnv, CloudflareEnv } from "./env";
 
 const app = new Hono<AppEnv>();
 
+function requireInternalAuth() {
+  return async (c: Context<AppEnv>, next: Next) => {
+    const secret = c.env.INTERNAL_SECRET;
+    if (!secret) {
+      if (c.env.ENVIRONMENT === "development") {
+        return next();
+      }
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const auth = c.req.header("Authorization");
+    if (auth !== `Bearer ${secret}`) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    return next();
+  };
+}
+
 app.get("/health", (c) =>
   c.json({ ok: true, version: "2.0", env: c.env.ENVIRONMENT }),
 );
@@ -28,7 +46,7 @@ app.get("/health", (c) =>
  * Body: { teamId, threadKey, objective, eventId?, eventTs?, channelId? }
  * Per Gate 0: DO addressed by teamId, not threadKey.
  */
-app.post("/research", async (c) => {
+app.post("/research", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
     teamId: string;
     threadKey: string;
@@ -64,7 +82,7 @@ app.post("/research", async (c) => {
  * Egress proxy → workspace DO execution log append.
  * Body includes teamId so we can address the correct OrchestratorDO.
  */
-app.post("/internal/execution-logs", async (c) => {
+app.post("/internal/execution-logs", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
     teamId: string;
     containerId?: string;
@@ -99,7 +117,7 @@ app.post("/internal/execution-logs", async (c) => {
  * Migration import: upsert a TaskRecord into the workspace OrchestratorDO.
  * Body: { teamId, task: TaskRecord }
  */
-app.post("/internal/import-task", async (c) => {
+app.post("/internal/import-task", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
     teamId: string;
     task: {
@@ -134,7 +152,7 @@ app.post("/internal/import-task", async (c) => {
   });
 });
 
-app.get("/internal/tasks/:taskId", async (c) => {
+app.get("/internal/tasks/:taskId", requireInternalAuth(), async (c) => {
   const teamId = c.req.query("teamId");
   const taskId = c.req.param("taskId");
   if (!teamId) return c.json({ error: "teamId query required" }, 400);

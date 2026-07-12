@@ -11,6 +11,8 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY: string;
   GITHUB_TOKEN?: string;
+  /** Active container session tokens (DECISIONS.md §2). */
+  AGENT_STATE: KVNamespace;
   /** Service binding back to orchestrator Worker for execution-log append. */
   ORCHESTRATOR_SERVICE: Fetcher;
 }
@@ -103,6 +105,14 @@ export default {
 
       if (!payload.url) {
         return Response.json({ error: "url_required" }, { status: 400 });
+      }
+
+      const agentToken =
+        request.headers.get("x-agent-token") ??
+        request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+        undefined;
+      if (!agentToken || !(await env.AGENT_STATE.get(`agent_token:${agentToken}`))) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
       }
 
       let upstream: URL;

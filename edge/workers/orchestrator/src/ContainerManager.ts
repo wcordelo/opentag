@@ -73,7 +73,7 @@ export interface ContainerStorage {
   updateAgentContainerStatus(
     containerId: string,
     status: AgentContainerStatus,
-    previewUrl?: string,
+    fields?: { previewUrl?: string; startedAt?: string; killedAt?: string },
   ): Promise<void>;
   getAgentContainer(containerId: string): Promise<AgentContainerRecord | null>;
 }
@@ -91,6 +91,10 @@ export interface ContainerManagerOptions {
   onColdStartAck?: (sessionId: string, flavor: AgentFlavor) => Promise<void>;
   /** Egress proxy base URL injected into the container's env (DECISIONS.md §2). */
   egressProxyUrl?: string;
+  /** KV cache for active AGENT_TOKEN values (DECISIONS.md §2). */
+  agentStateKv?: KVNamespace;
+  /** Workspace team id — required when agentStateKv is set. */
+  teamId?: string;
 }
 
 const DEFAULT_START_TIMEOUT_MS = 240_000;
@@ -155,16 +159,14 @@ export class ContainerManager {
 
     try {
       const previewUrl = await withTimeout(
-        this.provision(sessionId, flavor, hostname, egressProxyUrl),
+        this.provision(sessionId, flavor, hostname, egressProxyUrl, containerId),
         startTimeoutMs,
         () => new ContainerStartTimeoutError(sessionId, startTimeoutMs),
       );
 
-      await this.storage.updateAgentContainerStatus(
-        containerId,
-        "running",
+      await this.storage.updateAgentContainerStatus(containerId, "running", {
         previewUrl,
-      );
+      });
       return { containerId, previewUrl };
     } catch (err) {
       if (err instanceof ContainerStartTimeoutError) {
@@ -184,6 +186,7 @@ export class ContainerManager {
     flavor: AgentFlavor,
     hostname: string,
     egressProxyUrl: string,
+    containerId: string,
   ): Promise<string> {
     const sandbox = this.getSandbox(sessionId);
     const agentToken = crypto.randomUUID();
@@ -195,6 +198,21 @@ export class ContainerManager {
       HTTP_PROXY: egressProxyUrl,
       HTTPS_PROXY: egressProxyUrl,
     });
+
+    if (this.options.agentStateKv && this.options.teamId) {
+      await this.options.agentStateKv.put(
+        `agent_token:${agentToken}`,
+        JSON.stringify({
+          teamId: this.options.teamId,
+          containerId,
+          sessionId,
+        }),
+        { expirationTtl: 86_400 },
+      );
+      await this.options.agentStateKv.put(`container_token:${containerId}`, agentToken, {
+        expirationTtl: 86_400,
+      });
+    }
 
     const { url } = await sandbox.exposePort(AGENT_PORT, { hostname });
     return url;
@@ -215,6 +233,14 @@ export class ContainerManager {
     }
 
     await this.storage.updateAgentContainerStatus(containerId, "terminated");
+
+    if (this.options.agentStateKv) {
+      const token = await this.options.agentStateKv.get(`container_token:${containerId}`);
+      if (token) {
+        await this.options.agentStateKv.delete(`agent_token:${token}`);
+        await this.options.agentStateKv.delete(`container_token:${containerId}`);
+      }
+    }
   }
 
   /** Returns the stored preview URL for a container, or throws if unknown. */

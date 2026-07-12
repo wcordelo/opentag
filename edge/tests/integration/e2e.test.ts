@@ -15,18 +15,35 @@ describe("pipeline smoke (no live Slack / no deploy)", () => {
   });
 
   it("egress proxy rejects non-allowlisted hosts (M4 security invariant)", async () => {
+    const agentTokens = new Map<string, string>();
     const env = {
       ALLOWED_HOSTS: ["api.anthropic.com"],
       ANTHROPIC_API_KEY: "sk-test",
       OPENAI_API_KEY: "",
+      AGENT_STATE: {
+        get: async (key: string) => agentTokens.get(key) ?? null,
+        put: async (key: string, value: string) => {
+          agentTokens.set(key, value);
+        },
+        delete: async (key: string) => {
+          agentTokens.delete(key);
+        },
+      } as unknown as KVNamespace,
       ORCHESTRATOR_SERVICE: {
         fetch: async () => Response.json({ ok: true }),
       } as unknown as Fetcher,
     };
+    await env.AGENT_STATE.put(
+      "agent_token:tok1",
+      JSON.stringify({ teamId: "T1", containerId: "c1", sessionId: "s1" }),
+    );
     const res = await egress.fetch(
       new Request("https://egress/proxy", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-agent-token": "tok1",
+        },
         body: JSON.stringify({
           url: "https://evil.example/x",
           method: "GET",

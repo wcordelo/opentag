@@ -15,9 +15,19 @@ export interface OrchestratorDOEnv {
   OPENAI_API_KEY: string;
   PARALLEL_API_KEY?: string;
   SLACK_BOT_TOKEN: string;
+  SLACK_ALLOWED_CHANNEL_IDS?: string;
   RESEARCHER: DurableObjectNamespace;
   VERIFIER: DurableObjectNamespace;
   BLOBS: R2Bucket;
+}
+
+function parseAllowedChannels(raw?: string): string[] | undefined {
+  if (!raw) return undefined;
+  const channels = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return channels.length > 0 ? channels : undefined;
 }
 
 interface ExecutionLogBody {
@@ -70,6 +80,7 @@ export class OrchestratorDO implements DurableObject {
         storage,
         llm,
         parallelApiKey: this.env.PARALLEL_API_KEY,
+        allowedChannelIds: parseAllowedChannels(this.env.SLACK_ALLOWED_CHANNEL_IDS),
       });
     }
     return this.core;
@@ -183,41 +194,29 @@ export class OrchestratorDO implements DurableObject {
     this.ensureMigrated();
     const storage = this.getStorage();
     const core = this.getCore();
+    const researcher = core.getResearcher();
 
-    // Drain pending deliveries to Slack (interim / final messages).
-    const pending = await storage.getPendingDeliveries();
-    for (const obligation of pending) {
-      const payload = obligation.payload as {
-        type?: string;
-        text?: string;
-        taskId?: string;
-      };
-      if (payload.text && this.env.SLACK_BOT_TOKEN) {
-        await postSlackDelivery(
-          obligation.threadKey,
-          payload.text,
-          this.env.SLACK_BOT_TOKEN,
-        );
-      }
-      await storage.markDeliveryDelivered(obligation.id);
-      if (payload.taskId) {
-        await core.processOutbox(payload.taskId);
-      }
-    }
+    await this.drainDeliveries(storage, core);
 
-    // Process due alarms for fiber steps — fan out to ResearcherDO.
     const due = await storage.getDueAlarms(Date.now(), 10);
     for (const item of due) {
-      if (item.kind === "fiber_step" || item.kind === "outbox_retry") {
-        const id = this.env.RESEARCHER.idFromName(item.sessionId);
-        const stub = this.env.RESEARCHER.get(id);
-        await stub.fetch(
-          new Request("https://do/runFiberStep", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ taskId: item.sessionId }),
-          }),
-        );
+      if (item.kind === "fiber_step" || item.kind === "external_poll") {
+        const result = await researcher.runFiberStep(item.sessionId);
+        await core.processOutbox(item.sessionId);
+        await this.drainDeliveries(storage, core);
+
+        if (!result.done && result.nextAlarmMs) {
+          await storage.enqueueAlarm({
+            id: `alarm_${item.sessionId}_${Date.now()}`,
+            sessionId: item.sessionId,
+            kind: item.kind,
+            runAtMs: Date.now() + result.nextAlarmMs,
+            priority: 10,
+          });
+        }
+      } else if (item.kind === "outbox_retry") {
+        await core.processOutbox(item.sessionId);
+        await this.drainDeliveries(storage, core);
       }
       await storage.deleteAlarm(item.id);
     }
@@ -227,19 +226,47 @@ export class OrchestratorDO implements DurableObject {
       await this.ctx.storage.setAlarm(next[0]!.runAtMs);
     }
   }
+
+  private async drainDeliveries(
+    storage: DurableObjectStorageAdapter,
+    core: OrchestratorCore,
+  ): Promise<void> {
+    const pending = await storage.getPendingDeliveries();
+    for (const obligation of pending) {
+      const payload = obligation.payload as {
+        type?: string;
+        text?: string;
+        taskId?: string;
+      };
+      let delivered = false;
+      if (payload.text && this.env.SLACK_BOT_TOKEN) {
+        delivered = await postSlackDelivery(
+          obligation.threadKey,
+          payload.text,
+          this.env.SLACK_BOT_TOKEN,
+        );
+      }
+      if (delivered) {
+        await storage.markDeliveryDelivered(obligation.id);
+      }
+      if (payload.taskId) {
+        await core.processOutbox(payload.taskId);
+      }
+    }
+  }
 }
 
 async function postSlackDelivery(
   threadKey: string,
   text: string,
   botToken: string,
-): Promise<void> {
+): Promise<boolean> {
   const parts = threadKey.split(":");
-  if (parts.length < 3 || parts[0] !== "slack") return;
+  if (parts.length < 3 || parts[0] !== "slack") return false;
   const channel = parts[1]!;
   const threadTs = parts.slice(2).join(":");
   try {
-    await fetch("https://slack.com/api/chat.postMessage", {
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -252,7 +279,10 @@ async function postSlackDelivery(
         mrkdwn: true,
       }),
     });
+    const json = (await res.json()) as { ok: boolean };
+    return json.ok;
   } catch (err) {
     console.error("Slack delivery failed", err);
+    return false;
   }
 }

@@ -24,14 +24,14 @@ function makeStorage(): ContainerStorage & {
     async updateAgentContainerStatus(
       containerId: string,
       status: AgentContainerStatus,
-      previewUrl?: string,
+      fields?: { previewUrl?: string },
     ) {
       const existing = records.get(containerId);
       if (!existing) {
         throw new Error(`no such container: ${containerId}`);
       }
       existing.status = status;
-      if (previewUrl !== undefined) existing.previewUrl = previewUrl;
+      if (fields?.previewUrl !== undefined) existing.previewUrl = fields.previewUrl;
     },
     async getAgentContainer(containerId: string) {
       return records.get(containerId) ?? null;
@@ -96,7 +96,7 @@ describe("ContainerManager.start", () => {
     expect(envArg.HTTP_PROXY).toBe("https://egress.test");
     expect(envArg.HTTPS_PROXY).toBe("https://egress.test");
     expect(typeof envArg.AGENT_TOKEN).toBe("string");
-    expect(envArg.AGENT_TOKEN.length).toBeGreaterThan(0);
+    expect(envArg.AGENT_TOKEN!.length).toBeGreaterThan(0);
     // Containers hold no API keys (DECISIONS.md §2).
     expect(envArg.ANTHROPIC_API_KEY).toBeUndefined();
     expect(envArg.OPENAI_API_KEY).toBeUndefined();

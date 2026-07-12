@@ -48,6 +48,8 @@ service = "opentag-wasm-dispatch"
 # Secrets (set via `wrangler secret put <NAME>`, not declared with values here):
 # ANTHROPIC_API_KEY, OPENAI_API_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET,
 # GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_INSTALLATION_ID, AGENT_TOKEN
+# INTERNAL_SECRET — bearer token for /research and /internal/* routes
+# SLACK_ALLOWED_CHANNEL_IDS — comma-separated channel allowlist (optional)
 # EGRESS_PROXY_URL (var, not secret) — set below per environment.
 # LiteLLM: LITELLM_BASE_URL (var), LITELLM_API_KEY (secret)
 

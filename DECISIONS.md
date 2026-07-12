@@ -71,3 +71,8 @@ Mode, ack within 3s + `waitUntil` / `chat.postMessage` for results.
 | Research DOs = the system | Research DOs = long-running **task** runtime |
 | Bot StateStore = optional sibling | Bot StateStore = durability spine |
 | Orchestrator owns Slack HTTP | Bot Worker owns Slack HTTP; research is service-bound |
+
+## Full cutover (2026-07-11)
+
+Railway Socket Mode Slack (`pnpm start`, `SLACK_APP_TOKEN`, `opentag-bot`) is **removed**.
+Discord / Telegram / WhatsApp are out of this product track. Slack = CF Worker only.

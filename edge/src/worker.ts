@@ -1,13 +1,17 @@
 /**
  * OpenTag edge Worker — Claude Tag bot spine (PRODUCT.md).
+ * Slack ingress → CloudflareSlackAdapter → createBot (Channels).
  */
 import { Hono } from "hono";
 import type { AppEnv } from "./env.js";
 import { createDurableObjectStore } from "./store/index.js";
 import { slackVerify } from "./slack-verify.js";
 import { requireAdminAuth } from "./admin-auth.js";
-import { resolveHitlGate, saveHitlGate } from "./bot-host.js";
-import { resolveBotEngineKind, runSlackTurn } from "./bot-engine.js";
+import {
+  getOrCreateBot,
+  resolveBotEngineKind,
+  setCurrentTeamId,
+} from "./bot-engine.js";
 import {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
@@ -85,20 +89,24 @@ app.post("/admin/bundle", requireAdminAuth(), async (c) => {
   return c.json({ ok: true });
 });
 
-/** Seed a pending HITL gate (admin/debug). Production uses `confirm:` turns. */
+/** Seed a pending HITL action snapshot key (admin/debug). */
 app.post("/debug/hitl", requireAdminAuth(), async (c) => {
   const body = (await c.req.json()) as {
     actionId: string;
     conversationKey: string;
     summary?: string;
   };
-  await saveHitlGate(c.env, {
-    actionId: body.actionId,
-    conversationKey: body.conversationKey,
-    summary: body.summary ?? "approve?",
-    status: "pending",
-  });
   const store = createDurableObjectStore(c.env.BOT_STATE);
+  await store.kv.set(
+    `hitl:${body.actionId}`,
+    {
+      actionId: body.actionId,
+      conversationKey: body.conversationKey,
+      summary: body.summary ?? "approve?",
+      status: "pending",
+    },
+    86_400_000,
+  );
   const got = await store.kv.get(`hitl:${body.actionId}`);
   return c.json({ ok: true, gate: got });
 });
@@ -123,49 +131,25 @@ app.post("/slack/events", slackVerify(), async (c) => {
   const payload = c.get("slackPayload") as {
     type?: string;
     challenge?: string;
-    event_id?: string;
     team_id?: string;
-    event?: {
-      type?: string;
-      text?: string;
-      user?: string;
-      channel?: string;
-      ts?: string;
-      thread_ts?: string;
-      bot_id?: string;
-    };
   };
 
   if (payload?.type === "url_verification" && payload.challenge) {
     return c.json({ challenge: payload.challenge });
   }
 
-  const event = payload?.event;
-  if (!event || event.bot_id) {
-    return c.json({ ok: true });
-  }
+  setCurrentTeamId(payload.team_id ?? "unknown");
 
-  const isMention = event.type === "app_mention" || event.type === "message";
-  if (!isMention || !event.text || !event.channel || !event.user) {
-    return c.json({ ok: true });
-  }
-
-  const teamId = payload.team_id ?? "unknown";
-  const turn = {
-    teamId,
-    channelId: event.channel,
-    userId: event.user,
-    text: event.text.replace(/<@[^>]+>/g, "").trim(),
-    threadTs: event.thread_ts,
-    messageTs: event.ts,
-    eventId: payload.event_id ?? event.ts ?? crypto.randomUUID(),
+  const run = async () => {
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleEventsBody(payload, { teamId: payload.team_id });
   };
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
-    exec.waitUntil(runSlackTurn(c.env, turn).then(() => undefined));
+    exec.waitUntil(run().catch((err) => console.error("[slack/events]", err)));
   } else {
-    await runSlackTurn(c.env, turn);
+    await run();
   }
   return c.json({ ok: true });
 });
@@ -173,66 +157,43 @@ app.post("/slack/events", slackVerify(), async (c) => {
 app.post("/slack/commands", slackVerify(), async (c) => {
   const raw = c.get("rawBody");
   const params = new URLSearchParams(raw);
-  const command = params.get("command") ?? "";
-  const text = params.get("text") ?? "";
-  const channelId = params.get("channel_id") ?? "";
-  const userId = params.get("user_id") ?? "";
-  const teamId = params.get("team_id") ?? "unknown";
-  const triggerId = params.get("trigger_id") ?? crypto.randomUUID();
+  const body = {
+    command: params.get("command") ?? undefined,
+    text: params.get("text") ?? undefined,
+    channel_id: params.get("channel_id") ?? undefined,
+    user_id: params.get("user_id") ?? undefined,
+    trigger_id: params.get("trigger_id") ?? undefined,
+    team_id: params.get("team_id") ?? undefined,
+    thread_ts: params.get("thread_ts") ?? undefined,
+  };
 
-  if (command === "/config") {
-    const stub = c.env.WORKSPACE_CONFIG.get(
-      c.env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
-    await stub.fetch("https://do/putConfig", {
-      method: "POST",
-      body: JSON.stringify({
-        teamId,
-        channelId,
-        systemPrompt: text || DEFAULT_SYSTEM_PROMPT,
-        policies: { allowMemoryWrite: true, allowTasks: true },
-        accessBundleId: DEFAULT_BUNDLE.id,
-        updatedAt: new Date().toISOString(),
-      } satisfies WorkspaceChannelConfig),
-    });
-    return c.json({
-      response_type: "ephemeral",
-      text: `Channel prompt updated (${text.length} chars). Bundle: \`${DEFAULT_BUNDLE.id}\`.`,
-    });
+  setCurrentTeamId(body.team_id ?? "unknown");
+
+  // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
+  const run = async () => {
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleCommandBody(body);
+  };
+
+  const exec = c.executionCtx;
+  if (exec?.waitUntil) {
+    exec.waitUntil(run().catch((err) => console.error("[slack/commands]", err)));
+  } else {
+    await run();
   }
 
+  const command = body.command ?? "";
   if (command === "/research") {
-    const exec = c.executionCtx;
-    const turn = {
-      teamId,
-      channelId,
-      userId,
-      text: `research ${text}`,
-      eventId: `cmd:${triggerId}`,
-    };
-    if (exec?.waitUntil) {
-      exec.waitUntil(runSlackTurn(c.env, turn).then(() => undefined));
-    } else {
-      await runSlackTurn(c.env, turn);
-    }
     return c.json({
       response_type: "in_channel",
       text: "🔍 Research started…",
     });
   }
-
-  const exec = c.executionCtx;
-  const turn = {
-    teamId,
-    channelId,
-    userId,
-    text: text || command,
-    eventId: `cmd:${triggerId}`,
-  };
-  if (exec?.waitUntil) {
-    exec.waitUntil(runSlackTurn(c.env, turn).then(() => undefined));
-  } else {
-    await runSlackTurn(c.env, turn);
+  if (command === "/config") {
+    return c.json({
+      response_type: "ephemeral",
+      text: "Updating channel config…",
+    });
   }
   return c.json({
     response_type: "in_channel",
@@ -242,51 +203,29 @@ app.post("/slack/commands", slackVerify(), async (c) => {
 
 app.post("/slack/interactions", slackVerify(), async (c) => {
   const raw = c.get("rawBody");
-  let payload: {
-    type?: string;
-    actions?: Array<{ action_id?: string; value?: string }>;
-    channel?: { id?: string };
-    message?: { thread_ts?: string; ts?: string };
-  };
+  let payload: unknown;
   try {
     const params = new URLSearchParams(raw);
-    payload = JSON.parse(params.get("payload") ?? raw) as typeof payload;
+    payload = JSON.parse(params.get("payload") ?? raw);
   } catch {
     return c.json({ ok: true });
   }
 
-  const action = payload.actions?.[0];
-  const actionId = action?.action_id ?? action?.value;
-  if (!actionId) return c.json({ ok: true });
+  const run = async () => {
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleInteractionPayload(payload);
+  };
 
-  const decision =
-    actionId.endsWith(":deny") || action?.value === "deny"
-      ? "denied"
-      : "approved";
-  const gateId = actionId.replace(/:(approve|deny)$/, "");
-  const result = await resolveHitlGate(c.env, gateId, decision);
-
-  if (result.ok && c.env.SLACK_BOT_TOKEN && payload.channel?.id) {
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${c.env.SLACK_BOT_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        channel: payload.channel.id,
-        thread_ts: payload.message?.thread_ts ?? payload.message?.ts,
-        text: `HITL *${result.detail}*: ${result.summary ?? gateId}`,
-      }),
-    });
+  const exec = c.executionCtx;
+  if (exec?.waitUntil) {
+    exec.waitUntil(
+      run().catch((err) => console.error("[slack/interactions]", err)),
+    );
+  } else {
+    await run();
   }
 
-  return c.json({
-    response_type: "ephemeral",
-    text: result.ok
-      ? `Recorded ${result.detail} (durable StateStore).`
-      : `HITL failed: ${result.detail ?? "unknown"}`,
-  });
+  return c.json({ ok: true });
 });
 
 export default app;

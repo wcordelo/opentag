@@ -12,17 +12,14 @@
     "target": "ES2022",
     "noEmit": true,
     "lib": ["es2022", "dom"],
-    "types": ["node"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@copilotkit/bot-ui"
+    "types": ["node"]
   },
   "include": [
-    "app/**/*.ts",
-    "app/**/*.tsx",
     "runtime.ts",
     "runtime-research.ts",
     "worker/**/*.ts",
-    "lib/**/*.ts"
+    "lib/**/*.ts",
+    "e2e/research-loop.ts"
   ],
-  "exclude": ["node_modules", "agent", "e2e"]
+  "exclude": ["node_modules", "agent", "app", "edge"]
 }

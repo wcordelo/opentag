@@ -1,21 +1,16 @@
 /**
- * Store adapter for `@copilotkit/bot` on Cloudflare (PRODUCT.md Phase 1).
- *
- * Usage once the bot SDK is available in this package:
+ * Store adapter for `@copilotkit/channels` createBot on Cloudflare.
  *
  * ```ts
- * import { createBot } from "@copilotkit/bot";
+ * import { createBot } from "@copilotkit/channels";
  * import { createBotStoreAdapter } from "./create-bot-store.js";
  *
  * const bot = createBot({
- *   adapters: [slackAdapter],
+ *   adapters: [cfSlack],
  *   agent: (threadId) => makeAgent(threadId),
  *   store: { adapter: createBotStoreAdapter(env.BOT_STATE) },
  * });
  * ```
- *
- * Until the SDK publishes coherently for Workers, `bot-host.ts` exercises the
- * same StateStore durability contract (dedup, turn lock, threadstate, HITL).
  */
 import {
   createDurableObjectStore,

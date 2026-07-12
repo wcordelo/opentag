@@ -35,7 +35,9 @@ export async function postToSlackThread(
     },
     body: JSON.stringify({
       channel: parsed.channel,
-      thread_ts: parsed.threadTs,
+      ...(parsed.threadTs && parsed.threadTs !== parsed.channel
+        ? { thread_ts: parsed.threadTs }
+        : {}),
       text: chunkMessage(text),
       mrkdwn: true,
     }),

@@ -9,29 +9,25 @@ Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 ## Overview
 
 - **Shared core** (`lib/research/`) — actor logic, fibers, OCC, outbox
-- **Railway** — Postgres + Node processes (local / hybrid)
 - **Cloudflare** — Durable Objects + SQLite (`edge/wrangler.research.toml`), invoked via bot `RESEARCH_TASKS` binding
+- **Optional Railway** — Postgres + Node processes for local eval (not Slack ingress)
 
-## Processes (Railway)
+## Processes
 
-| Service | Command | Port |
+| Service | Command | Role |
 |---------|---------|------|
-| Bot | `pnpm dev` | — (Socket Mode; Railway path) |
-| Triage runtime | `pnpm runtime` | 8200 |
-| Research runtime | `pnpm research:runtime` | 8201 (+ delivery API 8202) |
-| Alarm worker | `pnpm research:worker` | — |
+| Bot Worker | `cd edge && npm run dev` | Slack Events API (primary) |
+| Triage runtime | `pnpm runtime` | AG-UI agent (`AGENT_URL`) |
+| Research Worker | `cd edge && npm run dev:research` | Internal `/research` |
+| Optional: research runtime | `pnpm research:runtime` | Railway/Postgres AG-UI + delivery |
+| Optional: alarm worker | `pnpm research:worker` | Postgres alarm poller |
 
 ## Cloudflare research task Worker
 
 ```bash
 cd edge
-npm install
+npm install   # requires sibling CopilotKit channels build — see edge/README.md
 npm run dev:research   # wrangler.research.toml → opentag-orchestrator
-```
-
-Bot spine (default):
-
-```bash
 npm run dev            # wrangler.toml → binds RESEARCH_TASKS → orchestrator
 ```
 
@@ -42,21 +38,14 @@ Internal kickoff: `POST /research` with `Authorization: Bearer $INTERNAL_SECRET`
 
 | Variable | Purpose |
 |----------|---------|
-| `DATABASE_URL` | Postgres (Railway research) |
-| `AGENT_RESEARCH_URL` | Research AG-UI endpoint (Railway bot routing) |
-| `RESEARCH_DELIVERY_URL` | Delivery API base |
-| `PARALLEL_API_KEY` | Parallel web search |
+| `DATABASE_URL` | Postgres (optional Railway research) |
+| `AGENT_URL` | Triage AG-UI (bot Worker → Node runtime) |
 | `INTERNAL_SECRET` | Bearer for CF `/research` + `/internal/*` |
+| `PARALLEL_API_KEY` | Parallel web search |
 
 ## Testing
 
 ```bash
-pnpm test                              # unit tests (repo root)
-RESEARCH_MOCK=1 pnpm e2e:research      # in-memory pipeline
+RESEARCH_MOCK=1 pnpm e2e:research
 cd edge && npm test && npm run test:e2e
 ```
-
-## MVP scope
-
-Deep research with search + synthesis + verifier; channel allowlist; budgets;
-blob spill. Not in MVP: company ETL, general codex agent, 60+ tool plugins.

@@ -8,6 +8,7 @@
 import { Orchestrator as OrchestratorCore } from "../../../../lib/research/orchestrator.js";
 import { DurableObjectStorageAdapter } from "../../../../lib/research/adapters/storage-do.js";
 import { DirectLlmAdapter } from "../../../../lib/research/adapters/llm.js";
+import { postToSlackThread } from "../../../../lib/research/delivery/slack.js";
 import { runMigrations } from "./schema";
 
 export interface OrchestratorDOEnv {
@@ -240,7 +241,7 @@ export class OrchestratorDO implements DurableObject {
       };
       let delivered = false;
       if (payload.text && this.env.SLACK_BOT_TOKEN) {
-        delivered = await postSlackDelivery(
+        delivered = await postToSlackThread(
           obligation.threadKey,
           payload.text,
           this.env.SLACK_BOT_TOKEN,
@@ -253,36 +254,5 @@ export class OrchestratorDO implements DurableObject {
         await core.processOutbox(payload.taskId);
       }
     }
-  }
-}
-
-async function postSlackDelivery(
-  threadKey: string,
-  text: string,
-  botToken: string,
-): Promise<boolean> {
-  const parts = threadKey.split(":");
-  if (parts.length < 3 || parts[0] !== "slack") return false;
-  const channel = parts[1]!;
-  const threadTs = parts.slice(2).join(":");
-  try {
-    const res = await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${botToken}`,
-      },
-      body: JSON.stringify({
-        channel,
-        thread_ts: threadTs === channel ? undefined : threadTs,
-        text: text.length > 3900 ? text.slice(0, 3900) + "\n…(truncated)" : text,
-        mrkdwn: true,
-      }),
-    });
-    const json = (await res.json()) as { ok: boolean };
-    return json.ok;
-  } catch (err) {
-    console.error("Slack delivery failed", err);
-    return false;
   }
 }

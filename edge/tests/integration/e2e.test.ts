@@ -56,6 +56,38 @@ describe("pipeline smoke (no live Slack / no deploy)", () => {
   });
 });
 
+describe("research delivery contract (bot TaskRuntime shape)", () => {
+  it("startTask payload matches orchestrator POST /research body", async () => {
+    const { startTask } = await import("../../src/tasks/runtime.js");
+    let body: Record<string, unknown> = {};
+    await startTask(
+      {
+        RESEARCH_TASKS: {
+          fetch: async (_u: RequestInfo, init?: RequestInit) => {
+            body = JSON.parse(String(init?.body ?? "{}")) as Record<
+              string,
+              unknown
+            >;
+            return Response.json({ taskId: "t1" });
+          },
+        } as unknown as Fetcher,
+        INTERNAL_SECRET: "s",
+      },
+      {
+        type: "research",
+        teamId: "T1",
+        threadKey: "slack:C:1",
+        channelId: "C",
+        threadTs: "1.0",
+        payload: { objective: "test" },
+      },
+    );
+    expect(body.objective).toBe("test");
+    expect(body.threadKey).toBe("slack:C:1");
+    expect(body.teamId).toBe("T1");
+  });
+});
+
 describe.skip("Full Miniflare DO e2e (enable with test:workers + bindings)", () => {
   it.todo("POST /research creates task readable via OrchestratorDO GET /tasks/:id");
   it.todo("duplicate Slack event_id does not create a second task in DO SQLite");

@@ -10,23 +10,53 @@ Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
 | `wrangler.bot-store.toml` | StateStore e2e alias |
 | `workers/egress-proxy/` | Shared egress for containers |
 
+## Prerequisite — sibling CopilotKit
+
+Edge depends on local `@copilotkit/channels*` via `file:../../CopilotKit/packages/...`:
+
+```bash
+# From Documents/ (or sibling of opentag)
+cd CopilotKit
+pnpm install
+pnpm --filter @copilotkit/shared --filter @copilotkit/core \
+  --filter @copilotkit/channels-ui --filter @copilotkit/channels \
+  --filter @copilotkit/channels-slack build
+```
+
+Then:
+
 ```bash
 cd edge
 npm install
 npm test
 npm run test:e2e         # StateStore workerd (primary)
 npm run test:workers     # research task suite (secondary)
-npm run dev              # bot spine
+npm run typecheck
+npm run dev              # bot spine (Slack Events API)
 npm run dev:research     # research task Worker
+```
+
+Agent replies need `pnpm runtime` at repo root (`AGENT_URL`).
+
+## Local E2E
+
+```bash
+cp .dev.vars.example .dev.vars   # fill Slack + AGENT_URL + secrets
+./scripts/e2e-local.sh           # checklist
+pnpm runtime                     # terminal A (repo root)
+npm run dev                      # terminal B — tunnel this to Slack
+# optional research:
+# merge .dev.vars.research.example into .dev.vars, then npm run dev:research
 ```
 
 ## Spine
 
-1. Slack → `src/worker.ts` (Events / commands / interactions)
+1. Slack → `src/worker.ts` → `CloudflareSlackAdapter` → `createBot` (`@copilotkit/channels`)
 2. StateStore `BOT_STATE` — HITL, locks, transcripts, dedup
 3. `WORKSPACE_CONFIG` — prompts + access bundles
 4. `KNOWLEDGE` — longer-term memory
 5. `RESEARCH_TASKS` → orchestrator `POST /research`
+6. `AGENT_URL` → Node AG-UI runtime (`HttpAgent`)
 
 ## Layout
 
@@ -34,7 +64,7 @@ npm run dev:research     # research task Worker
 edge/
 ├── wrangler.toml
 ├── wrangler.research.toml
-├── src/                  # bot spine
-├── workers/orchestrator/ # research tasks (Slack demoted)
+├── src/                  # bot spine + CloudflareSlackAdapter
+├── workers/orchestrator/ # research tasks
 └── workers/egress-proxy/
 ```

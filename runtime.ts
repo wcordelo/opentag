@@ -72,7 +72,7 @@ interface LabeledTransport {
   transport: McpHttpTransport;
 }
 
-function mcpTransports(): LabeledTransport[] {
+function mcpTransportsFromEnv(): LabeledTransport[] {
   const transports: LabeledTransport[] = [];
   if (process.env["LINEAR_API_KEY"]) {
     transports.push({
@@ -97,6 +97,93 @@ function mcpTransports(): LabeledTransport[] {
     });
   }
   return transports;
+}
+
+/**
+ * Parse AG-UI context entries posted by the CF bot (secretRefs / mcpEndpoints).
+ * Secret *values* are always resolved from process.env by name — never from the client.
+ */
+function mcpTransportsFromContext(input: unknown): LabeledTransport[] {
+  const endpointsRaw = extractContextValue(input, "mcpEndpoints");
+  const refsRaw = extractContextValue(input, "secretRefs");
+  let endpoints: string[] = [];
+  let secretRefs: string[] = [];
+  try {
+    if (typeof endpointsRaw === "string") {
+      endpoints = JSON.parse(endpointsRaw) as string[];
+    } else if (Array.isArray(endpointsRaw)) {
+      endpoints = endpointsRaw as string[];
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof refsRaw === "string") {
+      secretRefs = JSON.parse(refsRaw) as string[];
+    } else if (Array.isArray(refsRaw)) {
+      secretRefs = refsRaw as string[];
+    }
+  } catch {
+    /* ignore */
+  }
+  if (endpoints.length === 0) return [];
+
+  const transports: LabeledTransport[] = [];
+  for (let i = 0; i < endpoints.length; i++) {
+    const url = endpoints[i]!;
+    if (!url || typeof url !== "string") continue;
+    // Prefer a matching secretRef by index; else first available named secret.
+    const refName = secretRefs[i] ?? secretRefs[0];
+    const secret =
+      (refName ? process.env[refName] : undefined) ??
+      process.env["LINEAR_API_KEY"] ??
+      process.env["NOTION_MCP_AUTH_TOKEN"];
+    if (!secret) {
+      console.warn(
+        `[slack-runtime] mcpEndpoints entry ${url} skipped — no env secret for refs ${JSON.stringify(secretRefs)}`,
+      );
+      continue;
+    }
+    transports.push({
+      name: `bundle-mcp-${i}`,
+      transport: {
+        type: "http",
+        url,
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+    });
+  }
+  return transports;
+}
+
+function extractContextValue(input: unknown, key: string): unknown {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  if (key in obj) return obj[key];
+  const forwarded = obj["forwardedProps"] as Record<string, unknown> | undefined;
+  if (forwarded && key in forwarded) return forwarded[key];
+  const context = obj["context"] as
+    | Array<{ description?: string; value?: unknown }>
+    | undefined;
+  if (context) {
+    const entry = context.find((c) => c.description === key);
+    if (entry) return entry.value;
+  }
+  return undefined;
+}
+
+function mergeMcpTransports(
+  fromEnv: LabeledTransport[],
+  fromContext: LabeledTransport[],
+): LabeledTransport[] {
+  const seen = new Set(fromEnv.map((t) => t.transport.url));
+  const out = [...fromEnv];
+  for (const t of fromContext) {
+    if (seen.has(t.transport.url)) continue;
+    seen.add(t.transport.url);
+    out.push(t);
+  }
+  return out;
 }
 
 /** Max time to wait for an MCP server to connect before giving up on it. */
@@ -127,11 +214,10 @@ async function connectMcp(transport: McpHttpTransport) {
   }
 }
 
-if (mcpTransports().length === 0) {
+if (mcpTransportsFromEnv().length === 0) {
   console.warn(
-    "[slack-runtime] No MCP servers configured. Set LINEAR_API_KEY and/or " +
-      "NOTION_MCP_AUTH_TOKEN in .env — without them the bot can chat and " +
-      "search the web but can't read or write Linear/Notion.",
+    "[slack-runtime] No MCP servers configured via env. Set LINEAR_API_KEY and/or " +
+      "NOTION_MCP_AUTH_TOKEN in .env — channel bundles may still add mcpEndpoints.",
   );
 }
 
@@ -265,7 +351,10 @@ const agent = new BuiltInAgent({
     // kill the turn. Failures are dropped (the agent runs with whatever else is
     // up) and noted so the model only tells the user a source is down if they
     // actually ask for it — see `availabilityNote` below.
-    const transports = mcpTransports();
+    const transports = mergeMcpTransports(
+      mcpTransportsFromEnv(),
+      mcpTransportsFromContext(ctx.input),
+    );
     const settled = await Promise.allSettled(
       transports.map((t) => connectMcp(t.transport)),
     );

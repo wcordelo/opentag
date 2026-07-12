@@ -1,6 +1,5 @@
 /**
- * `@opentag/bot-store-durable-object` — a Durable Object + SQLite backed
- * `StateStore` for `@copilotkit/bot`.
+ * Durable Object + SQLite `StateStore` for `@copilotkit/channels` on Cloudflare.
  *
  * Layers (bottom → top):
  *   sql.ts                       — narrow SqlExecutor seam (portable/testable)

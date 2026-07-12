@@ -31,10 +31,10 @@ curl -X POST http://localhost:8787/tasks/start \
 
 ## Notes
 
-| Criterion | Railway + Postgres | Cloudflare DO |
-|-----------|-------------------|---------------|
+| Criterion | Railway + Postgres (optional) | Cloudflare DO |
+|-----------|-------------------------------|---------------|
 | Long job | Worker poll | DO alarm |
-| Slack UX | Socket Mode (Railway bot) | Events API (CF bot Worker) |
+| Slack UX | N/A (bot is CF) | Events API (CF bot Worker) |
 | State | Postgres | DO SQLite |
 
 Switching tracks is primarily an adapter swap on `lib/research/`.

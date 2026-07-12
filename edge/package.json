@@ -24,7 +24,11 @@
     "migrate:dry": "echo 'Migration is an external action — pass explicit adapters via scripts/migrate-pg-to-do.ts after sign-off'"
   },
   "dependencies": {
+    "@ag-ui/client": "0.0.57",
     "@cloudflare/sandbox": "^0.1.0",
+    "@copilotkit/channels": "file:../../CopilotKit/packages/channels",
+    "@copilotkit/channels-slack": "file:../../CopilotKit/packages/channels-slack",
+    "@copilotkit/channels-ui": "file:../../CopilotKit/packages/channels-ui",
     "hono": "^4.6.0",
     "zod": "^3.25.76"
   },

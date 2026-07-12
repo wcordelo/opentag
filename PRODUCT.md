@@ -1,18 +1,18 @@
 # OpenTag Product — Claude Tag on Cloudflare
 
 Status: **ACTIVE** (authoritative).  
-Date: 2026-07-11. Updated: 2026-07-11 (deep clean).
+Date: 2026-07-11. Updated: 2026-07-11 (full CF cutover).
 
 ## North star
 
-OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent you host yourself. Cloudflare is the infrastructure (Workers, Durable Objects, R2, Containers). CopilotKit `@copilotkit/bot` is the bot engine when the SDK is available on Workers; until then the bot Worker uses the same StateStore contract via a host adapter.
+OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent you host yourself. Cloudflare is the infrastructure (Workers, Durable Objects, R2, Containers). CopilotKit `@copilotkit/channels` is the bot engine (path-linked from a sibling CopilotKit monorepo until packages publish).
 
 **Acceptance (product):** a production Slack workspace can run the full agent loop — mentions, slash commands, HITL approvals — with durable state across Worker restarts, per-channel prompts, memory, access-controlled tools, and long-running tasks (including deep research).
 
 ## Spine
 
 1. **Ingress** — Slack Events API + slash commands + interactions on the **bot Worker** (no Socket Mode).
-2. **Bot engine** — `createBot` + `createDurableObjectStore(env.BOT_STATE)` when `@copilotkit/bot` resolves; otherwise StateStore-backed host (`bot-host.ts`).
+2. **Bot engine** — `createBot` + `CloudflareSlackAdapter` + `createDurableObjectStore(env.BOT_STATE)` + `HttpAgent` → `AGENT_URL`.
 3. **StateStore** (`edge/src/store/`, binding `BOT_STATE`) — durable HITL, turn locks, transcripts, dedup.
 4. **Tenant keying** — workspace (`teamId`) with channel overrides.
 
@@ -21,10 +21,11 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 | Capability | Status |
 |---|---|
 | Channel / workspace prompts & config | Implemented (`WorkspaceConfigDO`) |
-| Access bundles (tool allowlist + secret *refs*) | Implemented; MCP clients not yet spun from refs |
+| Access bundles (tool allowlist + secret *refs*) | Implemented; MCP clients open on Node runtime from refs |
 | Memory — thread + knowledge | Implemented (StateStore threadstate + `KnowledgeDO`) |
-| Durable HITL | Implemented (StateStore + Block Kit interactions) |
+| Durable HITL | Implemented (createBot ActionStore + Block Kit via Channels) |
 | Deep research | Task type via `RESEARCH_TASKS` → orchestrator |
+| Bundle → MCP | Runtime opens MCP from context `mcpEndpoints` + env `secretRefs` |
 | Multi-agent PM / impl / verify | **Deferred** (Track F) — not in public TaskRuntime API |
 
 ## What research is (and is not)
@@ -37,7 +38,7 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 1. No Socket Mode on Cloudflare Workers.
 2. Container egress is application-level HTTP proxy only.
 3. Task/actor code talks to adapters, not `pg` / raw DO APIs.
-4. Cold starts: immediate Slack ack; final result via `chat.postMessage`.
+4. Cold starts: immediate Slack ack; final result via `chat.postMessage` / agent stream.
 
 ## Deploy layout
 
@@ -49,6 +50,5 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 
 ## Remaining work (honest)
 
-- Wire live `@copilotkit/bot` on the Worker once the package installs on edge.
-- Consume access-bundle `mcpEndpoints` as live MCP clients (refs only today).
 - Track F: `pm_impl_verify` / sandbox multi-agent pipeline.
+- Publish `@copilotkit/channels*` to npm (today: sibling `file:` checkout).

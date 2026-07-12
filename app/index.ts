@@ -49,6 +49,7 @@ import {
   extractResearchObjective,
   isResearchIntent,
   buildThreadKey,
+  conversationPartsFromThread,
   pollDeliveries,
   markDeliveryDelivered,
 } from "./research-agent.js";
@@ -233,12 +234,15 @@ async function main() {
 
       if (isResearchIntent(text) && process.env["AGENT_RESEARCH_URL"]) {
         const messages = await thread.getMessages();
+        const parts = conversationPartsFromThread(thread);
         const threadKey = buildThreadKey(
           thread.platform,
-          message.channelId ?? thread.id,
-          thread.id,
+          message.channelId ?? parts.channelId,
+          parts.threadTs,
         );
-        const researchAgent = createResearchAgent(thread.id);
+        const researchAgent = createResearchAgent(
+          thread.conversationKey ?? thread.id,
+        );
         await thread.runAgent({
           agent: researchAgent,
           prompt: extractResearchObjective(text) || text,

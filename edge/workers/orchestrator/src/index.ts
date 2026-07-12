@@ -95,6 +95,55 @@ app.post("/internal/execution-logs", async (c) => {
   });
 });
 
+/**
+ * Migration import: upsert a TaskRecord into the workspace OrchestratorDO.
+ * Body: { teamId, task: TaskRecord }
+ */
+app.post("/internal/import-task", async (c) => {
+  const body = (await c.req.json()) as {
+    teamId: string;
+    task: {
+      taskId: string;
+      threadKey: string;
+      status: string;
+      objective: string;
+      createdAt: string;
+      deadlineAt?: string;
+      eventTs?: string;
+      eventId?: string;
+      metadata?: Record<string, unknown>;
+    };
+  };
+
+  if (!body.teamId || !body.task?.taskId) {
+    return c.json({ error: "teamId and task.taskId required" }, 400);
+  }
+
+  const id = c.env.ORCHESTRATOR.idFromName(body.teamId);
+  const stub = c.env.ORCHESTRATOR.get(id);
+  const res = await stub.fetch(
+    new Request("https://do/import-task", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body.task),
+    }),
+  );
+  return new Response(res.body, {
+    status: res.status,
+    headers: res.headers,
+  });
+});
+
+app.get("/internal/tasks/:taskId", async (c) => {
+  const teamId = c.req.query("teamId");
+  const taskId = c.req.param("taskId");
+  if (!teamId) return c.json({ error: "teamId query required" }, 400);
+  const id = c.env.ORCHESTRATOR.idFromName(teamId);
+  const stub = c.env.ORCHESTRATOR.get(id);
+  const res = await stub.fetch(new Request(`https://do/tasks/${taskId}`));
+  return new Response(res.body, { status: res.status, headers: res.headers });
+});
+
 app.post("/slack/events", slackVerify(), async (c) => {
   return handleSlackEvents(c);
 });

@@ -149,8 +149,12 @@ const deliveryServer = createServer(async (req, res) => {
     return;
   }
 
-  if (req.url?.startsWith("/api/research/deliveries/") && req.method === "POST") {
-    const id = req.url.split("/").pop();
+  // POST /api/research/deliveries/:id/delivered — mirrors OrchestratorDO.
+  const deliveredMatch = req.url?.match(
+    /^\/api\/research\/deliveries\/([^/]+)\/delivered\/?$/,
+  );
+  if (deliveredMatch && req.method === "POST") {
+    const id = deliveredMatch[1];
     if (id) {
       const ctx = await ctxPromise;
       await ctx.orchestrator.markDeliveryDelivered(id);

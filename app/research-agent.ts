@@ -35,6 +35,34 @@ export function buildThreadKey(
   return `${platform}:${channelId}:${threadTs}`;
 }
 
+/** Channel + thread_ts extracted from a CopilotKit Thread. */
+export function conversationPartsFromThread(thread: {
+  conversationKey?: string;
+  id?: string;
+}): { channelId: string; threadTs: string } {
+  const key = thread.conversationKey ?? thread.id ?? "";
+  // Slack adapter: conversationKeyOf → `${channelId}::${scope}`
+  if (key.includes("::")) {
+    const [channelId, scope = ""] = key.split("::");
+    const threadTs = scope && scope !== "dm" ? scope : channelId!;
+    return { channelId: channelId!, threadTs };
+  }
+  return { channelId: key, threadTs: key };
+}
+
+/**
+ * Build `platform:channelId:threadTs` from a CopilotKit Thread.
+ * Slack's `conversationKey` is `channelId::scope` (scope = thread_ts or `"dm"`).
+ */
+export function threadKeyFromThread(thread: {
+  platform: string;
+  conversationKey?: string;
+  id?: string;
+}): string {
+  const { channelId, threadTs } = conversationPartsFromThread(thread);
+  return buildThreadKey(thread.platform, channelId, threadTs);
+}
+
 const deliveryApiBase =
   process.env["RESEARCH_DELIVERY_URL"] ?? "http://localhost:8202";
 
@@ -61,7 +89,9 @@ export async function pollDeliveries(
 }
 
 export async function markDeliveryDelivered(id: string): Promise<void> {
-  await fetch(`${deliveryApiBase}/api/research/deliveries/${id}`, {
+  // Path matches OrchestratorDO (`POST /deliveries/:id/delivered`) and the
+  // Railway delivery API mirror under `/api/research`.
+  await fetch(`${deliveryApiBase}/api/research/deliveries/${id}/delivered`, {
     method: "POST",
   });
 }

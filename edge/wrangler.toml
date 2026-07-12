@@ -3,13 +3,12 @@ main = "workers/orchestrator/src/index.ts"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 
-[limits]
-cpu_ms = 300000
+# [limits] cpu_ms requires a paid Workers plan — omitted for Free-plan deploy.
 
 [vars]
 ENVIRONMENT = "development"
 ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"]
-EGRESS_PROXY_URL = "http://localhost:8788"
+EGRESS_PROXY_URL = "https://opentag-egress-proxy.williamlopezc.workers.dev"
 
 # Sandbox SDK container binding + [[containers]] block (Dockerfile path, image
 # name, instance limits) are owned by Track C — added when workers/sandbox/
@@ -31,7 +30,7 @@ new_sqlite_classes = ["OrchestratorDO", "ResearcherDO", "VerifierDO"]
 
 [[kv_namespaces]]
 binding = "AGENT_STATE"
-id = "replace-with-real-kv-namespace-id"
+id = "dfb2924dcc474183a735c22040b97111"
 
 [[r2_buckets]]
 binding = "BLOBS"

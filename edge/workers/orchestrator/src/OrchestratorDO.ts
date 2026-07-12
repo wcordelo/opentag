@@ -113,6 +113,27 @@ export class OrchestratorDO implements DurableObject {
         return Response.json(task);
       }
 
+      if (path === "/import-task" && request.method === "POST") {
+        const task = (await request.json()) as {
+          taskId: string;
+          threadKey: string;
+          status: "pending" | "running" | "complete" | "failed" | "cancelled" | "superseded";
+          objective: string;
+          createdAt: string;
+          deadlineAt?: string;
+          eventTs?: string;
+          eventId?: string;
+          metadata?: Record<string, unknown>;
+        };
+        const storage = this.getStorage();
+        const existing = await storage.getTask(task.taskId);
+        if (existing) {
+          return Response.json({ ok: true, skipped: true, taskId: task.taskId });
+        }
+        await storage.createTask(task);
+        return Response.json({ ok: true, written: true, taskId: task.taskId });
+      }
+
       if (path === "/execution-logs" && request.method === "POST") {
         const body = (await request.json()) as ExecutionLogBody;
         const id = body.id ?? crypto.randomUUID();

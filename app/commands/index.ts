@@ -18,11 +18,7 @@ import { IssueCard } from "../components/index.js";
 import { FileIssueModal } from "../modals/file-issue.js";
 import {
   createResearchAgent,
-  extractResearchObjective,
-  isResearchIntent,
-  buildThreadKey,
-  pollDeliveries,
-  markDeliveryDelivered,
+  threadKeyFromThread,
 } from "../research-agent.js";
 
 export const appCommands: BotCommand[] = [
@@ -151,8 +147,10 @@ export const appCommands: BotCommand[] = [
         return;
       }
       const messages = await thread.getMessages();
-      const threadKey = buildThreadKey(thread.platform, thread.id, thread.id);
-      const researchAgent = createResearchAgent(thread.id);
+      const threadKey = threadKeyFromThread(thread);
+      const researchAgent = createResearchAgent(
+        thread.conversationKey ?? thread.id,
+      );
       await thread.runAgent({
         agent: researchAgent,
         prompt: `research ${text}`,

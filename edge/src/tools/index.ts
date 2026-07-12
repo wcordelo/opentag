@@ -352,7 +352,7 @@ export const reactMessageTool = defineBotTool({
       return { ok: false, error: "SLACK_BOT_TOKEN missing" };
     }
     const conversationKey = conversationKeyOf(thread);
-    const inbound = getInboundMessage(conversationKey);
+    const inbound = getInboundMessage(conversationKey, thread);
     const channel = channelFromThread(thread) || inbound?.channel || "";
     const argTs = messageTs?.trim();
     let ts =

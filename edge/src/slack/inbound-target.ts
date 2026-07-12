@@ -1,11 +1,12 @@
 /**
- * Last inbound Slack message per conversation — used for reactions.
+ * Inbound Slack message targets for reactions.
+ *
  * CopilotKit's IncomingMessage.ref is empty on the CF path (`ref: { id: "" }`),
  * and thread.getMessages() can return [] if replies fetch fails, so we stash
- * channel+ts at ingress time.
+ * channel+ts at ingress / bind it to the per-turn Thread object.
  *
- * Prefer request-scoped storage (same waitUntil/turn stack as tools) so we
- * don't depend on conversationKey matching across Map lookups.
+ * Prefer thread-bound targets (WeakMap) so concurrent turns in the same isolate
+ * cannot steal each other's reaction target via a shared conversation Map.
  */
 import {
   getCurrentInboundMessage,
@@ -13,7 +14,10 @@ import {
   type InboundMessageTarget,
 } from "../request-context.js";
 
-const lastInboundByConversation = new Map<string, InboundMessageTarget>();
+export type { InboundMessageTarget };
+
+/** Per-turn Thread instance → inbound message to react on. */
+const inboundByThread = new WeakMap<object, InboundMessageTarget>();
 
 export function rememberInboundMessage(
   conversationKey: string,
@@ -21,18 +25,47 @@ export function rememberInboundMessage(
   ts: string,
 ): void {
   if (!channel || !ts) return;
+  // Request-scoped for short-circuit reacts in the same waitUntil turn.
+  void conversationKey;
   setCurrentInboundMessage(channel, ts);
-  if (conversationKey) {
-    lastInboundByConversation.set(conversationKey, { channel, ts });
-  }
 }
 
+/** Bind the react target to this turn's Thread (call once at onMention start). */
+export function bindInboundToThread(
+  thread: object,
+  target: InboundMessageTarget | undefined,
+): void {
+  if (!target?.channel || !target.ts) return;
+  inboundByThread.set(thread, target);
+}
+
+export function getInboundForThread(
+  thread: object,
+): InboundMessageTarget | undefined {
+  return inboundByThread.get(thread);
+}
+
+/**
+ * Resolve inbound target for reactions.
+ * Prefer thread-bound (concurrent-safe), then request-scoped.
+ * Does NOT use a conversation-wide Map (that raced across overlapping turns
+ * and leaked stale targets into slash-command turns).
+ */
 export function getInboundMessage(
   conversationKey: string,
+  thread?: object,
 ): InboundMessageTarget | undefined {
-  // Request-scoped first — set at ingress inside runWithTeamId.
+  if (thread) {
+    const bound = inboundByThread.get(thread);
+    if (bound) return bound;
+  }
   const fromTurn = getCurrentInboundMessage();
   if (fromTurn) return fromTurn;
-  if (!conversationKey) return undefined;
-  return lastInboundByConversation.get(conversationKey);
+  // Last resort: conversation key encodes channel::threadTs (or message ts).
+  if (!conversationKey.includes("::")) return undefined;
+  const [channel, scope] = conversationKey.split("::");
+  if (channel && scope && /^\d+\.\d+$/.test(scope)) {
+    return { channel, ts: scope };
+  }
+  return undefined;
 }

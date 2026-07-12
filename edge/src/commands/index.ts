@@ -14,6 +14,10 @@ import { startTask } from "../tasks/runtime.js";
 import { getCurrentTeamId } from "../request-context.js";
 import { runBundledAgentTurn } from "../agent-turn.js";
 import { trivialAck } from "../trivial-ack.js";
+import {
+  bindInboundToThread,
+  getInboundMessage,
+} from "../slack/inbound-target.js";
 import type { Env } from "../env.js";
 
 let boundEnv: Env | null = null;
@@ -142,6 +146,8 @@ export const edgeCommands = [
         await thread.post("Usage: `/agent <message>`");
         return;
       }
+      const key = conversationKeyOf(thread as { conversationKey?: string });
+      bindInboundToThread(thread, getInboundMessage(key));
       try {
         const trivial = trivialAck(text);
         if (trivial) {

@@ -24,6 +24,10 @@ import {
 import { runBundledAgentTurn } from "./agent-turn.js";
 import { trivialAckReply, trivialAck } from "./trivial-ack.js";
 import { reactIntent } from "./react-intent.js";
+import {
+  bindInboundToThread,
+  getInboundMessage,
+} from "./slack/inbound-target.js";
 import type { Env } from "./env.js";
 
 export type BotEngineKind = "createBot";
@@ -93,6 +97,10 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
     try {
       const teamId = getCurrentTeamId();
       const channelId = (thread.conversationKey ?? "").split("::")[0] ?? "";
+      // Snapshot react target for this turn before any concurrent ingress can
+      // overwrite request-scoped state; bind to the Thread for tool handlers.
+      const reactTarget = getInboundMessage(thread.conversationKey ?? "");
+      bindInboundToThread(thread, reactTarget);
 
       const { config, bundle } = await loadTurnAccess(
         env.WORKSPACE_CONFIG,
@@ -179,6 +187,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           const reacted = await adapter.react(
             thread.conversationKey ?? "",
             trivial.emoji,
+            reactTarget,
           );
           if (!reacted) {
             await thread.post(
@@ -201,6 +210,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         const reacted = await adapter.react(
           thread.conversationKey ?? "",
           intent.emoji,
+          reactTarget,
         );
         if (!reacted) {
           console.error(
@@ -221,7 +231,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       const progressTimer = setTimeout(() => {
         progressReacted = true;
         void adapter
-          .react(thread.conversationKey ?? "", progressEmoji)
+          .react(thread.conversationKey ?? "", progressEmoji, reactTarget)
           .catch(() => undefined);
       }, 2_500);
 
@@ -238,7 +248,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         clearTimeout(progressTimer);
         if (progressReacted) {
           void adapter
-            .unreact(thread.conversationKey ?? "", progressEmoji)
+            .unreact(thread.conversationKey ?? "", progressEmoji, reactTarget)
             .catch(() => undefined);
         }
       }

@@ -40,6 +40,7 @@ import {
 import {
   rememberInboundMessage,
   getInboundMessage,
+  type InboundMessageTarget,
 } from "./inbound-target.js";
 import {
   buildFileContentParts,
@@ -54,6 +55,20 @@ export type CloudflareSlackAdapterOptions = {
   botUserId?: string;
   teamId?: string;
 };
+
+function messageTsFromRef(
+  messageRef: MessageRef,
+  fallback?: string,
+): string {
+  if (typeof messageRef.id === "string" && /^\d+\.\d+$/.test(messageRef.id)) {
+    return messageRef.id;
+  }
+  const extra = messageRef as MessageRef & { ts?: unknown };
+  if (typeof extra.ts === "string" && /^\d+\.\d+$/.test(extra.ts)) {
+    return extra.ts;
+  }
+  return fallback && /^\d+\.\d+$/.test(fallback) ? fallback : "";
+}
 
 export class CloudflareSlackAdapter implements PlatformAdapter {
   readonly platform = "slack";
@@ -207,19 +222,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     return { handled: true };
   }
 
-  /** React to the latest inbound user message in this conversation (if known). */
+  /** React to a specific inbound message, or resolve from turn/thread key. */
   async react(
     conversationKey: string,
     emoji: string,
+    targetOverride?: InboundMessageTarget,
   ): Promise<boolean> {
-    let target = getInboundMessage(conversationKey);
-    // Fall back to thread parent ts encoded in the conversation key.
-    if (!target && conversationKey.includes("::")) {
-      const [channel, scope] = conversationKey.split("::");
-      if (channel && scope && /^\d+\.\d+$/.test(scope)) {
-        target = { channel, ts: scope };
-      }
-    }
+    const target =
+      targetOverride ?? getInboundMessage(conversationKey);
     if (!target) {
       console.error("[slack] react: no inbound target", conversationKey);
       return false;
@@ -246,14 +256,10 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   async unreact(
     conversationKey: string,
     emoji: string,
+    targetOverride?: InboundMessageTarget,
   ): Promise<boolean> {
-    let target = getInboundMessage(conversationKey);
-    if (!target && conversationKey.includes("::")) {
-      const [channel, scope] = conversationKey.split("::");
-      if (channel && scope && /^\d+\.\d+$/.test(scope)) {
-        target = { channel, ts: scope };
-      }
-    }
+    const target =
+      targetOverride ?? getInboundMessage(conversationKey);
     if (!target) return false;
     const r = await this.client.removeReaction({
       channel: target.channel,
@@ -302,13 +308,18 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       conversationKey,
       replyTarget: {
         channel: normalized.channel,
-        ...(threadTs ? { threadTs } : {}),
+        ...(threadTs ? { threadTs, messageTs: threadTs } : {}),
       },
       user,
       eventId: normalized.eventId,
       platform: "slack",
       triggerId: normalized.triggerId,
     };
+    // Slash commands have no message ts to react to; bind thread parent only so
+    // react_message does not reuse a stale event-turn target from request scope.
+    if (threadTs && normalized.channel) {
+      rememberInboundMessage(conversationKey, normalized.channel, threadTs);
+    }
     await this.sink.onCommand(cmd);
     return { handled: true };
   }
@@ -441,15 +452,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   ): Promise<{ ok: boolean; error?: string }> {
     const t = target as { channel?: string; messageTs?: string };
     const channel = t.channel ?? "";
-    const ts =
-      (typeof messageRef.id === "string" && /^\d+\.\d+$/.test(messageRef.id)
-        ? messageRef.id
-        : undefined) ||
-      (typeof (messageRef as { ts?: string }).ts === "string"
-        ? (messageRef as { ts: string }).ts
-        : undefined) ||
-      t.messageTs ||
-      "";
+    const ts = messageTsFromRef(messageRef, t.messageTs);
     if (!channel || !ts) {
       return { ok: false, error: "no_message_target" };
     }
@@ -473,15 +476,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   ): Promise<{ ok: boolean; error?: string }> {
     const t = target as { channel?: string; messageTs?: string };
     const channel = t.channel ?? "";
-    const ts =
-      (typeof messageRef.id === "string" && /^\d+\.\d+$/.test(messageRef.id)
-        ? messageRef.id
-        : undefined) ||
-      (typeof (messageRef as { ts?: string }).ts === "string"
-        ? (messageRef as { ts: string }).ts
-        : undefined) ||
-      t.messageTs ||
-      "";
+    const ts = messageTsFromRef(messageRef, t.messageTs);
     if (!channel || !ts) {
       return { ok: false, error: "no_message_target" };
     }

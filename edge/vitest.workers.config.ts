@@ -1,11 +1,11 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// Miniflare / workerd pool for research orchestrator integration tests.
+// Miniflare / workerd pool for research *task* integration tests.
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: "./wrangler.toml" },
+      wrangler: { configPath: "./wrangler.research.toml" },
     }),
   ],
   test: {

@@ -1,20 +1,14 @@
 /**
- * Orchestrator Worker — Hono router + Durable Object class exports.
- *
- * Gate 0 decisions (DECISIONS.md):
- * - OrchestratorDO keyed by workspace teamId (invariant #6)
- * - /research-only Slack scope; other commands stay on Railway
- * - Events API + slash commands, no Socket Mode
+ * Orchestrator Worker — research **task** runtime (PRODUCT.md).
+ * Public Slack ingress lives on the bot Worker. This Worker exposes
+ * authenticated `/research` + `/internal/*` only.
  */
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { OrchestratorDO } from "./OrchestratorDO";
 import { ResearcherDO } from "./ResearcherDO";
 import { VerifierDO } from "./VerifierDO";
-import { slackVerify } from "./slack-verify";
-import { handleSlackEvents } from "./slack-events";
-import { handleSlackCommands } from "./slack-commands";
-import type { AppEnv, CloudflareEnv } from "./env";
+import type { AppEnv } from "./env";
 
 export type { AppEnv, CloudflareEnv } from "./env";
 
@@ -38,13 +32,18 @@ function requireInternalAuth() {
 }
 
 app.get("/health", (c) =>
-  c.json({ ok: true, version: "2.0", env: c.env.ENVIRONMENT }),
+  c.json({
+    ok: true,
+    role: "research-task",
+    version: "2.0",
+    env: c.env.ENVIRONMENT,
+    slack: "demoted — use bot Worker",
+  }),
 );
 
 /**
- * Internal research kickoff (dev / migration tooling).
+ * Research kickoff (bot TaskRuntime / migration tooling).
  * Body: { teamId, threadKey, objective, eventId?, eventTs?, channelId? }
- * Per Gate 0: DO addressed by teamId, not threadKey.
  */
 app.post("/research", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
@@ -78,10 +77,6 @@ app.post("/research", requireInternalAuth(), async (c) => {
   });
 });
 
-/**
- * Egress proxy → workspace DO execution log append.
- * Body includes teamId so we can address the correct OrchestratorDO.
- */
 app.post("/internal/execution-logs", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
     teamId: string;
@@ -113,10 +108,6 @@ app.post("/internal/execution-logs", requireInternalAuth(), async (c) => {
   });
 });
 
-/**
- * Migration import: upsert a TaskRecord into the workspace OrchestratorDO.
- * Body: { teamId, task: TaskRecord }
- */
 app.post("/internal/import-task", requireInternalAuth(), async (c) => {
   const body = (await c.req.json()) as {
     teamId: string;
@@ -162,15 +153,17 @@ app.get("/internal/tasks/:taskId", requireInternalAuth(), async (c) => {
   return new Response(res.body, { status: res.status, headers: res.headers });
 });
 
-app.post("/slack/events", slackVerify(), async (c) => {
-  return handleSlackEvents(c);
-});
-app.post("/slack/commands", slackVerify(), async (c) => {
-  return handleSlackCommands(c);
-});
-
-/** Reserved for Block Kit; stubbed per Gate 0 — no HITL in /research flow. */
-app.post("/slack/interactions", slackVerify(), (c) => c.json({ ok: true }, 200));
+/** Slack moved to the bot Worker — refuse so misconfigured Request URLs fail loudly. */
+app.all("/slack/*", (c) =>
+  c.json(
+    {
+      error: "slack_demoted",
+      message:
+        "Slack Events/commands/interactions terminate on the bot Worker (edge/wrangler.toml). Research is POST /research via RESEARCH_TASKS.",
+    },
+    410,
+  ),
+);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 

@@ -1,57 +1,48 @@
-name = "opentag-orchestrator"
-main = "workers/orchestrator/src/index.ts"
-compatibility_date = "2026-04-01"
+# OpenTag edge — DEFAULT deploy: Claude Tag bot + StateStore spine.
+# See PRODUCT.md. Research task Workers use wrangler.research.toml.
+name = "opentag-edge"
+main = "src/worker.ts"
+compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
-# [limits] cpu_ms requires a paid Workers plan — omitted for Free-plan deploy.
+# Bot conversation state (HITL, turn locks, transcripts, dedup).
+[[durable_objects.bindings]]
+name = "BOT_STATE"
+class_name = "ConversationStateDO"
 
-[vars]
-ENVIRONMENT = "development"
-ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"]
-EGRESS_PROXY_URL = "https://opentag-egress-proxy.williamlopezc.workers.dev"
+# Per-workspace channel prompts + access bundles.
+[[durable_objects.bindings]]
+name = "WORKSPACE_CONFIG"
+class_name = "WorkspaceConfigDO"
 
-# Sandbox SDK container binding + [[containers]] block (Dockerfile path, image
-# name, instance limits) are owned by Track C — added when workers/sandbox/
-# is scaffolded, since the exact binding shape depends on the installed
-# @cloudflare/sandbox version's template output.
-
-# Durable Objects — OrchestratorDO is per-workspace (idFromName(teamId)),
-# ResearcherDO/VerifierDO are per-task (idFromName(taskId)). See DECISIONS.md.
-[durable_objects]
-bindings = [
-  { name = "ORCHESTRATOR", class_name = "OrchestratorDO" },
-  { name = "RESEARCHER", class_name = "ResearcherDO" },
-  { name = "VERIFIER", class_name = "VerifierDO" },
-]
+# Longer-term knowledge base (not research verified_facts).
+[[durable_objects.bindings]]
+name = "KNOWLEDGE"
+class_name = "KnowledgeDO"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["OrchestratorDO", "ResearcherDO", "VerifierDO"]
+new_sqlite_classes = ["ConversationStateDO"]
 
-[[kv_namespaces]]
-binding = "AGENT_STATE"
-id = "dfb2924dcc474183a735c22040b97111"
+[[migrations]]
+tag = "v2-claude-tag"
+new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"
 
-# wasm-dispatch and egress-proxy are separate deployable Workers (own
-# wrangler.toml under workers/wasm-dispatch and workers/egress-proxy).
-# syumai/workers compiles a whole Go http.Handler to WASM and IS the worker's
-# fetch handler, so it cannot be imported as a plain wasm_modules binding into
-# this (JS) worker — it is called via a service binding instead.
+# Research task Worker (wrangler.research.toml → name = "opentag-orchestrator").
 [[services]]
-binding = "WASM_DISPATCH"
-service = "opentag-wasm-dispatch"
+binding = "RESEARCH_TASKS"
+service = "opentag-orchestrator"
 
-# Secrets (set via `wrangler secret put <NAME>`, not declared with values here):
-# ANTHROPIC_API_KEY, OPENAI_API_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET,
-# GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_INSTALLATION_ID, AGENT_TOKEN
-# INTERNAL_SECRET — bearer token for /research and /internal/* routes
-# SLACK_ALLOWED_CHANNEL_IDS — comma-separated channel allowlist (optional)
-# EGRESS_PROXY_URL (var, not secret) — set below per environment.
-# LiteLLM: LITELLM_BASE_URL (var), LITELLM_API_KEY (secret)
+[vars]
+ENVIRONMENT = "development"
+AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"
 
-[env.production]
-vars = { ENVIRONMENT = "production", ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"] }
+# Secrets (wrangler secret put):
+# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_AUTH_HEADER
+# ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
+# INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
+# LITELLM_API_KEY / OPENAI_API_KEY as needed by agent runtime

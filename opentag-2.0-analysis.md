@@ -1,3 +1,6 @@
+> **Historical audit.** Product: [`PRODUCT.md`](./PRODUCT.md). Do not treat
+> “research migration” as the Claude Tag product spine.
+
 # OpenTag 2.0 Architecture — Technical Audit
 
 **Date:** 2026-07-11  

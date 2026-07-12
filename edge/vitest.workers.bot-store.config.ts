@@ -2,9 +2,9 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 /**
- * Runs bot-store tests INSIDE workerd so ConversationStateDO, ctx.storage.sql,
- * transactionSync, and the RPC boundary are exercised. Uses wrangler.bot-store.toml
- * (not the research orchestrator wrangler.toml).
+ * Primary CF suite: StateStore inside workerd (ConversationStateDO + SQL).
+ * Uses wrangler.bot-store.toml (thin alias of the bot spine BOT_STATE binding).
+ * Default product deploy is wrangler.toml — same DO class.
  */
 export default defineConfig({
   plugins: [

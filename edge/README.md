@@ -1,78 +1,40 @@
-# OpenTag Edge
+# OpenTag Edge — Claude Tag on Cloudflare
 
-Two Cloudflare tracks share this directory:
+**Product:** OpenTag as an open Claude-in-Slack alternative on Cloudflare.
+Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
 
-| Track | Path | Wrangler config | Purpose |
-| --- | --- | --- | --- |
-| **Research orchestrator** | `workers/` | `wrangler.toml` | OpenTag 2.0 `/research` pipeline (Orchestrator / Researcher / Verifier DOs) |
-| **Bot StateStore** | `src/store/` | `wrangler.bot-store.toml` | `@opentag/bot-store-durable-object` — Durable Object + SQLite `StateStore` for `@copilotkit/bot` |
+| Config | Role |
+| --- | --- |
+| **`wrangler.toml`** | **Default** — bot Worker + StateStore + config + knowledge + `RESEARCH_TASKS` |
+| `wrangler.research.toml` | Research **task** Worker (internal `/research` only — no public Slack) |
+| `wrangler.bot-store.toml` | StateStore e2e alias |
+| `workers/egress-proxy/` | Shared egress for containers |
 
 ```bash
 cd edge
 npm install
-npm test                 # node unit tests (both tracks)
-npm run test:workers     # research orchestrator workerd suite
-npm run test:e2e         # bot-store workerd suite
-npm run dev              # research orchestrator (wrangler.toml)
-npm run dev:bot-store    # bot StateStore worker
+npm test
+npm run test:e2e         # StateStore workerd (primary)
+npm run test:workers     # research task suite (secondary)
+npm run dev              # bot spine
+npm run dev:research     # research task Worker
 ```
 
----
+## Spine
 
-## Research orchestrator
+1. Slack → `src/worker.ts` (Events / commands / interactions)
+2. StateStore `BOT_STATE` — HITL, locks, transcripts, dedup
+3. `WORKSPACE_CONFIG` — prompts + access bundles
+4. `KNOWLEDGE` — longer-term memory
+5. `RESEARCH_TASKS` → orchestrator `POST /research`
 
-Thin Durable Object shells over shared `lib/research/` core.
-
-### Endpoints
-
-- `GET /health` — health check
-- `POST /research` — `{ threadKey, objective }` → Orchestrator DO
-
-### Shared core
-
-Actor logic lives in `../lib/research/`:
-
-- `orchestrator.ts`, `researcher.ts`, `verifier.ts`
-- `adapters/storage-do.ts` — DO SQLite adapter
-
-Compare with Railway: [../docs/evaluation.md](../docs/evaluation.md).
-
----
-
-## `@opentag/bot-store-durable-object`
-
-A **Durable Object + SQLite** `StateStore` for [`@copilotkit/bot`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot) — drop-in replacement for in-memory / Redis stores.
-
-```ts
-import { createBot } from "@copilotkit/bot";
-import { createDurableObjectStore } from "@opentag/bot-store-durable-object";
-
-const bot = createBot({
-  adapters: [/* … */],
-  agent: (threadId) => makeAgent(threadId),
-  store: { adapter: createDurableObjectStore(env.BOT_STATE) },
-});
-```
-
-### Layout
+## Layout
 
 ```
 edge/
-├── wrangler.toml                 # research orchestrator (default)
-├── wrangler.bot-store.toml       # bot StateStore worker
-├── workers/                      # orchestrator, egress-proxy, wasm-dispatch, …
-├── src/store/                    # SqlStateEngine + ConversationStateDO
-├── test/                         # bot-store conformance + workerd e2e
-└── tests/integration/            # research orchestrator workerd tests
+├── wrangler.toml
+├── wrangler.research.toml
+├── src/                  # bot spine
+├── workers/orchestrator/ # research tasks (Slack demoted)
+└── workers/egress-proxy/
 ```
-
-### Verify (bot-store)
-
-```bash
-npm run test:e2e         # workerd + real ConversationStateDO
-npm run test:e2e:full    # typecheck + suites + createBot + live wrangler
-npm run check-types
-npm run dev:bot-store    # /health and /debug/store
-```
-
-See `AGENTS.md` at the repo root for Cursor Cloud notes (including the wrangler/`getByName` caveat — use `wrangler.bot-store.toml`).

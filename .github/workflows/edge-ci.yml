@@ -1,4 +1,4 @@
-# OpenTag edge CI — typecheck, unit tests, optional TinyGo WASM build.
+# OpenTag edge CI — bot spine first, research/WASM secondary.
 # Does NOT deploy, migrate DBs, push Slack messages, or create PRs.
 name: edge-ci
 
@@ -7,15 +7,20 @@ on:
     paths:
       - "edge/**"
       - "lib/research/**"
+      - "PRODUCT.md"
+      - "DECISIONS.md"
       - "scripts/migrate-pg-to-do.ts"
   pull_request:
     paths:
       - "edge/**"
       - "lib/research/**"
+      - "PRODUCT.md"
+      - "DECISIONS.md"
       - "scripts/migrate-pg-to-do.ts"
 
 jobs:
-  test:
+  bot-spine:
+    name: bot-spine (typecheck + unit + StateStore e2e)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,11 +35,28 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:e2e
+
+  research-workers:
+    name: research-task workers (secondary)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+      - run: npm ci
+      - run: npm run test:workers
 
   wasm:
     runs-on: ubuntu-latest
-    # TinyGo is optional until the toolchain is standard in this repo's CI image.
-    # Job fails the build size check only when a wasm artifact is produced.
+    # TinyGo optional — not on the Claude Tag critical path.
     continue-on-error: true
     defaults:
       run:

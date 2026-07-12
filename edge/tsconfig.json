@@ -16,7 +16,7 @@
     "allowJs": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["workers/**/*.ts", "src/**/*.ts", "test/**/*.ts", "tests/**/*.ts"],
+  "include": ["workers/**/*.ts", "src/**/*.ts", "test/**/*.ts", "tests/**/*.ts", "typecheck-stubs/**/*.d.ts"],
   "exclude": [
     "node_modules",
     "wasm-core",

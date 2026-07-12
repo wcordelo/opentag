@@ -93,6 +93,13 @@ OpenTag is deliberately small and hackable:
 The full architecture, the file-by-file map, and every integration live in
 **[setup.md](./setup.md)**.
 
+## Cloudflare (Claude Tag host)
+
+OpenTag on Cloudflare is the self-hosted Claude Tag path: Events API bot Worker,
+Durable Object StateStore, channel config / access bundles, knowledge memory, and
+long-running tasks (including research). See **[PRODUCT.md](./PRODUCT.md)** and
+**[edge/README.md](./edge/README.md)**. Default deploy: `cd edge && npm run dev`.
+
 ## Don't want to host it yourself?
 
 Self-hosting means you run and scale the runtime, persistence, and inspection tooling yourself.

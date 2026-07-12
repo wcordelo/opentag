@@ -1,28 +1,43 @@
-import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace, R2Bucket } from "@cloudflare/workers-types";
 import type { ConversationStateDO } from "./store/conversation-state-do.js";
+import type { WorkspaceConfigDO } from "./config/workspace-config-do.js";
+import type { KnowledgeDO } from "./memory/knowledge-do.js";
 
 /**
- * Worker bindings. `BOT_STATE` is the Durable Object namespace that fronts the
- * SQLite-backed state store (declared in `wrangler.toml`). Secrets mirror the
- * Node deployment's `.env` so the same bot code runs on the edge.
+ * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
  */
 export interface Env {
-  /** Durable Object namespace bound to {@link ConversationStateDO}. */
   BOT_STATE: DurableObjectNamespace<ConversationStateDO>;
+  WORKSPACE_CONFIG: DurableObjectNamespace<WorkspaceConfigDO>;
+  KNOWLEDGE: DurableObjectNamespace<KnowledgeDO>;
+  BLOBS?: R2Bucket;
 
-  // ── Agent backend (see runtime.ts) ──
+  /** Service binding to research task Worker (opentag-orchestrator). */
+  RESEARCH_TASKS?: Fetcher;
+
+  /** Bearer for research Worker /research (forwarded by TaskRuntime). */
+  INTERNAL_SECRET?: string;
+
+  /** Bearer for /admin/* and /debug/* and /tasks/start. */
+  ADMIN_SECRET?: string;
+
   AGENT_URL: string;
   AGENT_AUTH_HEADER?: string;
+  ENVIRONMENT?: string;
+  DEFAULT_ACCESS_BUNDLE_ID?: string;
 
-  // ── Platform secrets (set whichever platform(s) you run) ──
   SLACK_BOT_TOKEN?: string;
-  SLACK_APP_TOKEN?: string;
   SLACK_SIGNING_SECRET?: string;
-  DISCORD_BOT_TOKEN?: string;
-  DISCORD_APP_ID?: string;
-  TELEGRAM_BOT_TOKEN?: string;
-  WHATSAPP_ACCESS_TOKEN?: string;
-  WHATSAPP_PHONE_NUMBER_ID?: string;
-  WHATSAPP_APP_SECRET?: string;
-  WHATSAPP_VERIFY_TOKEN?: string;
+  /** @deprecated Socket Mode — unused on CF. */
+  SLACK_APP_TOKEN?: string;
 }
+
+export type BotVariables = {
+  rawBody: string;
+  slackPayload: unknown;
+};
+
+export type AppEnv = {
+  Bindings: Env;
+  Variables: BotVariables;
+};

@@ -1,14 +1,26 @@
 # OpenTag 2.0 — Goal Prompt for `/goal` skill
 
-Paste this as the goal when you run `/goal` in Claude Code inside the opentag repo.
+> **Superseded for product direction.** Use [`PRODUCT.md`](PRODUCT.md) /
+> [`DECISIONS.md`](DECISIONS.md) “Product supersession”. This file remains the
+> *research task migration* goal (Track A/B/C). Claude Tag on CF = bot +
+> StateStore spine; research is one TaskRuntime flavor.
+
+Paste this as the goal when you run `/goal` in Claude Code inside the opentag repo
+**for the research-task migration track only**.
 
 ---
 
 ## Goal
 
-Migrate OpenTag from Railway + Postgres + Node.js to a fully Cloudflare-native multi-agent pipeline: Hono + Durable Objects (SQLite) + CF Containers via @cloudflare/sandbox + TinyGo WASM via syumai/workers. The `lib/research/` actor core (Orchestrator, Researcher, Verifier, DurableObjectStorageAdapter) is reused UNCHANGED. All Slack integration migrates from Socket Mode to Events API + chat.postMessage.
+Migrate OpenTag **research task workers** from Railway + Postgres + Node.js to a
+Cloudflare-native pipeline: Hono + Durable Objects (SQLite) + CF Containers via
+@cloudflare/sandbox + optional TinyGo WASM. The `lib/research/` actor core
+(Orchestrator, Researcher, Verifier, DurableObjectStorageAdapter) is reused
+UNCHANGED. Slack for research uses Events API + chat.postMessage (invoked from
+the bot TaskRuntime — not as the sole product surface).
 
-**Acceptance:** full test suite passes against production environment; real end-to-end research request completes in a production Slack workspace.
+**Acceptance (research track):** research task suite passes; a `/research` (or
+bot-enqueued research) request completes and posts back to the Slack thread.
 
 ---
 

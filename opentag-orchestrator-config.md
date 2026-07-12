@@ -1,4 +1,5 @@
 === ORCHESTRATOR CONFIG START ===
+# HISTORICAL — see PRODUCT.md for Claude Tag on CF. Research is a task flavor.
 CONFIG VERSION: 1.1
 PROJECT: OpenTag
 OBJECTIVE: Migrate OpenTag from Railway + Postgres + Node.js to a fully Cloudflare-native multi-agent pipeline (Hono + Durable Objects + Containers via Sandbox SDK + TinyGo WASM), with lib/research/ actor core reused unchanged and all Slack integration migrated from Socket Mode to Events API.

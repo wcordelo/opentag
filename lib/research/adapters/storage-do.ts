@@ -1,8 +1,9 @@
 /**
- * Durable Object SQLite storage adapter — Cloudflare comparison track.
+ * Durable Object SQLite storage adapter — Cloudflare research task plane.
  *
  * Thin wrapper around ctx.storage.sql implementing StorageAdapter.
- * Used by edge/worker DO classes; shares lib/research core logic.
+ * Used by Cloudflare research DO classes (edge/workers/orchestrator);
+ * shares lib/research core logic.
  */
 import type { StorageAdapter } from "./storage.js";
 import type {

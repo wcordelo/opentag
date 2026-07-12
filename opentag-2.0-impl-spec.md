@@ -1,3 +1,6 @@
+> **Historical planning doc.** Product: [`PRODUCT.md`](./PRODUCT.md).
+> `edge/worker/` stub removed; research = `edge/workers/orchestrator/` + `wrangler.research.toml`.
+
 # OpenTag 2.0 — Cloudflare Implementation Spec
 
 **Status:** Draft v1.0 · July 2026  

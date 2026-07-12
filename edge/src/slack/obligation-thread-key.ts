@@ -25,10 +25,21 @@ export function firstSlackTs(
   return candidates.find((v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)));
 }
 
-/** Obligation + SessionEventDO partition id for a Slack channel/thread. */
+/**
+ * Obligation + SessionEventDO partition id for a Slack channel/thread.
+ *
+ * DMs key on the channel: their conversationKey scope is the literal "dm"
+ * (the whole DM is one conversation), so keying per-message-ts would
+ * fragment sessions across turns AND make an unthreaded DM "stop" derive a
+ * different key than the turn it targets. Channel turns key on the thread
+ * root ts.
+ */
 export function slackObligationThreadKey(
   channelId: string,
   statusThreadTs?: string,
 ): string {
-  return `slack:${channelId}:${statusThreadTs ?? channelId}`;
+  const scope = channelId.startsWith("D")
+    ? channelId
+    : (statusThreadTs ?? channelId);
+  return `slack:${channelId}:${scope}`;
 }

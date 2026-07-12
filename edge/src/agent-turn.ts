@@ -24,6 +24,10 @@ import type { Env } from "./env.js";
 import type { AgentContentPart } from "./slack/download-files.js";
 import { createSlackWebClient } from "./slack/web-api.js";
 import { getInboundMessage } from "./slack/inbound-target.js";
+import {
+  firstSlackTs,
+  slackObligationThreadKey,
+} from "./slack/obligation-thread-key.js";
 import { extractMessageOverrides } from "./slack/overrides.js";
 import {
   resolveThreadOverrides,
@@ -264,10 +268,10 @@ function deriveHarnessThreadKey(
 ): string {
   const scope = conversationKey.split("::")[1];
   const inbound = getInboundMessage(conversationKey, thread);
-  const threadTs = [scope, inbound?.threadTs, inbound?.ts].find(
-    (v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)),
-  );
-  return `slack:${channelId}:${threadTs ?? channelId}`;
+  const threadTs = firstSlackTs(scope, inbound?.threadTs, inbound?.ts);
+  // Same key the obligation writer / stop path derive — sessions, obligations
+  // and stops must all land on the same SessionEventDO partition.
+  return slackObligationThreadKey(channelId, threadTs);
 }
 
 /** Text parts joined; non-text parts (images, etc.) noted rather than dropped silently. */

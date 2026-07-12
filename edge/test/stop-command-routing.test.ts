@@ -328,4 +328,26 @@ describe("handleStopCommand", () => {
     expect(botState.obligationClearCalls).toHaveLength(0);
     expect(fetchCalls).toHaveLength(0);
   });
+
+  it("DM stop (even unthreaded) keys on the channel — same partition the turn wrote", async () => {
+    // DMs are one conversation (conversationKey scope is the literal "dm"),
+    // so slackObligationThreadKey keys them on the channel. An unthreaded
+    // "stop" in a DM must interrupt/clear the exact key the obligation
+    // writer derived for the active turn.
+    const botState = makeFakeBotState();
+    const sessionEvents = makeFakeSessionEvents();
+    await handleStopCommand(
+      {
+        BOT_STATE: botState.namespace,
+        SESSION_EVENTS: sessionEvents.namespace,
+        SLACK_BOT_TOKEN: "xoxb-test",
+      } as unknown as Env,
+      { type: "message", channel: "D9", user: "U1", text: "stop", ts: "44.4" },
+      "EvDm1",
+    );
+    expect(sessionEvents.interruptCalls).toEqual(["slack:D9:D9"]);
+    expect(botState.obligationClearCalls).toEqual([
+      { threadKey: "slack:D9:D9" },
+    ]);
+  });
 });

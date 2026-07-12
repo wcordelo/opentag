@@ -1,0 +1,34 @@
+# OpenTag edge CI — Claude Tag bot spine only.
+# Does NOT deploy, migrate DBs, push Slack messages, or create PRs.
+name: edge-ci
+
+on:
+  push:
+    paths:
+      - "edge/**"
+      - "PRODUCT.md"
+      - ".github/workflows/edge-ci.yml"
+  pull_request:
+    paths:
+      - "edge/**"
+      - "PRODUCT.md"
+      - ".github/workflows/edge-ci.yml"
+
+jobs:
+  bot-spine:
+    name: bot-spine (typecheck + unit + StateStore e2e)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:e2e

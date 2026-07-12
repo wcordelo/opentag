@@ -32,7 +32,7 @@ else
 fi
 
 step "3/5  Durable Object suite (workerd)"
-if npx vitest run --config vitest.workers.config.ts 2>&1 | tee /tmp/e2e-workerd.log; then
+if npx vitest run --config vitest.workers.bot-store.config.ts 2>&1 | tee /tmp/e2e-workerd.log; then
   ok "vitest (workerd)"
 else
   bad "vitest (workerd) — see /tmp/e2e-workerd.log"
@@ -154,7 +154,7 @@ WRANGLER_LOG=/tmp/e2e-wrangler.log
 rm -f "$WRANGLER_LOG"
 
 # Start wrangler in background; kill on exit
-npx wrangler dev --port "$PORT" --local >"$WRANGLER_LOG" 2>&1 &
+npx wrangler dev --config wrangler.bot-store.toml --port "$PORT" --local >"$WRANGLER_LOG" 2>&1 &
 WR_PID=$!
 cleanup_wrangler() { kill "$WR_PID" 2>/dev/null || true; wait "$WR_PID" 2>/dev/null || true; }
 trap cleanup_wrangler EXIT

@@ -1,0 +1,16 @@
+# Cloudflare bot Worker secrets (wrangler uses this file for `npm run dev`)
+# Copy: cp .dev.vars.example .dev.vars
+
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_SIGNING_SECRET=...
+AGENT_URL=http://localhost:8200/api/copilotkit/agent/triage/run
+# AGENT_AUTH_HEADER=Bearer ...
+
+# Protect /admin/* /debug/* /tasks/start
+ADMIN_SECRET=dev-admin-secret
+
+# Must match research Worker INTERNAL_SECRET when using RESEARCH_TASKS
+INTERNAL_SECRET=dev-internal-secret
+
+# Production note: set AGENT_URL to a publicly reachable runtime host.
+# Local wrangler default is localhost:8200 — fine for tunnel+local runtime only.

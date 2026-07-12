@@ -1,9 +1,24 @@
-# UNCOMMITTED demo helper — local Redis for the durable-action restart test.
-#   docker compose up -d        # start Redis on localhost:6379
-#   docker compose down         # stop it
+# UNCOMMITTED demo helper — local Redis + Postgres for research actors.
+#   docker compose up -d
+#   docker compose down
 services:
   redis:
     image: redis:7-alpine
     container_name: slack-demo-redis
     ports:
       - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: opentag-postgres
+    environment:
+      POSTGRES_USER: opentag
+      POSTGRES_PASSWORD: opentag
+      POSTGRES_DB: opentag
+    ports:
+      - "5432:5432"
+    volumes:
+      - opentag_pg_data:/var/lib/postgresql/data
+
+volumes:
+  opentag_pg_data:

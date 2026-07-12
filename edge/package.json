@@ -1,29 +1,43 @@
 {
-  "name": "@opentag/bot-store-durable-object",
+  "name": "opentag-edge",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Durable Object + SQLite backed StateStore for @copilotkit/bot — the edge-native persistence layer for OpenTag.",
+  "description": "OpenTag edge: Claude Tag bot spine on Cloudflare (StateStore + config + knowledge) with research as a task Worker.",
   "license": "MIT",
   "main": "./src/store/index.ts",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:bot-store": "wrangler dev --config wrangler.bot-store.toml",
+    "dev:research": "wrangler dev --config wrangler.research.toml",
     "deploy": "wrangler deploy",
+    "deploy:bot": "wrangler deploy --config wrangler.bot.toml",
+    "deploy:bot-store": "wrangler deploy --config wrangler.bot-store.toml",
+    "deploy:research": "npm run build:wasm && wrangler deploy --config wrangler.research.toml",
+    "build:wasm": "cd wasm-core && tinygo build -o ../workers/wasm-dispatch/src/main.wasm -target wasm -no-debug . && wasm-opt -O3 ../workers/wasm-dispatch/src/main.wasm -o ../workers/wasm-dispatch/src/main.opt.wasm",
+    "typecheck": "tsc --noEmit",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "vitest run --config vitest.workers.config.ts",
-    "test:all": "vitest run && vitest run --config vitest.workers.config.ts",
-    "test:e2e:full": "bash scripts/e2e-full.sh"
+    "test:e2e": "vitest run --config vitest.workers.bot-store.config.ts",
+    "test:e2e:full": "bash scripts/e2e-full.sh",
+    "migrate:dry": "echo 'Migration is an external action — pass explicit adapters via scripts/migrate-pg-to-do.ts after sign-off'"
   },
   "dependencies": {
-    "hono": "^4.6.0"
+    "@ag-ui/client": "0.0.57",
+    "@cloudflare/sandbox": "^0.1.0",
+    "@copilotkit/channels": "file:./vendor/copilotkit-channels-0.1.1.tgz",
+    "@copilotkit/channels-slack": "0.1.2",
+    "@copilotkit/channels-ui": "0.1.1",
+    "hono": "^4.6.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.17.0",
-    "@cloudflare/workers-types": "^4.20240909.0",
-    "@types/node": "^22.10.0",
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@types/node": "^22.20.1",
+    "binaryen": "^122.0.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.3",
-    "wrangler": "^3.78.0"
+    "wrangler": "^4.0.0"
   }
 }

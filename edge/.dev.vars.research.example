@@ -1,0 +1,12 @@
+# Research task Worker (wrangler.research.toml) — copy to .dev.vars.research
+# or symlink: ln -sf .dev.vars.research .dev.vars when running `npm run dev:research`
+#
+# Wrangler loads `.dev.vars` from the config directory (edge/).
+# For dual-dev, use the same INTERNAL_SECRET + SLACK_BOT_TOKEN as the bot Worker.
+
+SLACK_BOT_TOKEN=xoxb-...
+INTERNAL_SECRET=dev-internal-secret
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+# PARALLEL_API_KEY=
+# SLACK_ALLOWED_CHANNEL_IDS=C123,C456

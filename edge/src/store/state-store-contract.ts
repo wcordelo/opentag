@@ -1,12 +1,11 @@
 /**
- * The `StateStore` contract, mirrored verbatim from `@copilotkit/bot`
+ * The `StateStore` contract, mirrored from `@copilotkit/channels`
  * (`src/state/state-store.ts`).
  *
- * We keep a local copy so this Worker package type-checks standalone before the
- * `@copilotkit/bot` packages publish to npm. Because TypeScript is structural,
- * a {@link DurableObjectStateStore} that satisfies *this* interface is also
- * assignable to `createBot({ store: { adapter } })`'s `StateStore` — no cast
- * needed once the real package is installed. Keep this in sync with upstream.
+ * We keep a local copy so this Worker package type-checks standalone. Because
+ * TypeScript is structural, a {@link DurableObjectStateStore} that satisfies
+ * *this* interface is also assignable to
+ * `createBot({ store: { adapter } })`'s `StateStore`. Keep in sync with upstream.
  *
  * JSON-serialization contract: all values round-trip through `JSON.stringify` /
  * `JSON.parse` on remote backends, so `T` must be JSON-serializable.

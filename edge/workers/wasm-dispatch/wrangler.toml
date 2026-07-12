@@ -1,0 +1,9 @@
+name = "opentag-wasm-dispatch"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Track D swaps `main` to point at the syumai/workers-generated entry and
+# adds the [[wasm_modules]] binding once `npm run build:wasm` has produced
+# src/main.opt.wasm. Left out here so this worker boots on the TS stub before
+# that build artifact exists.

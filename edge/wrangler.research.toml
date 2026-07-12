@@ -1,0 +1,57 @@
+name = "opentag-orchestrator"
+main = "workers/orchestrator/src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# [limits] cpu_ms requires a paid Workers plan — omitted for Free-plan deploy.
+
+[vars]
+ENVIRONMENT = "development"
+ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"]
+EGRESS_PROXY_URL = "https://opentag-egress-proxy.williamlopezc.workers.dev"
+
+# Sandbox SDK container binding + [[containers]] block (Dockerfile path, image
+# name, instance limits) are owned by Track C — added when workers/sandbox/
+# is scaffolded, since the exact binding shape depends on the installed
+# @cloudflare/sandbox version's template output.
+
+# Durable Objects — OrchestratorDO is per-workspace (idFromName(teamId)),
+# ResearcherDO/VerifierDO are per-task (idFromName(taskId)). See DECISIONS.md.
+[durable_objects]
+bindings = [
+  { name = "ORCHESTRATOR", class_name = "OrchestratorDO" },
+  { name = "RESEARCHER", class_name = "ResearcherDO" },
+  { name = "VERIFIER", class_name = "VerifierDO" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OrchestratorDO", "ResearcherDO", "VerifierDO"]
+
+[[kv_namespaces]]
+binding = "AGENT_STATE"
+id = "dfb2924dcc474183a735c22040b97111"
+
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "opentag-research-blobs"
+
+# wasm-dispatch and egress-proxy are separate deployable Workers (own
+# wrangler.toml under workers/wasm-dispatch and workers/egress-proxy).
+# syumai/workers compiles a whole Go http.Handler to WASM and IS the worker's
+# fetch handler, so it cannot be imported as a plain wasm_modules binding into
+# this (JS) worker — it is called via a service binding instead.
+[[services]]
+binding = "WASM_DISPATCH"
+service = "opentag-wasm-dispatch"
+
+# Secrets (set via `wrangler secret put <NAME>`, not declared with values here):
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET,
+# GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_INSTALLATION_ID, AGENT_TOKEN
+# INTERNAL_SECRET — bearer token for /research and /internal/* routes
+# SLACK_ALLOWED_CHANNEL_IDS — comma-separated channel allowlist (optional)
+# EGRESS_PROXY_URL (var, not secret) — set below per environment.
+# LiteLLM: LITELLM_BASE_URL (var), LITELLM_API_KEY (secret)
+
+[env.production]
+vars = { ENVIRONMENT = "production", ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"] }

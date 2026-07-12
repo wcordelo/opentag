@@ -5,10 +5,8 @@ renders rich results right in the conversation. Think of it as having Claude in 
 workspace, except **open-source and self-hosted**: you own the runtime, bring your own
 model, and wire it to your own tools. No per-seat pricing, no lock-in.
 
-It's built on **[`@copilotkit/bot`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot)** —
-CopilotKit's open SDK for chat-platform agents (Slack first; the same code also runs on
-Discord, Telegram, and WhatsApp). Clone it, point it at your model and tools, and you own
-the whole stack.
+It's built on **[`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)** —
+CopilotKit's open SDK for chat-platform agents — hosted on **Cloudflare Workers** with a Node AG-UI runtime for the LLM.
 
 ## See it in action
 
@@ -18,80 +16,67 @@ https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135
 
 > **Two ways to run it:** **host it on your own** with the open-source SDK below — or skip the ops and **[sign up for the managed service →](https://go.copilotkit.ai/opentag-managed-gh)** coming soon from CopilotKit. The managed service will be part of our Enterprise Intelligence platform. You'll be able to use our cloud-hosting or enterprises can host it on their own infra.
 
-## Quick start (self-hosted)
+## Quick start (self-hosted — Claude Tag on Cloudflare)
 
-OpenTag ships inside the [CopilotKit monorepo](https://github.com/CopilotKit/CopilotKit) as a
-first-class example (`examples/slack`). That's the dependable way to run it today while the
-bot SDK packages finish publishing to npm. (A standalone `npm install` from this repo lights
-up the moment they land — see [setup.md](./setup.md).)
-
-You'll run two processes: the **agent** (the LLM backend) and the **bot** (the Slack
-connection) — and set three secrets.
-
-### The packages
-
-OpenTag is a thin layer on top of a handful of CopilotKit packages. The `pnpm install` in step 3 installs all of them for you — this is what each one does, so you know what you're running and which ones are optional.
-
-**Required** — every OpenTag install needs these four:
-
-| Package | Role |
-| --- | --- |
-| [`@copilotkit/bot`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot) | The platform-agnostic bot engine — threading, tool calls, the human-in-the-loop gate. |
-| [`@copilotkit/runtime`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/runtime) | The AG-UI agent backend that runs your LLM and tools. |
-| [`@copilotkit/bot-ui`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-ui) | Cross-platform JSX for rich messages (Block Kit on Slack, Components V2 on Discord, HTML on Telegram). |
-| [`@copilotkit/bot-slack`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-slack) | The Slack adapter — or swap it for the platform you're targeting (below). |
-
-**Optional** — add only what you use:
-
-| Package | When you need it |
-| --- | --- |
-| [`@copilotkit/bot-discord`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-discord) · [`-telegram`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-telegram) · [`-whatsapp`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-whatsapp) | Running on a platform other than Slack — one adapter per platform. |
-| [`@copilotkit/bot-store-redis`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/bot-store-redis) | Durable thread persistence across restarts (defaults to in-memory without it). |
+You'll run two processes: the **agent** (Node AG-UI) and the **bot Worker** (Slack Events API).
 
 **1. Create a Slack app.** At [api.slack.com/apps](https://api.slack.com/apps?new_app=1) →
 *From a manifest* → paste [`slack-app-manifest.yaml`](./slack-app-manifest.yaml). Install it,
-then grab the **Bot User OAuth Token** (`xoxb-…`) and an **App-Level Token** (`xapp-…`, with the
-`connections:write` scope). Step-by-step in [setup.md](./setup.md#1-create-a-slack-app).
+then grab the **Bot User OAuth Token** (`xoxb-…`) and **Signing Secret**. Point Events /
+Interactivity / slash command Request URLs at your Worker (`…/slack/events`, `…/commands`,
+`…/interactions`). See [PRODUCT.md](./PRODUCT.md) and [edge/README.md](./edge/README.md).
 
-**2. Set three secrets** in `.env` (`cp .env.example .env`):
-
-```bash
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-OPENAI_API_KEY=sk-...      # or ANTHROPIC_API_KEY — bring your own model
-```
-
-**3. Run it** from the CopilotKit monorepo root:
+**2. Build sibling CopilotKit channels packages** (edge uses `file:` deps):
 
 ```bash
+cd ../CopilotKit   # sibling checkout
 pnpm install
-pnpm --filter slack-example runtime   # the agent backend, on :8200
-pnpm --filter slack-example dev        # the bot
+pnpm --filter @copilotkit/channels-ui --filter @copilotkit/channels --filter @copilotkit/channels-slack build
 ```
 
-**4. Talk to it.** @mention the bot in any channel thread:
+**3. Secrets** — `cp .env.example .env` for the runtime; `edge/.dev.vars` for the Worker:
 
-> @OpenTag summarize this thread and file it as a bug
+```bash
+# runtime (.env)
+OPENAI_API_KEY=sk-...
+AGENT_URL=http://localhost:8200/api/copilotkit/agent/triage/run
 
-That's the whole loop. To wire up Linear, Notion, inline charts, Redis persistence, or to run
-on Discord / Telegram / WhatsApp, see **[setup.md](./setup.md)**.  
+# edge/.dev.vars
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_SIGNING_SECRET=...
+AGENT_URL=http://localhost:8200/api/copilotkit/agent/triage/run
+```
 
-We won't lie to you, though. Setting up hosting for chat agents is not easy. To skip all of that heartache, go [join the waitlist](https://go.copilotkit.ai/opentag-managed-gh) for the CopilotKit managed service as part of our Intelligence platform, both cloud-hosted or self-hosted.
+**4. Run it:**
+
+```bash
+pnpm runtime                 # agent backend :8200
+cd edge && npm install && npm run dev   # Slack bot Worker
+```
+
+**5. Talk to it.** @mention the bot in a channel thread.
+
+Full architecture: **[PRODUCT.md](./PRODUCT.md)** · **[edge/README.md](./edge/README.md)** · **[setup.md](./setup.md)**.
 
 ## Make it your own
 
 OpenTag is deliberately small and hackable:
 
-- **Change what it does.** The agent's behavior is steered by a single system prompt in
+- **Change what it does.** The agent's behavior is steered by a system prompt in
   [`runtime.ts`](./runtime.ts) — rewrite it and you have a different agent.
-- **Copy `app/` to start your own bot.** It's the platform-agnostic bot (tools, components, the
-  human-in-the-loop gate). `runtime.ts` is the agent backend: one CopilotKit `BuiltInAgent` (an
-  LLM + optional MCP tools — no Python, no LangGraph), served over AG-UI.
-- **One platform, or all of them.** `createBot` takes an array of adapters; set the secrets for
-  whichever platform(s) you want and the bot starts an adapter for each.
+- **Edge bot surface.** Tools/commands for Slack live under [`edge/src/`](./edge/src/);
+  the Worker owns Events API ingress via `CloudflareSlackAdapter` + `createBot`.
+- **Bring your own model + MCP.** Linear/Notion attach when credentials are present.
 
-The full architecture, the file-by-file map, and every integration live in
-**[setup.md](./setup.md)**.
+The Cloudflare product path is **[PRODUCT.md](./PRODUCT.md)**; deeper maps in
+**[setup.md](./setup.md)** and **[edge/README.md](./edge/README.md)**.
+
+## Cloudflare (Claude Tag host)
+
+OpenTag on Cloudflare is the self-hosted Claude Tag path: Events API bot Worker,
+Durable Object StateStore, channel config / access bundles, knowledge memory, and
+long-running tasks (including research). See **[PRODUCT.md](./PRODUCT.md)** and
+**[edge/README.md](./edge/README.md)**. Default deploy: `cd edge && npm run dev`.
 
 ## Don't want to host it yourself?
 

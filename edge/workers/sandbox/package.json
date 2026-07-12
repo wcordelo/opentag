@@ -1,0 +1,6 @@
+{
+  "name": "opentag-sandbox-container",
+  "private": true,
+  "type": "commonjs",
+  "description": "Container-side agent-runner.js only — not part of the edge/ npm workspace. Not copied into the Docker image (see ./Dockerfile); exists solely so agent-runner.js resolves as CommonJS instead of inheriting edge/package.json's \"type\": \"module\"."
+}

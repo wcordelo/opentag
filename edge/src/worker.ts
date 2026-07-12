@@ -1,79 +1,247 @@
-import { Hono } from "hono";
-import type { Env } from "./env.js";
-import { createDurableObjectStore } from "./store/index.js";
-
-// Re-export the Durable Object class at the Worker entrypoint so the runtime can
-// instantiate it (the class name is referenced by `wrangler.toml`).
-export { ConversationStateDO } from "./store/index.js";
-
-const app = new Hono<{ Bindings: Env }>();
-
-app.get("/health", (c) => c.json({ ok: true, store: "durable-object-sqlite" }));
-
 /**
- * Smoke-test endpoint: drives the real `StateStore` through the Durable Object
- * so you can verify the SQLite backend end-to-end under `wrangler dev` without
- * standing up a chat platform. Round-trips kv, list, lock, dedup, and queue.
- * Remove (or guard behind auth) in production.
+ * OpenTag edge Worker — Claude Tag bot spine (PRODUCT.md).
+ * Slack ingress → CloudflareSlackAdapter → createBot (Channels).
  */
-app.get("/debug/store", async (c) => {
+import { Hono } from "hono";
+import type { AppEnv } from "./env.js";
+import { createDurableObjectStore } from "./store/index.js";
+import { slackVerify } from "./slack-verify.js";
+import { requireAdminAuth } from "./admin-auth.js";
+import {
+  getOrCreateBot,
+  resolveBotEngineKind,
+  runWithTeamId,
+} from "./bot-engine.js";
+import {
+  DEFAULT_BUNDLE,
+  DEFAULT_SYSTEM_PROMPT,
+  type AccessBundle,
+  type WorkspaceChannelConfig,
+} from "./config/workspace-config-do.js";
+import { startTask } from "./tasks/runtime.js";
+
+export { ConversationStateDO } from "./store/index.js";
+export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
+export { KnowledgeDO } from "./memory/knowledge-do.js";
+
+const app = new Hono<AppEnv>();
+
+app.get("/health", async (c) =>
+  c.json({
+    ok: true,
+    product: "claude-tag-cf",
+    store: "durable-object-sqlite",
+    spine: ["BOT_STATE", "WORKSPACE_CONFIG", "KNOWLEDGE", "RESEARCH_TASKS"],
+    botEngine: await resolveBotEngineKind(),
+  }),
+);
+
+app.get("/debug/store", requireAdminAuth(), async (c) => {
   const store = createDurableObjectStore(c.env.BOT_STATE);
   const k = `debug:${crypto.randomUUID()}`;
-
   await store.kv.set(k, { hello: "edge" }, 5_000);
   const got = await store.kv.get<{ hello: string }>(k);
-
   await store.list.append(k, "a");
-  await store.list.append(k, "b", { maxLen: 2 });
   const list = await store.list.range<string>(k);
-
   const lock = await store.lock.acquire(`${k}:lock`, { ttlMs: 1_000 });
-  const lockedOut = await store.lock.acquire(`${k}:lock`);
   if (lock) await store.lock.release(`${k}:lock`, lock.token);
-
   const firstSeen = await store.dedup.seen(`${k}:evt`, 5_000);
   const secondSeen = await store.dedup.seen(`${k}:evt`, 5_000);
-
-  await store.queue.enqueue(`${k}:q`, 1);
-  await store.queue.enqueue(`${k}:q`, 2);
-  const depth = await store.queue.depth(`${k}:q`);
-  const head = await store.queue.dequeue<number>(`${k}:q`);
-
   return c.json({
     kv: got,
     list,
-    lock: { acquired: lock !== null, secondAttemptBlocked: lockedOut === null },
+    lock: { acquired: lock !== null },
     dedup: { firstSeen, secondSeen },
-    queue: { depth, head },
   });
 });
 
-/**
- * Webhook ingress (sketch). On the edge, bots are HTTP-webhook driven (Slack
- * Events API, Discord interactions, WhatsApp Cloud API) rather than the Node
- * socket-mode / long-poll adapters. The persistence wiring is the point of this
- * package and is identical to the Node app — only the backend changes:
- *
- * ```ts
- * import { createBot } from "@copilotkit/bot";
- * import { slack } from "@copilotkit/bot-slack";
- *
- * const bot = createBot({
- *   adapters: [slack({ ... })],
- *   agent: (threadId) => makeAgent(threadId, c.env),
- *   // ▼ the only change from the Redis/in-memory deployment:
- *   store: { adapter: createDurableObjectStore(c.env.BOT_STATE) },
- *   components: [ConfirmCreateIssue],
- * });
- * // dispatch the verified webhook payload into the bot here
- * ```
- *
- * A click that lands after a cold start re-fires because the action snapshot
- * lives in the Durable Object's SQLite DB, not process memory.
- */
-app.post("/webhook/:platform", async (c) => {
-  // TODO: verify the platform signature, then dispatch into createBot(...) as above.
-  return c.json({ received: true, platform: c.req.param("platform") }, 202);
+app.post("/admin/config", requireAdminAuth(), async (c) => {
+  const body = (await c.req.json()) as WorkspaceChannelConfig;
+  const stub = c.env.WORKSPACE_CONFIG.get(
+    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
+  );
+  await stub.fetch("https://do/putConfig", {
+    method: "POST",
+    body: JSON.stringify({
+      ...body,
+      systemPrompt: body.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      accessBundleId: body.accessBundleId || DEFAULT_BUNDLE.id,
+      updatedAt: new Date().toISOString(),
+    }),
+  });
+  return c.json({ ok: true });
+});
+
+app.post("/admin/bundle", requireAdminAuth(), async (c) => {
+  const body = (await c.req.json()) as AccessBundle & { teamId: string };
+  const stub = c.env.WORKSPACE_CONFIG.get(
+    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
+  );
+  await stub.fetch("https://do/putBundle", {
+    method: "POST",
+    body: JSON.stringify({
+      id: body.id,
+      tools: body.tools ?? [],
+      mcpEndpoints: body.mcpEndpoints ?? [],
+      secretRefs: body.secretRefs ?? [],
+    } satisfies AccessBundle),
+  });
+  return c.json({ ok: true });
+});
+
+/** Seed a pending HITL action snapshot key (admin/debug). */
+app.post("/debug/hitl", requireAdminAuth(), async (c) => {
+  const body = (await c.req.json()) as {
+    actionId: string;
+    conversationKey: string;
+    summary?: string;
+  };
+  const store = createDurableObjectStore(c.env.BOT_STATE);
+  await store.kv.set(
+    `hitl:${body.actionId}`,
+    {
+      actionId: body.actionId,
+      conversationKey: body.conversationKey,
+      summary: body.summary ?? "approve?",
+      status: "pending",
+    },
+    86_400_000,
+  );
+  const got = await store.kv.get(`hitl:${body.actionId}`);
+  return c.json({ ok: true, gate: got });
+});
+
+app.post("/tasks/start", requireAdminAuth(), async (c) => {
+  const body = await c.req.json();
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    (body as { type?: string }).type !== "research"
+  ) {
+    return c.json(
+      { error: "only type=research is supported until Track F" },
+      400,
+    );
+  }
+  const result = await startTask(c.env, body as never);
+  return c.json(result);
+});
+
+app.post("/slack/events", slackVerify(), async (c) => {
+  const payload = c.get("slackPayload") as {
+    type?: string;
+    challenge?: string;
+    team_id?: string;
+  };
+
+  if (payload?.type === "url_verification" && payload.challenge) {
+    return c.json({ challenge: payload.challenge });
+  }
+
+  const teamId = payload.team_id ?? "unknown";
+
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleEventsBody(payload, { teamId: payload.team_id });
+    });
+
+  const exec = c.executionCtx;
+  if (exec?.waitUntil) {
+    exec.waitUntil(
+      run().catch(async (err) => {
+        console.error("[slack/events]", err);
+        // Best-effort: waitUntil cancellation leaves no reply otherwise.
+      }),
+    );
+  } else {
+    await run();
+  }
+  return c.json({ ok: true });
+});
+
+app.post("/slack/commands", slackVerify(), async (c) => {
+  const raw = c.get("rawBody");
+  const params = new URLSearchParams(raw);
+  const body = {
+    command: params.get("command") ?? undefined,
+    text: params.get("text") ?? undefined,
+    channel_id: params.get("channel_id") ?? undefined,
+    user_id: params.get("user_id") ?? undefined,
+    trigger_id: params.get("trigger_id") ?? undefined,
+    team_id: params.get("team_id") ?? undefined,
+    thread_ts: params.get("thread_ts") ?? undefined,
+  };
+
+  const teamId = body.team_id ?? "unknown";
+
+  // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleCommandBody(body);
+    });
+
+  const exec = c.executionCtx;
+  if (exec?.waitUntil) {
+    exec.waitUntil(run().catch((err) => console.error("[slack/commands]", err)));
+  } else {
+    await run();
+  }
+
+  const command = body.command ?? "";
+  if (command === "/research") {
+    return c.json({
+      response_type: "in_channel",
+      text: "🔍 Research started…",
+    });
+  }
+  if (command === "/config") {
+    return c.json({
+      response_type: "ephemeral",
+      text: "Updating channel config…",
+    });
+  }
+  return c.json({
+    response_type: "in_channel",
+    text: "🤖 On it…",
+  });
+});
+
+app.post("/slack/interactions", slackVerify(), async (c) => {
+  const raw = c.get("rawBody");
+  let payload: unknown;
+  try {
+    const params = new URLSearchParams(raw);
+    payload = JSON.parse(params.get("payload") ?? raw);
+  } catch {
+    return c.json({ error: "invalid_payload" }, 400);
+  }
+
+  const teamId =
+    typeof payload === "object" &&
+    payload !== null &&
+    "team" in payload &&
+    typeof (payload as { team?: { id?: string } }).team?.id === "string"
+      ? (payload as { team: { id: string } }).team.id
+      : "unknown";
+
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleInteractionPayload(payload);
+    });
+
+  const exec = c.executionCtx;
+  if (exec?.waitUntil) {
+    exec.waitUntil(
+      run().catch((err) => console.error("[slack/interactions]", err)),
+    );
+  } else {
+    await run();
+  }
+
+  return c.json({ ok: true });
 });
 
 export default app;

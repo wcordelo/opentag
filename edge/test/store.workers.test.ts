@@ -35,4 +35,30 @@ describe("Durable Object integration", () => {
     const second = createDurableObjectStore(env.BOT_STATE, { partition: () => name });
     expect(await second.kv.get("k")).toEqual({ n: 42 });
   });
+
+  it("persists HITL action:* snapshots across stub resolutions", async () => {
+    const name = `hitl-${crypto.randomUUID()}`;
+    const actionId = `act_${crypto.randomUUID()}`;
+    const first = createDurableObjectStore(env.BOT_STATE, {
+      partition: () => name,
+    });
+    await first.kv.set(
+      `action:${actionId}`,
+      {
+        actionId,
+        conversationKey: "C1::1.0",
+        status: "pending",
+        summary: "approve write?",
+      },
+      86_400_000,
+    );
+    const second = createDurableObjectStore(env.BOT_STATE, {
+      partition: () => name,
+    });
+    const snap = await second.kv.get<{ actionId: string; status: string }>(
+      `action:${actionId}`,
+    );
+    expect(snap?.actionId).toBe(actionId);
+    expect(snap?.status).toBe("pending");
+  });
 });

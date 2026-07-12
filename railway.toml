@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1
+
+# Optional Railway services (NOT Slack ingress — that is Cloudflare edge/):
+# 1. opentag-runtime    → startCommand: pnpm runtime
+# 2. opentag-research   → startCommand: pnpm research:runtime  (Postgres track)
+# 3. opentag-worker     → startCommand: pnpm research:worker
+#
+# Attach Postgres for research services; set DATABASE_URL.
+# Slack Events API → Cloudflare Worker (cd edge && wrangler deploy).

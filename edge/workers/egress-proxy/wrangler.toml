@@ -1,0 +1,20 @@
+name = "opentag-egress-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"]
+
+# Service binding back to the orchestrator, used to append proxied-request
+# logs to the owning workspace's OrchestratorDO (agent_execution_logs table).
+[[services]]
+binding = "ORCHESTRATOR_SERVICE"
+service = "opentag-orchestrator"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, INTERNAL_SECRET
+
+[[kv_namespaces]]
+binding = "AGENT_STATE"
+id = "dfb2924dcc474183a735c22040b97111"

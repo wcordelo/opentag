@@ -1,26 +1,53 @@
-# Cloudflare Worker config for the OpenTag edge-native stack.
-#
-# The bot's session/conversation state lives in a Durable Object with an
-# embedded SQLite database (ConversationStateDO) — no Redis, no external store.
+# OpenTag edge — DEFAULT local/dev bot Worker.
+# Production Claude Tag deploy: `npm run deploy:bot` → wrangler.bot.toml (opentag-bot).
+# Research task Workers use wrangler.research.toml.
 name = "opentag-edge"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"
-# `nodejs_compat` covers the handful of node builtins the bot SDK touches.
 compatibility_flags = ["nodejs_compat"]
 
-# ── Durable Object namespace binding ──────────────────────────────────────────
-# `env.BOT_STATE` resolves to instances of ConversationStateDO.
+# Bot conversation state (HITL, turn locks, transcripts, dedup).
 [[durable_objects.bindings]]
 name = "BOT_STATE"
 class_name = "ConversationStateDO"
 
-# ── SQLite migration ──────────────────────────────────────────────────────────
-# SQLite storage MUST be requested when the class is first deployed (it can't be
-# switched on later). `new_sqlite_classes` does exactly that.
+# Per-workspace channel prompts + access bundles.
+[[durable_objects.bindings]]
+name = "WORKSPACE_CONFIG"
+class_name = "WorkspaceConfigDO"
+
+# Longer-term knowledge base (not research verified_facts).
+[[durable_objects.bindings]]
+name = "KNOWLEDGE"
+class_name = "KnowledgeDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
 
-# ── Vars (non-secret). Set secrets with `wrangler secret put <NAME>`. ─────────
+[[migrations]]
+tag = "v2-claude-tag"
+new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
+
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "opentag-research-blobs"
+
+# Research task Worker (wrangler.research.toml → name = "opentag-orchestrator").
+[[services]]
+binding = "RESEARCH_TASKS"
+service = "opentag-orchestrator"
+
 [vars]
-AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"
+ENVIRONMENT = "development"
+# AGENT_URL is a wrangler secret (public runtime host). Do not put localhost
+# here — it would overwrite the secret on deploy and break production replies.
+# Local: set AGENT_URL in .dev.vars (http://localhost:8200/...).
+
+# Secrets (wrangler secret put):
+# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL, AGENT_AUTH_HEADER
+# ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
+# INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
+
+[env.production]
+vars = { ENVIRONMENT = "production" }

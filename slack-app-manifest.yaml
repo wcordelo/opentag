@@ -13,8 +13,7 @@ features:
     home_tab_enabled: false
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
-  # Enables the assistant pane ("Agents & AI Apps"). The greeting + chips here
-  # mirror the `assistant` option in app/index.ts.
+  # Enables the assistant pane ("Agents & AI Apps").
   assistant_view:
     assistant_description: On-call triage assistant — query/file Linear issues and find/write Notion pages.
     suggested_prompts:
@@ -26,18 +25,17 @@ features:
     - command: /agent
       description: Talk to the AG-UI agent from any channel
       usage_hint: "<your message>"
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
-    - command: /triage
-      description: Triage this thread — summarize and propose Linear issues
-      usage_hint: ""
+    - command: /config
+      description: Set the channel system prompt
+      usage_hint: "<prompt text>"
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
-    - command: /preview
-      description: Privately preview the issue I'd file
-      usage_hint: "<issue title>"
-      should_escape: false
-    - command: /file-issue
-      description: Open a form to file a Linear issue
-      usage_hint: ""
+    - command: /research
+      description: Run deep research on a topic (verified, cited summary)
+      usage_hint: "<topic>"
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
 oauth_config:
   scopes:
@@ -62,6 +60,7 @@ oauth_config:
       - chat:write # post and edit messages in channels bot is in
       - chat:write.public # post in channels bot isn't a member of
       - chat:write.customize # per-message username/icon (handy for branding)
+      - reactions:write # ack long turns / thanks with emoji instead of chat spam
       - im:write # open DMs
       - mpim:write # open group DMs
       # --- Files (for future image/file passing) ---
@@ -72,17 +71,22 @@ oauth_config:
       # --- Slash commands ---
       - commands
 settings:
+  # Events API only — Socket Mode is forbidden (PRODUCT.md).
+  # Point all Request URLs at the **bot** Worker (opentag-bot), not the research orchestrator.
   event_subscriptions:
+    request_url: https://opentag-bot.williamlopezc.workers.dev/slack/events
     bot_events:
       - app_mention
-      - assistant_thread_started # user opened the assistant pane
-      - assistant_thread_context_changed # the channel/context the user is viewing
-      - message.im # DMs to the bot + assistant-pane messages
-      - message.mpim # messages in group DMs the bot is in
-      # Add message.channels/message.groups only when using
-      # respondTo.threadReplies: "afterBotReply" for legacy plain thread continuation.
+      - assistant_thread_started
+      - assistant_thread_context_changed
+      # Channel thread replies (no re-@mention) — needed for conversation continuity.
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
   interactivity:
     is_enabled: true
-  socket_mode_enabled: true
+    request_url: https://opentag-bot.williamlopezc.workers.dev/slack/interactions
+  socket_mode_enabled: false
   org_deploy_enabled: false
   token_rotation_enabled: false

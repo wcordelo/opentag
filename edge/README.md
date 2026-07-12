@@ -10,33 +10,25 @@ Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
 | `wrangler.bot-store.toml` | StateStore e2e alias |
 | `workers/egress-proxy/` | Shared egress for containers |
 
-## Prerequisite — sibling CopilotKit
+## Prerequisite — `@copilotkit/channels*`
 
-Edge depends on local `@copilotkit/channels*` via `file:../../CopilotKit/packages/...`:
+CI and local installs use npm + a Workers-safe vendored tarball:
 
-```bash
-# From Documents/ (or sibling of opentag)
-cd CopilotKit
-pnpm install
-pnpm --filter @copilotkit/shared --filter @copilotkit/core \
-  --filter @copilotkit/channels-ui --filter @copilotkit/channels \
-  --filter @copilotkit/channels-slack build
-```
-
-Then:
+- `@copilotkit/channels` → `edge/vendor/copilotkit-channels-0.1.1.tgz` (no `createRequire`)
+- `@copilotkit/channels-ui` / `@copilotkit/channels-slack` → npm registry
 
 ```bash
 cd edge
-npm install
+npm ci   # or npm install
 npm test
 npm run test:e2e         # StateStore workerd (primary)
-npm run test:workers     # research task suite (secondary)
+npm run test:workers     # research task smoke (Node; DO e2e still todo)
 npm run typecheck
 npm run dev              # bot spine (Slack Events API)
 npm run dev:research     # research task Worker
 ```
 
-Agent replies need `pnpm runtime` at repo root (`AGENT_URL`).
+Optional local sibling CopilotKit checkout is only needed when refreshing the vendor tarball (see `vendor/README.md`).
 
 ## Local E2E
 

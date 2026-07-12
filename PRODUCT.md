@@ -5,7 +5,7 @@ Date: 2026-07-11. Updated: 2026-07-11 (full CF cutover).
 
 ## North star
 
-OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent you host yourself. Cloudflare is the infrastructure (Workers, Durable Objects, R2, Containers). CopilotKit `@copilotkit/channels` is the bot engine (path-linked from a sibling CopilotKit monorepo until packages publish).
+OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent you host yourself. Cloudflare is the infrastructure (Workers, Durable Objects, R2, Containers). CopilotKit `@copilotkit/channels` is the bot engine (`edge/vendor/` holds a Workers-safe tarball until upstream drops `createRequire`).
 
 **Acceptance (product):** a production Slack workspace can run the full agent loop — mentions, slash commands, HITL approvals — with durable state across Worker restarts, per-channel prompts, memory, access-controlled tools, and long-running tasks (including deep research).
 
@@ -51,8 +51,9 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 ## Remaining work (honest)
 
 - Track F: `pm_impl_verify` / sandbox multi-agent pipeline.
-- Publish `@copilotkit/channels*` to npm (today: sibling `file:` checkout).
+- Upstream `@copilotkit/channels` Workers fix (today: vendored tarball in `edge/vendor/`).
 - Chart/diagram image tools deferred on Workers (no Playwright in isolate).
 - Production deploy needs a public `AGENT_URL` (not localhost).
 - Public tunnel + Slack Request URL re-point for live inbound Events API
   (local loop proven via `edge/scripts/e2e-smoke-local.sh`).
+- Research Miniflare DO e2e (`WASM_DISPATCH` service) still `it.todo`.

@@ -1,7 +1,6 @@
 /**
- * Integration coverage plan + executable smoke checks for pieces that do not
- * need Miniflare DO bindings. Full workers-pool e2e remains behind
- * `npm run test:workers` once service bindings are provisioned.
+ * Research-task smoke checks (Node) — no Miniflare / WASM_DISPATCH service.
+ * Full workerd DO e2e stays as `it.todo` until service bindings are provisioned.
  */
 import { describe, expect, it } from "vitest";
 import { classify } from "../../workers/wasm-dispatch/src/index";

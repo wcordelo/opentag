@@ -12,7 +12,6 @@ export default defineConfig({
     ],
     exclude: [
       "test/**/*.workers.test.ts",
-      "tests/integration/**",
       "node_modules/**",
     ],
   },

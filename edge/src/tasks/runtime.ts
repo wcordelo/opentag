@@ -10,6 +10,13 @@ export type StartTaskRequest = {
   channelId: string;
   threadTs?: string;
   payload: Record<string, unknown>;
+  /**
+   * Effective thread model override (GOAL.md Phase A3 / SPEC §5 Phase A3).
+   * The orchestrator Worker may ignore this today — real model passthrough
+   * targets the Phase A5 container. This field is the contract A5 builds on;
+   * callers that don't pass it are unchanged.
+   */
+  model?: string;
 };
 
 export type StartTaskResult = {
@@ -66,6 +73,7 @@ export async function startTask(
       channelId: req.channelId,
       eventId: taskId,
       eventTs: req.threadTs,
+      model: req.model,
     }),
   });
 

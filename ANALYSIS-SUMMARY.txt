@@ -1,0 +1,35 @@
+ARCHITECTURE ANALYSIS COMPLETE (July 11, 2026)
+==============================================
+
+VERDICT: Option A — port centaur's UX into opentag. Do NOT move centaur off K8s.
+
+Full analysis: ~/Documents/opentag/ARCHITECTURE-ANALYSIS.md
+
+THE SHORT VERSION:
+
+Centaur's good UX is one TypeScript service (slackbotv2/src/, ~7.3k LOC), not K8s.
+It ports to CF Workers nearly verbatim. Key features:
+  - Live streaming with conflation (conflate.ts)
+  - Durable crash recovery (render obligations in DO, not Postgres)
+  - --model flags, stop command, quick-action cards
+
+Option B is blocked by:
+  1. ParadeDB (pg_search + pg_cron + 41 migrations) — D1 can't replace it
+  2. api-rs = 4.5k LOC of K8s CRD bindings — inverts CF container model
+  3. iron-proxy MITM security — no CF equivalent
+  4. repo-cache hostPath mounts — don't exist on CF
+  → 4-6 months for zero user-visible change
+
+BIGGEST CURRENT OPENTAG PROBLEM:
+  cloudflare-slack-adapter.ts:418 buffers entire response before posting.
+  Fix this first — it's the #1 reason the UX feels slow.
+
+OPTION A PATH (~1 month to parity):
+  Week 1-2: Fix streaming + conflation
+  Week 3:   Session/event DO with alarm-based crash recovery
+  Week 4:   --model flags + stop command
+  Week 5:   Quick-action cards
+  Week 6+:  Claude Code harness in CF Container
+
+VALIDATE FIRST: Can your Slack app use assistant streaming/status APIs?
+  (If yes: cleaner streaming. If no: chat.update-based rendering works fine with conflation.)

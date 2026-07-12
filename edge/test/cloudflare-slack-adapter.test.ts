@@ -33,37 +33,71 @@ function makeSink(): IngressSink & {
   };
 }
 
+/**
+ * Canned Slack Web API responses for tests that construct a
+ * CloudflareSlackAdapter WITHOUT an explicit `botUserId` — `start()` then
+ * calls `ensureBotUserId()`, which hits `auth.test` for real. Node's
+ * fetch (undici) hangs indefinitely on a POST with an empty-string body,
+ * and `web-api.ts` sends `auth.test` with no params (empty body) — so any
+ * unmocked call here would hang the test suite rather than fail fast.
+ * Mocking keeps this file's "no live Slack" contract intact.
+ */
+function mockSlackApi(): () => void {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const u = String(url);
+    if (u.includes("auth.test")) {
+      return Response.json({ ok: true, user_id: "UBOTMOCK" });
+    }
+    if (u.includes("users.info")) {
+      return Response.json({
+        ok: true,
+        user: { id: "U1", real_name: "Test User", name: "testuser" },
+      });
+    }
+    return Response.json({ ok: true });
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = orig;
+  };
+}
+
 describe("CloudflareSlackAdapter", () => {
   it("start stores sink; handleEventsBody emits onTurn for app_mention", async () => {
-    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
-    const sink = makeSink();
-    await adapter.start(sink);
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
 
-    const result = await adapter.handleEventsBody({
-      team_id: "T1",
-      event_id: "Ev123",
-      event: {
-        type: "app_mention",
-        channel: "C1",
-        user: "U1",
-        text: "<@UBOT> hello world",
-        ts: "1.0",
-        thread_ts: "1.0",
-      },
-    });
+      const result = await adapter.handleEventsBody({
+        team_id: "T1",
+        event_id: "Ev123",
+        event: {
+          type: "app_mention",
+          channel: "C1",
+          user: "U1",
+          text: "<@UBOT> hello world",
+          ts: "1.0",
+          thread_ts: "1.0",
+        },
+      });
 
-    expect(result.handled).toBe(true);
-    expect(sink.turns).toHaveLength(1);
-    const turn = sink.turns[0] as {
-      conversationKey: string;
-      userText: string;
-      eventId?: string;
-      platform: string;
-    };
-    expect(turn.platform).toBe("slack");
-    expect(turn.userText).toBe("hello world");
-    expect(turn.conversationKey).toBe("C1::1.0");
-    expect(turn.eventId).toBe("Ev123");
+      expect(result.handled).toBe(true);
+      expect(sink.turns).toHaveLength(1);
+      const turn = sink.turns[0] as {
+        conversationKey: string;
+        userText: string;
+        eventId?: string;
+        platform: string;
+      };
+      expect(turn.platform).toBe("slack");
+      expect(turn.userText).toBe("hello world");
+      expect(turn.conversationKey).toBe("C1::1.0");
+      expect(turn.eventId).toBe("Ev123");
+    } finally {
+      restoreFetch();
+    }
   });
 
   it("ignores bot-only messages", async () => {
@@ -87,69 +121,87 @@ describe("CloudflareSlackAdapter", () => {
   });
 
   it("handleCommandBody emits onCommand", async () => {
-    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
-    const sink = makeSink();
-    await adapter.start(sink);
-    const result = await adapter.handleCommandBody({
-      command: "/research",
-      text: "durable objects",
-      channel_id: "C9",
-      user_id: "U9",
-      trigger_id: "trig1",
-      team_id: "T9",
-    });
-    expect(result.handled).toBe(true);
-    expect(sink.commands).toHaveLength(1);
-    const cmd = sink.commands[0] as { command: string; text: string };
-    expect(cmd.command).toBe("research");
-    expect(cmd.text).toBe("durable objects");
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const result = await adapter.handleCommandBody({
+        command: "/research",
+        text: "durable objects",
+        channel_id: "C9",
+        user_id: "U9",
+        trigger_id: "trig1",
+        team_id: "T9",
+      });
+      expect(result.handled).toBe(true);
+      expect(sink.commands).toHaveLength(1);
+      const cmd = sink.commands[0] as { command: string; text: string };
+      expect(cmd.command).toBe("research");
+      expect(cmd.text).toBe("durable objects");
+    } finally {
+      restoreFetch();
+    }
   });
 
   it("handleCommandBody uses thread_ts for threaded slash commands", async () => {
-    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
-    const sink = makeSink();
-    await adapter.start(sink);
-    const result = await adapter.handleCommandBody({
-      command: "/research",
-      text: "edge computing",
-      channel_id: "C9",
-      user_id: "U9",
-      trigger_id: "trig1",
-      team_id: "T9",
-      thread_ts: "999.111",
-    });
-    expect(result.handled).toBe(true);
-    const cmd = sink.commands[0] as {
-      conversationKey: string;
-      replyTarget: { threadTs?: string };
-    };
-    expect(cmd.conversationKey).toBe("C9::999.111");
-    expect(cmd.replyTarget.threadTs).toBe("999.111");
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const result = await adapter.handleCommandBody({
+        command: "/research",
+        text: "edge computing",
+        channel_id: "C9",
+        user_id: "U9",
+        trigger_id: "trig1",
+        team_id: "T9",
+        thread_ts: "999.111",
+      });
+      expect(result.handled).toBe(true);
+      const cmd = sink.commands[0] as {
+        conversationKey: string;
+        replyTarget: { threadTs?: string };
+      };
+      expect(cmd.conversationKey).toBe("C9::999.111");
+      expect(cmd.replyTarget.threadTs).toBe("999.111");
+    } finally {
+      restoreFetch();
+    }
   });
 
   it("handleInteractionPayload decodes block_actions", async () => {
-    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
-    const sink = makeSink();
-    await adapter.start(sink);
-    const result = await adapter.handleInteractionPayload({
-      type: "block_actions",
-      trigger_id: "trig",
-      user: { id: "U1" },
-      channel: { id: "C1" },
-      message: { ts: "10.0", thread_ts: "9.0" },
-      actions: [
-        {
-          action_id: "ck:abc",
-          value: '{"confirmed":true}',
-          action_ts: "10.1",
-        },
-      ],
-    });
-    expect(result.handled).toBe(true);
-    expect(sink.interactions).toHaveLength(1);
-    const evt = sink.interactions[0] as { id: string; conversationKey: string };
-    expect(evt.id).toBe("ck:abc");
-    expect(evt.conversationKey).toBe("C1::9.0");
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const result = await adapter.handleInteractionPayload({
+        type: "block_actions",
+        trigger_id: "trig",
+        user: { id: "U1" },
+        channel: { id: "C1" },
+        message: { ts: "10.0", thread_ts: "9.0" },
+        actions: [
+          {
+            action_id: "ck:abc",
+            value: '{"confirmed":true}',
+            action_ts: "10.1",
+          },
+        ],
+      });
+      expect(result.handled).toBe(true);
+      expect(sink.interactions).toHaveLength(1);
+      const evt = sink.interactions[0] as {
+        id: string;
+        conversationKey: string;
+      };
+      expect(evt.id).toBe("ck:abc");
+      expect(evt.conversationKey).toBe("C1::9.0");
+    } finally {
+      restoreFetch();
+    }
   });
 
   it("thread_reply stores inbound ts so reactions can target it", async () => {

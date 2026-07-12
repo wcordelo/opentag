@@ -24,6 +24,11 @@ export type SlackWebClient = {
     status: string;
     loading_messages?: string[];
   }): Promise<void>;
+  setTitle(args: {
+    channel_id: string;
+    thread_ts: string;
+    title: string;
+  }): Promise<void>;
   addReaction(args: {
     channel: string;
     timestamp: string;
@@ -93,10 +98,13 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     method: string,
     body?: Record<string, unknown>,
   ): Promise<T & { ok: boolean; error?: string }> {
+    // Never pass an empty-string body: undici hangs indefinitely on POST with
+    // body "" (e.g. auth.test with no args).
+    const encoded = body ? encodeForm(body) : "";
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers,
-      body: body ? encodeForm(body) : undefined,
+      body: encoded || undefined,
     });
     return (await res.json()) as T & { ok: boolean; error?: string };
   }
@@ -118,6 +126,9 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     },
     async setStatus(args) {
       await api("assistant.threads.setStatus", args).catch(() => undefined);
+    },
+    async setTitle(args) {
+      await api("assistant.threads.setTitle", args).catch(() => undefined);
     },
     async addReaction(args) {
       const r = await api("reactions.add", {

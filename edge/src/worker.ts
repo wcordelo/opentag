@@ -19,10 +19,20 @@ import {
   type WorkspaceChannelConfig,
 } from "./config/workspace-config-do.js";
 import { startTask } from "./tasks/runtime.js";
+import {
+  extractStopCommandEvent,
+  handleStopCommand,
+  type SlackEventCallbackPayload,
+} from "./slack/stop-routing.js";
+import {
+  isQuickInteraction,
+  handleQuickAction,
+} from "./slack/quick-actions.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 export { KnowledgeDO } from "./memory/knowledge-do.js";
+export { SessionEventDO } from "./store/session-event-do.js";
 
 const app = new Hono<AppEnv>();
 
@@ -132,13 +142,32 @@ app.post("/slack/events", slackVerify(), async (c) => {
     type?: string;
     challenge?: string;
     team_id?: string;
-  };
+  } & SlackEventCallbackPayload;
 
   if (payload?.type === "url_verification" && payload.challenge) {
     return c.json({ challenge: payload.challenge });
   }
 
   const teamId = payload.team_id ?? "unknown";
+  const exec = c.executionCtx;
+
+  // Stop-command routing (GOAL.md Phase A2 Task 1): a matching stop phrase
+  // never reaches the bot engine — it interrupts the session + clears
+  // status/obligation instead. Anything that isn't a stop command (including
+  // a message that merely fails the stop-phrase check) falls through to the
+  // normal routing below, unchanged.
+  const stopEvent = extractStopCommandEvent(payload);
+  if (stopEvent) {
+    const runStop = () => handleStopCommand(c.env, stopEvent, payload.event_id);
+    if (exec?.waitUntil) {
+      exec.waitUntil(
+        runStop().catch((err) => console.error("[slack/events:stop]", err)),
+      );
+    } else {
+      await runStop();
+    }
+    return c.json({ ok: true });
+  }
 
   const run = () =>
     runWithTeamId(teamId, async () => {
@@ -146,7 +175,6 @@ app.post("/slack/events", slackVerify(), async (c) => {
       await adapter.handleEventsBody(payload, { teamId: payload.team_id });
     });
 
-  const exec = c.executionCtx;
   if (exec?.waitUntil) {
     exec.waitUntil(
       run().catch(async (err) => {
@@ -226,8 +254,15 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
       ? (payload as { team: { id: string } }).team.id
       : "unknown";
 
+  // quick_* buttons become synthetic agent turns (SPEC §3.4) — routed INSTEAD
+  // of the generic interaction path so a click is never double-handled.
+  const isQuick = isQuickInteraction(payload);
   const run = () =>
     runWithTeamId(teamId, async () => {
+      if (isQuick) {
+        await handleQuickAction(c.env, payload);
+        return;
+      }
       const { adapter } = await getOrCreateBot(c.env);
       await adapter.handleInteractionPayload(payload);
     });

@@ -21,6 +21,12 @@ class_name = "WorkspaceConfigDO"
 name = "KNOWLEDGE"
 class_name = "KnowledgeDO"
 
+# Per-thread session event log (SPEC.md §3.2/§4.1) — replay source for the
+# render-obligation alarm fallback in ConversationStateDO.
+[[durable_objects.bindings]]
+name = "SESSION_EVENTS"
+class_name = "SessionEventDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -28,6 +34,10 @@ new_sqlite_classes = ["ConversationStateDO"]
 [[migrations]]
 tag = "v2-claude-tag"
 new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
+
+[[migrations]]
+tag = "v3-session-events"
+new_sqlite_classes = ["SessionEventDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"

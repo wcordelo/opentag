@@ -29,6 +29,7 @@ import {
   getInboundMessage,
 } from "./slack/inbound-target.js";
 import type { Env } from "./env.js";
+import type { SessionEventsRpc } from "./store/conversation-state-do.js";
 
 export type BotEngineKind = "createBot";
 
@@ -38,6 +39,80 @@ type BotHandle = {
   bot: Bot;
   adapter: CloudflareSlackAdapter;
 };
+
+/**
+ * Render-obligation timeout (SPEC.md §3.1 / GOAL.md Phase A2). MUST exceed
+ * `createBot({ store: { lockTtl } })` below (15 minutes) — otherwise the
+ * `ConversationStateDO` alarm could fire and "recover" a turn that's still
+ * legitimately mid-flight (e.g. waiting on a HITL confirmation), producing a
+ * double post. Kept in lockstep with `conversation-state-do.ts`'s own
+ * `DEFAULT_OBLIGATION_TIMEOUT_MS`, which applies the same default when
+ * `timeoutMs` is omitted — passed explicitly here anyway so the two files
+ * don't silently drift.
+ */
+const RENDER_OBLIGATION_TIMEOUT_MS = 20 * 60_000;
+
+/** Structured metric line (SPEC.md §4.3's minimum counters). */
+function logMetric(
+  metric: string,
+  fields: Record<string, unknown>,
+): void {
+  console.log(JSON.stringify({ metric, ...fields }));
+}
+
+/**
+ * Write the render obligation for a turn that's about to start. Best-effort:
+ * a write failure must never block the turn (GOAL.md: never-silent is a
+ * safety net, not a hard dependency of the happy path).
+ *
+ * `afterEventId` is the current tip of the thread's `SessionEventDO` event
+ * log — if the binding isn't registered yet (`env.SESSION_EVENTS` undefined,
+ * true until a later phase wires it into wrangler.toml), it defaults to `0`;
+ * the alarm fallback then degrades gracefully to the generic "please retry"
+ * error card instead of a reconstructed replay.
+ */
+async function writeRenderObligation(
+  env: Env,
+  stateStore: ReturnType<typeof createBotStoreAdapter>,
+  args: { threadKey: string; executionId: string; channel: string; threadTs?: string },
+): Promise<void> {
+  try {
+    let afterEventId = 0;
+    if (env.SESSION_EVENTS) {
+      // See `SessionEventsRpc` in conversation-state-do.ts for why this cast
+      // is needed (RPC return-type inference collapses to `never` on
+      // `replay()`'s `payload: unknown` field).
+      const sessionDo = env.SESSION_EVENTS.get(
+        env.SESSION_EVENTS.idFromName(args.threadKey),
+      ) as unknown as SessionEventsRpc;
+      const events = await sessionDo.replay();
+      afterEventId = events.length > 0 ? events[events.length - 1]!.id : 0;
+    }
+    await stateStore.obligation.set({
+      threadKey: args.threadKey,
+      executionId: args.executionId,
+      afterEventId,
+      channel: args.channel,
+      threadTs: args.threadTs,
+      timeoutMs: RENDER_OBLIGATION_TIMEOUT_MS,
+    });
+  } catch (err) {
+    console.error("[bot] render obligation write failed", err);
+  }
+}
+
+/** Clear a render obligation. Best-effort — failure to clear is recovered by the alarm. */
+async function clearRenderObligation(
+  stateStore: ReturnType<typeof createBotStoreAdapter>,
+  threadKey: string,
+  executionId: string,
+): Promise<void> {
+  try {
+    await stateStore.obligation.clear({ threadKey, executionId });
+  } catch (err) {
+    console.error("[bot] render obligation clear failed", err);
+  }
+}
 
 let singleton: BotHandle | null = null;
 
@@ -107,6 +182,12 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   });
 
   bot.onMention(async ({ thread, message }) => {
+    // Hoisted so the outer catch (below) can clear the obligation after it
+    // posts the "Something went wrong" error card — set once the turn
+    // actually starts (research/remember/trivial-ack/react-intent short
+    // circuits never reach that point and never write an obligation).
+    let renderObligationThreadKey: string | undefined;
+    let renderObligationExecutionId: string | undefined;
     try {
       const teamId = getCurrentTeamId();
       const channelId = (thread.conversationKey ?? "").split("::")[0] ?? "";
@@ -238,32 +319,68 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         return;
       }
 
-      // Long turns: hourglass reaction after a short grace period (no chat spam).
-      const progressEmoji = "hourglass_flowing_sand";
-      let progressReacted = false;
-      const progressTimer = setTimeout(() => {
-        progressReacted = true;
+      // Assistant status indicator (DM pane only — no-ops elsewhere, swallowed
+      // by web-api). The streaming placeholder message covers channel visibility.
+      const statusScope = (thread.conversationKey ?? "").split("::")[1];
+      // Deterministic scope first: it comes from THIS turn's conversationKey,
+      // while reactTarget reads request-scoped state that a concurrent turn in
+      // the same isolate can overwrite (wrong-thread obligation = wrong-thread
+      // fallback post). reactTarget is only consulted for DMs, whose scope is
+      // the literal "dm" rather than a ts; assistant.threads.* wants the
+      // thread-root ts, hence threadTs before the reply ts.
+      const statusThreadTs = [
+        statusScope,
+        reactTarget?.threadTs,
+        reactTarget?.ts,
+      ].find((v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)));
+
+      if (statusThreadTs) {
         void adapter
-          .react(thread.conversationKey ?? "", progressEmoji, reactTarget)
+          .setStatus({
+            channel: channelId,
+            threadTs: statusThreadTs,
+            status: "Thinking…".slice(0, 50),
+          })
           .catch(() => undefined);
-      }, 2_500);
+      }
+
+      // Never-silent guarantee (SPEC.md §3.1 / GOAL.md Phase A2): write a
+      // render obligation before the turn runs so `ConversationStateDO`'s
+      // alarm can recover if this isolate crashes or the agent hangs.
+      const executionId = crypto.randomUUID();
+      const obligationThreadKey = `slack:${channelId}:${statusThreadTs ?? channelId}`;
+      renderObligationThreadKey = obligationThreadKey;
+      renderObligationExecutionId = executionId;
+      logMetric("turn_started", { threadKey: obligationThreadKey, executionId });
+      await writeRenderObligation(env, stateStore, {
+        threadKey: obligationThreadKey,
+        executionId,
+        channel: channelId,
+        threadTs: statusThreadTs,
+      });
 
       try {
-        await runBundledAgentTurn(
-          env,
-          thread as Parameters<typeof runBundledAgentTurn>[1],
-          message.contentParts && message.contentParts.length > 0
-            ? message.contentParts
-            : text,
-          message.user,
-        );
-      } finally {
-        clearTimeout(progressTimer);
-        if (progressReacted) {
-          void adapter
-            .unreact(thread.conversationKey ?? "", progressEmoji, reactTarget)
-            .catch(() => undefined);
+        try {
+          await runBundledAgentTurn(
+            env,
+            thread as Parameters<typeof runBundledAgentTurn>[1],
+            message.contentParts && message.contentParts.length > 0
+              ? message.contentParts
+              : text,
+            message.user,
+          );
+        } finally {
+          if (statusThreadTs) {
+            void adapter
+              .setStatus({ channel: channelId, threadTs: statusThreadTs, status: "" })
+              .catch(() => undefined);
+          }
         }
+        logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
+        await clearRenderObligation(stateStore, obligationThreadKey, executionId);
+      } catch (turnErr) {
+        logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
+        throw turnErr;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -273,8 +390,20 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
             `Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.`,
         );
+        // The error card just landed (error_visible already achieved) — safe
+        // to clear now. If the post above throws instead, we fall into this
+        // catch's own catch below and deliberately leave the obligation in
+        // place so the alarm can recover (fallback replay or its own error
+        // card, whichever applies).
+        if (renderObligationThreadKey && renderObligationExecutionId) {
+          await clearRenderObligation(
+            stateStore,
+            renderObligationThreadKey,
+            renderObligationExecutionId,
+          );
+        }
       } catch {
-        /* ignore */
+        /* ignore — obligation intentionally left for alarm recovery */
       }
     }
   });

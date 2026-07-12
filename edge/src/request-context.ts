@@ -6,7 +6,12 @@
  * Handles both sync and async `fn` — the frame stays until a returned
  * Promise settles.
  */
-export type InboundMessageTarget = { channel: string; ts: string };
+export type InboundMessageTarget = {
+  channel: string;
+  ts: string;
+  /** Thread root ts (assistant status/title APIs need this, not the message ts). */
+  threadTs?: string;
+};
 
 type Store = {
   teamId: string;
@@ -35,9 +40,10 @@ export function getCurrentTeamId(): string {
 export function setCurrentInboundMessage(
   channel: string,
   ts: string,
+  threadTs?: string,
 ): void {
   if (!channel || !ts) return;
-  const target = { channel, ts };
+  const target = { channel, ts, threadTs };
   const store = stack[stack.length - 1];
   if (store) {
     store.inbound = target;

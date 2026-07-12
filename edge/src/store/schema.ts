@@ -6,7 +6,7 @@ import type { SqlExecutor } from "./sql.js";
  * the `_meta` table so a Durable Object that was created on an older schema can
  * upgrade in place on its next constructor run.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * One table per {@link import("./sql.js")} StateStore namespace. Everything the
@@ -66,6 +66,23 @@ const DDL = [
      value TEXT NOT NULL,
      PRIMARY KEY (key, seq)
    )`,
+
+  // render_obligations (SPEC.md §3.1 / §4.2): the never-silent guarantee. One
+  // row per in-flight turn, keyed by threadKey — a fresh write for the same
+  // thread supersedes any prior one (PRIMARY KEY upsert). The DO's single
+  // alarm serves any row whose `deadline` has passed (see conversation-state-do.ts
+  // `alarm()`); a normal turn completion deletes the row before the deadline
+  // ever arrives.
+  `CREATE TABLE IF NOT EXISTS render_obligations (
+     thread_key     TEXT PRIMARY KEY,
+     execution_id   TEXT NOT NULL,
+     after_event_id INTEGER NOT NULL,
+     channel        TEXT NOT NULL,
+     thread_ts      TEXT,
+     deadline       INTEGER NOT NULL,
+     attempt        INTEGER NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS render_obligations_deadline ON render_obligations (deadline)`,
 ];
 
 /**

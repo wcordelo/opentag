@@ -23,11 +23,12 @@ export function rememberInboundMessage(
   conversationKey: string,
   channel: string,
   ts: string,
+  threadTs?: string,
 ): void {
   if (!channel || !ts) return;
   // Request-scoped for short-circuit reacts in the same waitUntil turn.
   void conversationKey;
-  setCurrentInboundMessage(channel, ts);
+  setCurrentInboundMessage(channel, ts, threadTs);
 }
 
 /** Bind the react target to this turn's Thread (call once at onMention start). */

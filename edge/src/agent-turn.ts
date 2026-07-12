@@ -23,6 +23,12 @@ import {
 import type { Env } from "./env.js";
 import type { AgentContentPart } from "./slack/download-files.js";
 import { createSlackWebClient } from "./slack/web-api.js";
+import { getInboundMessage } from "./slack/inbound-target.js";
+import { extractMessageOverrides } from "./slack/overrides.js";
+import {
+  resolveThreadOverrides,
+  type ResolvedThreadOverrides,
+} from "./store/thread-overrides.js";
 
 type Requester = {
   id?: string;
@@ -77,7 +83,8 @@ type ThreadMessageLite = {
 
 type AgentThread = {
   conversationKey?: string;
-  post: (ui: never) => Promise<unknown>;
+  /** Subset of Thread.post(ui: Renderable) — plain strings are valid Renderables. */
+  post: (ui: string) => Promise<unknown>;
   getMessages?: () => Promise<ThreadMessageLite[]>;
   runAgent: (opts: {
     prompt: string | AgentContentPart[];
@@ -219,10 +226,73 @@ function embedTranscriptInPrompt(
   return [{ type: "text", text: `${block}\n` }, ...prompt];
 }
 
+/** True if `cleaned` has no user-visible content left after flag stripping. */
+function isEmptyAfterStrip(cleaned: string | AgentContentPart[]): boolean {
+  if (typeof cleaned === "string") return cleaned.trim() === "";
+  if (cleaned.length === 0) return true;
+  return cleaned.every((p) => p.type === "text" && !p.text.trim());
+}
+
+/** Short thread confirmation for a message that was only override flags. */
+function formatOverrideConfirmation(resolved: {
+  effectiveModel?: string;
+  effectiveHarnessType?: string;
+  effectiveReasoning?: string;
+}): string {
+  const bits: string[] = [];
+  if (resolved.effectiveModel) bits.push(`model: ${resolved.effectiveModel}`);
+  if (resolved.effectiveHarnessType)
+    bits.push(`harness: ${resolved.effectiveHarnessType}`);
+  if (resolved.effectiveReasoning)
+    bits.push(`reasoning: ${resolved.effectiveReasoning}`);
+  const summary = bits.join(", ") || "preference";
+  return `✓ Saved: ${summary} (applies to this thread)`;
+}
+
+/**
+ * Strip override flags from `prompt` (SPEC §2.2, GOAL Phase A3), merge them
+ * into the thread's sticky overrides, and return the cleaned prompt plus the
+ * effective model/harness/reasoning for this turn.
+ *
+ * String prompts are stripped directly. `AgentContentPart[]` prompts are
+ * stripped per text part (a flag never spans parts), but flags are *detected*
+ * from the concatenation of all text parts so a message split across parts
+ * still resolves a single sticky merge.
+ */
+async function stripOverridesFromPrompt(
+  store: Parameters<typeof resolveThreadOverrides>[0],
+  conversationKey: string,
+  prompt: string | AgentContentPart[],
+): Promise<{
+  cleanedPrompt: string | AgentContentPart[];
+  resolved: ResolvedThreadOverrides;
+}> {
+  if (typeof prompt === "string") {
+    const resolved = await resolveThreadOverrides(store, conversationKey, prompt);
+    return { cleanedPrompt: resolved.cleanedText, resolved };
+  }
+
+  const detectionText = prompt
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join(" ");
+  const resolved = await resolveThreadOverrides(
+    store,
+    conversationKey,
+    detectionText,
+  );
+  const cleanedPrompt = prompt.map((p) =>
+    p.type === "text"
+      ? { ...p, text: extractMessageOverrides(p.text).cleanedText }
+      : p,
+  );
+  return { cleanedPrompt, resolved };
+}
+
 export async function runBundledAgentTurn(
   env: Env,
   thread: AgentThread,
-  prompt: string | AgentContentPart[],
+  promptIn: string | AgentContentPart[],
   requesterIn?: Requester,
 ): Promise<void> {
   const requester = await ensureRequesterProfile(env, requesterIn);
@@ -230,6 +300,29 @@ export async function runBundledAgentTurn(
   const channelId = channelFromThread(thread);
   const conversationKey = thread.conversationKey ?? "";
   const store = createDurableObjectStore(env.BOT_STATE);
+
+  // Phase A3 (GOAL.md / SPEC §2.2): parse + strip --model/--harness/-rsn
+  // flags before anything downstream sees raw text, and resolve sticky
+  // thread-level overrides (last flag wins per-field, absent fields keep the
+  // stored value).
+  const { cleanedPrompt, resolved: overrides } = await stripOverridesFromPrompt(
+    store,
+    conversationKey,
+    promptIn,
+  );
+  const prompt = cleanedPrompt;
+
+  if (overrides.hasMessageFlags && isEmptyAfterStrip(prompt)) {
+    try {
+      await thread.post(formatOverrideConfirmation(overrides));
+    } catch (err) {
+      console.warn(
+        "[agent-turn] override confirmation post failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return;
+  }
 
   const { config, bundle } = await loadTurnAccess(
     env.WORKSPACE_CONFIG,
@@ -260,6 +353,36 @@ export async function runBundledAgentTurn(
           .filter((p): p is { type: "text"; text: string } => p.type === "text")
           .map((p) => p.text)
           .join(" ");
+
+  // Assistant thread title from the first user message (SPEC §3.5). Durable
+  // dedup makes this once-per-thread across isolates; errors are best-effort.
+  if (env.SLACK_BOT_TOKEN && promptText.trim() && conversationKey) {
+    try {
+      const titled = await store.dedup.seen(
+        `title:${conversationKey}`,
+        30 * 86_400_000,
+      );
+      if (!titled) {
+        const scope = conversationKey.split("::")[1];
+        const inbound = getInboundMessage(conversationKey, thread);
+        const titleThreadTs = [inbound?.threadTs, scope, inbound?.ts].find(
+          (v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)),
+        );
+        if (titleThreadTs) {
+          await createSlackWebClient(env.SLACK_BOT_TOKEN).setTitle({
+            channel_id: channelId,
+            thread_ts: titleThreadTs,
+            title: promptText.trim().slice(0, 100),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[agent-turn] setTitle failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   // Durable mid-thread memory (survives isolate hops / empty Slack history).
   if (promptText.trim()) {
@@ -390,6 +513,30 @@ export async function runBundledAgentTurn(
     toolContext.push({
       description: "Last created Linear issue in this thread",
       value: formatLastIssueContext(lastIssue),
+    });
+  }
+
+  // Phase A3 (GOAL.md / SPEC §2.2): tell the model about a recorded
+  // model/harness preference instead of silently ignoring it. Real
+  // passthrough targets the Phase A5 container; today this keeps the agent
+  // honest if the user asks whether the switch "took".
+  if (overrides.effectiveModel || overrides.effectiveHarnessType) {
+    const requested: string[] = [];
+    if (overrides.effectiveModel)
+      requested.push(`model ${overrides.effectiveModel}`);
+    if (overrides.effectiveHarnessType)
+      requested.push(`harness ${overrides.effectiveHarnessType}`);
+    if (overrides.effectiveReasoning)
+      requested.push(`reasoning effort ${overrides.effectiveReasoning}`);
+    toolContext.push({
+      description: "model preference",
+      value: [
+        `The user requested ${requested.join(" / ")} for this thread.`,
+        "This preference is recorded and sticky for the thread, but the",
+        "current runtime may not support switching the underlying",
+        "model/harness yet. If asked, acknowledge that the preference is",
+        "recorded rather than claiming it took effect or silently ignoring it.",
+      ].join(" "),
     });
   }
 

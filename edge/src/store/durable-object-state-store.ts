@@ -3,7 +3,10 @@ import type {
   DurableObjectStub,
 } from "@cloudflare/workers-types";
 import type { StateStore } from "./state-store-contract.js";
-import type { ConversationStateDO } from "./conversation-state-do.js";
+import type {
+  ConversationStateDO,
+  RenderObligationRow,
+} from "./conversation-state-do.js";
 import { singleGlobal, type Partitioner } from "./partition.js";
 
 export interface DurableObjectStoreOptions {
@@ -107,6 +110,34 @@ export class DurableObjectStateStore implements StateStore {
     dequeue: async <T>(key: string): Promise<T | undefined> =>
       (await this.stub(key).queueDequeue(key)) as T | undefined,
     depth: async (key: string): Promise<number> => this.stub(key).queueDepth(key),
+  };
+
+  /**
+   * Render-obligation client (SPEC.md §3.1 / §4.2), not part of the base
+   * `StateStore` contract. Routes through the same {@link Partitioner} as
+   * every other namespace here (`stub(threadKey)`), so `bot-engine.ts`
+   * writing an obligation and `ConversationStateDO`'s alarm serving it always
+   * land on the identical Durable Object instance.
+   */
+  obligation = {
+    set: async (args: {
+      threadKey: string;
+      executionId: string;
+      afterEventId: number;
+      channel: string;
+      threadTs?: string;
+      timeoutMs?: number;
+    }): Promise<void> => {
+      await this.stub(args.threadKey).obligationSet(args);
+    },
+    clear: async (args: {
+      threadKey: string;
+      executionId?: string;
+    }): Promise<void> => {
+      await this.stub(args.threadKey).obligationClear(args);
+    },
+    get: async (threadKey: string): Promise<RenderObligationRow | undefined> =>
+      this.stub(threadKey).obligationGet({ threadKey }),
   };
 }
 

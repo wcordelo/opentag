@@ -37,6 +37,12 @@ import {
   createSlackWebClient,
   type SlackWebClient,
 } from "./web-api.js";
+import { conflateChatSdkStream } from "./conflate.js";
+import {
+  buildMrkdwnBlocks,
+  stringsToMarkdownChunks,
+  truncateFallbackText,
+} from "./stream-render.js";
 import {
   rememberInboundMessage,
   getInboundMessage,
@@ -62,6 +68,12 @@ export type CloudflareSlackAdapterOptions = {
    * `awaitChoiceDurable` can resolve across Worker isolates.
    */
   stateStore?: StateStore;
+  /**
+   * Minimum ms between `chat.update` calls while streaming (default 800).
+   * Conflation absorbs bursts while an update is in flight; this is the
+   * per-call `Date.now()` throttle floor. Injectable for tests.
+   */
+  streamUpdateIntervalMs?: number;
 };
 
 function messageTsFromRef(
@@ -224,6 +236,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         conversationKey,
         normalized.channel,
         normalized.ts,
+        normalized.threadTs ?? normalized.ts,
       );
     }
     await this.sink.onTurn(turn);
@@ -259,6 +272,32 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       return false;
     }
     return true;
+  }
+
+  /** Assistant (DM pane) status indicator — best-effort, errors swallowed by the client. */
+  async setStatus(args: {
+    channel: string;
+    threadTs: string;
+    status: string;
+  }): Promise<void> {
+    await this.client.setStatus({
+      channel_id: args.channel,
+      thread_ts: args.threadTs,
+      status: args.status,
+    });
+  }
+
+  /** Assistant (DM pane) thread title — best-effort, errors swallowed by the client. */
+  async setTitle(args: {
+    channel: string;
+    threadTs: string;
+    title: string;
+  }): Promise<void> {
+    await this.client.setTitle({
+      channel_id: args.channel,
+      thread_ts: args.threadTs,
+      title: args.title,
+    });
   }
 
   async unreact(
@@ -326,7 +365,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     // Slash commands have no message ts to react to; bind thread parent only so
     // react_message does not reuse a stale event-turn target from request scope.
     if (threadTs && normalized.channel) {
-      rememberInboundMessage(conversationKey, normalized.channel, threadTs);
+      rememberInboundMessage(
+        conversationKey,
+        normalized.channel,
+        threadTs,
+        threadTs,
+      );
     }
     await this.sink.onCommand(cmd);
     return { handled: true };
@@ -415,22 +459,99 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     });
   }
 
+  /**
+   * Incremental Slack render: post one placeholder message, then drain a
+   * conflated markdown stream into throttled `chat.update` calls on that
+   * same message. Never posts more than one message per call (house rule).
+   */
   async stream(
     target: ReplyTarget,
     chunks: AsyncIterable<string>,
   ): Promise<MessageRef> {
-    let acc = "";
-    for await (const c of chunks) acc += c;
-    const r = await this.client.postMessage({
-      channel: String((target as { channel?: string }).channel ?? ""),
-      thread_ts: (target as { threadTs?: string }).threadTs,
-      text: acc || "(empty)",
-    });
-    return {
-      id: r.ts ?? "",
-      channel: String((target as { channel?: string }).channel ?? ""),
-      ts: r.ts,
+    const channel = String((target as { channel?: string }).channel ?? "");
+    const thread_ts = (target as { threadTs?: string }).threadTs;
+
+    const placeholderBody: Record<string, unknown> = {
+      channel,
+      thread_ts,
+      text: "…",
+      unfurl_links: false,
+      unfurl_media: false,
     };
+    const placeholder = await this.client.postMessage(
+      placeholderBody as { channel: string; thread_ts?: string; text: string },
+    );
+    if (!placeholder.ok || !placeholder.ts) {
+      throw new Error(
+        `chat.postMessage failed: ${placeholder.error ?? "unknown"}`,
+      );
+    }
+    const ts = placeholder.ts;
+    const intervalMs = this.opts.streamUpdateIntervalMs ?? 800;
+
+    let acc = "";
+    let lastUpdateAt = 0;
+    let lastSent: string | undefined;
+
+    const attemptUpdate = async (text: string): Promise<boolean> => {
+      try {
+        const r = await this.client.updateMessage({
+          channel,
+          ts,
+          text: truncateFallbackText(text),
+          blocks: buildMrkdwnBlocks(text),
+        });
+        if (!r.ok) {
+          console.error("[slack] chat.update failed", r.error, channel, ts);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.error(
+          "[slack] chat.update threw",
+          err instanceof Error ? err.message : err,
+          channel,
+          ts,
+        );
+        return false;
+      }
+    };
+
+    // Skip-if-unchanged guard: cheap, safe because `pushUpdate` is always
+    // called at least once more (the final call) with the true end state.
+    const pushUpdate = async (text: string, isFinal: boolean) => {
+      if (text === lastSent) return;
+      const ok = await attemptUpdate(text);
+      if (ok) {
+        lastSent = text;
+        return;
+      }
+      if (isFinal) {
+        const retryOk = await attemptUpdate(text);
+        if (retryOk) lastSent = text;
+      }
+    };
+
+    try {
+      const conflated = conflateChatSdkStream(
+        stringsToMarkdownChunks(chunks),
+      );
+      for await (const chunk of conflated) {
+        if (chunk.type === "markdown_text") acc += chunk.text;
+        const now = Date.now();
+        if (now - lastUpdateAt >= intervalMs) {
+          await pushUpdate(acc, false);
+          lastUpdateAt = now;
+        }
+      }
+    } catch (err) {
+      await pushUpdate(`${acc}\n\n⚠️ (stream interrupted)`, true);
+      throw err;
+    }
+
+    await pushUpdate(acc, true);
+
+    return { id: ts, channel, ts };
   }
 
   async delete(_ref: MessageRef): Promise<void> {

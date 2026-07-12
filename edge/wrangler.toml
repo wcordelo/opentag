@@ -1,5 +1,6 @@
-# OpenTag edge — DEFAULT deploy: Claude Tag bot + StateStore spine.
-# See PRODUCT.md. Research task Workers use wrangler.research.toml.
+# OpenTag edge — DEFAULT local/dev bot Worker.
+# Production Claude Tag deploy: `npm run deploy:bot` → wrangler.bot.toml (opentag-bot).
+# Research task Workers use wrangler.research.toml.
 name = "opentag-edge"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"
@@ -28,6 +29,11 @@ new_sqlite_classes = ["ConversationStateDO"]
 tag = "v2-claude-tag"
 new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
 
+# Prior deploy exported ThreadDurableObject (old @copilotkit/bot path). Drop it.
+[[migrations]]
+tag = "v3-drop-thread-do"
+deleted_classes = ["ThreadDurableObject"]
+
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"
@@ -39,15 +45,14 @@ service = "opentag-orchestrator"
 
 [vars]
 ENVIRONMENT = "development"
-# Local default only. For deployed Workers, override AGENT_URL to a public
-# runtime host (Railway/Fly/etc.) — Workers cannot reach your laptop localhost.
-AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"
+# AGENT_URL is a wrangler secret (public runtime host). Do not put localhost
+# here — it would overwrite the secret on deploy and break production replies.
+# Local: set AGENT_URL in .dev.vars (http://localhost:8200/...).
 
 # Secrets (wrangler secret put):
-# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_AUTH_HEADER
+# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL, AGENT_AUTH_HEADER
 # ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
 # INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
-# Optional: put AGENT_URL as a secret/var for production overrides.
 
 [env.production]
 vars = { ENVIRONMENT = "production" }

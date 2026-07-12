@@ -25,17 +25,17 @@ features:
     - command: /agent
       description: Talk to the AG-UI agent from any channel
       usage_hint: "<your message>"
-      url: https://opentag-edge.<account>.workers.dev/slack/commands
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
     - command: /config
       description: Set the channel system prompt
       usage_hint: "<prompt text>"
-      url: https://opentag-edge.<account>.workers.dev/slack/commands
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
     - command: /research
       description: Run deep research on a topic (verified, cited summary)
       usage_hint: "<topic>"
-      url: https://opentag-edge.<account>.workers.dev/slack/commands
+      url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
 oauth_config:
   scopes:
@@ -71,9 +71,9 @@ oauth_config:
       - commands
 settings:
   # Events API only — Socket Mode is forbidden (PRODUCT.md).
-  # Point all Request URLs at the **bot** Worker (opentag-edge), not the research orchestrator.
+  # Point all Request URLs at the **bot** Worker (opentag-bot), not the research orchestrator.
   event_subscriptions:
-    request_url: https://opentag-edge.<account>.workers.dev/slack/events
+    request_url: https://opentag-bot.williamlopezc.workers.dev/slack/events
     bot_events:
       - app_mention
       - assistant_thread_started
@@ -85,7 +85,7 @@ settings:
       - message.mpim
   interactivity:
     is_enabled: true
-    request_url: https://opentag-edge.<account>.workers.dev/slack/interactions
+    request_url: https://opentag-bot.williamlopezc.workers.dev/slack/interactions
   socket_mode_enabled: false
   org_deploy_enabled: false
   token_rotation_enabled: false

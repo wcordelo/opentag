@@ -44,16 +44,20 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 
 | Config | Role |
 |---|---|
-| `edge/wrangler.toml` | **Default** — bot Worker + StateStore + config + knowledge + `RESEARCH_TASKS` |
+| `edge/wrangler.toml` | Local/dev bot Worker (`opentag-edge`) |
+| `edge/wrangler.bot.toml` | **Production** Claude Tag bot (`opentag-bot`) — clean DO migrations |
 | `edge/wrangler.research.toml` | Research task Worker (internal `/research`, no public Slack) |
 | `edge/workers/egress-proxy/` | Shared egress for containers |
+
+**Live URL (this account):** `https://opentag-bot.williamlopezc.workers.dev`  
+Point Slack Events / commands / interactions Request URLs there. `AGENT_URL` is a Worker secret pointing at a public AG-UI runtime (today: cloudflared quick tunnel to local `:8200`).
 
 ## Remaining work (honest)
 
 - Track F: `pm_impl_verify` / sandbox multi-agent pipeline.
 - Upstream `@copilotkit/channels` Workers fix (today: vendored tarball in `edge/vendor/`).
 - Chart/diagram image tools deferred on Workers (no Playwright in isolate).
-- Production deploy needs a public `AGENT_URL` (not localhost).
-- Public tunnel + Slack Request URL re-point for live inbound Events API
-  (local loop proven via `edge/scripts/e2e-smoke-local.sh`).
+- Stable public `AGENT_URL` (Railway/Fly) — today a cloudflared quick tunnel to local runtime.
+- Re-apply Slack app manifest Request URLs to `opentag-bot` for true Slack→CF inbound.
 - Research Miniflare DO e2e (`WASM_DISPATCH` service) still `it.todo`.
+- Legacy `opentag-edge` Worker still on account (old DO history); production is `opentag-bot`.

@@ -11,6 +11,7 @@
     "dev:bot-store": "wrangler dev --config wrangler.bot-store.toml",
     "dev:research": "wrangler dev --config wrangler.research.toml",
     "deploy": "wrangler deploy",
+    "deploy:bot": "wrangler deploy --config wrangler.bot.toml",
     "deploy:bot-store": "wrangler deploy --config wrangler.bot-store.toml",
     "deploy:research": "npm run build:wasm && wrangler deploy --config wrangler.research.toml",
     "build:wasm": "cd wasm-core && tinygo build -o ../workers/wasm-dispatch/src/main.wasm -target wasm -no-debug . && wasm-opt -O3 ../workers/wasm-dispatch/src/main.wasm -o ../workers/wasm-dispatch/src/main.opt.wasm",

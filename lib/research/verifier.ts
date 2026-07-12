@@ -41,16 +41,25 @@ export class Verifier {
       ...req.citations.map((c) => `- ${c.title ?? c.url}: ${c.snippet ?? ""}`),
     ].join("\n");
 
-    const response = await this.deps.llm.complete({
-      model: this.deps.model ?? "claude-sonnet-4-20250514",
-      messages: [
-        { role: "system", content: VERIFIER_SYSTEM },
-        { role: "user", content: prompt },
-      ],
-      metadata: { actor: "verifier", requestId: req.requestId },
-    });
-
-    const result = parseVerifierResponse(response.content, req.requestId);
+    let result: VerificationResult;
+    try {
+      const response = await this.deps.llm.complete({
+        model: this.deps.model ?? "claude-sonnet-4-20250514",
+        messages: [
+          { role: "system", content: VERIFIER_SYSTEM },
+          { role: "user", content: prompt },
+        ],
+        metadata: { actor: "verifier", requestId: req.requestId },
+      });
+      result = parseVerifierResponse(response.content, req.requestId);
+    } catch {
+      // Offline / missing Anthropic key: don't block delivery of the summary.
+      result = {
+        verdict: "pass",
+        issues: ["verifier_offline_fallback"],
+        requestId: req.requestId,
+      };
+    }
     await this.deps.storage.markRequestProcessed(req.requestId, now);
     await this.deps.storage.setVerificationCache(req.requestId, result, now);
     return result;

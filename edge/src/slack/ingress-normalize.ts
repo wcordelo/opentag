@@ -210,6 +210,7 @@ export function normalizeSlackEvent(
       source: "thread_reply",
       channel,
       threadTs: event.thread_ts,
+      ts: event.ts,
       userText: stripMentions(text),
       senderUserId: event.user,
       eventId,

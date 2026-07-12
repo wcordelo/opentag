@@ -29,11 +29,6 @@ new_sqlite_classes = ["ConversationStateDO"]
 tag = "v2-claude-tag"
 new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
 
-# Prior deploy exported ThreadDurableObject (old @copilotkit/bot path). Drop it.
-[[migrations]]
-tag = "v3-drop-thread-do"
-deleted_classes = ["ThreadDurableObject"]
-
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"

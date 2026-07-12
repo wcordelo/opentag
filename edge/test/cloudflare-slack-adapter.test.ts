@@ -152,6 +152,50 @@ describe("CloudflareSlackAdapter", () => {
     expect(evt.conversationKey).toBe("C1::9.0");
   });
 
+  it("thread_reply stores inbound ts so reactions can target it", async () => {
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+    });
+    const sink = makeSink();
+    await adapter.start(sink);
+    const reactions: unknown[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("reactions.add")) {
+        reactions.push(JSON.parse(String(init?.body ?? "{}")));
+        return Response.json({ ok: true });
+      }
+      return Response.json({ ok: false });
+    }) as typeof fetch;
+    try {
+      const result = await adapter.handleEventsBody({
+        team_id: "T1",
+        event_id: "EvThread",
+        event: {
+          type: "message",
+          channel: "C1",
+          channel_type: "channel",
+          user: "U1",
+          text: "ok great thank you",
+          ts: "55.5",
+          thread_ts: "50.0",
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(sink.turns).toHaveLength(1);
+      const ok = await adapter.react("C1::50.0", "heart");
+      expect(ok).toBe(true);
+      expect(reactions[0]).toMatchObject({
+        channel: "C1",
+        timestamp: "55.5",
+        name: "heart",
+      });
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it("getSink throws before start", () => {
     const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
     expect(() => adapter.getSink()).toThrow(/sink not set/);

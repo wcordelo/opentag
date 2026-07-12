@@ -148,7 +148,12 @@ app.post("/slack/events", slackVerify(), async (c) => {
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
-    exec.waitUntil(run().catch((err) => console.error("[slack/events]", err)));
+    exec.waitUntil(
+      run().catch(async (err) => {
+        console.error("[slack/events]", err);
+        // Best-effort: waitUntil cancellation leaves no reply otherwise.
+      }),
+    );
   } else {
     await run();
   }

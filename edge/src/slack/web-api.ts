@@ -24,6 +24,16 @@ export type SlackWebClient = {
     status: string;
     loading_messages?: string[];
   }): Promise<void>;
+  addReaction(args: {
+    channel: string;
+    timestamp: string;
+    name: string;
+  }): Promise<{ ok: boolean; error?: string }>;
+  removeReaction(args: {
+    channel: string;
+    timestamp: string;
+    name: string;
+  }): Promise<{ ok: boolean; error?: string }>;
   lookupUserByQuery(query: string): Promise<PlatformUser | undefined>;
   resolveUser(userId: string): Promise<PlatformUser>;
   getThreadMessages(args: {
@@ -77,16 +87,34 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     async setStatus(args) {
       await api("assistant.threads.setStatus", args).catch(() => undefined);
     },
+    async addReaction(args) {
+      const r = await api("reactions.add", {
+        channel: args.channel,
+        timestamp: args.timestamp,
+        name: args.name,
+      });
+      return { ok: r.ok, error: r.error };
+    },
+    async removeReaction(args) {
+      const r = await api("reactions.remove", {
+        channel: args.channel,
+        timestamp: args.timestamp,
+        name: args.name,
+      });
+      return { ok: r.ok, error: r.error };
+    },
     async resolveUser(userId) {
       const cached = userCache.get(userId);
       if (cached) return cached;
-      let user: PlatformUser = { id: userId };
+      // `timezone` is an OpenTag extension (not on PlatformUser); agent-turn reads it.
+      let user: PlatformUser & { timezone?: string } = { id: userId };
       try {
         const r = await api<{
           user?: {
             id?: string;
             name?: string;
             real_name?: string;
+            tz?: string;
             profile?: {
               real_name?: string;
               display_name?: string;
@@ -105,6 +133,7 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
               u.name,
             handle: u.name,
             email: u.profile?.email,
+            ...(u.tz ? { timezone: u.tz } : {}),
           };
         }
       } catch {

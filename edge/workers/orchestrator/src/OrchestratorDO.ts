@@ -73,13 +73,19 @@ export class OrchestratorDO implements DurableObject {
   private getCore(): OrchestratorCore {
     if (!this.core) {
       const storage = this.getStorage();
+      const hasAnthropic = Boolean(this.env.ANTHROPIC_API_KEY?.trim());
+      const defaultModel = hasAnthropic ? undefined : "gpt-4o";
       const llm = new DirectLlmAdapter({
         anthropicApiKey: this.env.ANTHROPIC_API_KEY,
         openaiApiKey: this.env.OPENAI_API_KEY,
+        // Prefer OpenAI when Anthropic isn't configured (common CF secret set).
+        defaultModel,
+        fallbackModel: "gpt-4o",
       });
       this.core = new OrchestratorCore({
         storage,
         llm,
+        model: defaultModel,
         parallelApiKey: this.env.PARALLEL_API_KEY,
         allowedChannelIds: parseAllowedChannels(this.env.SLACK_ALLOWED_CHANNEL_IDS),
       });
@@ -225,6 +231,13 @@ export class OrchestratorDO implements DurableObject {
     const next = await storage.getDueAlarms(Date.now() + 60_000, 1);
     if (next.length > 0) {
       await this.ctx.storage.setAlarm(next[0]!.runAtMs);
+      return;
+    }
+
+    // Keep retrying undelivered Slack posts (e.g. transient Slack errors).
+    const stillPending = await storage.getPendingDeliveries();
+    if (stillPending.length > 0) {
+      await this.ctx.storage.setAlarm(Date.now() + 5_000);
     }
   }
 
@@ -245,6 +258,18 @@ export class OrchestratorDO implements DurableObject {
           obligation.threadKey,
           payload.text,
           this.env.SLACK_BOT_TOKEN,
+        );
+        if (!delivered) {
+          console.error(
+            "[orchestrator] Slack delivery failed",
+            obligation.id,
+            obligation.threadKey,
+          );
+        }
+      } else if (payload.text && !this.env.SLACK_BOT_TOKEN) {
+        console.error(
+          "[orchestrator] SLACK_BOT_TOKEN missing; cannot deliver",
+          obligation.id,
         );
       }
       if (delivered) {

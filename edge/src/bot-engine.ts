@@ -22,9 +22,13 @@ import {
   runWithTeamId,
 } from "./request-context.js";
 import { runBundledAgentTurn } from "./agent-turn.js";
+import { trivialAckReply, trivialAck } from "./trivial-ack.js";
+import { reactIntent } from "./react-intent.js";
 import type { Env } from "./env.js";
 
 export type BotEngineKind = "createBot";
+
+export { trivialAckReply, trivialAck } from "./trivial-ack.js";
 
 type BotHandle = {
   bot: Bot;
@@ -79,7 +83,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       {
         description: "product",
         value:
-          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, issue_card, issue_list, page_list, show_status, show_links, show_incident, memory_search, memory_write, start_task, research_progress. Chart/diagram image tools are NOT available on the Workers bot.",
+          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, issue_card, issue_list, page_list, show_status, show_links, show_incident, memory_search, memory_write, start_task, research_progress, react_message. When asked to react, call react_message — never post emoji as text. Chart/diagram image tools are NOT available on the Workers bot.",
       },
     ],
     commands: edgeCommands,
@@ -167,19 +171,85 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         return;
       }
 
-      await runBundledAgentTurn(
-        env,
-        thread as Parameters<typeof runBundledAgentTurn>[1],
-        message.contentParts && message.contentParts.length > 0
-          ? message.contentParts
-          : text,
-        message.user,
-      );
+      // Skip the full AG-UI/MCP/LLM round-trip for pure acknowledgments —
+      // react on the user message instead of posting a chat reply.
+      const trivial = trivialAck(text);
+      if (trivial) {
+        if (trivial.mode === "react") {
+          const reacted = await adapter.react(
+            thread.conversationKey ?? "",
+            trivial.emoji,
+          );
+          if (!reacted) {
+            await thread.post(
+              trivial.emoji === "heart" ? "You're welcome." : "👍",
+            );
+          }
+        } else {
+          await thread.post(trivial.text);
+        }
+        return;
+      }
+
+      // Explicit "react to my message" / "don't react" — no LLM tool flakiness.
+      const intent = reactIntent(text);
+      if (intent) {
+        if (intent.action === "skip") {
+          // Silent — user asked for no reaction; avoid chat spam too.
+          return;
+        }
+        const reacted = await adapter.react(
+          thread.conversationKey ?? "",
+          intent.emoji,
+        );
+        if (!reacted) {
+          console.error(
+            "[bot] react intent failed",
+            thread.conversationKey,
+            intent.emoji,
+          );
+          await thread.post(
+            "Couldn't add a reaction (missing message target or `reactions:write`).",
+          );
+        }
+        return;
+      }
+
+      // Long turns: hourglass reaction after a short grace period (no chat spam).
+      const progressEmoji = "hourglass_flowing_sand";
+      let progressReacted = false;
+      const progressTimer = setTimeout(() => {
+        progressReacted = true;
+        void adapter
+          .react(thread.conversationKey ?? "", progressEmoji)
+          .catch(() => undefined);
+      }, 2_500);
+
+      try {
+        await runBundledAgentTurn(
+          env,
+          thread as Parameters<typeof runBundledAgentTurn>[1],
+          message.contentParts && message.contentParts.length > 0
+            ? message.contentParts
+            : text,
+          message.user,
+        );
+      } finally {
+        clearTimeout(progressTimer);
+        if (progressReacted) {
+          void adapter
+            .unreact(thread.conversationKey ?? "", progressEmoji)
+            .catch(() => undefined);
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[bot] onMention failed", msg);
       try {
-        await thread.post(`⚠️ Something went wrong: ${msg.slice(0, 200)}`);
+        await thread.post(
+          `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
+            `Usually the local runtime/tunnel behind AGENT_URL — retry in a few seconds.`,
+        );
       } catch {
         /* ignore */
       }

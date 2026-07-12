@@ -60,6 +60,7 @@ oauth_config:
       - chat:write # post and edit messages in channels bot is in
       - chat:write.public # post in channels bot isn't a member of
       - chat:write.customize # per-message username/icon (handy for branding)
+      - reactions:write # ack long turns / thanks with emoji instead of chat spam
       - im:write # open DMs
       - mpim:write # open group DMs
       # --- Files (for future image/file passing) ---

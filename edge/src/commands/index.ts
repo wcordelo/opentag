@@ -13,6 +13,7 @@ import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { startTask } from "../tasks/runtime.js";
 import { getCurrentTeamId } from "../request-context.js";
 import { runBundledAgentTurn } from "../agent-turn.js";
+import { trivialAck } from "../trivial-ack.js";
 import type { Env } from "../env.js";
 
 let boundEnv: Env | null = null;
@@ -127,7 +128,7 @@ export const edgeCommands = [
         return;
       }
       await thread.post(
-        `🔍 Research ${result.status}: \`${result.taskId}\`${result.detail ? ` — ${result.detail}` : ""}`,
+        `🔍 Research accepted: \`${result.taskId}\` — I'll post the summary here when it's ready.`,
       );
     },
   }),
@@ -142,6 +143,19 @@ export const edgeCommands = [
         return;
       }
       try {
+        const trivial = trivialAck(text);
+        if (trivial) {
+          // Slash commands have no inbound channel message to react on —
+          // fall back to a short post.
+          await thread.post(
+            trivial.mode === "react"
+              ? trivial.emoji === "heart"
+                ? "You're welcome."
+                : "👍"
+              : trivial.text,
+          );
+          return;
+        }
         await runBundledAgentTurn(
           env,
           thread as Parameters<typeof runBundledAgentTurn>[1],

@@ -36,6 +36,7 @@ export const DEFAULT_BUNDLE: AccessBundle = {
     "memory_search",
     "memory_write",
     "start_task",
+    "react_message",
   ],
   mcpEndpoints: [],
   secretRefs: [
@@ -53,6 +54,12 @@ export function resolveAllowedTools(
   allToolNames: string[],
   bundle: AccessBundle,
 ): string[] {
-  const allowed = new Set(bundle.tools);
+  // Keep the code-defined default bundle in sync even if the DO was seeded
+  // with an older tools list (e.g. missing react_message after a deploy).
+  const tools =
+    bundle.id === DEFAULT_BUNDLE.id
+      ? [...new Set([...DEFAULT_BUNDLE.tools, ...bundle.tools])]
+      : bundle.tools;
+  const allowed = new Set(tools);
   return allToolNames.filter((name) => allowed.has(name));
 }

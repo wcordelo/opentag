@@ -27,6 +27,14 @@ export async function postToSlackThread(
   const parsed = parseThreadKey(threadKey);
   if (!parsed) return false;
 
+  // Only real Slack timestamps belong in thread_ts (not slash:: scopes).
+  const threadTs =
+    parsed.threadTs &&
+    parsed.threadTs !== parsed.channel &&
+    /^\d+\.\d+$/.test(parsed.threadTs)
+      ? parsed.threadTs
+      : undefined;
+
   const res = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
@@ -35,15 +43,16 @@ export async function postToSlackThread(
     },
     body: JSON.stringify({
       channel: parsed.channel,
-      ...(parsed.threadTs && parsed.threadTs !== parsed.channel
-        ? { thread_ts: parsed.threadTs }
-        : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {}),
       text: chunkMessage(text),
       mrkdwn: true,
     }),
   });
 
-  const json = (await res.json()) as { ok: boolean };
+  const json = (await res.json()) as { ok: boolean; error?: string };
+  if (!json.ok) {
+    console.error("[research-delivery] chat.postMessage failed", json.error);
+  }
   return json.ok;
 }
 

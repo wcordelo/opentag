@@ -25,6 +25,8 @@ export interface Env {
   AGENT_AUTH_HEADER?: string;
   ENVIRONMENT?: string;
   DEFAULT_ACCESS_BUNDLE_ID?: string;
+  /** Fallback IANA timezone when Slack users.info has no tz (default PDT/PST). */
+  DEFAULT_USER_TIMEZONE?: string;
 
   SLACK_BOT_TOKEN?: string;
   SLACK_SIGNING_SECRET?: string;

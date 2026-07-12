@@ -191,6 +191,47 @@ function mergeMcpTransports(
 const MCP_CONNECT_TIMEOUT_MS = 8000;
 
 /**
+ * OpenAI strict tool schemas coerce optional MCP fields to `null`. Linear's
+ * Zod validators reject null (they want the key omitted). Drop null/undefined
+ * recursively before the MCP `callTool` executes.
+ */
+function stripNullishDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripNullishDeep);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      if (child === null || child === undefined) continue;
+      out[key] = stripNullishDeep(child);
+    }
+    return out;
+  }
+  return value;
+}
+
+const stripNullishToolArgsMiddleware = {
+  name: "strip-nullish-tool-args",
+  onBeforeToolCall(
+    _ctx: unknown,
+    hookCtx: { args?: unknown },
+  ): { type: "transformArgs"; args: unknown } | undefined {
+    let args: unknown = hookCtx.args;
+    if (typeof args === "string") {
+      try {
+        args = JSON.parse(args.trim() || "{}");
+      } catch {
+        return undefined;
+      }
+    }
+    if (!args || typeof args !== "object") return undefined;
+    return { type: "transformArgs", args: stripNullishDeep(args) };
+  },
+};
+
+/**
  * Connect one MCP client without ever taking the run down with it. A server
  * that's misconfigured (bad key), down (sidecar not running), or hanging must
  * NOT abort the turn — the agent should keep working with whatever else is
@@ -222,11 +263,52 @@ if (mcpTransportsFromEnv().length === 0) {
   );
 }
 
+// OpenAI-only here: web search is an OpenAI hosted (provider) tool, so this
+// agent runs on the OpenAI Responses API via TanStack AI's `openaiText`
+// adapter. Override the model with AGENT_MODEL (a bare OpenAI id, or
+// "openai/<id>" — the prefix is stripped); defaults to gpt-5.5. The cast is
+// needed because AGENT_MODEL is dynamic and `openaiText` types its argument to
+// the known OpenAI model literals.
+const model = (process.env["AGENT_MODEL"] ?? "openai/gpt-5.5").replace(
+  /^openai\//,
+  "",
+) as Parameters<typeof openaiText>[0];
+
 const SYSTEM_PROMPT = [
   "You are an on-call triage assistant living in a Slack workspace. You help",
   "an engineering team turn incident chatter into tracked work: you pull and",
   "file Linear issues, find Notion runbooks, and write incident threads up as",
-  "Notion postmortems.",
+  "Notion postmortems. You also answer factual / current-events questions",
+  "using web_search when needed.",
+  "",
+  `Runtime model: you are running OpenAI model "${model}". If asked what model`,
+  "you are, answer with that exact id — do not claim you cannot tell.",
+  "",
+  "Time & 'today':",
+  "- Every turn includes a 'Clock / timezone for this turn' context entry.",
+  "- Interpret 'today', 'tonight', 'this morning', and 'scheduled today' using",
+  "  the requester's local calendar date from that entry — NEVER UTC alone.",
+  "- US evening kickoffs often land on the next UTC day; do not call them",
+  "  'yesterday' just because UTC already rolled over.",
+  "- When searching schedules, put the requester-local date in the query",
+  "  (and mention their timezone if relevant).",
+  "",
+  "Thread continuity:",
+  "- Every turn includes 'Current Slack thread transcript' when available.",
+  "- Use it. Do NOT pretend you lack earlier context. Do NOT ask the user to",
+  "  restate teams, leagues, or constraints already in the thread.",
+  "- If you called read_thread, trust its messages the same way.",
+  "- If the latest message is only a greeting (hi/hello) but an earlier user",
+  "  question in this thread still has no bot answer after it, answer that",
+  "  pending question now — do not only greet back.",
+  "",
+  "Factual / schedule questions (sports, news, 'what's on today'):",
+  "- Call web_search FIRST. Prefer answering over clarifying.",
+  "- Only ask a clarifying question when the topic is genuinely ambiguous",
+  "  AFTER search (e.g. two different tournaments both match).",
+  "- If the user corrects you, apologize in one short line and re-search with",
+  "  their correction. Do not make them repeat the whole request.",
+  "- Cite sources (links) for schedule/score claims.",
   "",
   "Data access:",
   "- Linear and Notion are connected via MCP. Use those tools to search, read,",
@@ -308,17 +390,6 @@ const SYSTEM_PROMPT = [
   "'I'll need approval' disclaimer to a pure render or read.",
 ].join("\n");
 
-// OpenAI-only here: web search is an OpenAI hosted (provider) tool, so this
-// agent runs on the OpenAI Responses API via TanStack AI's `openaiText`
-// adapter. Override the model with AGENT_MODEL (a bare OpenAI id, or
-// "openai/<id>" — the prefix is stripped); defaults to gpt-5.5. The cast is
-// needed because AGENT_MODEL is dynamic and `openaiText` types its argument to
-// the known OpenAI model literals.
-const model = (process.env["AGENT_MODEL"] ?? "openai/gpt-5.5").replace(
-  /^openai\//,
-  "",
-) as Parameters<typeof openaiText>[0];
-
 // Factory mode: we own the LLM call (TanStack AI `chat()`); BuiltInAgent owns
 // the AG-UI run lifecycle and converts TanStack's stream into AG-UI events.
 // `chat()` runs the multi-turn tool loop, the OpenAI `web_search` provider
@@ -389,6 +460,9 @@ const agent = new BuiltInAgent({
         ...(clientTools as never[]),
       ],
       ...(clients.length > 0 ? { mcp: { clients } } : {}),
+      // OpenAI strict schemas force optional MCP filters as `null`; Linear Zod
+      // rejects null — strip before callTool so unused filters are omitted.
+      middleware: [stripNullishToolArgsMiddleware],
       // TanStack AI needs the full AbortController (not just the signal).
       abortController: ctx.abortController,
     });

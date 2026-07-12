@@ -32,9 +32,13 @@ export class ResearcherDO implements DurableObject {
       this.ensureMigrated();
       const { taskId } = (await request.json()) as { taskId: string };
       const storage = new DurableObjectStorageAdapter(this.ctx.storage.sql);
+      const hasAnthropic = Boolean(this.env.ANTHROPIC_API_KEY?.trim());
+      const defaultModel = hasAnthropic ? undefined : "gpt-4o";
       const llm = new DirectLlmAdapter({
         anthropicApiKey: this.env.ANTHROPIC_API_KEY,
         openaiApiKey: this.env.OPENAI_API_KEY,
+        defaultModel,
+        fallbackModel: "gpt-4o",
       });
       const { Researcher: ResearcherCore } = await import(
         "../../../../lib/research/researcher.js"
@@ -42,6 +46,7 @@ export class ResearcherDO implements DurableObject {
       const researcher = new ResearcherCore({
         storage,
         llm,
+        model: defaultModel,
         parallelApiKey: this.env.PARALLEL_API_KEY,
       });
       const result = await researcher.runFiberStep(taskId);
@@ -56,14 +61,22 @@ export class ResearcherDO implements DurableObject {
     const due = await storage.getDueAlarms(Date.now(), 1);
     if (due.length === 0) return;
     const alarm = due[0]!;
+    const hasAnthropic = Boolean(this.env.ANTHROPIC_API_KEY?.trim());
+    const defaultModel = hasAnthropic ? undefined : "gpt-4o";
     const llm = new DirectLlmAdapter({
       anthropicApiKey: this.env.ANTHROPIC_API_KEY,
       openaiApiKey: this.env.OPENAI_API_KEY,
+      defaultModel,
+      fallbackModel: "gpt-4o",
     });
     const { Researcher: ResearcherCore } = await import(
       "../../../../lib/research/researcher.js"
     );
-    const researcher = new ResearcherCore({ storage, llm });
+    const researcher = new ResearcherCore({
+      storage,
+      llm,
+      model: defaultModel,
+    });
     await researcher.runFiberStep(alarm.sessionId);
     await storage.deleteAlarm(alarm.id);
     const next = await storage.getDueAlarms(Date.now(), 1);

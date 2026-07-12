@@ -221,7 +221,14 @@ export class Researcher {
       `Facts:\n${facts.map((f) => `- ${f.content} (${f.sourceUrl ?? "no url"})`).join("\n")}`,
     ].filter(Boolean).join("\n\n");
 
-    const model = this.deps.model ?? "claude-sonnet-4-20250514";
+    const model =
+      this.deps.model ??
+      (typeof (this.deps.llm as unknown as { getActiveModel?: () => string })
+        .getActiveModel === "function"
+        ? (
+            this.deps.llm as unknown as { getActiveModel: () => string }
+          ).getActiveModel()
+        : "claude-sonnet-4-20250514");
     let llmResponse: { content: string; model: string };
     try {
       llmResponse = await this.deps.llm.complete({

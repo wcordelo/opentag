@@ -38,6 +38,10 @@ import {
   type SlackWebClient,
 } from "./web-api.js";
 import {
+  rememberInboundMessage,
+  getInboundMessage,
+} from "./inbound-target.js";
+import {
   buildFileContentParts,
   extractSlackFiles,
   mergePromptParts,
@@ -57,7 +61,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   readonly capabilities: SurfaceCapabilities = {
     supportsModals: false,
     supportsTyping: false,
-    supportsReactions: false,
+    supportsReactions: true,
     supportsStreaming: true,
     supportsEphemeral: false,
     maxBlocksPerMessage: 50,
@@ -69,17 +73,29 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   private readonly client: SlackWebClient;
   private botUserId: string | undefined;
   private teamId: string | undefined;
+  /** Reuse AG-UI agents within this isolate so mid-thread turns keep message history. */
+  private readonly agentsByConversation = new Map<
+    string,
+    { agent: ReturnType<Parameters<ConversationStore["getOrCreate"]>[2]> }
+  >();
+  /** Inbound message to react on (CopilotKit IncomingMessage.ref is empty on CF). */
+  // Kept in inbound-target.ts so tools can read it without the adapter instance.
 
-  readonly conversationStore: ConversationStore = {
-    async getOrCreate(conversationKey, _replyTarget, makeAgent) {
-      return { agent: makeAgent(conversationKey) };
-    },
-  };
+  readonly conversationStore: ConversationStore;
 
   constructor(private readonly opts: CloudflareSlackAdapterOptions) {
     this.client = createSlackWebClient(opts.botToken);
     this.botUserId = opts.botUserId;
     this.teamId = opts.teamId;
+    this.conversationStore = {
+      getOrCreate: async (conversationKey, _replyTarget, makeAgent) => {
+        const hit = this.agentsByConversation.get(conversationKey);
+        if (hit) return hit;
+        const created = { agent: makeAgent(conversationKey) };
+        this.agentsByConversation.set(conversationKey, created);
+        return created;
+      },
+    };
   }
 
   /** Expose sink for tests after `bot.start()`. */
@@ -146,11 +162,13 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       ? {
           channel: normalized.channel,
           statusTs: normalized.ts,
+          messageTs: normalized.ts,
           recipientUserId: normalized.senderUserId,
         }
       : {
           channel: normalized.channel,
           threadTs: normalized.threadTs ?? normalized.ts,
+          messageTs: normalized.ts,
           recipientUserId: normalized.senderUserId,
         };
 
@@ -178,8 +196,75 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       eventId: normalized.eventId,
       platform: "slack",
     };
+    if (normalized.ts) {
+      rememberInboundMessage(
+        conversationKey,
+        normalized.channel,
+        normalized.ts,
+      );
+    }
     await this.sink.onTurn(turn);
     return { handled: true };
+  }
+
+  /** React to the latest inbound user message in this conversation (if known). */
+  async react(
+    conversationKey: string,
+    emoji: string,
+  ): Promise<boolean> {
+    let target = getInboundMessage(conversationKey);
+    // Fall back to thread parent ts encoded in the conversation key.
+    if (!target && conversationKey.includes("::")) {
+      const [channel, scope] = conversationKey.split("::");
+      if (channel && scope && /^\d+\.\d+$/.test(scope)) {
+        target = { channel, ts: scope };
+      }
+    }
+    if (!target) {
+      console.error("[slack] react: no inbound target", conversationKey);
+      return false;
+    }
+    const name = emoji.replace(/^:|:$/g, "");
+    const r = await this.client.addReaction({
+      channel: target.channel,
+      timestamp: target.ts,
+      name,
+    });
+    if (!r.ok && r.error !== "already_reacted") {
+      console.error(
+        "[slack] reactions.add failed",
+        r.error,
+        name,
+        target.channel,
+        target.ts,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  async unreact(
+    conversationKey: string,
+    emoji: string,
+  ): Promise<boolean> {
+    let target = getInboundMessage(conversationKey);
+    if (!target && conversationKey.includes("::")) {
+      const [channel, scope] = conversationKey.split("::");
+      if (channel && scope && /^\d+\.\d+$/.test(scope)) {
+        target = { channel, ts: scope };
+      }
+    }
+    if (!target) return false;
+    const r = await this.client.removeReaction({
+      channel: target.channel,
+      timestamp: target.ts,
+      name: emoji.replace(/^:|:$/g, ""),
+    });
+    if (!r.ok && r.error !== "no_reaction") {
+      console.error("[slack] reactions.remove failed", r.error, emoji);
+      return false;
+    }
+    return true;
   }
 
   /** Handle slash-command form body (already URL-decoded params object or raw). */
@@ -342,7 +427,75 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       status: statusTs
         ? { threadTs: statusTs, isPane: false }
         : undefined,
+      // Prefer reactions / final replies over `:wrench:` / `:white_check_mark:`
+      // tool-status chat rows (those confused users into thinking the bot
+      // was posting emoji as text).
+      showToolStatus: false,
     });
+  }
+
+  async addReaction(
+    target: ReplyTarget,
+    messageRef: MessageRef,
+    emoji: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const t = target as { channel?: string; messageTs?: string };
+    const channel = t.channel ?? "";
+    const ts =
+      (typeof messageRef.id === "string" && /^\d+\.\d+$/.test(messageRef.id)
+        ? messageRef.id
+        : undefined) ||
+      (typeof (messageRef as { ts?: string }).ts === "string"
+        ? (messageRef as { ts: string }).ts
+        : undefined) ||
+      t.messageTs ||
+      "";
+    if (!channel || !ts) {
+      return { ok: false, error: "no_message_target" };
+    }
+    const name = emoji.replace(/^:|:$/g, "").trim();
+    const r = await this.client.addReaction({
+      channel,
+      timestamp: ts,
+      name,
+    });
+    if (!r.ok && r.error !== "already_reacted") {
+      console.error("[slack] reactions.add failed", r.error, name);
+      return { ok: false, error: r.error ?? "reactions_add_failed" };
+    }
+    return { ok: true };
+  }
+
+  async removeReaction(
+    target: ReplyTarget,
+    messageRef: MessageRef,
+    emoji: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const t = target as { channel?: string; messageTs?: string };
+    const channel = t.channel ?? "";
+    const ts =
+      (typeof messageRef.id === "string" && /^\d+\.\d+$/.test(messageRef.id)
+        ? messageRef.id
+        : undefined) ||
+      (typeof (messageRef as { ts?: string }).ts === "string"
+        ? (messageRef as { ts: string }).ts
+        : undefined) ||
+      t.messageTs ||
+      "";
+    if (!channel || !ts) {
+      return { ok: false, error: "no_message_target" };
+    }
+    const name = emoji.replace(/^:|:$/g, "").trim();
+    const r = await this.client.removeReaction({
+      channel,
+      timestamp: ts,
+      name,
+    });
+    if (!r.ok && r.error !== "no_reaction") {
+      console.error("[slack] reactions.remove failed", r.error, name);
+      return { ok: false, error: r.error ?? "reactions_remove_failed" };
+    }
+    return { ok: true };
   }
 
   decodeInteraction(raw: unknown): InteractionEvent | undefined {
@@ -355,8 +508,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   }
 
   async getMessages(target: ReplyTarget): Promise<ThreadMessage[]> {
-    const t = target as { channel?: string; threadTs?: string };
-    const threadTs = t.threadTs;
+    const t = target as {
+      channel?: string;
+      threadTs?: string;
+      messageTs?: string;
+    };
+    const threadTs = t.threadTs ?? t.messageTs;
     if (!t.channel || !threadTs) return [];
     const messages = await this.client.getThreadMessages({
       channel: t.channel,

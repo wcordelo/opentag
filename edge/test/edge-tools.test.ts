@@ -22,6 +22,7 @@ const EXPECTED_EDGE_TOOLS = [
   "memory_search",
   "memory_write",
   "start_task",
+  "react_message",
 ] as const;
 
 describe("edge triage tools", () => {

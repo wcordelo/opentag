@@ -26,7 +26,10 @@ export class DirectLlmAdapter implements LlmAdapter {
   constructor(private readonly config: LlmAdapterConfig) {}
 
   getActiveModel(hint?: string): string {
-    const preferred = hint ?? this.config.defaultModel ?? DEFAULT_MODEL;
+    const preferred =
+      hint ??
+      this.config.defaultModel ??
+      (this.config.anthropicApiKey?.trim() ? DEFAULT_MODEL : FALLBACK_MODEL);
     if (this.isCircuitOpen(preferred) && this.config.fallbackModel) {
       return this.config.fallbackModel;
     }

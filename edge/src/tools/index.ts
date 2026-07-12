@@ -14,6 +14,9 @@ import {
 } from "@copilotkit/channels-ui";
 import { memorySearch, memoryWrite } from "../memory/knowledge-do.js";
 import { startTask } from "../tasks/runtime.js";
+import { createSlackWebClient } from "../slack/web-api.js";
+import { getInboundMessage } from "../slack/inbound-target.js";
+import { normalizeEmojiToken } from "../react-intent.js";
 import type { Env } from "../env.js";
 import { getCurrentTeamId } from "../request-context.js";
 import {
@@ -142,8 +145,9 @@ export const readThreadTool = defineBotTool({
   name: "read_thread",
   description:
     "Fetch the messages in the current conversation thread so you can " +
-    "summarize or act on them. Call before turning a conversation into a " +
-    "Linear issue or Notion postmortem — never guess what was said.",
+    "summarize or act on them. Prefer the 'Current Slack thread transcript' " +
+    "context when present; call this tool if you need a fresh pull. Never " +
+    "claim the thread is empty when transcript context or this tool returns messages.",
   parameters: z.object({}),
   async handler(_args, { thread }) {
     const messages = await thread.getMessages();
@@ -323,6 +327,96 @@ export const startTaskTool = defineBotTool({
   },
 });
 
+export const reactMessageTool = defineBotTool({
+  name: "react_message",
+  description:
+    "Add an emoji reaction to a Slack message in this thread. Use when the " +
+    "user asks you to react, or when a reaction is better than a chat reply. " +
+    "NEVER post emoji as plain text like ':+1:' or '👍' — call this tool. " +
+    "Emoji names have no colons (thumbsup, heart, eyes). " +
+    "Omit messageTs unless you have an exact Slack timestamp (digits.digits).",
+  parameters: z.object({
+    emoji: z
+      .string()
+      .describe("Slack emoji short name without colons, e.g. thumbsup or +1"),
+    messageTs: z
+      .string()
+      .optional()
+      .describe(
+        "Exact Slack message ts (e.g. 1783830175.114279). Omit to react to the inbound user message.",
+      ),
+  }),
+  async handler({ emoji, messageTs }, { thread }) {
+    const env = requireEnv();
+    if (!env.SLACK_BOT_TOKEN) {
+      return { ok: false, error: "SLACK_BOT_TOKEN missing" };
+    }
+    const conversationKey = conversationKeyOf(thread);
+    const inbound = getInboundMessage(conversationKey);
+    const channel = channelFromThread(thread) || inbound?.channel || "";
+    const argTs = messageTs?.trim();
+    let ts =
+      (argTs && /^\d+\.\d+$/.test(argTs) ? argTs : undefined) ||
+      inbound?.ts ||
+      undefined;
+
+    if (!ts) {
+      const msgs = await thread.getMessages();
+      const lastUser = [...msgs].reverse().find((m) => !m.isBot && m.ts);
+      const anyTs = [...msgs].reverse().find((m) => m.ts);
+      ts = lastUser?.ts ?? anyTs?.ts;
+    }
+
+    if (!ts) {
+      const scope = conversationKey.split("::")[1];
+      if (scope && /^\d+\.\d+$/.test(scope)) ts = scope;
+    }
+
+    if (!channel || !ts) {
+      console.error("[react_message] no_message_target", {
+        conversationKey,
+        channel,
+        hasInbound: Boolean(inbound),
+      });
+      return {
+        ok: false,
+        error: "no_message_target",
+        detail: {
+          conversationKey,
+          channel,
+          hasInbound: Boolean(inbound),
+        },
+      };
+    }
+
+    let name = normalizeEmojiToken(emoji);
+    if (!name) return { ok: false, error: "empty_emoji" };
+
+    const client = createSlackWebClient(env.SLACK_BOT_TOKEN);
+    const r = await client.addReaction({
+      channel,
+      timestamp: ts,
+      name,
+    });
+    if (!r.ok && r.error !== "already_reacted") {
+      console.error("[react_message] reactions.add failed", r.error, {
+        channel,
+        ts,
+        name,
+        requested: emoji,
+      });
+      return {
+        ok: false,
+        error: r.error ?? "reactions_add_failed",
+        channel,
+        ts,
+        emoji: name,
+      };
+    }
+    return { ok: true, emoji: name, ts, channel };
+  },
+});
+
 export const ALL_EDGE_TOOLS = [
   lookupSlackUserTool,
   readThreadTool,
@@ -337,6 +431,7 @@ export const ALL_EDGE_TOOLS = [
   memorySearchTool,
   memoryWriteTool,
   startTaskTool,
+  reactMessageTool,
 ] as const;
 
 export const ALL_EDGE_TOOL_NAMES = ALL_EDGE_TOOLS.map((t) => t.name);

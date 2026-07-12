@@ -45,6 +45,28 @@ export interface Env {
 
   SLACK_BOT_TOKEN?: string;
   SLACK_SIGNING_SECRET?: string;
+
+  /**
+   * Fetcher service binding to the Claude Code harness container (GOAL.md
+   * Phase A5, SPEC.md §3.6/§4.4). Prefer this over `HARNESS_URL` — same
+   * Worker→Worker-avoids-CF-1042 reason `AGENT_RUNTIME` exists alongside
+   * `AGENT_URL`. Ships as a separate Worker (`edge/workers/sandbox/` +
+   * `containers/harness/` own the container image); deploy is gated
+   * (GOAL.md house rule 6) — this binding is optional and unset today.
+   */
+  HARNESS?: Fetcher;
+  /**
+   * Base URL for the harness container's HTTP surface (`POST /turn`,
+   * `GET /health`) when no `HARNESS` service binding is configured — same
+   * dual pattern as `AGENT_URL`/`AGENT_RUNTIME`. `edge/src/harness/client.ts`
+   * appends the path itself (`/turn`); do not include it here.
+   */
+  HARNESS_URL?: string;
+  /**
+   * Default repo to clone for a harness turn when the caller doesn't supply
+   * one (SPEC.md §4.4). Forwarded as `repo.url` in the `/turn` POST body.
+   */
+  HARNESS_REPO_URL?: string;
 }
 
 export type BotVariables = {

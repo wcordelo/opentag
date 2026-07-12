@@ -22,3 +22,12 @@ new_sqlite_classes = ["Sandbox"]
 # class_name = "Sandbox"
 # image = "./Dockerfile"
 # max_instances = 10
+
+# The Claude Code coding harness (GOAL.md Phase A5 / SPEC.md §4.4) is a
+# separate image at ../../containers/harness/Dockerfile, fronted by
+# edge/workers/sandbox/harness-server.ts (plain Node HTTP server, not a
+# Worker — runs INSIDE that container). It is not wired into this
+# wrangler.toml's [[containers]] block either, for the same gated-deploy
+# reason as the block above; edge/src/harness/client.ts is the edge-side
+# caller and expects an env binding (HARNESS service binding or HARNESS_URL)
+# once that wiring lands.

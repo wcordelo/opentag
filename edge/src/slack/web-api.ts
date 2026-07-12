@@ -68,6 +68,20 @@ export type SlackWebClient = {
   >;
 };
 
+/**
+ * Best-effort GitHub handle extraction (GOAL.md Phase A5 / SPEC.md §5-A5
+ * item 5). No dedicated Slack scope for this — `users.profile.get` is a
+ * separate OAuth scope we don't request — so instead we scan the entire
+ * `users.info` JSON response (custom profile fields, status text, etc.) for
+ * a `github.com/<handle>` URL. Cheap and lossy by design: a false negative
+ * just means the `[Requester Context]` block omits the GitHub line.
+ */
+const GITHUB_HANDLE_RE = /github\.com\/([A-Za-z0-9-]+)/i;
+
+function extractGithubHandle(rawJson: string): string | undefined {
+  return rawJson.match(GITHUB_HANDLE_RE)?.[1];
+}
+
 export function createSlackWebClient(botToken: string): SlackWebClient {
   // Slack Web API: prefer form-urlencoded. JSON bodies break several methods
   // (notably users.info → user_not_found / no profile.email).
@@ -151,8 +165,11 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
       // Prefer a cache hit that already has email. Incomplete entries (id-only)
       // are refreshed so a transient users.info miss does not stick forever.
       if (cached?.email) return cached;
-      // `timezone` is an OpenTag extension (not on PlatformUser); agent-turn reads it.
-      let user: PlatformUser & { timezone?: string } = { id: userId };
+      // `timezone`/`githubHandle` are OpenTag extensions (not on PlatformUser);
+      // agent-turn reads both.
+      let user: PlatformUser & { timezone?: string; githubHandle?: string } = {
+        id: userId,
+      };
       try {
         const r = await api<{
           user?: {
@@ -164,11 +181,17 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
               real_name?: string;
               display_name?: string;
               email?: string;
+              fields?: unknown;
+              status_text?: string;
             };
           };
         }>("users.info", { user: userId });
         const u = r.user;
         if (r.ok && u?.id) {
+          // Scan the whole raw response (custom profile fields, status text,
+          // etc.) rather than one known field — the cheapest thing that
+          // catches most real-world "github.com/handle" placements.
+          const githubHandle = extractGithubHandle(JSON.stringify(r));
           user = {
             id: u.id,
             name:
@@ -179,6 +202,7 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             handle: u.name,
             email: u.profile?.email,
             ...(u.tz ? { timezone: u.tz } : {}),
+            ...(githubHandle ? { githubHandle } : {}),
           };
           if (!user.email) {
             console.warn(

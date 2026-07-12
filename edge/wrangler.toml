@@ -48,6 +48,16 @@ bucket_name = "opentag-research-blobs"
 binding = "RESEARCH_TASKS"
 service = "opentag-orchestrator"
 
+# Claude Code harness container (GOAL.md Phase A5, SPEC.md §3.6/§4.4). The
+# container Worker + image ship separately (edge/workers/sandbox/ +
+# containers/harness/, owned by a different build track) and deploy is
+# gated (GOAL.md house rule 6) — uncomment once that Worker is deployed.
+# Mirrors edge/workers/sandbox/wrangler.toml's commented [[containers]] block.
+#
+# [[services]]
+# binding = "HARNESS"
+# service = "opentag-harness"
+
 [vars]
 ENVIRONMENT = "development"
 # AGENT_URL is a wrangler secret (public runtime host). Do not put localhost
@@ -58,6 +68,11 @@ ENVIRONMENT = "development"
 # SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL, AGENT_AUTH_HEADER
 # ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
 # INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
+#
+# Harness container (Phase A5, gated — see the commented [[services]] block
+# above). Set only once the container Worker is deployed:
+# HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
+# HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
 
 [env.production]
 vars = { ENVIRONMENT = "production" }

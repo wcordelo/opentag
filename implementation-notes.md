@@ -1,5 +1,143 @@
 # Implementation Notes
 
+## Phase A5 — Claude Code harness container, container-side (2026-07-12)
+
+### Status
+Container-side half of A5 only (GOAL.md split this phase across two concurrent agents;
+the `edge/src/**` half — `edge/src/harness/client.ts`, agent-turn wiring — is owned
+elsewhere and was read-only reference here). Typecheck clean (`cd edge && npm run
+typecheck`); `cd edge && npx vitest run test/harness-server.test.ts
+test/tool-host.test.ts` 47/47; full suite 258/258 after this work. Docker build not
+run (no docker available; not required per mission scope).
+
+### What landed
+- **`edge/workers/sandbox/harness-server.ts`** — plain-Node HTTP server (runs INSIDE
+  the container, not a Worker) implementing the pinned wire contract: `GET /health`,
+  `POST /turn` streaming `application/x-ndjson`. All reasoning-bearing logic is a pure,
+  exported function: `assemblePrompt`, `mapStreamJsonLine` (claude-code stream-json →
+  our NDJSON), `finalizeEvents` (done-always-last invariant), `buildClaudeArgs`,
+  `createExecutionTracker`/`decideTurnAdmission` (409 dedup), `createSessionQueue`
+  (per-session serialization, cross-session concurrency), `ensureWorkdir` (git clone +
+  work-branch checkout), `workBranchName`, `summarizeToolInput`, `truncateSummary`. The
+  HTTP server itself (`createHarnessServer`) wires these together; it only binds a port
+  when run as the main module (`isMain` guard via `import.meta.url`), so importing the
+  file in tests never starts a listener.
+- **`edge/workers/sandbox/tool-host.ts`** — TS port of centaur's `centaur_tool_host.py`
+  (106 LOC). Same stdin/stdout line-delimited JSON protocol, same tiny surface: shells
+  out to `${OPENTAG_TOOL_BIN:-opentag-tools} call <tool> <method> <json-args>` via
+  `spawnSync` with a timeout, emits `{"type":"result","turn_id":id,"result":"<json>"}`,
+  prints `__OPENTAG_TOOL_HOST_READY` on start (opentag's rename of centaur's sentinel).
+- **`containers/harness/Dockerfile`** — two-stage build: `build` stage compiles both
+  `.ts` files to ES2022/ESM `.js` with a pinned `typescript@5.6.3` (no npm deps needed
+  at runtime); `harness` stage is Ubuntu 22.04 + curl/git/ripgrep/jq/fd (symlinked from
+  `fdfind`) + Node 20 (NodeSource) + uv (astral installer) + `@anthropic-ai/claude-code`
+  pinned to `2.1.154` (same version centaur's proven sandbox Dockerfile pins). Non-root
+  `harness` user; `/opt/harness/package.json` sets `"type":"module"` so Node runs the
+  compiled ESM output; `EXPOSE 8080`; `CMD node /opt/harness/harness-server.js`.
+- **`containers/harness/SYSTEM_PROMPT.md`** — adapted from
+  `centaur/services/sandbox/SYSTEM_PROMPT.md` per SPEC.md §2.7 (full section accounting
+  below).
+- **`edge/test/harness-server.test.ts`** (34 tests) + **`edge/test/tool-host.test.ts`**
+  (13 tests) — cover every item the mission asked for: event mapping (assistant text,
+  tool_use, result success/failure, malformed/blank lines, ignored system/user types),
+  the done-always-last invariant (no-done → fallback appended; done-in-middle →
+  truncated so done stays last; already-terminal → unchanged), the duplicate-execution
+  409 decision (pure `decideTurnAdmission`/`ExecutionTracker`), prompt assembly with/
+  without transcript and requesterContext (5 cases), plus bonus coverage
+  (`createSessionQueue` serialization/concurrency/error-continuation,
+  `buildClaudeArgs` flag shape, `workBranchName`/`summarizeToolInput`/`truncateSummary`).
+  `tool-host.test.ts` exercises `runTool`/`handleRequestLine` end-to-end through a real
+  spawned Node "fake tool bin" script (chmod +x, shebang) standing in for
+  `opentag-tools` — covers success, nonzero exit, and timeout paths via a real
+  `spawnSync` call, not a mock.
+- Comment-only additions to `edge/workers/sandbox/Dockerfile` and `wrangler.toml`
+  pointing at `containers/harness/` (both left otherwise untouched — verified via
+  `git diff`, no `[[containers]]` wiring added, per the mission's explicit scope limit).
+
+### Event-mapping table (claude-code stream-json → our NDJSON)
+| stream-json line | our NDJSON event(s) |
+|---|---|
+| `{"type":"assistant","message":{"content":[{"type":"text","text":"…"}]}}` | `{"kind":"output","payload":{"text":"…"}}` per text block |
+| `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"…","input":{…}}]}}` | `{"kind":"output","payload":{"tool":"…","summary":"…"}}` (summary = first present of `command/file_path/path/pattern/url/query/description`, truncated to 120 chars, else just the tool name) |
+| `{"type":"assistant",...,"content":[{"type":"thinking",...}]}` | (not surfaced — see deviations) |
+| `{"type":"result","is_error":false,"result":"…"}` | `{"kind":"done","payload":{"ok":true,"summary":"…truncated to 500…"}}` |
+| `{"type":"result","is_error":true,...}` | `{"kind":"done","payload":{"ok":false,"summary":"…"}}` |
+| `{"type":"system",...}` / `{"type":"user",...}` | `[]` (init/tool-result echoes, intentionally not surfaced) |
+| malformed JSON / blank line / unrecognized shape | `[]` (never throws) |
+| process exits non-zero without ever emitting `result` | synthesized at the live-stream level (not in `mapStreamJsonLine`): `{"kind":"error",...}` then `{"kind":"done","payload":{"ok":false,...}}` |
+| stream ends with no `result` at all (offline/testable form) | `finalizeEvents()` appends `{"kind":"done","payload":{"ok":false,"summary":"No result received from Claude Code"}}` |
+
+### SYSTEM_PROMPT.md — section accounting (SPEC §2.7)
+- **Copied verbatim:** `[Writing Quality Gate]`, `[User Interaction]`,
+  `[GitHub PR Attribution]`, `[Python policy]`, `[Rust policy]`, `[Parallel tool calls]`
+  (extracted from centaur's nested `[Tool CLI access]` section into its own heading),
+  `[Format complaints are correction signals]`, `[User-visible artifact verification]`.
+- **Adapted:** `[Container Lifecycle]` (K8s/pod refs → "CF Container... may be
+  recycled"); `[Environment]` (centaur's `~/github/{org}/{repo}` read-only-mount +
+  `git-branch` CLI model doesn't apply — opentag clones per-session directly into the
+  workdir with the work branch already checked out by `harness-server.ts`, so this is a
+  rewrite, not a copy, describing what's actually true for this container); new
+  `[Chat delivery — do not self-post]` section generalizing centaur's Slack-specific
+  "don't call the slack tool to reply" rule (still relevant: the harness's stdout *is*
+  the delivery path).
+- **Omitted (centaur-specific, per mission scope):** `[Self-introspection]`, `[Model
+  and Harness Switching Answers]` (Amp/Codex/Bedrock — out of scope, SPEC §9),
+  `[Research and Grounding]` (persona-overlay references), `[Authoritative
+  internal-data answers]`, `[Authoritative deployment-capability answers]`, `[Named
+  skill resolution]`, `[Ethereum Mainnet RPC]`, `[Common Tool CLIs]` +
+  `[Tool discovery]` (centaur's own tool CLI examples — opentag has none yet),
+  `[MPP fallback discovery]`, all `[Slack channel references]` /
+  `[Slack files and attachments]` / `[Slack file uploads]` sections (centaur's own
+  `slack` tool CLI, doesn't exist in this image), `[Document processing — built-in
+  libraries]` (python-docx/openpyxl/pymupdf/etc. are NOT installed in
+  `containers/harness/Dockerfile` — copying that section would promise capabilities
+  the image doesn't have).
+- Added a short `[Identity]` header naming OpenTag, as instructed.
+
+### Decisions / deviations from the literal mission text
+1. **Added `--permission-mode bypassPermissions`** to the `claude` invocation
+   (`buildClaudeArgs`), beyond the literal `claude -p <prompt> --output-format
+   stream-json --verbose` line in the mission prompt. Without it, any tool call in a
+   headless/non-interactive turn blocks on an approval prompt nobody is present to
+   answer, and the turn silently hangs until `TURN_TIMEOUT_MS` — defeating the point of
+   a coding harness. Matches the pattern centaur's own Claude Code harness
+   (`crates/harness-server/src/claude.rs`) already uses in production. Escape hatch:
+   `CLAUDE_PERMISSION_MODE=""` env var disables it without a code change.
+2. **`--append-system-prompt` (not `--append-system-prompt-file`).** Checked
+   `claude --help` directly (locally installed CLI, v2.1.119): no
+   `--append-system-prompt-file` flag exists. Used the documented
+   `--append-system-prompt <prompt>` string flag, reading `SYSTEM_PROMPT_PATH` into
+   memory (cached after first read) and passing its contents as the argv value — the
+   "else" branch the mission prompt anticipated.
+3. **No token-level text deltas.** The pinned claude invocation omits
+   `--include-partial-messages`, so `assistant` stream-json lines carry whole content
+   blocks, not incremental deltas. `mapStreamJsonLine` therefore emits one `output`
+   text event per text *block* (still incremental turn-over-turn, just coarser than
+   token streaming). Noted inline in the source and here rather than silently
+   diverging from the wire-contract doc's phrase "assistant text deltas".
+4. **`thinking` content blocks are dropped**, not surfaced as `output` — not in the
+   pinned NDJSON contract's event vocabulary (`text` and `tool` are the only two
+   `output` payload shapes) and centaur's own normalizer treats them as
+   passthrough-only content, not primary answer text.
+5. **Model passthrough via `--model` only**, not a `CLAUDE_MODEL` env var read by the
+   `claude` binary itself — the mission's "`CLAUDE_MODEL`/`--model`" phrasing reads as
+   *either* mechanism satisfies the requirement; `CLAUDE_MODEL` is a centaur-internal
+   convention their own Rust wrapper reads (`ClaudeCodeHarness::default_model`), not
+   something the upstream `claude` CLI consumes itself. `harness-server.ts` still sets
+   `env.CLAUDE_MODEL` when a model override is present (harmless, future-proofs against
+   a hypothetical CLI env fallback) but the actual mechanism is `--model`.
+6. **`edge/workers/sandbox/*.ts` typecheck via the existing root `edge/tsconfig.json`**
+   (its `include` already globs `workers/**/*.ts`) — no separate tsconfig needed;
+   confirmed via `cd edge && npm run typecheck`. The *build-time* compile
+   (TS → JS for the container image) uses a separate, unrelated `tsc` invocation inside
+   `containers/harness/Dockerfile`'s `build` stage with its own explicit flags
+   (`--module ES2022`, no project file), so the two compilations don't interact.
+7. **`ensureWorkdir` / git clone / `claude --version` are integration-only** — not unit
+   tested (would require a real git binary + network, or a real `claude` binary; the
+   mission scope explicitly excludes requiring Docker). `tool-host.ts`'s `runTool` IS
+   unit tested end-to-end via a real spawned process (a temp-file Node script standing
+   in for `opentag-tools`), since that path has no external-network dependency.
+
 ## Phase A4 — Quick-action cards (2026-07-12)
 
 ### Status

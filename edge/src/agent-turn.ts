@@ -29,6 +29,7 @@ import {
   resolveThreadOverrides,
   type ResolvedThreadOverrides,
 } from "./store/thread-overrides.js";
+import { runHarnessTurn } from "./harness/client.js";
 
 type Requester = {
   id?: string;
@@ -37,6 +38,8 @@ type Requester = {
   email?: string;
   /** IANA tz from Slack users.info (e.g. America/Los_Angeles). */
   timezone?: string;
+  /** Best-effort GitHub handle scraped from the Slack profile (SPEC §5-A5 item 5). */
+  githubHandle?: string;
 };
 
 /** Ensure we have profile email from Slack (users:read.email). */
@@ -52,12 +55,14 @@ async function ensureRequesterProfile(
       requester.id,
     );
     const freshTz = timezoneOf(fresh as Requester);
+    const freshGithub = (fresh as Requester).githubHandle;
     return {
       ...requester,
       email: fresh.email?.trim() || requester.email,
       name: fresh.name ?? requester.name,
       handle: fresh.handle ?? requester.handle,
       timezone: freshTz ?? requester.timezone,
+      githubHandle: freshGithub ?? requester.githubHandle,
     };
   } catch (err) {
     console.warn(
@@ -226,6 +231,75 @@ function embedTranscriptInPrompt(
   return [{ type: "text", text: `${block}\n` }, ...prompt];
 }
 
+/**
+ * `[Requester Context]` block (SPEC §5-A5 item 5) — used both as the
+ * harness's `requesterContext` field and as an extra AG-UI context entry so
+ * the running system prompt's PR-attribution guidance (`Prompted by: @<handle>`)
+ * has something to read regardless of which path a turn takes. Lines with no
+ * data are omitted entirely rather than printed empty.
+ */
+function buildRequesterContextBlock(requester?: Requester): string | undefined {
+  if (!requester) return undefined;
+  const lines: string[] = [];
+  const name = requester.name ?? requester.handle;
+  if (name) lines.push(`Name: ${name}`);
+  if (requester.handle) lines.push(`Slack: @${requester.handle}`);
+  if (requester.email) lines.push(`Email: ${requester.email}`);
+  if (requester.githubHandle) lines.push(`GitHub: @${requester.githubHandle}`);
+  if (lines.length === 0) return undefined;
+  return ["[Requester Context]", ...lines].join("\n");
+}
+
+/**
+ * Deterministic per-thread key for the harness / `SessionEventDO`, matching
+ * `bot-engine.ts`'s render-obligation `threadKey` convention
+ * (`slack:{channel}:{threadTs}`): the conversationKey's own scope segment
+ * wins over any request-scoped inbound target, because a concurrent turn in
+ * the same isolate can overwrite the latter (see `inbound-target.ts`).
+ */
+function deriveHarnessThreadKey(
+  channelId: string,
+  conversationKey: string,
+  thread: object,
+): string {
+  const scope = conversationKey.split("::")[1];
+  const inbound = getInboundMessage(conversationKey, thread);
+  const threadTs = [scope, inbound?.threadTs, inbound?.ts].find(
+    (v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)),
+  );
+  return `slack:${channelId}:${threadTs ?? channelId}`;
+}
+
+/** Text parts joined; non-text parts (images, etc.) noted rather than dropped silently. */
+function harnessPromptText(prompt: string | AgentContentPart[]): string {
+  if (typeof prompt === "string") return prompt;
+  return prompt
+    .map((p) => (p.type === "text" ? p.text : "[attachment omitted]"))
+    .join("\n");
+}
+
+/** SPEC §3.6: transcript re-feed, truncated to 24k chars from the most recent end. */
+const HARNESS_TRANSCRIPT_MAX_CHARS = 24_000;
+
+/** Same merged history `embedTranscriptInPrompt` uses, rendered as a flat transcript for the harness. */
+function buildHarnessTranscript(history: ThreadMessageLite[]): string | undefined {
+  if (history.length === 0) return undefined;
+  const full = history
+    .map((m) => {
+      const who = m.user?.name ?? m.user?.handle ?? (m.isBot ? "bot" : "user");
+      return `${who}: ${(m.text ?? "").replace(/\s+/g, " ").trim()}`;
+    })
+    .join("\n");
+  return full.length > HARNESS_TRANSCRIPT_MAX_CHARS
+    ? full.slice(full.length - HARNESS_TRANSCRIPT_MAX_CHARS)
+    : full;
+}
+
+/** Structured metric line (SPEC.md §4.3's minimum counters), matching bot-engine.ts's convention. */
+function logMetric(metric: string, fields: Record<string, unknown>): void {
+  console.log(JSON.stringify({ metric, ...fields }));
+}
+
 /** True if `cleaned` has no user-visible content left after flag stripping. */
 function isEmptyAfterStrip(cleaned: string | AgentContentPart[]): boolean {
   if (typeof cleaned === "string") return cleaned.trim() === "";
@@ -311,6 +385,15 @@ export async function runBundledAgentTurn(
     promptIn,
   );
   const prompt = cleanedPrompt;
+
+  // Phase A5 (GOAL.md / SPEC §3.6 + §4.4): route to the Claude Code harness
+  // container instead of the AG-UI agent when the thread's effective harness
+  // is "claudecode" AND a way to reach the container is actually configured.
+  // Neither binding set (the default until the container Worker deploys) —
+  // this stays false and behavior is byte-for-byte what it was pre-A5.
+  const useHarness =
+    overrides.effectiveHarnessType === "claudecode" &&
+    Boolean(env.HARNESS || env.HARNESS_URL);
 
   if (overrides.hasMessageFlags && isEmptyAfterStrip(prompt)) {
     try {
@@ -473,6 +556,18 @@ export async function runBundledAgentTurn(
     },
   ];
 
+  // SPEC §5-A5 item 5: pass the requester block to the harness AND (small
+  // win) append it to AG-UI context too, so PR-attribution guidance in the
+  // container's SYSTEM_PROMPT — and any future AG-UI attribution use — has
+  // something to read regardless of which path this turn takes.
+  const requesterContextBlock = buildRequesterContextBlock(requester);
+  if (requesterContextBlock) {
+    toolContext.push({
+      description: "Requester Context",
+      value: requesterContextBlock,
+    });
+  }
+
   if (assigneeEmail) {
     toolContext.push({
       description: "Linear assignee email for this conversation",
@@ -530,13 +625,19 @@ export async function runBundledAgentTurn(
       requested.push(`reasoning effort ${overrides.effectiveReasoning}`);
     toolContext.push({
       description: "model preference",
-      value: [
-        `The user requested ${requested.join(" / ")} for this thread.`,
-        "This preference is recorded and sticky for the thread, but the",
-        "current runtime may not support switching the underlying",
-        "model/harness yet. If asked, acknowledge that the preference is",
-        "recorded rather than claiming it took effect or silently ignoring it.",
-      ].join(" "),
+      value: useHarness
+        ? [
+            `The user requested ${requested.join(" / ")} for this thread.`,
+            "This turn is running on the Claude Code harness container as",
+            "requested.",
+          ].join(" ")
+        : [
+            `The user requested ${requested.join(" / ")} for this thread.`,
+            "This preference is recorded and sticky for the thread, but the",
+            "current runtime may not support switching the underlying",
+            "model/harness yet. If asked, acknowledge that the preference is",
+            "recorded rather than claiming it took effect or silently ignoring it.",
+          ].join(" "),
     });
   }
 
@@ -562,6 +663,43 @@ export async function runBundledAgentTurn(
   }
 
   const enrichedPrompt = embedTranscriptInPrompt(prompt, history);
+
+  if (useHarness) {
+    const harnessThreadKey = deriveHarnessThreadKey(
+      channelId,
+      conversationKey,
+      thread,
+    );
+    const harnessResult = await runHarnessTurn(env, {
+      threadKey: harnessThreadKey,
+      conversationKey,
+      prompt: harnessPromptText(prompt),
+      model: overrides.effectiveModel,
+      requesterContext: requesterContextBlock,
+      transcript: buildHarnessTranscript(history),
+    });
+
+    if (harnessResult.ok) {
+      const text = harnessResult.text.trim();
+      // Never-silent guarantee: even a nominally "ok" turn must not post
+      // nothing (GOAL.md house rule / SPEC §3.1 taxonomy — error_visible /
+      // answer_visible, never silent).
+      await thread.post(
+        text || "_(Claude Code harness turn completed with no output.)_",
+      );
+      return;
+    }
+
+    // Harness configured but the turn failed (unavailable, duplicate
+    // execution, container error, stream ended without `done`, etc.) — fall
+    // back to the normal AG-UI path below so users aren't stranded, rather
+    // than surfacing a harness-specific error. `runHarnessTurn` has already
+    // given the SessionEventDO event log a terminal `done` event of its own.
+    logMetric("harness_fallback", {
+      threadKey: harnessThreadKey,
+      error: harnessResult.error ?? "unknown",
+    });
+  }
 
   await thread.runAgent({
     prompt: enrichedPrompt,

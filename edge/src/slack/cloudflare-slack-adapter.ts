@@ -166,6 +166,21 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     return this.botUserId;
   }
 
+  /** Best-effort abort of an in-flight AG-UI run (GOAL.md Phase A2 stop path). */
+  abortConversation(conversationKey: string): void {
+    const entry = this.agentsByConversation.get(conversationKey);
+    const agent = entry?.agent as { abortRun?: () => void } | undefined;
+    try {
+      agent?.abortRun?.();
+    } catch (err) {
+      console.error(
+        "[slack] abortConversation failed",
+        conversationKey,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   /**
    * Handle a verified Events API JSON body (url_verification already handled).
    */

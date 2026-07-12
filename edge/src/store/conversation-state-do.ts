@@ -77,6 +77,15 @@ export interface SessionEventsRpc {
       createdAt: number;
     }>
   >;
+  execute(args: {
+    executionId: string;
+    inputLines: string[];
+  }): Promise<{ accepted: boolean; duplicate: boolean }>;
+  appendEvent(args: {
+    executionId: string;
+    kind: "output" | "error" | "done";
+    payload: unknown;
+  }): Promise<{ id: number }>;
 }
 
 export interface RenderObligationRow {

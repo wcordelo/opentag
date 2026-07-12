@@ -9,6 +9,13 @@
 import { isSlackStopCommand } from "./stop-command.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
 import { createSlackWebClient } from "./web-api.js";
+import {
+  activeTurnKvKey,
+  firstSlackTs,
+  slackObligationThreadKey,
+  type ActiveTurnRecord,
+} from "./obligation-thread-key.js";
+import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
 
 /** The subset of a Slack Events API `event` object this module reads. */
@@ -81,15 +88,19 @@ export function extractStopCommandEvent(
  * runs.
  *
  * Steps (GOAL.md Phase A2 Task 1):
- *  1. Derive `threadKey` from `channel` + `thread_ts ?? ts`.
+ *  1. Derive `threadKey` using the same rule as `bot-engine.ts` obligation
+ *     writes (`slack:{channel}:{statusThreadTs ?? channel}`), falling back
+ *     to the channel's registered active turn when stop is sent outside a
+ *     thread while a threaded turn is in flight.
  *  2. Dedup on `stop:${event_id}` (Slack redelivers events aggressively —
  *     house rule 3) so a redelivered stop is a total no-op.
  *  3. Interrupt the thread's `SessionEventDO`, if registered.
- *  4. Clear the render obligation for the thread (no `executionId` — a stop
+ *  4. Abort any in-flight AG-UI run for the active conversation.
+ *  5. Clear the render obligation for the thread (no `executionId` — a stop
  *     clears whatever is pending, not just the latest turn).
- *  5. Clear the assistant status.
- *  6. Post a short confirmation to the thread.
- *  7. Log a structured `stop_command_received` metric line.
+ *  6. Clear the assistant status.
+ *  7. Post a short confirmation to the thread.
+ *  8. Log a structured `stop_command_received` metric line.
  */
 export async function handleStopCommand(
   env: Env,
@@ -98,15 +109,31 @@ export async function handleStopCommand(
 ): Promise<void> {
   try {
     const channel = event.channel;
-    const threadTs = event.thread_ts ?? event.ts;
-    if (!channel || !threadTs) return;
-    const threadKey = `slack:${channel}:${threadTs}`;
+    if (!channel) return;
 
     const stateStore = createBotStoreAdapter(env.BOT_STATE);
 
+    let activeTurn: ActiveTurnRecord | undefined;
+    try {
+      activeTurn = await stateStore.kv.get<ActiveTurnRecord>(
+        activeTurnKvKey(channel),
+      );
+    } catch (err) {
+      console.error("[stop-command] active turn lookup failed", channel, err);
+    }
+
+    const statusThreadTs = firstSlackTs(event.thread_ts, event.ts);
+    let threadKey = slackObligationThreadKey(channel, statusThreadTs);
+    if (!event.thread_ts && activeTurn?.threadKey) {
+      threadKey = activeTurn.threadKey;
+    }
+
+    const postThreadTs = statusThreadTs ?? activeTurn?.threadKey.split(":")[2];
+    if (!postThreadTs) return;
+
     // Idempotency (house rule 3): a redelivered stop event must be a total
     // no-op, not a second interrupt/clear/post cycle.
-    const dedupKey = `stop:${eventId ?? `${channel}:${threadTs}:${event.ts ?? "noeventid"}`}`;
+    const dedupKey = `stop:${eventId ?? `${channel}:${postThreadTs}:${event.ts ?? "noeventid"}`}`;
     const alreadySeen = await stateStore.dedup.seen(dedupKey, 10 * 60_000);
     if (alreadySeen) return;
 
@@ -118,6 +145,22 @@ export async function handleStopCommand(
         await sessionDo.interrupt();
       } catch (err) {
         console.error("[stop-command] interrupt failed", threadKey, err);
+      }
+    }
+
+    if (
+      activeTurn?.conversationKey &&
+      activeTurn.threadKey === threadKey
+    ) {
+      try {
+        const { adapter } = await getOrCreateBot(env);
+        adapter.abortConversation(activeTurn.conversationKey);
+      } catch (err) {
+        console.error(
+          "[stop-command] abortConversation failed",
+          activeTurn.conversationKey,
+          err,
+        );
       }
     }
 
@@ -134,7 +177,7 @@ export async function handleStopCommand(
       try {
         await client.setStatus({
           channel_id: channel,
-          thread_ts: threadTs,
+          thread_ts: postThreadTs,
           status: "",
         });
       } catch (err) {
@@ -143,7 +186,7 @@ export async function handleStopCommand(
       try {
         await client.postMessage({
           channel,
-          thread_ts: threadTs,
+          thread_ts: postThreadTs,
           text: "🛑 Stopped.",
         });
       } catch (err) {

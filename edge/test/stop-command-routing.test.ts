@@ -29,6 +29,12 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 
+vi.mock("../src/bot-engine.js", () => ({
+  getOrCreateBot: vi.fn(async () => ({
+    adapter: { abortConversation: vi.fn() },
+  })),
+}));
+
 const { extractStopCommandEvent, handleStopCommand } = await import(
   "../src/slack/stop-routing.js"
 );
@@ -143,6 +149,7 @@ function makeFakeBotState() {
     threadKey: string;
     executionId?: string;
   }> = [];
+  const kvStore = new Map<string, unknown>();
   const seenKeys = new Set<string>();
   const stub = {
     dedupSeen: async (key: string, ttlMs: number) => {
@@ -157,6 +164,14 @@ function makeFakeBotState() {
     }) => {
       obligationClearCalls.push(args);
     },
+    kvGet: async <T>(key: string): Promise<T | undefined> =>
+      kvStore.get(key) as T | undefined,
+    kvSet: async <T>(key: string, value: T): Promise<void> => {
+      kvStore.set(key, value);
+    },
+    kvDelete: async (key: string): Promise<void> => {
+      kvStore.delete(key);
+    },
   };
   return {
     namespace: {
@@ -165,6 +180,7 @@ function makeFakeBotState() {
     },
     dedupSeenCalls,
     obligationClearCalls,
+    kvStore,
   };
 }
 

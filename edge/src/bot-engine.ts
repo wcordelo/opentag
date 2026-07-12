@@ -28,6 +28,13 @@ import {
   bindInboundToThread,
   getInboundMessage,
 } from "./slack/inbound-target.js";
+import {
+  activeTurnKvKey,
+  firstSlackTs,
+  slackObligationThreadKey,
+  type ActiveTurnRecord,
+} from "./slack/obligation-thread-key.js";
+import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
 import type { SessionEventsRpc } from "./store/conversation-state-do.js";
 
@@ -111,6 +118,50 @@ async function clearRenderObligation(
     await stateStore.obligation.clear({ threadKey, executionId });
   } catch (err) {
     console.error("[bot] render obligation clear failed", err);
+  }
+}
+
+/** Mark a turn as executing in SessionEventDO so the obligation alarm can defer. */
+async function beginSessionExecution(
+  env: Env,
+  threadKey: string,
+  executionId: string,
+  inputText: string,
+): Promise<void> {
+  if (!env.SESSION_EVENTS) return;
+  try {
+    const sessionDo = env.SESSION_EVENTS.get(
+      env.SESSION_EVENTS.idFromName(threadKey),
+    ) as unknown as SessionEventsRpc;
+    await sessionDo.execute({
+      executionId,
+      inputLines: [inputText.slice(0, 4000)],
+    });
+  } catch (err) {
+    console.error("[bot] session execute failed", err);
+  }
+}
+
+/** Clear session:executing when a turn finishes or fails. */
+async function endSessionExecution(
+  env: Env,
+  threadKey: string,
+  executionId: string,
+  kind: "done" | "error",
+  payload?: unknown,
+): Promise<void> {
+  if (!env.SESSION_EVENTS) return;
+  try {
+    const sessionDo = env.SESSION_EVENTS.get(
+      env.SESSION_EVENTS.idFromName(threadKey),
+    ) as unknown as SessionEventsRpc;
+    await sessionDo.appendEvent({
+      executionId,
+      kind,
+      payload: payload ?? {},
+    });
+  } catch (err) {
+    console.error("[bot] session appendEvent failed", err);
   }
 }
 
@@ -223,22 +274,26 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           );
           return;
         }
-        const objective = text
+        const conversationKey = thread.conversationKey ?? "";
+        const { cleanedText, effectiveModel } = await resolveThreadOverrides(
+          stateStore,
+          conversationKey,
+          text,
+        );
+        const objective = cleanedText
           .replace(/<@[^>]+>/g, "")
           .replace(/^\s*research[:\s]+/i, "")
           .trim();
-        const scope = (thread.conversationKey ?? "").split("::")[1];
-        const threadTs =
-          scope && scope !== "dm" && !scope.startsWith("slash::")
-            ? scope
-            : undefined;
+        const statusScope = conversationKey.split("::")[1];
+        const threadTs = firstSlackTs(statusScope);
         const result = await startTask(env, {
           type: "research",
           teamId,
-          threadKey: `slack:${channelId}:${threadTs ?? channelId}`,
+          threadKey: slackObligationThreadKey(channelId, threadTs),
           channelId,
           threadTs,
-          payload: { objective: objective || text },
+          model: effectiveModel,
+          payload: { objective: objective || cleanedText },
         });
         if (result.status === "error") {
           await thread.post(
@@ -328,11 +383,11 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       // fallback post). reactTarget is only consulted for DMs, whose scope is
       // the literal "dm" rather than a ts; assistant.threads.* wants the
       // thread-root ts, hence threadTs before the reply ts.
-      const statusThreadTs = [
+      const statusThreadTs = firstSlackTs(
         statusScope,
         reactTarget?.threadTs,
         reactTarget?.ts,
-      ].find((v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)));
+      );
 
       if (statusThreadTs) {
         void adapter
@@ -348,7 +403,11 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       // render obligation before the turn runs so `ConversationStateDO`'s
       // alarm can recover if this isolate crashes or the agent hangs.
       const executionId = crypto.randomUUID();
-      const obligationThreadKey = `slack:${channelId}:${statusThreadTs ?? channelId}`;
+      const obligationThreadKey = slackObligationThreadKey(
+        channelId,
+        statusThreadTs,
+      );
+      const conversationKey = thread.conversationKey ?? "";
       renderObligationThreadKey = obligationThreadKey;
       renderObligationExecutionId = executionId;
       logMetric("turn_started", { threadKey: obligationThreadKey, executionId });
@@ -358,6 +417,16 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         channel: channelId,
         threadTs: statusThreadTs,
       });
+      await beginSessionExecution(env, obligationThreadKey, executionId, text);
+      try {
+        await stateStore.kv.set<ActiveTurnRecord>(
+          activeTurnKvKey(channelId),
+          { threadKey: obligationThreadKey, conversationKey },
+          RENDER_OBLIGATION_TIMEOUT_MS,
+        );
+      } catch (err) {
+        console.error("[bot] active turn registration failed", err);
+      }
 
       try {
         try {
@@ -376,11 +445,23 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
               .catch(() => undefined);
           }
         }
+        await endSessionExecution(env, obligationThreadKey, executionId, "done");
         logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
         await clearRenderObligation(stateStore, obligationThreadKey, executionId);
       } catch (turnErr) {
+        const errMsg =
+          turnErr instanceof Error ? turnErr.message : String(turnErr);
+        await endSessionExecution(env, obligationThreadKey, executionId, "error", {
+          message: errMsg.slice(0, 500),
+        });
         logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
         throw turnErr;
+      } finally {
+        try {
+          await stateStore.kv.delete(activeTurnKvKey(channelId));
+        } catch {
+          /* best-effort */
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

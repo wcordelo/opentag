@@ -71,6 +71,46 @@ function mapDeliveryRow(row: DeliveryDbRow): DeliveryObligation {
   };
 }
 
+interface OutboxDbRow {
+  id: string;
+  session_id: string;
+  target_actor: string;
+  payload: string;
+  status: OutboxMessage["status"];
+  created_at: string;
+}
+
+function mapOutboxRow(row: OutboxDbRow): OutboxMessage {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    targetActor: row.target_actor,
+    payload: JSON.parse(row.payload) as OutboxMessage["payload"],
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+interface AlarmDbRow {
+  id: string;
+  session_id: string;
+  kind: AlarmQueueItem["kind"];
+  run_at_ms: number;
+  payload: string | null;
+  priority: number | null;
+}
+
+function mapAlarmRow(row: AlarmDbRow): AlarmQueueItem {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    kind: row.kind,
+    runAtMs: row.run_at_ms,
+    payload: row.payload ? (JSON.parse(row.payload) as Record<string, unknown>) : undefined,
+    priority: row.priority ?? undefined,
+  };
+}
+
 interface AgentContainerDbRow {
   container_id: string;
   session_id: string;
@@ -295,7 +335,8 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
       "SELECT * FROM outbox WHERE session_id = ? AND status = 'pending'",
       sessionId,
     );
-    return (cursor as { toArray: () => OutboxMessage[] }).toArray?.() ?? [];
+    const rows = (cursor as { toArray: () => OutboxDbRow[] }).toArray?.() ?? [];
+    return rows.map(mapOutboxRow);
   }
 
   async markOutboxSent(id: string): Promise<void> {
@@ -419,7 +460,8 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
       nowMs,
       limit,
     );
-    return (cursor as { toArray: () => AlarmQueueItem[] }).toArray?.() ?? [];
+    const rows = (cursor as { toArray: () => AlarmDbRow[] }).toArray?.() ?? [];
+    return rows.map(mapAlarmRow);
   }
 
   async deleteAlarm(id: string): Promise<void> {

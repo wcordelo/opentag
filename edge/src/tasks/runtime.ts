@@ -79,7 +79,19 @@ export async function startTask(
     };
   }
 
-  const body = (await res.json().catch(() => ({}))) as { taskId?: string };
+  const body = (await res.json().catch(() => ({}))) as {
+    taskId?: string;
+    status?: string;
+    message?: string;
+  };
+  if (body.status === "failed") {
+    return {
+      taskId: body.taskId ?? taskId,
+      type: req.type,
+      status: "error",
+      detail: body.message ?? "research start failed",
+    };
+  }
   return {
     taskId: body.taskId ?? taskId,
     type: req.type,

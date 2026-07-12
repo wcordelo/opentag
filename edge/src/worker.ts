@@ -210,7 +210,7 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
     const params = new URLSearchParams(raw);
     payload = JSON.parse(params.get("payload") ?? raw);
   } catch {
-    return c.json({ ok: true });
+    return c.json({ error: "invalid_payload" }, 400);
   }
 
   const teamId =

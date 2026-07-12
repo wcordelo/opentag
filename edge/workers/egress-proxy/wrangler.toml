@@ -13,7 +13,7 @@ binding = "ORCHESTRATOR_SERVICE"
 service = "opentag-orchestrator"
 
 # Secrets (set via `wrangler secret put <NAME>`):
-# ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN, INTERNAL_SECRET
 
 [[kv_namespaces]]
 binding = "AGENT_STATE"

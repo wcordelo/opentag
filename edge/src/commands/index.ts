@@ -5,8 +5,10 @@ import { defineBotCommand } from "@copilotkit/channels";
 import {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
+  resolveAllowedTools,
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
+import { ALL_EDGE_TOOL_NAMES } from "../tools/index.js";
 import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { startTask } from "../tasks/runtime.js";
 import { getCurrentTeamId } from "../request-context.js";
@@ -90,6 +92,24 @@ export const edgeCommands = [
       const channelId = channelFromKey(key);
       const threadTs = threadTsFromKey(key);
       const teamId = getCurrentTeamId();
+      const { config, bundle } = await loadTurnAccess(
+        env.WORKSPACE_CONFIG,
+        teamId,
+        channelId,
+      );
+      const allowed = new Set(
+        resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
+      );
+      if (config.policies.allowTasks === false) {
+        allowed.delete("start_task");
+        allowed.delete("research_progress");
+      }
+      if (!allowed.has("start_task")) {
+        await thread.post(
+          "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
+        );
+        return;
+      }
       const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;
       const result = await startTask(env, {
         type: "research",

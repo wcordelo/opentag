@@ -11,6 +11,7 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY: string;
   GITHUB_TOKEN?: string;
+  INTERNAL_SECRET?: string;
   /** Active container session tokens (DECISIONS.md §2). */
   AGENT_STATE: KVNamespace;
   /** Service binding back to orchestrator Worker for execution-log append. */
@@ -72,10 +73,14 @@ async function logExecution(
   // Logging is best-effort — never fail the proxied request because of it.
   if (!entry.teamId) return;
   try {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (env.INTERNAL_SECRET) {
+      headers.Authorization = `Bearer ${env.INTERNAL_SECRET}`;
+    }
     await env.ORCHESTRATOR_SERVICE.fetch(
       new Request("https://orchestrator/internal/execution-logs", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify(entry),
       }),
     );

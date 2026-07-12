@@ -36,25 +36,30 @@ function isThenable(v: unknown): v is PromiseLike<unknown> {
 
 /** Run `fn` with an isolated team id for the call tree (incl. awaited work). */
 export function runWithTeamId<T>(teamId: string, fn: () => T): T {
-  stack.push({ teamId: teamId || "default" });
+  const frame: Store = { teamId: teamId || "default" };
+  stack.push(frame);
+  const cleanup = () => {
+    const i = stack.indexOf(frame);
+    if (i !== -1) stack.splice(i, 1);
+  };
   try {
     const result = fn();
     if (isThenable(result)) {
       return result.then(
         (v) => {
-          stack.pop();
+          cleanup();
           return v;
         },
         (err) => {
-          stack.pop();
+          cleanup();
           throw err;
         },
       ) as T;
     }
-    stack.pop();
+    cleanup();
     return result;
   } catch (err) {
-    stack.pop();
+    cleanup();
     throw err;
   }
 }

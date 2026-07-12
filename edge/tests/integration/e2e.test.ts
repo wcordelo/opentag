@@ -88,8 +88,48 @@ describe("research delivery contract (bot TaskRuntime shape)", () => {
   });
 });
 
-describe.skip("Full Miniflare DO e2e (enable with test:workers + bindings)", () => {
-  it.todo("POST /research creates task readable via OrchestratorDO GET /tasks/:id");
-  it.todo("duplicate Slack event_id does not create a second task in DO SQLite");
-  it.todo("container start posts cold-start Slack ack before sandbox is ready");
+describe("research Slack delivery drain (unit)", () => {
+  it("postToSlackThread is called for pending obligations with text", async () => {
+    const posts: Array<{ threadKey: string; text: string }> = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("chat.postMessage")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          channel?: string;
+          text?: string;
+        };
+        posts.push({
+          threadKey: `slack:${body.channel}:1.0`,
+          text: body.text ?? "",
+        });
+        return Response.json({ ok: true });
+      }
+      return Response.json({ ok: false });
+    }) as typeof fetch;
+
+    try {
+      const { postToSlackThread } = await import(
+        "../../../lib/research/delivery/slack.js"
+      );
+      const ok = await postToSlackThread(
+        "slack:C9:1.0",
+        "Research complete: DOs are great",
+        "xoxb-test",
+      );
+      expect(ok).toBe(true);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]!.text).toMatch(/Research complete/);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+});
+
+describe("Full Miniflare DO e2e (enable with test:workers + bindings)", () => {
+  it.todo(
+    "POST /research creates task readable via OrchestratorDO GET /tasks/:id",
+  );
+  it.todo(
+    "duplicate Slack event_id does not create a second task in DO SQLite",
+  );
 });

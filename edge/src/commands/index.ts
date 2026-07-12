@@ -9,6 +9,7 @@ import {
 } from "../config/access-bundle.js";
 import { startTask } from "../tasks/runtime.js";
 import { getCurrentTeamId } from "../request-context.js";
+import { runBundledAgentTurn } from "../agent-turn.js";
 import type { Env } from "../env.js";
 
 let boundEnv: Env | null = null;
@@ -97,11 +98,17 @@ export const edgeCommands = [
     name: "agent",
     description: "Talk to the agent without an @-mention.",
     async handler({ thread, text }) {
+      const env = requireEnv();
       if (!text?.trim()) {
         await thread.post("Usage: `/agent <message>`");
         return;
       }
-      await thread.runAgent({ prompt: text.trim() });
+      try {
+        await runBundledAgentTurn(env, thread, text.trim());
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await thread.post(`⚠️ Something went wrong: ${msg.slice(0, 200)}`);
+      }
     },
   }),
 ];

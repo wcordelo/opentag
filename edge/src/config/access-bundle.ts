@@ -23,14 +23,22 @@ export type WorkspaceChannelConfig = {
 export const DEFAULT_BUNDLE: AccessBundle = {
   id: "default",
   tools: [
+    "lookup_slack_user",
+    "read_thread",
     "confirm_write",
+    "issue_card",
+    "issue_list",
+    "page_list",
+    "show_status",
+    "show_links",
+    "show_incident",
     "research_progress",
     "memory_search",
     "memory_write",
     "start_task",
   ],
   mcpEndpoints: [],
-  secretRefs: ["OPENAI_API_KEY", "LITELLM_API_KEY"],
+  secretRefs: ["OPENAI_API_KEY", "LITELLM_API_KEY", "LINEAR_API_KEY"],
 };
 
 export const DEFAULT_SYSTEM_PROMPT =

@@ -12,12 +12,16 @@ import {
   ALL_EDGE_TOOLS,
   ALL_EDGE_TOOL_NAMES,
   bindToolEnv,
-  guardToolsByBundle,
 } from "./tools/index.js";
 import { edgeCommands, bindCommandEnv } from "./commands/index.js";
 import { resolveAllowedTools } from "./config/access-bundle.js";
 import { loadTurnAccess } from "./config/workspace-config-do.js";
-import { setCurrentTeamId, getCurrentTeamId } from "./request-context.js";
+import {
+  setCurrentTeamId,
+  getCurrentTeamId,
+  runWithTeamId,
+} from "./request-context.js";
+import { runBundledAgentTurn } from "./agent-turn.js";
 import type { Env } from "./env.js";
 
 export type BotEngineKind = "createBot";
@@ -57,8 +61,6 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
     ? { Authorization: env.AGENT_AUTH_HEADER }
     : undefined;
 
-  // Tools filtered per-turn via onMention context; start with full set and
-  // re-filter names in the mention handler by posting bundle denies.
   const bot = createBot({
     name: "opentag",
     adapters: [adapter],
@@ -77,7 +79,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       {
         description: "product",
         value:
-          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles.",
+          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, issue_card, issue_list, page_list, show_status, show_links, show_incident, memory_search, memory_write, start_task, research_progress. Chart/diagram image tools are NOT available on the Workers bot.",
       },
     ],
     commands: edgeCommands,
@@ -96,6 +98,13 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       const allowed = new Set(
         resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
       );
+      if (config.policies.allowMemoryWrite === false) {
+        allowed.delete("memory_write");
+      }
+      if (config.policies.allowTasks === false) {
+        allowed.delete("start_task");
+        allowed.delete("research_progress");
+      }
 
       const text = message.text ?? "";
       const isResearch =
@@ -104,7 +113,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       if (isResearch) {
         if (!allowed.has("start_task")) {
           await thread.post(
-            "⛔ Research / `start_task` is not allowed by this channel's access bundle.",
+            "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
           );
           return;
         }
@@ -135,7 +144,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       if (remember) {
         if (!allowed.has("memory_write")) {
           await thread.post(
-            "⛔ `memory_write` is not allowed by this channel's access bundle.",
+            "⛔ `memory_write` is not allowed by this channel's access bundle or policies.",
           );
           return;
         }
@@ -151,33 +160,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         return;
       }
 
-      const toolContext = [
-        { description: "systemPrompt", value: config.systemPrompt },
-        { description: "accessBundleId", value: bundle.id },
-        {
-          description: "allowedTools",
-          value: JSON.stringify([...allowed]),
-        },
-        {
-          description: "secretRefs",
-          value: JSON.stringify(bundle.secretRefs),
-        },
-        {
-          description: "mcpEndpoints",
-          value: JSON.stringify(bundle.mcpEndpoints),
-        },
-        { description: "teamId", value: teamId },
-        { description: "channelId", value: channelId },
-      ];
-
-      await thread.runAgent({
-        prompt: text,
-        context: toolContext,
-        tools: guardToolsByBundle(
-          ALL_EDGE_TOOLS.filter((t) => allowed.has(t.name)),
-          allowed,
-        ),
-      });
+      await runBundledAgentTurn(env, thread, text);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[bot] onMention failed", msg);
@@ -199,4 +182,4 @@ export function resetBotSingleton(): void {
   singleton = null;
 }
 
-export { setCurrentTeamId, getCurrentTeamId };
+export { setCurrentTeamId, getCurrentTeamId, runWithTeamId };

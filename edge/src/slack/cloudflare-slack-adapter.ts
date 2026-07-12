@@ -19,6 +19,7 @@ import type {
   BotNode,
   MessageRef,
   PlatformUser,
+  ThreadMessage,
 } from "@copilotkit/channels-ui";
 import {
   createRunRenderer,
@@ -85,10 +86,27 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
 
   async start(sink: IngressSink): Promise<void> {
     this.sink = sink;
+    await this.ensureBotUserId();
   }
 
   async stop(): Promise<void> {
     this.sink = undefined;
+  }
+
+  /** Resolve bot user id via auth.test (loop guards + mention dedup). */
+  async ensureBotUserId(): Promise<string | undefined> {
+    if (this.botUserId) return this.botUserId;
+    try {
+      const r = await this.client.authTest();
+      if (r.ok && r.userId) this.botUserId = r.userId;
+    } catch {
+      /* leave unset — loop guards degrade gracefully */
+    }
+    return this.botUserId;
+  }
+
+  getBotUserId(): string | undefined {
+    return this.botUserId;
   }
 
   /**
@@ -100,6 +118,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   ): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
     if (meta?.teamId) this.teamId = meta.teamId;
+    await this.ensureBotUserId();
 
     const normalized = normalizeSlackEvent(
       body as Parameters<typeof normalizeSlackEvent>[0],
@@ -303,7 +322,29 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
 
   async lookupUser(q: UserQuery): Promise<PlatformUser | undefined> {
     if (!q.query) return undefined;
-    return this.client.lookupUser(q.query);
+    return this.client.lookupUserByQuery(q.query);
+  }
+
+  async getMessages(target: ReplyTarget): Promise<ThreadMessage[]> {
+    const t = target as { channel?: string; threadTs?: string };
+    const threadTs = t.threadTs;
+    if (!t.channel || !threadTs) return [];
+    const messages = await this.client.getThreadMessages({
+      channel: t.channel,
+      threadTs,
+      limit: 100,
+    });
+    const out: ThreadMessage[] = [];
+    for (const m of messages.slice(-100)) {
+      if (m.subtype && m.subtype !== "file_share") continue;
+      out.push({
+        text: m.text ?? "",
+        ts: m.ts,
+        isBot: Boolean(m.bot_id),
+        user: m.user ? await this.client.resolveUser(m.user) : undefined,
+      });
+    }
+    return out;
   }
 }
 

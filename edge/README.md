@@ -42,12 +42,17 @@ Agent replies need `pnpm runtime` at repo root (`AGENT_URL`).
 
 ```bash
 cp .dev.vars.example .dev.vars   # fill Slack + AGENT_URL + secrets
-./scripts/e2e-local.sh           # checklist
-pnpm runtime                     # terminal A (repo root)
+./scripts/e2e-local.sh           # readiness checks + checklist
+pnpm runtime                     # terminal A (repo root) — AGENT_URL target
 npm run dev                      # terminal B — tunnel this to Slack
+# Re-install / update Slack app from ../slack-app-manifest.yaml
+# (includes message.channels for thread continuity)
 # optional research:
 # merge .dev.vars.research.example into .dev.vars, then npm run dev:research
 ```
+
+**Smoke:** @mention → reply; thread follow-up without @; Linear `issue_list`;
+`confirm_write` across Worker restart; `/research` delivery; `remember:`.
 
 ## Spine
 

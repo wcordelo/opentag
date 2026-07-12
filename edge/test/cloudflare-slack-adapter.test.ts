@@ -1,7 +1,7 @@
 /**
  * Unit tests for CloudflareSlackAdapter ingress (no live Slack).
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CloudflareSlackAdapter } from "../src/slack/cloudflare-slack-adapter.js";
 import type { IngressSink } from "@copilotkit/channels";
 
@@ -157,6 +157,83 @@ describe("CloudflareSlackAdapter", () => {
     expect(() => adapter.getSink()).toThrow(/sink not set/);
   });
 
-  // silence unused
-  void vi;
+  it("ensureBotUserId caches auth.test user_id", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      if (String(url).includes("auth.test")) {
+        return Response.json({ ok: true, user_id: "UBOT123" });
+      }
+      return Response.json({ ok: false });
+    }) as typeof fetch;
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
+      expect(adapter.getBotUserId()).toBe("UBOT123");
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it("getMessages maps conversations.replies", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      if (String(url).includes("auth.test")) {
+        return Response.json({ ok: true, user_id: "UBOT" });
+      }
+      if (String(url).includes("conversations.replies")) {
+        return Response.json({
+          ok: true,
+          messages: [
+            { text: "hi", ts: "1.0", user: "U1" },
+            { text: "yo", ts: "1.1", bot_id: "B1" },
+          ],
+        });
+      }
+      if (String(url).includes("users.info")) {
+        return Response.json({
+          ok: true,
+          user: { id: "U1", real_name: "Ada", name: "ada" },
+        });
+      }
+      return Response.json({ ok: false });
+    }) as typeof fetch;
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      await adapter.start(makeSink());
+      const msgs = await adapter.getMessages({
+        channel: "C1",
+        threadTs: "1.0",
+      });
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0]!.text).toBe("hi");
+      expect(msgs[0]!.user?.name).toBe("Ada");
+      expect(msgs[1]!.isBot).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it("accepts channel thread replies without re-mention", async () => {
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+    });
+    const sink = makeSink();
+    await adapter.start(sink);
+    const result = await adapter.handleEventsBody({
+      event_id: "EvThread",
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "follow up without mention",
+        ts: "2.0",
+        thread_ts: "1.0",
+      },
+    });
+    expect(result.handled).toBe(true);
+    expect(sink.turns).toHaveLength(1);
+  });
 });

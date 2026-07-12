@@ -39,10 +39,12 @@ service = "opentag-orchestrator"
 
 [vars]
 ENVIRONMENT = "development"
+# Local default only. For deployed Workers, override AGENT_URL to a public
+# runtime host (Railway/Fly/etc.) — Workers cannot reach your laptop localhost.
 AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"
 
 # Secrets (wrangler secret put):
 # SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_AUTH_HEADER
 # ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
 # INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
-# LITELLM_API_KEY / OPENAI_API_KEY as needed by agent runtime
+# Optional: put AGENT_URL as a secret/var for production overrides.

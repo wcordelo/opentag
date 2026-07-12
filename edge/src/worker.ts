@@ -10,7 +10,7 @@ import { requireAdminAuth } from "./admin-auth.js";
 import {
   getOrCreateBot,
   resolveBotEngineKind,
-  setCurrentTeamId,
+  runWithTeamId,
 } from "./bot-engine.js";
 import {
   DEFAULT_BUNDLE,
@@ -138,12 +138,13 @@ app.post("/slack/events", slackVerify(), async (c) => {
     return c.json({ challenge: payload.challenge });
   }
 
-  setCurrentTeamId(payload.team_id ?? "unknown");
+  const teamId = payload.team_id ?? "unknown";
 
-  const run = async () => {
-    const { adapter } = await getOrCreateBot(c.env);
-    await adapter.handleEventsBody(payload, { teamId: payload.team_id });
-  };
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleEventsBody(payload, { teamId: payload.team_id });
+    });
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
@@ -167,13 +168,14 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     thread_ts: params.get("thread_ts") ?? undefined,
   };
 
-  setCurrentTeamId(body.team_id ?? "unknown");
+  const teamId = body.team_id ?? "unknown";
 
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
-  const run = async () => {
-    const { adapter } = await getOrCreateBot(c.env);
-    await adapter.handleCommandBody(body);
-  };
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleCommandBody(body);
+    });
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
@@ -211,10 +213,19 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
     return c.json({ ok: true });
   }
 
-  const run = async () => {
-    const { adapter } = await getOrCreateBot(c.env);
-    await adapter.handleInteractionPayload(payload);
-  };
+  const teamId =
+    typeof payload === "object" &&
+    payload !== null &&
+    "team" in payload &&
+    typeof (payload as { team?: { id?: string } }).team?.id === "string"
+      ? (payload as { team: { id: string } }).team.id
+      : "unknown";
+
+  const run = () =>
+    runWithTeamId(teamId, async () => {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleInteractionPayload(payload);
+    });
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {

@@ -78,6 +78,9 @@ settings:
       - app_mention
       - assistant_thread_started
       - assistant_thread_context_changed
+      # Channel thread replies (no re-@mention) — needed for conversation continuity.
+      - message.channels
+      - message.groups
       - message.im
       - message.mpim
   interactivity:

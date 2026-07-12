@@ -11,3 +11,6 @@ ADMIN_SECRET=dev-admin-secret
 
 # Must match research Worker INTERNAL_SECRET when using RESEARCH_TASKS
 INTERNAL_SECRET=dev-internal-secret
+
+# Production note: set AGENT_URL to a publicly reachable runtime host.
+# Local wrangler default is localhost:8200 — fine for tunnel+local runtime only.

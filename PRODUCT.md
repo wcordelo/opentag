@@ -52,3 +52,5 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 
 - Track F: `pm_impl_verify` / sandbox multi-agent pipeline.
 - Publish `@copilotkit/channels*` to npm (today: sibling `file:` checkout).
+- Live Slack smoke still required once (see `edge/scripts/e2e-local.sh`).
+- Chart/diagram image tools deferred on Workers (no Playwright in isolate).

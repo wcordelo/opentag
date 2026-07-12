@@ -1,0 +1,26 @@
+# Cloudflare Worker config for the OpenTag edge-native stack.
+#
+# The bot's session/conversation state lives in a Durable Object with an
+# embedded SQLite database (ConversationStateDO) — no Redis, no external store.
+name = "opentag-edge"
+main = "src/worker.ts"
+compatibility_date = "2026-06-01"
+# `nodejs_compat` covers the handful of node builtins the bot SDK touches.
+compatibility_flags = ["nodejs_compat"]
+
+# ── Durable Object namespace binding ──────────────────────────────────────────
+# `env.BOT_STATE` resolves to instances of ConversationStateDO.
+[[durable_objects.bindings]]
+name = "BOT_STATE"
+class_name = "ConversationStateDO"
+
+# ── SQLite migration ──────────────────────────────────────────────────────────
+# SQLite storage MUST be requested when the class is first deployed (it can't be
+# switched on later). `new_sqlite_classes` does exactly that.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConversationStateDO"]
+
+# ── Vars (non-secret). Set secrets with `wrangler secret put <NAME>`. ─────────
+[vars]
+AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"

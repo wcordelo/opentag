@@ -1,10 +1,19 @@
 import { defineConfig } from "vitest/config";
 
-// Unit-test config for edge/ Workers source. Integration tests that need
-// Miniflare DO/KV/R2 bindings use vitest.workers.config.ts (cloudflare pool).
+// Node unit tests: research Workers + bot-store engine (node:sqlite).
+// Workerd suites use vitest.workers*.config.ts.
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["workers/**/*.test.ts", "tests/**/*.test.ts"],
+    include: [
+      "workers/**/*.test.ts",
+      "tests/**/*.test.ts",
+      "test/**/*.test.ts",
+    ],
+    exclude: [
+      "test/**/*.workers.test.ts",
+      "tests/integration/**",
+      "node_modules/**",
+    ],
   },
 });

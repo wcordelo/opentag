@@ -49,6 +49,7 @@ service = "opentag-wasm-dispatch"
 # ANTHROPIC_API_KEY, OPENAI_API_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET,
 # GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_INSTALLATION_ID, AGENT_TOKEN
 # EGRESS_PROXY_URL (var, not secret) — set below per environment.
+# LiteLLM: LITELLM_BASE_URL (var), LITELLM_API_KEY (secret)
 
 [env.production]
 vars = { ENVIRONMENT = "production", ALLOWED_HOSTS = ["api.anthropic.com", "api.openai.com", "api.github.com", "registry.npmjs.org", "pkg.go.dev"] }

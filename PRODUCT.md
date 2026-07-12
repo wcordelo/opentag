@@ -15,6 +15,7 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 2. **Bot engine** — `createBot` + `CloudflareSlackAdapter` + `createDurableObjectStore(env.BOT_STATE)` + `HttpAgent` → `AGENT_URL`.
 3. **StateStore** (`edge/src/store/`, binding `BOT_STATE`) — durable HITL, turn locks, transcripts, dedup.
 4. **Tenant keying** — workspace (`teamId`) with channel overrides.
+5. **AG-UI brain** — `opentag-agent` Cloudflare Container running Node `runtime.ts` (LLM + MCP).
 
 ## Claude Tag parity checklist
 
@@ -39,7 +40,7 @@ OpenTag is an **open-source Claude Tag alternative**: a Slack-native AI agent yo
 See also [`DECISIONS.md`](./DECISIONS.md).
 
 1. No Socket Mode on Cloudflare Workers.
-2. Container egress is application-level HTTP proxy only.
+2. Container egress for **sandbox** pm/impl/verify is application-level HTTP proxy only (see DECISIONS §2).
 3. Task/actor code talks to adapters, not `pg` / raw DO APIs.
 4. Cold starts: immediate Slack ack; final result via `chat.postMessage` / agent stream.
 
@@ -49,18 +50,21 @@ See also [`DECISIONS.md`](./DECISIONS.md).
 |---|---|
 | `edge/wrangler.toml` | Local/dev bot Worker (`opentag-edge`) |
 | `edge/wrangler.bot.toml` | **Production** Claude Tag bot (`opentag-bot`) |
+| `edge/workers/agent-runtime/` | **Production** AG-UI triage Container (`opentag-agent`) |
 | `edge/wrangler.research.toml` | Research task Worker (internal `/research`, no public Slack) |
-| `edge/workers/egress-proxy/` | Shared egress for containers |
+| `edge/workers/egress-proxy/` | Shared egress for sandbox containers |
 
-**Live URL (this account):** `https://opentag-bot.williamlopezc.workers.dev`  
-Point Slack Events / commands / interactions Request URLs there. `AGENT_URL` must be a publicly reachable AG-UI runtime (local: tunnel to `:8200`).
+**Live URLs (this account):**
+- Bot: `https://opentag-bot.williamlopezc.workers.dev`
+- Agent: `https://opentag-agent.williamlopezc.workers.dev/api/copilotkit/agent/triage/run`
+
+Point Slack Events / commands / interactions Request URLs at the bot. Production `AGENT_URL` is the agent Worker above (no laptop / cloudflared). Local `pnpm runtime` is **dev-only**.
 
 ## Remaining work (honest)
 
 - Multi-agent PM / impl / verify sandbox pipeline (deferred).
 - Upstream `@copilotkit/channels` Workers fix (today: vendored tarball in `edge/vendor/`).
 - Chart/diagram image tools deferred on Workers (no Playwright in isolate).
-- Stable always-on public `AGENT_URL` (today often a cloudflared tunnel to local runtime).
 
 ## Doc map
 

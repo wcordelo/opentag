@@ -49,11 +49,19 @@ import {
   type AgentContentPart,
 } from "./download-files.js";
 
+import type { StateStore } from "../store/state-store-contract.js";
+import { persistHitlChoice } from "../hitl/durable-choice.js";
+
 export type CloudflareSlackAdapterOptions = {
   botToken: string;
   /** Optional bot user id for loop guards; resolved lazily if omitted. */
   botUserId?: string;
   teamId?: string;
+  /**
+   * When set, block_actions values are mirrored into StateStore so
+   * `awaitChoiceDurable` can resolve across Worker isolates.
+   */
+  stateStore?: StateStore;
 };
 
 function messageTsFromRef(
@@ -331,6 +339,28 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     if (!this.sink) return { handled: false };
     const evt = decodeInteraction(payload);
     if (!evt) return { handled: false };
+    // Persist before sink: another isolate may be polling this key while this
+    // isolate has no in-memory awaitChoice waiter.
+    if (this.opts.stateStore && evt.value !== undefined) {
+      try {
+        await persistHitlChoice(
+          this.opts.stateStore,
+          evt.conversationKey,
+          evt.value,
+        );
+        console.log(
+          "[slack] hitl persisted",
+          evt.conversationKey,
+          typeof evt.value === "object" &&
+            evt.value &&
+            "choiceId" in evt.value
+            ? (evt.value as { choiceId?: string }).choiceId
+            : undefined,
+        );
+      } catch (err) {
+        console.error("[slack] persistHitlChoice failed", err);
+      }
+    }
     await this.sink.onInteraction(evt);
     return { handled: true };
   }
@@ -508,15 +538,24 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       threadTs?: string;
       messageTs?: string;
     };
-    const threadTs = t.threadTs ?? t.messageTs;
-    if (!t.channel || !threadTs) return [];
-    const messages = await this.client.getThreadMessages({
-      channel: t.channel,
-      threadTs,
-      limit: 100,
-    });
+    if (!t.channel) return [];
+
+    // Threaded channel/group conversations: replies under threadTs.
+    // DMs / top-level: conversations.replies(messageTs) only returns that one
+    // message — use channel history so the agent keeps prior turns (emails, etc.).
+    const raw = t.threadTs
+      ? await this.client.getThreadMessages({
+          channel: t.channel,
+          threadTs: t.threadTs,
+          limit: 100,
+        })
+      : await this.client.getChannelHistory({
+          channel: t.channel,
+          limit: 50,
+        });
+
     const out: ThreadMessage[] = [];
-    for (const m of messages.slice(-100)) {
+    for (const m of raw.slice(-100)) {
       if (m.subtype && m.subtype !== "file_share") continue;
       out.push({
         text: m.text ?? "",

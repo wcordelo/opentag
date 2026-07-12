@@ -15,6 +15,12 @@ export interface Env {
   /** Service binding to research task Worker (opentag-orchestrator). */
   RESEARCH_TASKS?: Fetcher;
 
+  /**
+   * Service binding to AG-UI triage Worker (opentag-agent). Required in prod —
+   * Worker→Worker fetch via workers.dev returns Cloudflare 1042 on the same zone.
+   */
+  AGENT_RUNTIME?: Fetcher;
+
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;
 

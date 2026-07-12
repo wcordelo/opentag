@@ -17,7 +17,7 @@ Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 | Service | Command | Role |
 |---------|---------|------|
 | Bot Worker | `cd edge && npm run dev` | Slack Events API (primary) |
-| Triage runtime | `pnpm runtime` | AG-UI agent (`AGENT_URL`) |
+| Triage runtime | `opentag-agent` Container (prod) / `pnpm runtime` (dev) | AG-UI agent (`AGENT_URL`) |
 | Research Worker | `cd edge && npm run dev:research` | Internal `/research` |
 
 ## Cloudflare research task Worker

@@ -25,13 +25,13 @@ import {
 } from "./_status.js";
 
 export const issueCardSchema = z.object({
-  identifier: z.string().describe("Issue identifier, e.g. 'CPK-1234'."),
+  identifier: z.string().describe("Issue identifier, e.g. 'BER-1234'."),
   title: z.string().describe("Issue title."),
   url: z.string().optional().describe("Link to the issue in Linear."),
   state: z.string().optional().describe("Workflow state name."),
   assignee: z.string().optional().describe("Assignee display name."),
   priority: z.string().optional().describe("Priority label."),
-  team: z.string().optional().describe("Team key/name, e.g. 'CPK'."),
+  team: z.string().optional().describe("Team key/name, e.g. 'Berendo'."),
   cycle: z.string().optional().describe("Cycle name/number."),
   updated: z.string().optional().describe("Human-readable last-updated."),
   description: z
@@ -257,7 +257,8 @@ export function IncidentCard({
   title,
   severity,
   summary,
-}: z.infer<typeof incidentSchema>): BotNode {
+  choiceId,
+}: z.infer<typeof incidentSchema> & { choiceId: string }): BotNode {
   const accent =
     severity === "SEV1"
       ? "#EB5757"
@@ -273,12 +274,12 @@ export function IncidentCard({
       jsxs(Actions, {
         children: [
           jsx(Button, {
-            value: { action: "ack", id },
+            value: { action: "ack", id, choiceId },
             style: "primary",
             children: "Acknowledge",
           }),
           jsx(Button, {
-            value: { action: "escalate", id },
+            value: { action: "escalate", id, choiceId },
             style: "danger",
             children: "Escalate",
           }),

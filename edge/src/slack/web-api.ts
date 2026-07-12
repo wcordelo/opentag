@@ -49,13 +49,45 @@ export type SlackWebClient = {
       subtype?: string;
     }>
   >;
+  getChannelHistory(args: {
+    channel: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      text?: string;
+      ts?: string;
+      user?: string;
+      bot_id?: string;
+      subtype?: string;
+    }>
+  >;
 };
 
 export function createSlackWebClient(botToken: string): SlackWebClient {
+  // Slack Web API: prefer form-urlencoded. JSON bodies break several methods
+  // (notably users.info → user_not_found / no profile.email).
   const headers = {
     Authorization: `Bearer ${botToken}`,
-    "Content-Type": "application/json",
+    "Content-Type": "application/x-www-form-urlencoded",
   };
+
+  function encodeForm(body: Record<string, unknown>): string {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined || value === null) continue;
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        params.set(key, String(value));
+      } else {
+        // blocks, attachments, etc. must be JSON strings in form bodies
+        params.set(key, JSON.stringify(value));
+      }
+    }
+    return params.toString();
+  }
 
   async function api<T extends Record<string, unknown>>(
     method: string,
@@ -64,7 +96,7 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? encodeForm(body) : undefined,
     });
     return (await res.json()) as T & { ok: boolean; error?: string };
   }
@@ -105,7 +137,9 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     },
     async resolveUser(userId) {
       const cached = userCache.get(userId);
-      if (cached) return cached;
+      // Prefer a cache hit that already has email. Incomplete entries (id-only)
+      // are refreshed so a transient users.info miss does not stick forever.
+      if (cached?.email) return cached;
       // `timezone` is an OpenTag extension (not on PlatformUser); agent-turn reads it.
       let user: PlatformUser & { timezone?: string } = { id: userId };
       try {
@@ -135,9 +169,22 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             email: u.profile?.email,
             ...(u.tz ? { timezone: u.tz } : {}),
           };
+          if (!user.email) {
+            console.warn(
+              "[slack] users.info returned no email for",
+              userId,
+              "— need users:read.email scope and a reinstall if missing",
+            );
+          }
+        } else if (!r.ok) {
+          console.warn("[slack] users.info failed", userId, r.error);
         }
-      } catch {
-        /* bare id on network / API failure */
+      } catch (err) {
+        console.warn(
+          "[slack] users.info error",
+          userId,
+          err instanceof Error ? err.message : err,
+        );
       }
       userCache.set(userId, user);
       return user;
@@ -222,8 +269,53 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
           ts: threadTs,
           limit,
         });
-        return r.ok ? (r.messages ?? []) : [];
-      } catch {
+        if (!r.ok) {
+          console.error(
+            "[slack] conversations.replies failed",
+            r.error,
+            channel,
+            threadTs,
+          );
+          return [];
+        }
+        return r.messages ?? [];
+      } catch (err) {
+        console.error(
+          "[slack] conversations.replies threw",
+          err instanceof Error ? err.message : err,
+        );
+        return [];
+      }
+    },
+    async getChannelHistory({ channel, limit = 50 }) {
+      try {
+        const r = await api<{
+          messages?: Array<{
+            text?: string;
+            ts?: string;
+            user?: string;
+            bot_id?: string;
+            subtype?: string;
+          }>;
+        }>("conversations.history", {
+          channel,
+          limit,
+        });
+        if (!r.ok) {
+          console.error(
+            "[slack] conversations.history failed",
+            r.error,
+            channel,
+          );
+          return [];
+        }
+        // API returns newest-first; normalize to oldest → newest.
+        return [...(r.messages ?? [])].reverse();
+      } catch (err) {
+        console.error(
+          "[slack] conversations.history threw",
+          err instanceof Error ? err.message : err,
+        );
         return [];
       }
     },

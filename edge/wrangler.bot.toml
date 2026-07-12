@@ -31,10 +31,16 @@ bucket_name = "opentag-research-blobs"
 binding = "RESEARCH_TASKS"
 service = "opentag-orchestrator"
 
+# Worker→Worker must use a service binding — public workers.dev fetch returns 1042
+# on the same zone. HttpAgent still needs AGENT_URL for the Request path/URL.
+[[services]]
+binding = "AGENT_RUNTIME"
+service = "opentag-agent"
+
 [vars]
 ENVIRONMENT = "production"
-# AGENT_URL must be set via `wrangler secret put AGENT_URL --config wrangler.bot.toml`
-# (public Node AG-UI runtime — Workers cannot reach laptop localhost).
+# AGENT_URL: https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
+# (path used by HttpAgent; traffic goes through AGENT_RUNTIME service binding)
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET

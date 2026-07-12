@@ -6,8 +6,8 @@ workspace, except **open-source and self-hosted**: you own the runtime, bring yo
 model, and wire it to your own tools. No per-seat pricing, no lock-in.
 
 It's built on **[`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)** —
-CopilotKit's open SDK for chat-platform agents — hosted on **Cloudflare Workers**, with a
-Node **AG-UI** runtime for the LLM and MCP tools.
+CopilotKit's open SDK for chat-platform agents — hosted on **Cloudflare Workers**, with the
+LLM/MCP brain in a **Cloudflare Container** (`opentag-agent`).
 
 > **Authoritative product docs:** [PRODUCT.md](./PRODUCT.md) · [edge/README.md](./edge/README.md) · [setup.md](./setup.md)
 
@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135
 
 OpenTag is a **Slack-native Claude Tag alternative** on Cloudflare. Slack ingress is
 **Events API only** (no Socket Mode). The bot Worker owns mentions, slash commands, and
-interactions; a Node process hosts the LLM; optional research runs as a long-lived task Worker.
+interactions; a Cloudflare Container hosts the LLM; optional research runs as a task Worker.
 
 ```
                     ┌─────────────────────────────────────────┐
@@ -43,19 +43,21 @@ interactions; a Node process hosts the LLM; optional research runs as a long-liv
                     (AGENT_URL)  │              │ service binding
                                  ▼              ▼
                     ┌────────────────┐  ┌──────────────────────┐
-                    │ pnpm runtime   │  │ opentag-orchestrator │
-                    │ runtime.ts     │  │ research task Worker │
-                    │ AG-UI + MCP    │  │ fibers → Slack post  │
-                    │ Linear/Notion  │  └──────────────────────┘
+                    │ opentag-agent  │  │ opentag-orchestrator │
+                    │ CF Container   │  │ research task Worker │
+                    │ runtime.ts     │  │ fibers → Slack post  │
+                    │ AG-UI + MCP    │  └──────────────────────┘
                     └────────────────┘
 ```
 
 | Piece | Role |
 | --- | --- |
 | **Bot Worker** (`edge/`, `opentag-bot`) | Slack Events API, `createBot`, tools/commands, reactions, Durable Object state |
-| **AG-UI runtime** (`runtime.ts`, `pnpm runtime`) | LLM turns, MCP (Linear / Notion), system prompt |
+| **AG-UI agent** (`edge/workers/agent-runtime/`, `opentag-agent`) | LLM turns, MCP (Linear / Notion), system prompt — production `AGENT_URL` |
 | **Research task Worker** (optional) | Deep research fibers; posts verified summaries back to the thread |
-| **Egress proxy** (optional) | Application-level HTTP proxy for sandbox containers |
+| **Egress proxy** (optional) | Application-level HTTP proxy for deferred sandbox containers |
+
+Local `pnpm runtime` is **dev-only** (iterate on prompts/MCP without rebuilding the Container image).
 
 ---
 
@@ -111,7 +113,11 @@ Chart/diagram image tools are **not** available on the Workers bot (no Playwrigh
 
 ## Quick start (self-hosted)
 
-You need **two processes** locally: the **agent** (`pnpm runtime`) and the **bot Worker** (`cd edge && npm run dev`). For live Slack inbound, expose the Worker (or deploy it) and point the Slack app Request URLs at it.
+**Production:** deploy `opentag-agent` (Container) + `opentag-bot` — no laptop processes.
+See [setup.md](./setup.md).
+
+**Local iterate:** run the agent on `:8200` and the bot Worker with wrangler; for live Slack
+inbound, expose the Worker (or deploy it) and point Slack Request URLs at it.
 
 ### 1. Create a Slack app
 
@@ -127,12 +133,11 @@ Production example in this repo’s manifest: `https://opentag-bot.williamlopezc
 
 ### 2. Secrets
 
-**Runtime** (repo root):
+**Agent** (Container secrets, or root `.env` for local `pnpm runtime`):
 
 ```bash
 cp .env.example .env
 # OPENAI_API_KEY=...
-# AGENT_URL=http://localhost:8200/api/copilotkit/agent/triage/run
 # LINEAR_API_KEY=...   # optional
 # NOTION_TOKEN=...     # optional
 ```
@@ -144,15 +149,16 @@ cd edge
 cp .dev.vars.example .dev.vars
 # SLACK_BOT_TOKEN=xoxb-...
 # SLACK_SIGNING_SECRET=...
-# AGENT_URL=http://localhost:8200/api/copilotkit/agent/triage/run
+# AGENT_URL=https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
+#   (or http://localhost:8200/... for local pnpm runtime)
 # ADMIN_SECRET=...
 # INTERNAL_SECRET=...   # must match research Worker if you run research
 ```
 
-### 3. Install & run
+### 3. Install & run (local / dev)
 
 ```bash
-# Agent (repo root)
+# Agent (repo root) — skip if AGENT_URL already points at opentag-agent
 pnpm install
 pnpm runtime                 # AG-UI on :8200
 
@@ -188,31 +194,32 @@ You only need a sibling [CopilotKit](https://github.com/CopilotKit/CopilotKit) c
 | Config | Worker | Role |
 | --- | --- | --- |
 | [`edge/wrangler.bot.toml`](./edge/wrangler.bot.toml) | **`opentag-bot`** | **Production** Claude Tag bot |
+| [`edge/workers/agent-runtime/`](./edge/workers/agent-runtime/) | **`opentag-agent`** | **Production** AG-UI Container |
 | [`edge/wrangler.toml`](./edge/wrangler.toml) | `opentag-edge` | Local / legacy-dev bot |
 | [`edge/wrangler.research.toml`](./edge/wrangler.research.toml) | orchestrator | Research tasks (internal `/research`) |
-| [`edge/workers/egress-proxy/`](./edge/workers/egress-proxy/) | egress proxy | Container egress |
+| [`edge/workers/egress-proxy/`](./edge/workers/egress-proxy/) | egress proxy | Sandbox container egress |
 
 ```bash
 cd edge
+npm run deploy:agent         # AG-UI Container (Workers Paid)
 npm run deploy:bot           # production bot
 # wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
 # wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
 # wrangler secret put AGENT_URL --config wrangler.bot.toml
+#   → https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
 # wrangler secret put INTERNAL_SECRET --config wrangler.bot.toml
 # wrangler secret put ADMIN_SECRET --config wrangler.bot.toml
 
 npm run deploy:research      # optional research plane
 ```
 
-`AGENT_URL` must be reachable from Cloudflare (public URL or tunnel). A local-only
-`http://localhost:8200/...` works for local wrangler + tunnel, not for a deployed Worker
-unless the runtime is also publicly reachable.
+Production needs no laptop runtime or tunnel to `:8200`.
 
 ---
 
 ## Make it your own
 
-- **Change behavior** — edit the system prompt and tooling in [`runtime.ts`](./runtime.ts).
+- **Change behavior** — edit the system prompt and tooling in [`lib/triage-agent.ts`](./lib/triage-agent.ts) (redeploy `opentag-agent` for prod).
 - **Edge Slack surface** — tools, commands, reactions, and ingress live under [`edge/src/`](./edge/src/) (`bot-engine.ts`, `tools/`, `commands/`, `slack/`).
 - **Access control** — channel bundles in `WorkspaceConfigDO` / [`edge/src/config/`](./edge/src/config/).
 - **Bring your own model + MCP** — OpenAI / Anthropic / Google keys; Linear & Notion when configured.
@@ -224,15 +231,17 @@ unless the runtime is also publicly reachable.
 
 ```
 opentag/
-├── runtime.ts              # Node AG-UI triage agent (pnpm runtime)
+├── runtime.ts              # Node AG-UI entry (local + Container)
+├── lib/triage-agent.ts     # Shared triage BuiltInAgent factory
 ├── runtime-research.ts     # Optional research AG-UI agent
 ├── slack-app-manifest.yaml # Slack app (Events API, scopes, slash commands)
 ├── PRODUCT.md              # Authoritative product / architecture
-├── DECISIONS.md            # Gate 0 technical decisions (research track)
+├── DECISIONS.md            # Technical decisions
 ├── setup.md                # Setup & env reference
-├── edge/                   # Cloudflare bot + research Workers
+├── edge/                   # Cloudflare bot + agent + research Workers
 │   ├── src/                # Bot spine (worker, adapter, tools, store)
 │   ├── wrangler.bot.toml   # Production opentag-bot
+│   ├── workers/agent-runtime/  # Production AG-UI Container (opentag-agent)
 │   ├── workers/orchestrator/
 │   ├── workers/egress-proxy/
 │   └── vendor/             # Workers-safe @copilotkit/channels tarball
@@ -275,10 +284,10 @@ Local Slack smoke helpers: `edge/scripts/e2e-local.sh`, `edge/scripts/e2e-smoke-
 | --- | --- | --- |
 | `SLACK_BOT_TOKEN` | `edge/.dev.vars` / secrets | Bot Web API (needs `reactions:write` for emoji acks) |
 | `SLACK_SIGNING_SECRET` | edge | Events / commands HMAC |
-| `AGENT_URL` | edge + root | AG-UI triage run URL |
-| `AGENT_AUTH_HEADER` | edge (optional) | Auth to the runtime |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | root `.env` | Models for `pnpm runtime` |
-| `LINEAR_API_KEY` / `NOTION_*` | root `.env` | Optional MCP |
+| `AGENT_URL` | bot secrets / `.dev.vars` | AG-UI triage run URL (`opentag-agent` in prod) |
+| `AGENT_AUTH_HEADER` | bot + agent (optional) | Auth to the runtime |
+| `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
+| `LINEAR_API_KEY` / `NOTION_*` | agent secrets / root `.env` | Optional MCP |
 | `ADMIN_SECRET` | edge | Protect `/admin/*` |
 | `INTERNAL_SECRET` | bot + research | Service-to-service research kickoff |
 
@@ -290,7 +299,7 @@ Full lists: [`.env.example`](./.env.example), [`edge/.dev.vars.example`](./edge/
 
 1. **No Socket Mode** on Cloudflare Workers — Events API + HMAC only.
 2. **Bot Worker owns Slack HTTP**; research is internal via `RESEARCH_TASKS`.
-3. Container egress is **application-level HTTP proxy** only (no transparent TCP).
+3. Sandbox container egress is **application-level HTTP proxy** only (no transparent TCP). Triage agent Container holds API keys directly (DECISIONS §4).
 4. Task / actor code talks to **adapters**, not raw `pg` / ad-hoc DO APIs.
 5. Cold starts: ack Slack quickly; finish via `waitUntil` / `chat.postMessage` / agent stream.
 

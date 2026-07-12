@@ -163,8 +163,19 @@ describe("CloudflareSlackAdapter", () => {
     const orig = globalThis.fetch;
     globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
       if (String(url).includes("reactions.add")) {
-        reactions.push(JSON.parse(String(init?.body ?? "{}")));
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        reactions.push({
+          channel: params.get("channel"),
+          timestamp: params.get("timestamp"),
+          name: params.get("name"),
+        });
         return Response.json({ ok: true });
+      }
+      if (String(url).includes("users.info")) {
+        return Response.json({
+          ok: true,
+          user: { id: "U1", real_name: "Ada", name: "ada" },
+        });
       }
       return Response.json({ ok: false });
     }) as typeof fetch;

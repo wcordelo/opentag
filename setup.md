@@ -8,15 +8,37 @@
 ```
 Slack Events API ──▶  edge/ bot Worker (createBot + DO StateStore)
                               │
-                              ├── AG-UI ──▶  pnpm runtime (runtime.ts + MCP)
+                              ├── AG-UI ──▶  opentag-agent (CF Container)
                               └── RESEARCH_TASKS ──▶  research Worker (optional)
 ```
 
-## Quick run
+## Production deploy
+
+Requires **Workers Paid** (Cloudflare Containers).
 
 ```bash
-# Agent (repo root)
-cp .env.example .env          # OPENAI_API_KEY, AGENT_URL, optional Linear/Notion
+# 1. Triage agent Container
+cd edge/workers/agent-runtime
+npm ci
+# secrets: OPENAI_API_KEY, LINEAR_API_KEY, LINEAR_TEAM_KEY, optional Notion + AGENT_AUTH_HEADER
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put LINEAR_API_KEY
+npm run deploy
+
+# 2. Point the bot at the agent
+cd ../..
+printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run' \
+  | npx wrangler secret put AGENT_URL --config wrangler.bot.toml
+npm run deploy:bot
+```
+
+No laptop `pnpm runtime` or cloudflared tunnel is required for production Slack.
+
+## Local / quick iterate (dev-only)
+
+```bash
+# Agent (repo root) — optional when iterating on prompts without redeploying the image
+cp .env.example .env          # OPENAI_API_KEY, optional Linear/Notion
 pnpm install && pnpm runtime  # :8200
 
 # Bot Worker
@@ -47,17 +69,18 @@ Refreshing the channels vendor tarball (optional): see [`edge/vendor/README.md`]
 | --- | --- | --- |
 | `SLACK_BOT_TOKEN` | `edge/.dev.vars` / secrets | Bot Web API |
 | `SLACK_SIGNING_SECRET` | `edge/.dev.vars` / secrets | Events HMAC verify |
-| `AGENT_URL` | edge + root `.env` | AG-UI triage endpoint |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | root `.env` | Model for `pnpm runtime` |
-| `LINEAR_API_KEY` / `NOTION_*` | root `.env` | Optional MCP tools on runtime |
+| `AGENT_URL` | bot secrets / `.dev.vars` | AG-UI triage endpoint (`opentag-agent` in prod) |
+| `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
+| `LINEAR_API_KEY` / `NOTION_*` | agent secrets / root `.env` | Optional MCP tools |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |
 
 See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 
 ## 3. Integrations (runtime)
 
-Linear and Notion MCP wiring lives in [`runtime.ts`](./runtime.ts). Run
-`pnpm notion-mcp` when using Notion.
+Linear and Notion MCP wiring lives in [`lib/triage-agent.ts`](./lib/triage-agent.ts) /
+[`runtime.ts`](./runtime.ts). In the Container, Notion starts as a sidecar when
+`NOTION_TOKEN` + `NOTION_MCP_AUTH_TOKEN` are set. Locally: `pnpm notion-mcp`.
 
 ## Research tasks
 

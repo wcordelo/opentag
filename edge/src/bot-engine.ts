@@ -61,22 +61,35 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
     throw new Error("AGENT_URL is required for AG-UI agent replies");
   }
 
+  const stateStore = createBotStoreAdapter(env.BOT_STATE);
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
+    stateStore,
   });
 
   const headers = env.AGENT_AUTH_HEADER
     ? { Authorization: env.AGENT_AUTH_HEADER }
     : undefined;
 
+  // Prefer service binding so Worker→Worker does not hit CF 1042 (same-zone
+  // workers.dev fetch is blocked). AGENT_URL still supplies the request URL/path.
+  const agentFetch = env.AGENT_RUNTIME
+    ? (url: string, init: RequestInit) => env.AGENT_RUNTIME!.fetch(url, init)
+    : undefined;
+
   const bot = createBot({
     name: "opentag",
     adapters: [adapter],
-    store: { adapter: createBotStoreAdapter(env.BOT_STATE) },
+    store: {
+      adapter: stateStore,
+      // Keep the turn lock for the full HITL wait (default 60s is too short).
+      lockTtl: 15 * 60_000,
+    },
     agent: (threadId) => {
       const a = new HttpAgent({
         url: env.AGENT_URL,
         headers,
+        ...(agentFetch ? { fetch: agentFetch } : {}),
       });
       a.threadId = threadId;
       return a;
@@ -258,7 +271,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       try {
         await thread.post(
           `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
-            `Usually the local runtime/tunnel behind AGENT_URL — retry in a few seconds.`,
+            `Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.`,
         );
       } catch {
         /* ignore */

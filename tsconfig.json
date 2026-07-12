@@ -19,6 +19,7 @@
     "runtime-research.ts",
     "worker/**/*.ts",
     "lib/**/*.ts",
+    "lib/triage-agent.ts",
     "e2e/research-loop.ts"
   ],
   "exclude": ["node_modules", "agent", "app", "edge"]

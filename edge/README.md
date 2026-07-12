@@ -7,9 +7,10 @@ Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
 | --- | --- |
 | **`wrangler.bot.toml`** | **Production** — `opentag-bot` Claude Tag spine |
 | `wrangler.toml` | Local/dev bot Worker (`opentag-edge`) |
+| **`workers/agent-runtime/`** | **Production** AG-UI triage Container (`opentag-agent`) |
 | `wrangler.research.toml` | Research **task** Worker (internal `/research` only) |
 | `wrangler.bot-store.toml` | StateStore e2e alias |
-| `workers/egress-proxy/` | Shared egress for containers |
+| `workers/egress-proxy/` | Shared egress for **sandbox** containers |
 
 ## Prerequisite — `@copilotkit/channels*`
 
@@ -25,6 +26,7 @@ npm test                 # bot-spine unit tests
 npm run test:e2e         # StateStore workerd
 npm run typecheck
 npm run deploy:bot       # production Worker (opentag-bot)
+npm run deploy:agent     # production AG-UI Container (opentag-agent)
 npm run dev              # local bot spine (Slack Events API)
 npm run dev:research     # optional research task Worker
 ```
@@ -32,12 +34,24 @@ npm run dev:research     # optional research task Worker
 Optional sibling CopilotKit checkout is only needed when refreshing the vendor
 tarball (see [`vendor/README.md`](./vendor/README.md)).
 
+## Production agent
+
+```bash
+cd workers/agent-runtime
+npm ci && npm run deploy
+# Then set bot AGENT_URL to:
+#   https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
+```
+
+See [`workers/agent-runtime/README.md`](./workers/agent-runtime/README.md). Requires Workers Paid.
+
 ## Local E2E
 
 ```bash
 cp .dev.vars.example .dev.vars   # fill Slack + AGENT_URL + secrets
 ./scripts/e2e-local.sh           # readiness checks + checklist
-pnpm runtime                     # terminal A (repo root) — AGENT_URL target
+# Dev-only local brain (or point AGENT_URL at deployed opentag-agent):
+pnpm runtime                     # terminal A (repo root)
 npm run dev                      # terminal B
 ./scripts/e2e-smoke-local.sh     # signed Events API → real Slack reply (no tunnel)
 # For live Slack inbound: tunnel :8787 and point Request URLs at the bot Worker;
@@ -58,7 +72,7 @@ npm run dev                      # terminal B
 3. `WORKSPACE_CONFIG` — prompts + access bundles
 4. `KNOWLEDGE` — longer-term memory
 5. `RESEARCH_TASKS` → orchestrator `POST /research`
-6. `AGENT_URL` → Node AG-UI runtime (`HttpAgent`)
+6. `AGENT_URL` → `opentag-agent` Container (`HttpAgent`)
 
 ## Layout
 
@@ -67,6 +81,7 @@ edge/
 ├── wrangler.toml
 ├── wrangler.research.toml
 ├── src/                  # bot spine + CloudflareSlackAdapter
+├── workers/agent-runtime/ # production AG-UI Container
 ├── workers/orchestrator/ # research tasks
 └── workers/egress-proxy/
 ```

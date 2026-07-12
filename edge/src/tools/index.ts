@@ -11,6 +11,8 @@ import {
   Context,
   Actions,
   Button,
+  Fields,
+  Field,
 } from "@copilotkit/channels-ui";
 import { memorySearch, memoryWrite } from "../memory/knowledge-do.js";
 import { startTask } from "../tasks/runtime.js";
@@ -34,6 +36,9 @@ import {
   incidentSchema,
 } from "../components/cards.js";
 import { guardToolsByBundle } from "./guard.js";
+import { createDurableObjectStore } from "../store/index.js";
+import { awaitChoiceDurable, newHitlChoiceId } from "../hitl/durable-choice.js";
+import { coerceTicketFields } from "../slack/thread-memory.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -47,6 +52,10 @@ export function bindToolEnv(env: Env): void {
 function requireEnv(): Env {
   if (!boundEnv) throw new Error("tool env not bound — call bindToolEnv first");
   return boundEnv;
+}
+
+function requireStateStore() {
+  return createDurableObjectStore(requireEnv().BOT_STATE);
 }
 
 function conversationKeyOf(thread: unknown): string {
@@ -65,10 +74,41 @@ function threadTsFromThread(thread: unknown): string | undefined {
   return scope;
 }
 
-function ConfirmWriteCard(props: { action: string; detail?: string }) {
+function ConfirmWriteCard(props: {
+  action: string;
+  detail?: string;
+  title?: string;
+  description?: string;
+  assigneeEmail?: string;
+  team?: string;
+  choiceId: string;
+}) {
   const kids: unknown[] = [jsx(Header, { children: `📝 ${props.action}?` })];
+  const fields: unknown[] = [];
+  if (props.title) {
+    fields.push(jsx(Field, { children: `**Title**\n${props.title}` }));
+  }
+  if (props.description) {
+    fields.push(
+      jsx(Field, { children: `**Description**\n${props.description}` }),
+    );
+  }
+  if (props.team) {
+    fields.push(jsx(Field, { children: `**Team**\n${props.team}` }));
+  }
+  if (props.assigneeEmail) {
+    fields.push(
+      jsx(Field, { children: `**Assignee**\n${props.assigneeEmail}` }),
+    );
+  }
+  if (fields.length > 0) {
+    kids.push(jsxs(Fields, { children: fields }));
+  }
   if (props.detail) {
     kids.push(jsx(Section, { children: props.detail }));
+  }
+  if (!props.title && !props.description && !props.detail) {
+    kids.push(jsx(Section, { children: props.action }));
   }
   kids.push(
     jsx(Context, {
@@ -77,12 +117,12 @@ function ConfirmWriteCard(props: { action: string; detail?: string }) {
     jsxs(Actions, {
       children: [
         jsx(Button, {
-          value: { confirmed: true },
+          value: { confirmed: true, choiceId: props.choiceId },
           style: "primary",
           children: "Create",
         }),
         jsx(Button, {
-          value: { confirmed: false },
+          value: { confirmed: false, choiceId: props.choiceId },
           style: "danger",
           children: "Cancel",
         }),
@@ -97,18 +137,100 @@ export const confirmWriteTool = defineBotTool({
   description:
     "Ask the user to approve a write before you perform it. Posts a " +
     "confirm/cancel card and BLOCKS until the user clicks; returns " +
-    "whether they confirmed. Call before creating/modifying Linear or Notion.",
+    "whether they confirmed. For Linear issues, ALWAYS pass structured " +
+    "title / description / assigneeEmail / team (inferred from messy human " +
+    "input — typos and missing punctuation are fine). Call before " +
+    "creating/modifying Linear or Notion.",
   parameters: z.object({
-    action: z.string().describe("One-line summary of the write"),
-    detail: z.string().optional().describe("Optional detail under the prompt"),
+    action: z
+      .string()
+      .describe('Short summary, e.g. "Create Linear issue"'),
+    title: z
+      .string()
+      .optional()
+      .describe(
+        "Issue/page title only — never include description text or field labels",
+      ),
+    description: z
+      .string()
+      .optional()
+      .describe("Issue/page body — separate from title"),
+    assigneeEmail: z
+      .string()
+      .optional()
+      .describe("Assignee email when creating a Linear issue"),
+    team: z
+      .string()
+      .optional()
+      .describe("Linear team display name when creating an issue"),
+    detail: z
+      .string()
+      .optional()
+      .describe("Optional extra notes when structured fields do not apply"),
   }),
-  async handler({ action, detail }, { thread }) {
-    const choice = await thread.awaitChoice<{ confirmed?: boolean }>(
-      ConfirmWriteCard({ action, detail }),
+  async handler(
+    { action, title, description, assigneeEmail, team, detail },
+    { thread },
+  ) {
+    const fields = coerceTicketFields({ title, description });
+    const choiceId = newHitlChoiceId();
+    console.log("[confirm_write] waiting", {
+      choiceId,
+      title: fields.title,
+      description: fields.description,
+      assigneeEmail,
+      team,
+    });
+    const choice = await awaitChoiceDurable<{ confirmed?: boolean }>(
+      thread,
+      requireStateStore(),
+      ConfirmWriteCard({
+        action,
+        title: fields.title,
+        description: fields.description,
+        assigneeEmail,
+        team,
+        detail,
+        choiceId,
+      }),
+      {
+        choiceId,
+        conversationKey: conversationKeyOf(thread),
+      },
     );
-    return choice?.confirmed
-      ? "The user APPROVED the write — proceed."
-      : "The user DECLINED — do not write; acknowledge and stop.";
+    console.log("[confirm_write] resolved", {
+      choiceId,
+      confirmed: choice?.confirmed,
+    });
+    if (!choice?.confirmed) {
+      return "The user DECLINED — do not write; acknowledge and stop.";
+    }
+    // Immediate Slack feedback while the agent calls save_issue (LLM + MCP).
+    try {
+      await thread.post("⏳ Creating Linear issue…");
+    } catch (err) {
+      console.warn(
+        "[confirm_write] creating ack failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    const parts = [
+      "The user APPROVED the write — proceed IMMEDIATELY.",
+      "In this same turn: call save_issue NOW with the fields below (do not ask anything, do not call list_teams first unless save_issue fails).",
+      "Then call issue_card with the new identifier + url. No extra prose before those tools.",
+      fields.title != null && fields.title !== ""
+        ? `title=${JSON.stringify(fields.title)}`
+        : null,
+      fields.description != null && fields.description !== ""
+        ? `description=${JSON.stringify(fields.description)}`
+        : null,
+      assigneeEmail
+        ? `assigneeEmail=${JSON.stringify(assigneeEmail)}`
+        : null,
+      team ? `team=${JSON.stringify(team)}` : null,
+      "Use these exact field values; do not remix them.",
+    ].filter(Boolean);
+    return parts.join(" ");
   },
 });
 
@@ -225,9 +347,14 @@ export const showIncidentTool = defineBotTool({
     "BLOCKS until the user clicks; returns which action they took.",
   parameters: incidentSchema,
   async handler(props, { thread, user }) {
-    const choice = await thread.awaitChoice<{ action?: string; id?: string }>(
-      IncidentCard(props),
-    );
+    const choiceId = newHitlChoiceId();
+    const choice = await awaitChoiceDurable<{
+      action?: string;
+      id?: string;
+    }>(thread, requireStateStore(), IncidentCard({ ...props, choiceId }), {
+      choiceId,
+      conversationKey: conversationKeyOf(thread),
+    });
     if (choice?.action === "ack") {
       const who = user?.name ?? user?.handle ?? user?.id ?? "someone";
       await thread.post(`✅ Acknowledged *${props.title}* — ack'd by ${who}`);

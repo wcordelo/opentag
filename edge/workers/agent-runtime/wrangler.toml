@@ -1,0 +1,29 @@
+name = "opentag-agent"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Always-on AG-UI triage runtime in a Cloudflare Container.
+# Build context is the repo root so Dockerfile can COPY runtime.ts + lib/.
+[[containers]]
+class_name = "TriageContainer"
+image = "./Dockerfile"
+image_build_context = "../../.."
+max_instances = 2
+instance_type = "basic"
+
+[[durable_objects.bindings]]
+name = "TRIAGE"
+class_name = "TriageContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TriageContainer"]
+
+# Secrets (wrangler secret put --config wrangler.toml):
+#   OPENAI_API_KEY, AGENT_MODEL (optional), LINEAR_API_KEY, LINEAR_MCP_URL,
+#   LINEAR_TEAM_KEY, NOTION_TOKEN, NOTION_MCP_AUTH_TOKEN, AGENT_AUTH_HEADER
+#
+# Bot Worker AGENT_URL:
+#   https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run

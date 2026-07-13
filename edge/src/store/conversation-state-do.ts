@@ -295,7 +295,7 @@ export function hasSuccessfulTerminal(
     const payload = e.payload;
     if (payload && typeof payload === "object") {
       const rec = payload as Record<string, unknown>;
-      if (rec.interrupted === true || rec.ok === false) return false;
+      if (rec.interrupted === true || rec.ok === false) continue;
     }
     return true;
   }
@@ -529,11 +529,13 @@ export class ConversationStateDO extends DurableObject {
           this.obligations.reinsertForRetry(ob, OBLIGATION_LIVE_DEFER_MS);
           await this.rescheduleAlarm();
         } else {
-          await this.postFallback(
-            ob,
-            env,
-            "⚠️ This turn was interrupted before an answer could be delivered. Please retry.",
-            "error_visible",
+          console.log(
+            JSON.stringify({
+              metric: "obligation_silent_clear",
+              threadKey: ob.threadKey,
+              executionId: ob.executionId,
+              reason: "live_execution_max_defer",
+            }),
           );
         }
         return;

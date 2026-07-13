@@ -368,13 +368,15 @@ async function stripOverridesFromPrompt(
   return { cleanedPrompt, resolved };
 }
 
+export type BundledAgentTurnOutcome = "completed" | "aborted";
+
 export async function runBundledAgentTurn(
   env: Env,
   thread: AgentThread,
   promptIn: string | AgentContentPart[],
   requesterIn?: Requester,
   turnContext?: { executionId?: string },
-): Promise<void> {
+): Promise<BundledAgentTurnOutcome> {
   const requester = await ensureRequesterProfile(env, requesterIn);
   const teamId = getCurrentTeamId();
   const channelId = channelFromThread(thread);
@@ -410,7 +412,7 @@ export async function runBundledAgentTurn(
         err instanceof Error ? err.message : err,
       );
     }
-    return;
+    return "completed";
   }
 
   const { config, bundle } = await loadTurnAccess(
@@ -454,9 +456,7 @@ export async function runBundledAgentTurn(
       if (!titled) {
         const scope = conversationKey.split("::")[1];
         const inbound = getInboundMessage(conversationKey, thread);
-        const titleThreadTs = [inbound?.threadTs, scope, inbound?.ts].find(
-          (v): v is string => Boolean(v && /^\d+\.\d+$/.test(v)),
-        );
+        const titleThreadTs = firstSlackTs(scope, inbound?.threadTs, inbound?.ts);
         if (titleThreadTs) {
           await createSlackWebClient(env.SLACK_BOT_TOKEN).setTitle({
             channel_id: channelId,
@@ -687,7 +687,7 @@ export async function runBundledAgentTurn(
     });
 
     if (harnessResult.error === "aborted") {
-      return;
+      return "aborted";
     }
 
     if (harnessResult.ok) {
@@ -698,7 +698,7 @@ export async function runBundledAgentTurn(
       await thread.post(
         text || "_(Claude Code harness turn completed with no output.)_",
       );
-      return;
+      return "completed";
     }
 
     // Harness configured but the turn failed (unavailable, duplicate
@@ -735,4 +735,5 @@ export async function runBundledAgentTurn(
       allowed,
     ),
   });
+  return "completed";
 }

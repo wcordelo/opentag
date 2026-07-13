@@ -445,7 +445,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
 
       try {
         try {
-          await runBundledAgentTurn(
+          const turnOutcome = await runBundledAgentTurn(
             env,
             thread as Parameters<typeof runBundledAgentTurn>[1],
             message.contentParts && message.contentParts.length > 0
@@ -454,6 +454,11 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
             message.user,
             { executionId },
           );
+          if (turnOutcome === "completed") {
+            await endSessionExecution(env, obligationThreadKey, executionId, "done");
+            logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
+          }
+          await clearRenderObligation(stateStore, obligationThreadKey, executionId);
         } finally {
           if (statusThreadTs) {
             void adapter
@@ -461,9 +466,6 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
               .catch(() => undefined);
           }
         }
-        await endSessionExecution(env, obligationThreadKey, executionId, "done");
-        logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
-        await clearRenderObligation(stateStore, obligationThreadKey, executionId);
       } catch (turnErr) {
         const errMsg =
           turnErr instanceof Error ? turnErr.message : String(turnErr);

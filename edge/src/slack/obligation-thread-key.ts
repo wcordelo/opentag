@@ -49,3 +49,12 @@ export function slackObligationThreadKey(
     : (statusThreadTs ?? channelId);
   return `slack:${channelId}:${scope}`;
 }
+
+/** Inverse of {@link slackObligationThreadKey} for abort routing when KV is stale. */
+export function conversationKeyFromThreadKey(threadKey: string): string {
+  const match = /^slack:([^:]+):(.+)$/.exec(threadKey);
+  if (!match) return "";
+  const channelId = match[1]!;
+  if (channelId.startsWith("D")) return `${channelId}::dm`;
+  return `${channelId}::${match[2]!}`;
+}

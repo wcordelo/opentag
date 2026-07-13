@@ -13,6 +13,7 @@ import { abortHarnessTurn } from "../harness/turn-abort.js";
 import {
   activeTurnKvKey,
   channelActiveTurnsKvKey,
+  conversationKeyFromThreadKey,
   firstSlackTs,
   slackObligationThreadKey,
   type ActiveTurnRecord,
@@ -58,8 +59,10 @@ interface SessionInterruptRpc {
  * should short-circuit routing to the bot engine.
  *
  * Matches only `event_callback` payloads whose `event.type` is
- * `"app_mention"` or `"message"`, with a non-empty `event.text`, and not
- * authored by a bot (`event.bot_id` absent). `event.subtype` is deliberately
+ * `"app_mention"` or (for threaded replies) `"message"`, with a non-empty
+ * `event.text`, and not authored by a bot (`event.bot_id` absent).
+ * Channel-level stops require `app_mention` so ordinary channel chatter
+ * cannot cancel unrelated in-flight turns. `event.subtype` is deliberately
  * not inspected — a stop message flows through this check the same way
  * regardless of subtype.
  *
@@ -74,6 +77,14 @@ export function extractStopCommandEvent(
   if (!event) return undefined;
   if (event.type !== "app_mention" && event.type !== "message") {
     return undefined;
+  }
+  // Top-level channel messages must @mention the bot; thread replies and DMs may
+  // stop without a mention because the user is already in the bot's conversation.
+  if (!event.thread_ts && event.type !== "app_mention") {
+    const channel = event.channel;
+    if (!(typeof channel === "string" && channel.startsWith("D"))) {
+      return undefined;
+    }
   }
   if (event.bot_id) return undefined;
   const text = event.text;
@@ -130,7 +141,7 @@ export async function handleStopCommand(
       }
       stopTargets = activeTurn
         ? [activeTurn]
-        : [{ threadKey, conversationKey: "" }];
+        : [{ threadKey, conversationKey: conversationKeyFromThreadKey(threadKey) }];
     } else {
       try {
         const channelTurns = await stateStore.kv.get<ActiveTurnRecord[]>(
@@ -139,10 +150,17 @@ export async function handleStopCommand(
         stopTargets =
           channelTurns && channelTurns.length > 0
             ? channelTurns
-            : [{ threadKey, conversationKey: "" }];
+            : [
+                {
+                  threadKey,
+                  conversationKey: conversationKeyFromThreadKey(threadKey),
+                },
+              ];
       } catch (err) {
         console.error("[stop-command] channel active turns lookup failed", channel, err);
-        stopTargets = [{ threadKey, conversationKey: "" }];
+        stopTargets = [
+          { threadKey, conversationKey: conversationKeyFromThreadKey(threadKey) },
+        ];
       }
     }
 
@@ -171,14 +189,16 @@ export async function handleStopCommand(
         }
       }
 
-      if (target.conversationKey) {
+      const conversationKey =
+        target.conversationKey || conversationKeyFromThreadKey(target.threadKey);
+      if (conversationKey) {
         try {
           const { adapter } = await getOrCreateBot(env);
-          adapter.abortConversation(target.conversationKey);
+          adapter.abortConversation(conversationKey);
         } catch (err) {
           console.error(
             "[stop-command] abortConversation failed",
-            target.conversationKey,
+            conversationKey,
             err,
           );
         }

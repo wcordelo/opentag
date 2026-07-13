@@ -124,15 +124,26 @@ describe("extractStopCommandEvent", () => {
     expect(extractStopCommandEvent(payload)).toBeUndefined();
   });
 
-  it("ignores event.subtype — a stop message with a subtype still matches", () => {
+  it("ignores event.subtype — a threaded stop message with a subtype still matches", () => {
     const event: SlackStopEvent = {
       type: "message",
       channel: "C1",
       subtype: "thread_broadcast",
       text: "stop",
       ts: "8.0",
+      thread_ts: "8.0",
     };
     expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
+  });
+
+  it("ignores channel-level message stops without an app_mention", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel: "C1",
+      text: "stop",
+      ts: "8.1",
+    };
+    expect(extractStopCommandEvent(eventCallback(event))).toBeUndefined();
   });
 });
 

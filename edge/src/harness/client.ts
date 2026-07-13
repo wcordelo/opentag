@@ -274,6 +274,10 @@ export async function runHarnessTurn(
       }
     } catch (err) {
       if (signal.aborted) {
+        await safeAppend(sessionDo, executionId, "done", {
+          interrupted: true,
+          ok: false,
+        });
         return { ok: false, text: accumulatedText, error: "aborted" };
       }
       const message = err instanceof Error ? err.message : String(err);

@@ -285,6 +285,23 @@ export class RenderObligationEngine {
   }
 }
 
+/** Whether replay already has a successful terminal event for this execution. */
+export function hasSuccessfulTerminal(
+  events: Array<{ executionId: string; kind: string; payload: unknown }>,
+  executionId: string,
+): boolean {
+  for (const e of events) {
+    if (e.executionId !== executionId || e.kind !== "done") continue;
+    const payload = e.payload;
+    if (payload && typeof payload === "object") {
+      const rec = payload as Record<string, unknown>;
+      if (rec.interrupted === true || rec.ok === false) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 /** `kind === 'output'` events, concatenated in order, from a `SessionEventDO.replay()` result. */
 export function reconstructMarkdown(
   events: Array<{ kind: string; payload: unknown }>,
@@ -523,6 +540,17 @@ export class ConversationStateDO extends DurableObject {
       }
 
       const events = await sessionDo.replay(ob.afterEventId).catch(() => []);
+      if (hasSuccessfulTerminal(events, ob.executionId)) {
+        console.log(
+          JSON.stringify({
+            metric: "obligation_silent_clear",
+            threadKey: ob.threadKey,
+            executionId: ob.executionId,
+            reason: "terminal_done",
+          }),
+        );
+        return;
+      }
       const content = reconstructMarkdown(events);
       if (content) {
         await this.postFallback(

@@ -34,6 +34,7 @@ import {
   type ResolvedThreadOverrides,
 } from "./store/thread-overrides.js";
 import { runHarnessTurn } from "./harness/client.js";
+import type { SessionEventsRpc } from "./store/conversation-state-do.js";
 
 type Requester = {
   id?: string;
@@ -703,8 +704,23 @@ export async function runBundledAgentTurn(
     // Harness configured but the turn failed (unavailable, duplicate
     // execution, container error, stream ended without `done`, etc.) — fall
     // back to the normal AG-UI path below so users aren't stranded, rather
-    // than surfacing a harness-specific error. `runHarnessTurn` has already
-    // given the SessionEventDO event log a terminal `done` event of its own.
+    // than surfacing a harness-specific error. `runHarnessTurn` may have
+    // cleared `session:executing` via a terminal harness `done` — restore it
+    // so the render-obligation alarm keeps deferring until AG-UI finishes.
+    if (turnContext?.executionId && env.SESSION_EVENTS) {
+      try {
+        const sessionDo = env.SESSION_EVENTS.get(
+          env.SESSION_EVENTS.idFromName(harnessThreadKey),
+        ) as unknown as SessionEventsRpc & {
+          resumeExecuting(args: { executionId: string }): Promise<void>;
+        };
+        await sessionDo.resumeExecuting({
+          executionId: turnContext.executionId,
+        });
+      } catch (err) {
+        console.error("[agent-turn] resumeExecuting failed", err);
+      }
+    }
     logMetric("harness_fallback", {
       threadKey: harnessThreadKey,
       error: harnessResult.error ?? "unknown",

@@ -264,6 +264,17 @@ export class SessionEventEngine {
       }));
   }
 
+  /**
+   * Re-mark a session executing after a non-terminal harness failure when the
+   * caller continues the same `executionId` on another runtime (AG-UI fallback).
+   */
+  async resumeExecuting(args: { executionId: string }): Promise<void> {
+    await this.kv.put<ExecutingSlot>(KEY_EXECUTING, {
+      executionId: args.executionId,
+      startedAt: this.now(),
+    });
+  }
+
   async interrupt(): Promise<{ interrupted: boolean }> {
     const executing = await this.kv.get<ExecutingSlot>(KEY_EXECUTING);
     if (!executing) return { interrupted: false };
@@ -380,6 +391,11 @@ export class SessionEventDO extends DurableObject {
     }>
   > {
     return this.engine.replay(afterEventId);
+  }
+
+  /** See {@link SessionEventEngine.resumeExecuting}. */
+  async resumeExecuting(args: { executionId: string }): Promise<void> {
+    return this.engine.resumeExecuting(args);
   }
 
   /**

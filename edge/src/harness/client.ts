@@ -25,10 +25,6 @@
  */
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
-import {
-  clearHarnessTurnAbort,
-  registerHarnessTurnAbort,
-} from "./turn-abort.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -38,28 +34,86 @@ export interface RunHarnessTurnArgs {
   threadKey: string;
   /** Not part of the /turn wire body (threadKey + sessionId already identify the session) — reserved for caller-side logging/telemetry. */
   conversationKey: string;
+  /** Stable identity supplied by Slack ingress; reused across redelivery. */
+  executionId: string;
+  /** Stable forwarded-message identity used for durable dedup. */
+  forwardedMessageId: string;
   prompt: string;
   model?: string;
   /** `[Requester Context]` block (SPEC §5-A5 item 5) — built by the caller (agent-turn.ts). */
   requesterContext?: string;
   /** Full thread transcript for a harness restart re-feed; truncated here regardless of who built it. */
   transcript?: string;
+  /** This repo turn must produce a new commit before it can succeed. */
+  codingTask?: boolean;
+  /** True only after an upstream HITL approval for remote git writes. */
+  remoteGitApproved?: boolean;
+  /** Approved turn must push/open and verify a requester-attributed PR. */
+  createPullRequest?: boolean;
   /** Called once per `output` event carrying a text delta (best-effort live rendering hook — unused in v1's single-final-post path, kept for a later incremental-render phase). */
   onText?: (delta: string) => void;
-  /**
-   * When set, reuse the execution already begun by `bot-engine.ts`
-   * (`beginSessionExecution`) instead of generating a new id and calling
-   * `execute()` again — keeps the render obligation and SessionEventDO slot aligned.
-   */
-  executionId?: string;
-  /** Optional external abort (e.g. from `registerHarnessTurnAbort`). */
-  signal?: AbortSignal;
 }
 
-export interface RunHarnessTurnResult {
-  ok: boolean;
-  text: string;
-  error?: string;
+export type HarnessFailureKind =
+  | "unavailable"
+  | "duplicate"
+  | "concurrent"
+  | "setup"
+  | "auth"
+  | "http"
+  | "timeout"
+  | "spawn_or_exit"
+  | "missing_done"
+  | "persistence"
+  | "interrupted"
+  | "postcondition"
+  | "transport"
+  | "harness";
+
+export type RunHarnessTurnResult =
+  | { ok: true; text: string; terminalPersisted?: true }
+  | {
+      ok: false;
+      text: string;
+      error: string;
+      failureKind: HarnessFailureKind;
+      interrupted?: boolean;
+      terminalPersisted?: true;
+    };
+
+function failed(
+  failureKind: HarnessFailureKind,
+  error: string,
+  text = "",
+  terminalPersisted = false,
+): RunHarnessTurnResult {
+  return {
+    ok: false,
+    text,
+    error,
+    failureKind,
+    ...(terminalPersisted ? { terminalPersisted: true as const } : {}),
+    ...(failureKind === "interrupted" ? { interrupted: true } : {}),
+  };
+}
+
+/** Central compatibility classifier until the pinned container protocol grows a code field. */
+function classifyHarnessFailure(message: string): HarnessFailureKind {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("postcondition_failed")) return "postcondition";
+  if (
+    normalized.includes("workdir") ||
+    normalized.includes("git clone") ||
+    normalized.includes("baseline commit")
+  ) return "setup";
+  if (normalized.includes("timed out") || normalized.includes("timeout")) return "timeout";
+  if (
+    normalized.includes("failed to start") ||
+    normalized.includes("process error") ||
+    normalized.includes("exited with code") ||
+    normalized.includes("process exited")
+  ) return "spawn_or_exit";
+  return "harness";
 }
 
 /**
@@ -77,13 +131,21 @@ interface SessionEventsFullRpc extends SessionEventsRpc {
   }): Promise<{ sessionId: string; restarted: boolean }>;
   execute(args: {
     executionId: string;
+    forwardedMessageId?: string;
     inputLines: string[];
-  }): Promise<{ accepted: boolean; duplicate: boolean }>;
+  }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
     executionId: string;
     kind: "output" | "error" | "done";
     payload: unknown;
   }): Promise<{ id: number }>;
+}
+
+class EventPersistenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EventPersistenceError";
+  }
 }
 
 function truncateTranscript(transcript: string | undefined): string | undefined {
@@ -117,8 +179,34 @@ function harnessFetcher(
   return undefined;
 }
 
-/** Append one event row, swallowing failures — a dead SessionEventDO must never crash the turn. */
-async function safeAppend(
+/** Authenticated exact-execution control request; safe/idempotent on misses. */
+export async function interruptHarnessTurn(
+  env: Env,
+  args: { sessionId: string; threadKey: string; executionId: string },
+): Promise<{ interrupted: boolean; approvalRevoked?: boolean }> {
+  if (!env.HARNESS_AUTH_TOKEN || (!env.HARNESS && !env.HARNESS_URL)) {
+    return { interrupted: false };
+  }
+  const url = env.HARNESS_URL
+    ? new URL("/interrupt", env.HARNESS_URL).toString()
+    : "https://harness/interrupt";
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.HARNESS_AUTH_TOKEN}`,
+    },
+    body: JSON.stringify(args),
+  };
+  const response = env.HARNESS
+    ? await env.HARNESS.fetch(url, init)
+    : await fetch(url, init);
+  if (!response.ok) return { interrupted: false };
+  return response.json() as Promise<{ interrupted: boolean; approvalRevoked?: boolean }>;
+}
+
+/** Append an event durably. Callers must not expose or process it on failure. */
+async function appendStrict(
   sessionDo: SessionEventsFullRpc,
   executionId: string,
   kind: "output" | "error" | "done",
@@ -127,12 +215,52 @@ async function safeAppend(
   try {
     await sessionDo.appendEvent({ executionId, kind, payload });
   } catch (err) {
-    console.error(
-      "[harness-client] appendEvent failed",
-      kind,
-      err instanceof Error ? err.message : err,
+    const message = err instanceof Error ? err.message : String(err);
+    throw new EventPersistenceError(`${kind}: ${message}`);
+  }
+}
+
+/** Record a failed terminal without ever disguising a storage failure as the original cause. */
+async function persistFailure(
+  sessionDo: SessionEventsFullRpc,
+  executionId: string,
+  failureKind: HarnessFailureKind,
+  message: string,
+  text: string,
+): Promise<RunHarnessTurnResult> {
+  let errorAppendFailure: string | undefined;
+  try {
+    await appendStrict(sessionDo, executionId, "error", { message });
+  } catch (err) {
+    errorAppendFailure = err instanceof Error ? err.message : String(err);
+  }
+  try {
+    await appendStrict(sessionDo, executionId, "done", {
+      ok: false,
+      summary: message,
+    });
+  } catch (err) {
+    return failed(
+      "persistence",
+      `terminal_persistence_failed: ${err instanceof Error ? err.message : String(err)}`,
+      text,
+      false,
     );
   }
+  return errorAppendFailure
+    ? failed("persistence", `event_persistence_failed: ${errorAppendFailure}`, text, true)
+    : failed(failureKind, message, text, true);
+}
+
+async function interrupted(
+  sessionDo: SessionEventsFullRpc,
+  executionId: string,
+): Promise<boolean> {
+  const state = await sessionDo.getState();
+  return (
+    state.interruptedExecutionId === executionId ||
+    (state.interrupted && state.executing?.executionId !== executionId)
+  );
 }
 
 /**
@@ -148,160 +276,224 @@ export async function runHarnessTurn(
   args: RunHarnessTurnArgs,
 ): Promise<RunHarnessTurnResult> {
   const fetcher = harnessFetcher(env);
-  if (!fetcher || !env.SESSION_EVENTS) {
-    return { ok: false, text: "", error: "harness_unavailable" };
+  if (!fetcher || !env.SESSION_EVENTS || !env.HARNESS_AUTH_TOKEN) {
+    return failed("unavailable", "harness_unavailable");
   }
 
   const sessionDo = env.SESSION_EVENTS.get(
     env.SESSION_EVENTS.idFromName(args.threadKey),
   ) as unknown as SessionEventsFullRpc;
 
-  const signal = args.signal ?? registerHarnessTurnAbort(args.threadKey);
-
+  let created: { sessionId: string; restarted: boolean };
   try {
-    const created = await sessionDo.create({
+    created = await sessionDo.create({
       threadKey: args.threadKey,
       harnessType: "claudecode",
       model: args.model,
     });
+  } catch (err) {
+    return failed("setup", err instanceof Error ? err.message : String(err));
+  }
 
-    const executionId = args.executionId ?? crypto.randomUUID();
-    if (!args.executionId) {
-      const executed = await sessionDo.execute({
-        executionId,
-        inputLines: [args.prompt],
-      });
-      if (!executed.accepted) {
-        return {
-          ok: false,
-          text: "",
-          error: executed.duplicate ? "duplicate_execution" : "execution_in_flight",
-        };
-      }
+  const executionId = args.executionId;
+  let executed: { accepted: boolean; duplicate: boolean; cancelled?: boolean };
+  try {
+    executed = await sessionDo.execute({
+      executionId,
+      forwardedMessageId: args.forwardedMessageId,
+      inputLines: [args.prompt],
+    });
+  } catch (err) {
+    return failed("persistence", err instanceof Error ? err.message : String(err));
+  }
+  if (!executed.accepted) {
+    if (executed.cancelled) return failed("interrupted", "interrupted");
+    return failed(
+      executed.duplicate ? "duplicate" : "concurrent",
+      executed.duplicate ? "duplicate_execution" : "execution_in_flight",
+    );
+  }
+
+  // Give a Stop that lands immediately after admission an exact durable
+  // checkpoint before any container request (and therefore any repo work or
+  // remote write) can begin.
+  if (await interrupted(sessionDo, executionId).catch(() => false)) {
+    return failed("interrupted", "interrupted");
+  }
+
+  const body: Record<string, unknown> = {
+    sessionId: created.sessionId,
+    executionId,
+    forwardedMessageId: args.forwardedMessageId,
+    threadKey: args.threadKey,
+    inputLines: [args.prompt],
+    remoteGitApproved: args.remoteGitApproved === true,
+  };
+  if (args.model) body.model = args.model;
+  if (args.requesterContext) body.requesterContext = args.requesterContext;
+  // SPEC §3.6: the caller supplies the transcript re-feed; we truncate it
+  // here regardless of whether this create() actually restarted, so a
+  // caller that always passes the current transcript doesn't need to know
+  // about restart semantics.
+  const transcript = truncateTranscript(args.transcript);
+  if (transcript) body.transcript = transcript;
+  if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
+  if (args.codingTask) body.codingTask = true;
+  if (args.createPullRequest) body.createPullRequest = true;
+
+  let accumulatedText = "";
+  let sawDone = false;
+  let doneOk = false;
+  let doneSummary: string | undefined;
+  let lastHarnessError: string | undefined;
+
+  /** Parse + mirror one NDJSON line into the event log, in order, awaited. */
+  const consumeLine = async (line: string): Promise<boolean> => {
+    let parsed: { kind?: string; payload?: unknown };
+    try {
+      parsed = JSON.parse(line) as { kind?: string; payload?: unknown };
+    } catch {
+      // Malformed line from the container — never crash the stream over it.
+      console.error("[harness-client] malformed NDJSON line", line.slice(0, 200));
+      return false;
     }
 
-    const body: Record<string, unknown> = {
-      sessionId: created.sessionId,
-      executionId,
-      threadKey: args.threadKey,
-      inputLines: [args.prompt],
-    };
-    if (args.model) body.model = args.model;
-    if (args.requesterContext) body.requesterContext = args.requesterContext;
-    // SPEC §3.6: the caller supplies the transcript re-feed; we truncate it
-    // here regardless of whether this create() actually restarted, so a
-    // caller that always passes the current transcript doesn't need to know
-    // about restart semantics.
-    const transcript = truncateTranscript(args.transcript);
-    if (transcript) body.transcript = transcript;
-    if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
-
-    let accumulatedText = "";
-    let sawDone = false;
-    let doneOk = false;
-    let doneSummary: string | undefined;
-
-    /** Parse + mirror one NDJSON line into the event log, in order, awaited. */
-    const consumeLine = async (line: string): Promise<void> => {
-      let parsed: { kind?: string; payload?: unknown };
-      try {
-        parsed = JSON.parse(line) as { kind?: string; payload?: unknown };
-      } catch {
-        // Malformed line from the container — never crash the stream over it.
-        console.error("[harness-client] malformed NDJSON line", line.slice(0, 200));
-        return;
+    if (parsed.kind === "output") {
+      const payload = (parsed.payload ?? {}) as {
+        text?: string;
+        tool?: string;
+        summary?: string;
+      };
+      await appendStrict(sessionDo, executionId, "output", payload);
+      if (typeof payload.text === "string" && payload.text) {
+        accumulatedText += payload.text;
+        args.onText?.(payload.text);
       }
+    } else if (parsed.kind === "error") {
+      await appendStrict(sessionDo, executionId, "error", parsed.payload ?? {});
+      const payload = (parsed.payload ?? {}) as { message?: unknown };
+      if (typeof payload.message === "string") lastHarnessError = payload.message;
+    } else if (parsed.kind === "done") {
+      const payload = (parsed.payload ?? {}) as { ok?: boolean; summary?: string };
+      // A successful result is impossible unless the terminal event is
+      // durably committed. Do not swallow this append failure.
+      await appendStrict(sessionDo, executionId, "done", payload);
+      sawDone = true;
+      doneOk = payload.ok === true;
+      doneSummary = payload.summary;
+      return true;
+    }
+    // Unknown kinds are ignored — forward compatibility with new event types.
+    return false;
+  };
 
-      if (parsed.kind === "output") {
-        const payload = (parsed.payload ?? {}) as {
-          text?: string;
-          tool?: string;
-          summary?: string;
-        };
-        await safeAppend(sessionDo, executionId, "output", payload);
-        if (typeof payload.text === "string" && payload.text) {
-          accumulatedText += payload.text;
-          args.onText?.(payload.text);
+  const abortController = new AbortController();
+  try {
+    const res = await fetcher({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.HARNESS_AUTH_TOKEN}`,
+      },
+      body: JSON.stringify(body),
+      signal: abortController.signal,
+    });
+
+    if (res.status === 409) {
+      return failed("concurrent", "execution_in_flight");
+    }
+    if (!res.ok || !res.body) {
+      const error = `harness /turn failed: HTTP ${res.status}`;
+      return persistFailure(
+        sessionDo,
+        executionId,
+        res.status === 401 || res.status === 403 ? "auth" : "http",
+        error,
+        accumulatedText,
+      );
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let terminal = false;
+    let pendingRead = reader.read();
+
+    while (!terminal) {
+      const read = pendingRead.then((result) => ({ type: "read" as const, result }));
+      const poll = new Promise<{ type: "poll" }>((resolve) =>
+        setTimeout(() => resolve({ type: "poll" }), 100),
+      );
+      const next = await Promise.race([read, poll]);
+      if (next.type === "poll") {
+        if (await interrupted(sessionDo, executionId).catch(() => false)) {
+          abortController.abort();
+          await reader.cancel().catch(() => undefined);
+          return failed("interrupted", "interrupted", accumulatedText);
         }
-      } else if (parsed.kind === "error") {
-        await safeAppend(sessionDo, executionId, "error", parsed.payload ?? {});
-      } else if (parsed.kind === "done") {
-        const payload = (parsed.payload ?? {}) as { ok?: boolean; summary?: string };
-        await safeAppend(sessionDo, executionId, "done", payload);
-        sawDone = true;
-        doneOk = payload.ok === true;
-        doneSummary = payload.summary;
+        continue;
       }
-      // Unknown kinds are ignored — forward compatibility with new event types.
-    };
-
-    try {
-      const res = await fetcher({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      });
-
-      if (res.status === 409) {
-        return { ok: false, text: "", error: "execution_in_flight" };
+      const { done, value } = next.result;
+      if (!done) pendingRead = reader.read();
+      if (value && value.length > 0) {
+        buffer += decoder.decode(value, { stream: true });
       }
-      if (!res.ok || !res.body) {
-        throw new Error(`harness /turn failed: HTTP ${res.status}`);
+      if (done) {
+        buffer += decoder.decode(); // flush any trailing multi-byte sequence
+        const rest = buffer.trim();
+        if (rest) terminal = await consumeLine(rest);
+        break;
       }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (value && value.length > 0) {
-          buffer += decoder.decode(value, { stream: true });
-        }
-        if (done) {
-          buffer += decoder.decode(); // flush any trailing multi-byte sequence
-          const rest = buffer.trim();
-          if (rest) await consumeLine(rest);
+      let newlineIdx: number;
+      while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+        if (line && (await consumeLine(line))) {
+          terminal = true;
+          buffer = "";
+          await reader.cancel().catch(() => undefined);
           break;
         }
-        let newlineIdx: number;
-        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIdx).trim();
-          buffer = buffer.slice(newlineIdx + 1);
-          if (line) await consumeLine(line);
-        }
       }
-    } catch (err) {
-      if (signal.aborted) {
-        await safeAppend(sessionDo, executionId, "done", {
-          interrupted: true,
-          ok: false,
-        });
-        return { ok: false, text: accumulatedText, error: "aborted" };
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      await safeAppend(sessionDo, executionId, "error", { message });
-      await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
-      return { ok: false, text: accumulatedText, error: message };
     }
-
-    if (!sawDone) {
-      // The event log must always terminate (GOAL.md never-silent house
-      // rule) — synthesize the terminal events ourselves so a replay/alarm
-      // recovery downstream never sees an execution stuck "executing" forever.
-      const message = "harness stream ended without a done event";
-      await safeAppend(sessionDo, executionId, "error", { message });
-      await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
-      return { ok: false, text: accumulatedText, error: message };
+  } catch (err) {
+    // A persistence failure invalidates the stream just as surely as a
+    // transport failure: stop consuming container output immediately.
+    abortController.abort();
+    if (await interrupted(sessionDo, executionId).catch(() => false)) {
+      return failed("interrupted", "interrupted", accumulatedText);
     }
-
-    return doneOk
-      ? { ok: true, text: accumulatedText }
-      : { ok: false, text: accumulatedText, error: doneSummary ?? "harness turn failed" };
-  } finally {
-    if (!args.signal) {
-      clearHarnessTurnAbort(args.threadKey);
-    }
+    const persistenceFailure = err instanceof EventPersistenceError;
+    const message = err instanceof Error ? err.message : String(err);
+    return persistFailure(
+      sessionDo,
+      executionId,
+      persistenceFailure ? "persistence" : "transport",
+      persistenceFailure ? `event_persistence_failed: ${message}` : message,
+      accumulatedText,
+    );
   }
+
+  if (!sawDone) {
+    // The event log must always terminate (GOAL.md never-silent house
+    // rule) — synthesize the terminal events ourselves so a replay/alarm
+    // recovery downstream never sees an execution stuck "executing" forever.
+    const message = "harness stream ended without a done event";
+    return persistFailure(
+      sessionDo,
+      executionId,
+      "missing_done",
+      message,
+      accumulatedText,
+    );
+  }
+
+  return doneOk
+    ? { ok: true, text: accumulatedText, terminalPersisted: true }
+    : failed(
+        classifyHarnessFailure(lastHarnessError ?? doneSummary ?? "harness turn failed"),
+        lastHarnessError ?? doneSummary ?? "harness turn failed",
+        accumulatedText,
+        true,
+      );
 }

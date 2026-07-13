@@ -5,8 +5,8 @@
  *
  * A minimal stdin/stdout JSON bridge that shells out to a tool CLI. Keeps the
  * same tiny surface as the Python original on purpose (SPEC §4.4): the
- * container's own footprint stays small, and tools update by redeploying the
- * `opentag-tools` CLI, not rebuilding this image.
+ * container's own footprint stays small, and tools can be supplied by setting
+ * OPENTAG_TOOL_BIN on the Container Worker without rebuilding this image.
  *
  * Protocol (line-delimited JSON), unchanged from centaur_tool_host.py:
  *   stdin  (per line): {"id":..., "tool":"...", "method":"...",
@@ -16,7 +16,7 @@
  *   On start: prints "__OPENTAG_TOOL_HOST_READY" (opentag's rename of
  *   centaur's "__CENTAUR_TOOL_HOST_READY" sentinel).
  *
- * Shells out to: `${OPENTAG_TOOL_BIN:-opentag-tools} call <tool> <method> <json-args>`.
+ * Shells out to: `${OPENTAG_TOOL_BIN} call <tool> <method> <json-args>`.
  * Node stdlib only (child_process, readline) — no npm install needed at
  * image build time.
  */
@@ -79,15 +79,19 @@ export function parseToolCallRequest(rawLine: string): ParsedToolCallRequest {
   return { ok: true, request: parsed as ToolCallRequest };
 }
 
-/** The tool CLI binary name is env-overridable (default "opentag-tools"). */
-export function toolBinName(): string {
-  return process.env.OPENTAG_TOOL_BIN || "opentag-tools";
+/** Return the explicitly configured tool CLI; no phantom default is assumed. */
+export function toolBinName(): string | undefined {
+  return process.env.OPENTAG_TOOL_BIN?.trim() || undefined;
 }
 
 /** `<bin> call <tool> <method> <json-args>` — matches centaur_tool_host.py's argv shape. */
 export function buildToolCommand(request: ToolCallRequest): { bin: string; args: string[] } {
+  const bin = toolBinName();
+  if (!bin) {
+    throw new Error("custom tools disabled: OPENTAG_TOOL_BIN is not configured");
+  }
   return {
-    bin: toolBinName(),
+    bin,
     args: ["call", request.tool, request.method, JSON.stringify(request.arguments ?? {})],
   };
 }
@@ -152,7 +156,7 @@ export function runTool(request: ToolCallRequest): ToolCallResponse {
 /** Parses one stdin line and produces the stdout envelope to emit — mirrors the try/except wrapper around `_run_tool`/`_emit_result` in `main()`. */
 export function handleRequestLine(rawLine: string): ToolHostResultEnvelope {
   const parsed = parseToolCallRequest(rawLine);
-  if (!parsed.ok) {
+  if (parsed.ok === false) {
     return buildResultEnvelope({
       id: null,
       status: 1,

@@ -2,9 +2,8 @@
  * Unit tests for edge/workers/sandbox/tool-host.ts (GOAL.md Phase A5), the
  * TypeScript port of centaur's centaur_tool_host.py. Covers request parsing,
  * response envelope shaping, and an end-to-end run through a real spawned
- * process — a tiny Node "fake tool bin" script stands in for
- * `opentag-tools`, exercising the actual `spawnSync` path without requiring
- * the real CLI or Docker.
+ * process — a tiny Node "fake tool bin" script exercises the actual
+ * `spawnSync` path without requiring a configured production CLI or Docker.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -59,9 +58,18 @@ describe("buildToolCommand / toolBinName", () => {
     else process.env.OPENTAG_TOOL_BIN = originalBin;
   });
 
-  it("defaults to 'opentag-tools'", () => {
+  it("is disabled unless OPENTAG_TOOL_BIN is configured", () => {
     delete process.env.OPENTAG_TOOL_BIN;
-    expect(toolBinName()).toBe("opentag-tools");
+    expect(toolBinName()).toBeUndefined();
+    expect(() => buildToolCommand({ tool: "linear", method: "search" })).toThrow(
+      "OPENTAG_TOOL_BIN is not configured",
+    );
+    const envelope = handleRequestLine(
+      JSON.stringify({ id: "disabled", tool: "linear", method: "search" }),
+    );
+    const result = JSON.parse(envelope.result) as ToolCallResponse;
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("OPENTAG_TOOL_BIN is not configured");
   });
 
   it("honors OPENTAG_TOOL_BIN", () => {

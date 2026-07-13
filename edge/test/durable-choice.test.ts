@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { Renderable } from "@copilotkit/channels-ui";
 import {
   awaitChoiceDurable,
+  cancelHitlChoice,
   clearHitlChoice,
   hitlChoiceKey,
   hitlIdKey,
@@ -146,5 +147,27 @@ describe("durable HITL choice", () => {
         pollMs: 20,
       }),
     ).resolves.toEqual({ confirmed: true });
+  });
+
+  it("cancellation wakes the waiter and makes a later approval a no-op", async () => {
+    const store = memoryStore();
+    const choiceId = "choice-stopped";
+    const pending = pollHitlChoice(store, {
+      choiceId,
+      conversationKey: "stopped-ck",
+      timeoutMs: 2_000,
+      pollMs: 5,
+    });
+    await cancelHitlChoice(store, {
+      choiceId,
+      conversationKey: "stopped-ck",
+    });
+    await expect(pending).resolves.toEqual({ confirmed: false, choiceId });
+
+    await persistHitlChoice(store, "stopped-ck", {
+      confirmed: true,
+      choiceId,
+    });
+    expect(await readHitlChoice(store, { choiceId })).toBeUndefined();
   });
 });

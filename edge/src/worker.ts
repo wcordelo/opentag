@@ -10,7 +10,6 @@ import { requireAdminAuth } from "./admin-auth.js";
 import {
   getOrCreateBot,
   resolveBotEngineKind,
-  runWithTeamId,
 } from "./bot-engine.js";
 import {
   DEFAULT_BUNDLE,
@@ -27,6 +26,7 @@ import {
 import {
   isQuickInteraction,
   handleQuickAction,
+  quickActionEventId,
 } from "./slack/quick-actions.js";
 
 export { ConversationStateDO } from "./store/index.js";
@@ -169,11 +169,10 @@ app.post("/slack/events", slackVerify(), async (c) => {
     return c.json({ ok: true });
   }
 
-  const run = () =>
-    runWithTeamId(teamId, async () => {
-      const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleEventsBody(payload, { teamId: payload.team_id });
-    });
+  const run = async () => {
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleEventsBody(payload, { teamId });
+  };
 
   if (exec?.waitUntil) {
     exec.waitUntil(
@@ -203,12 +202,15 @@ app.post("/slack/commands", slackVerify(), async (c) => {
 
   const teamId = body.team_id ?? "unknown";
 
+  if (!body.trigger_id) {
+    return c.json({ error: "missing_stable_command_identity" }, 400);
+  }
+
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
-  const run = () =>
-    runWithTeamId(teamId, async () => {
-      const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleCommandBody(body);
-    });
+  const run = async () => {
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleCommandBody(body);
+  };
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
@@ -257,15 +259,17 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
   // quick_* buttons become synthetic agent turns (SPEC §3.4) — routed INSTEAD
   // of the generic interaction path so a click is never double-handled.
   const isQuick = isQuickInteraction(payload);
-  const run = () =>
-    runWithTeamId(teamId, async () => {
-      if (isQuick) {
-        await handleQuickAction(c.env, payload);
-        return;
-      }
-      const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleInteractionPayload(payload);
-    });
+  if (isQuick && !quickActionEventId(payload)) {
+    return c.json({ error: "missing_stable_click_identity" }, 400);
+  }
+  const run = async () => {
+    if (isQuick) {
+      await handleQuickAction(c.env, payload, teamId);
+      return;
+    }
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleInteractionPayload(payload);
+  };
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {

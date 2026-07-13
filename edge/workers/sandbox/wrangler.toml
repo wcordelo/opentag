@@ -1,33 +1,33 @@
-name = "opentag-sandbox"
+name = "opentag-harness"
 main = "src/index.ts"
-compatibility_date = "2026-04-01"
+compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
 
-# The Sandbox SDK's `Sandbox` DO class is re-exported from src/index.ts.
-[durable_objects]
-bindings = [
-  { name = "SANDBOX", class_name = "Sandbox" },
-]
+# Real Claude Code harness image. This config is deployable, but deployment is
+# still gated operationally: the bot's HARNESS service binding remains
+# commented in edge/wrangler.bot.toml and no deploy is performed by this task.
+[[containers]]
+class_name = "HarnessContainer"
+image = "../../../containers/harness/Dockerfile"
+image_build_context = "../../.."
+max_instances = 10
+instance_type = "basic"
+
+[[durable_objects.bindings]]
+name = "HARNESS_CONTAINER"
+class_name = "HarnessContainer"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Sandbox"]
+new_sqlite_classes = ["HarnessContainer"]
 
-# [[containers]] (image = "./Dockerfile", instance limits, max_instances) is
-# added once this account has the image built and pushed — building it here
-# would require `wrangler deploy` / a registry push, which is out of scope
-# for this scaffold. See DECISIONS.md §2 and edge/wrangler.toml's note.
-#
-# [[containers]]
-# class_name = "Sandbox"
-# image = "./Dockerfile"
-# max_instances = 10
-
-# The Claude Code coding harness (GOAL.md Phase A5 / SPEC.md §4.4) is a
-# separate image at ../../containers/harness/Dockerfile, fronted by
-# edge/workers/sandbox/harness-server.ts (plain Node HTTP server, not a
-# Worker — runs INSIDE that container). It is not wired into this
-# wrangler.toml's [[containers]] block either, for the same gated-deploy
-# reason as the block above; edge/src/harness/client.ts is the edge-side
-# caller and expects an env binding (HARNESS service binding or HARNESS_URL)
-# once that wiring lands.
+# Worker-only secrets (set before deployment, never commit values). The
+# Container receives sentinels; outbound handlers inject these only for the
+# exact api.anthropic.com / GitHub upstream request:
+#   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+#   GITHUB_TOKEN (optional, for private clone + approved push/PR)
+#   OPENTAG_TOOL_BIN (optional; enables the installed opentag-tool-host bridge)
+#   HARNESS_AUTH_TOKEN (required; shared only with the bot Worker)
+# Vars: HARNESS_ALLOWED_REPO_HOSTS=github.com and an explicit
+# HARNESS_ALLOWED_REPO_ORGS list. Unknown hosts and empty-org clones fail closed.

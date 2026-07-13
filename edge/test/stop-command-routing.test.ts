@@ -38,6 +38,11 @@ vi.mock("../src/bot-engine.js", () => ({
 const { extractStopCommandEvent, handleStopCommand } = await import(
   "../src/slack/stop-routing.js"
 );
+const {
+  clearActiveTurn,
+  getLatestActiveTurn,
+  registerActiveTurn,
+} = await import("../src/slack/active-turn-registry.js");
 type SlackEventCallbackPayload =
   import("../src/slack/stop-routing.js").SlackEventCallbackPayload;
 type SlackStopEvent = import("../src/slack/stop-routing.js").SlackStopEvent;
@@ -161,6 +166,7 @@ function makeFakeBotState() {
     executionId?: string;
   }> = [];
   const kvStore = new Map<string, unknown>();
+  const listStore = new Map<string, unknown[]>();
   const seenKeys = new Set<string>();
   const stub = {
     dedupSeen: async (key: string, ttlMs: number) => {
@@ -183,6 +189,15 @@ function makeFakeBotState() {
     kvDelete: async (key: string): Promise<void> => {
       kvStore.delete(key);
     },
+    listAppend: async (key: string, value: unknown) => {
+      const values = listStore.get(key) ?? [];
+      values.push(value);
+      listStore.set(key, values);
+      return values.length;
+    },
+    listRange: async (key: string) => listStore.get(key) ?? [],
+    lockAcquire: async () => ({ token: crypto.randomUUID() }),
+    lockRelease: async () => undefined,
   };
   return {
     namespace: {
@@ -192,6 +207,7 @@ function makeFakeBotState() {
     dedupSeenCalls,
     obligationClearCalls,
     kvStore,
+    listStore,
   };
 }
 
@@ -202,9 +218,14 @@ function makeFakeSessionEvents() {
     namespace: {
       idFromName: (name: string) => ({ toString: () => name, name }),
       get: (id: { name: string }) => ({
+        getState: async () => ({ executing: { executionId: "active", startedAt: 1 } }),
         interrupt: async () => {
           interruptCalls.push(id.name);
           return { interrupted: true };
+        },
+        interruptExpected: async (_executionId: string) => {
+          interruptCalls.push(id.name);
+          return { interrupted: true, cancelled: true as const };
         },
       }),
     },
@@ -360,5 +381,62 @@ describe("handleStopCommand", () => {
     expect(botState.obligationClearCalls).toEqual([
       { threadKey: "slack:D9:D9" },
     ]);
+  });
+
+  it("keeps two thread records independent in either completion order", async () => {
+    const records = [
+      {
+        channelId: "C7", threadKey: "slack:C7:70.0", conversationKey: "C7::70.0",
+        executionId: "exec-a", threadTs: "70.0", registeredAt: 1,
+      },
+      {
+        channelId: "C7", threadKey: "slack:C7:71.0", conversationKey: "C7::71.0",
+        executionId: "exec-b", threadTs: "71.0", registeredAt: 2,
+      },
+    ] as const;
+
+    for (const completionOrder of [[0, 1], [1, 0]] as const) {
+      const botState = makeFakeBotState();
+      const env = { BOT_STATE: botState.namespace } as unknown as Env;
+      const stateStore = (await import("../src/create-bot-store.js"))
+        .createBotStoreAdapter(env.BOT_STATE);
+      await registerActiveTurn(stateStore, records[0]);
+      await registerActiveTurn(stateStore, records[1]);
+
+      await clearActiveTurn(stateStore, records[completionOrder[0]]);
+      expect((await getLatestActiveTurn(stateStore, "C7"))?.executionId)
+        .toBe(records[completionOrder[1]].executionId);
+      await clearActiveTurn(stateStore, records[completionOrder[1]]);
+      expect(await getLatestActiveTurn(stateStore, "C7")).toBeUndefined();
+    }
+  });
+
+  it("routes an unthreaded Stop to the newest authoritative channel turn", async () => {
+    const botState = makeFakeBotState();
+    const sessionEvents = makeFakeSessionEvents();
+    const env = {
+      BOT_STATE: botState.namespace,
+      SESSION_EVENTS: sessionEvents.namespace,
+      SLACK_BOT_TOKEN: "xoxb-test",
+    } as unknown as Env;
+    const stateStore = (await import("../src/create-bot-store.js"))
+      .createBotStoreAdapter(env.BOT_STATE);
+    await registerActiveTurn(stateStore, {
+      channelId: "C8", threadKey: "slack:C8:80.0", conversationKey: "C8::80.0",
+      executionId: "exec-old", threadTs: "80.0", registeredAt: 1,
+    });
+    await registerActiveTurn(stateStore, {
+      channelId: "C8", threadKey: "slack:C8:81.0", conversationKey: "C8::81.0",
+      executionId: "exec-new", threadTs: "81.0", registeredAt: 2,
+    });
+
+    await handleStopCommand(env, {
+      type: "message", channel: "C8", user: "U1", text: "stop", ts: "82.0",
+    }, "EvUnthreaded");
+
+    expect(sessionEvents.interruptCalls).toEqual(["slack:C8:81.0"]);
+    expect(botState.obligationClearCalls).toEqual([{ threadKey: "slack:C8:81.0" }]);
+    const post = fetchCalls.find((call) => call.url.includes("chat.postMessage"));
+    expect((post?.body as Record<string, string>).thread_ts).toBe("81.0");
   });
 });

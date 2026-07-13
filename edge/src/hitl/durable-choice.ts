@@ -32,6 +32,10 @@ export function hitlIdKey(choiceId: string): string {
   return `hitl-id:${choiceId}`;
 }
 
+export function hitlCancelledKey(choiceId: string): string {
+  return `hitl-cancelled:${choiceId}`;
+}
+
 export function newHitlChoiceId(): string {
   return crypto.randomUUID();
 }
@@ -49,14 +53,34 @@ export async function persistHitlChoice(
   value: unknown,
   ttlMs: number = HITL_CHOICE_TTL_MS,
 ): Promise<void> {
-  const record: HitlChoiceRecord = { value, at: Date.now() };
   const choiceId = choiceIdFromValue(value);
+  if (choiceId && (await store.kv.get<boolean>(hitlCancelledKey(choiceId)))) {
+    return;
+  }
+  const record: HitlChoiceRecord = { value, at: Date.now() };
   if (choiceId) {
     await store.kv.set(hitlIdKey(choiceId), record, ttlMs);
   }
   if (conversationKey) {
     await store.kv.set(hitlChoiceKey(conversationKey), record, ttlMs);
   }
+}
+
+/** Wake a durable waiter with a denial and make all later clicks no-ops. */
+export async function cancelHitlChoice(
+  store: StateStore,
+  opts: { conversationKey?: string; choiceId: string },
+): Promise<void> {
+  await clearHitlChoice(store, opts);
+  const record: HitlChoiceRecord = { value: {
+    confirmed: false,
+    choiceId: opts.choiceId,
+  }, at: Date.now() };
+  await store.kv.set(hitlIdKey(opts.choiceId), record, HITL_CHOICE_TTL_MS);
+  if (opts.conversationKey) {
+    await store.kv.set(hitlChoiceKey(opts.conversationKey), record, HITL_CHOICE_TTL_MS);
+  }
+  await store.kv.set(hitlCancelledKey(opts.choiceId), true, HITL_CHOICE_TTL_MS);
 }
 
 export async function clearHitlChoice(
@@ -167,6 +191,11 @@ export async function awaitChoiceDurable<T>(
   },
 ): Promise<T> {
   const conversationKey = opts.conversationKey ?? thread.conversationKey ?? "";
+  // Stop may publish this tombstone before override resolution reaches HITL.
+  // Consume it as an immediate denial; do not erase it and post a live card.
+  if (await store.kv.get<boolean>(hitlCancelledKey(opts.choiceId))) {
+    return { confirmed: false, choiceId: opts.choiceId } as T;
+  }
   await clearHitlChoice(store, {
     choiceId: opts.choiceId,
     conversationKey: conversationKey || undefined,
@@ -197,5 +226,9 @@ export async function awaitChoiceDurable<T>(
     return await Promise.race([memory, durable]);
   } finally {
     ac.abort();
+    await clearHitlChoice(store, {
+      choiceId: opts.choiceId,
+      conversationKey: conversationKey || undefined,
+    });
   }
 }

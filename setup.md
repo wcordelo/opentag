@@ -152,3 +152,19 @@ HITL / ticket-field units: `edge/test/durable-choice.test.ts`,
 ## Doc index
 
 See [docs/README.md](./docs/README.md).
+## Claude harness zero-trust egress
+
+The optional `edge/workers/sandbox` Claude Code harness uses Cloudflare
+Container outbound interception. Configure `ANTHROPIC_API_KEY` (or
+`CLAUDE_CODE_OAUTH_TOKEN`), `GITHUB_TOKEN`, and `HARNESS_AUTH_TOKEN` as secrets
+on the **harness Worker**, never as image variables. The Container receives
+only sentinel credential values. Set `HARNESS_ALLOWED_REPO_HOSTS=github.com`
+and a non-empty comma-separated `HARNESS_ALLOWED_REPO_ORGS` allowlist.
+
+Internet access is deny-by-default. Anthropic and GitHub traffic crosses
+Worker handlers that inject credentials; Git clone reads are restricted to the
+configured orgs, and pushes/PR creation additionally require the short-lived
+per-turn HITL scope for the exact repository and `opentag/session-*` branch.
+Package/source mirrors are GET/HEAD-only. The runtime entrypoint installs
+Cloudflare's ephemeral `/etc/cloudflare/certs/cloudflare-containers-ca.crt`
+into Ubuntu's trust store and exposes it to Node via `NODE_EXTRA_CA_CERTS`.

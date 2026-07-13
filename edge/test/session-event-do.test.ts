@@ -84,6 +84,27 @@ const EVENTS_DDL = [
      created_at INTEGER NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS events_execution ON events(execution_id, id)`,
+  `CREATE TABLE IF NOT EXISTS executions (
+     execution_id TEXT PRIMARY KEY,
+     forwarded_message_id TEXT UNIQUE,
+     started_at INTEGER NOT NULL,
+     terminal_at INTEGER
+   )`,
+  `INSERT OR IGNORE INTO executions
+     (execution_id, forwarded_message_id, started_at, terminal_at)
+   SELECT execution_id, NULL, MIN(created_at),
+          MAX(CASE WHEN kind = 'done' THEN created_at ELSE NULL END)
+   FROM events
+   GROUP BY execution_id`,
+  `CREATE TABLE IF NOT EXISTS cancelled_executions (
+     execution_id TEXT PRIMARY KEY,
+     cancelled_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS pending_cancellation (
+     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+     cancelled_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL
+   )`,
 ];
 
 function makeEngine(now?: () => number) {
@@ -123,6 +144,43 @@ describe("SessionEventEngine", () => {
     const events = await engine.replay();
     expect(events).toHaveLength(2);
     expect(events.every((e) => e.kind === "input")).toBe(true);
+  });
+
+  it("atomically rejects an exact execution cancelled before claim", async () => {
+    const { engine } = makeEngine();
+    await expect(engine.interruptExpected("exec-prestart")).resolves.toEqual({
+      interrupted: false,
+      cancelled: true,
+    });
+
+    await expect(engine.execute({
+      executionId: "exec-prestart",
+      forwardedMessageId: "message-prestart",
+      inputLines: ["must never run"],
+    })).resolves.toEqual({ accepted: false, duplicate: false, cancelled: true });
+    expect(await engine.replay()).toEqual([]);
+  });
+
+  it("terminalizes an exact execution once when Stop lands immediately after claim", async () => {
+    const { engine } = makeEngine(() => 1234);
+    expect(await engine.execute({ executionId: "exec-claimed", inputLines: ["go"] }))
+      .toEqual({ accepted: true, duplicate: false });
+
+    expect(await engine.interruptExpected("exec-claimed")).toEqual({
+      interrupted: true,
+      cancelled: true,
+    });
+    expect(await engine.interruptExpected("exec-claimed")).toEqual({
+      interrupted: false,
+      cancelled: true,
+    });
+    const events = await engine.replay();
+    expect(events.filter((event) => event.kind === "done")).toHaveLength(1);
+    await expect(engine.appendEvent({
+      executionId: "exec-claimed",
+      kind: "output",
+      payload: { text: "late" },
+    })).rejects.toThrow(/execution_already_terminal/);
   });
 
   it("execute() is still idempotent after the execution finished (input row survives)", async () => {
@@ -197,18 +255,45 @@ describe("SessionEventEngine", () => {
     const after = await engine.getState();
     expect(after.executing).toBeUndefined();
     expect(after.interrupted).toBe(true);
+    expect(after.interruptedExecutionId).toBe("exec-4");
 
     const events = await engine.replay();
     const doneEvent = events.find((e) => e.kind === "done");
     expect(doneEvent?.executionId).toBe("exec-4");
     expect(doneEvent?.payload).toEqual({ interrupted: true });
 
-    // Interrupting again with nothing running is a no-op.
+    // A second non-exact stop installs the short pre-admission barrier.
     const noop = await engine.interrupt();
     expect(noop).toEqual({ interrupted: false });
+
+    expect(await engine.execute({ executionId: "exec-after-stop", inputLines: ["new"] }))
+      .toEqual({ accepted: false, duplicate: false, cancelled: true });
+    await engine.execute({ executionId: "exec-later", inputLines: ["new"] });
+    const newer = await engine.getState();
+    expect(newer.interrupted).toBe(false);
+    expect(newer.interruptedExecutionId).toBe("exec-4");
+    expect(newer.executing?.executionId).toBe("exec-later");
   });
 
-  it("appendEvent() clears session:executing on 'error' but not on 'output'", async () => {
+  it("non-exact Stop before registry publication cancels exactly the next immediate admission", async () => {
+    const { engine } = makeEngine();
+    expect(await engine.interrupt()).toEqual({ interrupted: false });
+    expect(await engine.execute({ executionId: "pre-registry", inputLines: ["go"] }))
+      .toEqual({ accepted: false, duplicate: false, cancelled: true });
+    expect(await engine.execute({ executionId: "normal-later", inputLines: ["go"] }))
+      .toEqual({ accepted: true, duplicate: false });
+  });
+
+  it("expires an ancient non-exact Stop instead of cancelling arbitrary later work", async () => {
+    let now = 1_000;
+    const { engine } = makeEngine(() => now);
+    await engine.interrupt();
+    now += 30_001;
+    expect(await engine.execute({ executionId: "much-later", inputLines: ["go"] }))
+      .toEqual({ accepted: true, duplicate: false });
+  });
+
+  it("appendEvent() keeps the execution active through error until done", async () => {
     const { engine } = makeEngine();
     await engine.execute({ executionId: "exec-5", inputLines: ["go"] });
 
@@ -224,7 +309,69 @@ describe("SessionEventEngine", () => {
       kind: "error",
       payload: { message: "boom" },
     });
+    expect((await engine.getState()).executing?.executionId).toBe("exec-5");
+
+    await engine.appendEvent({
+      executionId: "exec-5",
+      kind: "done",
+      payload: { ok: false },
+    });
     expect((await engine.getState()).executing).toBeUndefined();
+  });
+
+  it("rejects a different execution while one is active", async () => {
+    const { engine } = makeEngine();
+    await engine.execute({ executionId: "active", inputLines: ["go"] });
+    expect(
+      await engine.execute({ executionId: "other", inputLines: ["race"] }),
+    ).toEqual({ accepted: false, duplicate: false });
+    expect((await engine.getState()).executing?.executionId).toBe("active");
+  });
+
+  it("deduplicates durably by forwardedMessageId", async () => {
+    const { engine } = makeEngine();
+    await engine.execute({
+      executionId: "exec-first",
+      forwardedMessageId: "slack:C1:1.2",
+      inputLines: ["go"],
+    });
+    await engine.appendEvent({
+      executionId: "exec-first",
+      kind: "done",
+      payload: { ok: true },
+    });
+    expect(
+      await engine.execute({
+        executionId: "exec-redelivery",
+        forwardedMessageId: "slack:C1:1.2",
+        inputLines: ["go"],
+      }),
+    ).toEqual({ accepted: false, duplicate: true });
+  });
+
+  it("only the matching active execution may append and nothing follows done", async () => {
+    const { engine } = makeEngine();
+    await engine.execute({ executionId: "exec-active", inputLines: ["go"] });
+    await expect(
+      engine.appendEvent({
+        executionId: "exec-stale",
+        kind: "done",
+        payload: {},
+      }),
+    ).rejects.toThrow(/execution_not_found/);
+    await engine.appendEvent({
+      executionId: "exec-active",
+      kind: "done",
+      payload: { ok: true },
+    });
+    await expect(
+      engine.appendEvent({
+        executionId: "exec-active",
+        kind: "output",
+        payload: { text: "late" },
+      }),
+    ).rejects.toThrow(/execution_already_terminal/);
+    expect((await engine.replay()).filter((event) => event.kind === "done")).toHaveLength(1);
   });
 
   it("create() is idempotent for the same harnessType and returns the existing sessionId", async () => {
@@ -250,6 +397,11 @@ describe("SessionEventEngine", () => {
     });
     await engine.execute({ executionId: "exec-6", inputLines: ["hi"] });
     expect(await engine.replay()).toHaveLength(1);
+    await engine.appendEvent({
+      executionId: "exec-6",
+      kind: "done",
+      payload: { ok: true },
+    });
 
     const restarted = await engine.create({
       threadKey: "thread-2",
@@ -272,6 +424,30 @@ describe("SessionEventEngine", () => {
       inputLines: ["hi"],
     });
     expect(reExecute).toEqual({ accepted: true, duplicate: false });
+  });
+
+  it("preserves a pre-start cancellation across a harness restart", async () => {
+    const { engine } = makeEngine();
+    await engine.create({ threadKey: "thread-restart-stop", harnessType: "old" });
+    await engine.interruptExpected("exec-restart-stop");
+    await engine.create({ threadKey: "thread-restart-stop", harnessType: "claudecode" });
+
+    expect(await engine.execute({
+      executionId: "exec-restart-stop",
+      inputLines: ["must stay stopped"],
+    })).toEqual({ accepted: false, duplicate: false, cancelled: true });
+  });
+
+  it("does not wipe an active execution for a harness change", async () => {
+    const { engine } = makeEngine();
+    await engine.create({ threadKey: "thread-active", harnessType: "claudecode" });
+    await engine.execute({ executionId: "exec-active", inputLines: ["go"] });
+
+    await expect(
+      engine.create({ threadKey: "thread-active", harnessType: "other" }),
+    ).rejects.toThrow(/harness_change_while_executing/);
+    expect((await engine.getState()).executing?.executionId).toBe("exec-active");
+    expect(await engine.replay()).toHaveLength(1);
   });
 });
 

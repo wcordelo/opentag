@@ -6,24 +6,6 @@
  * and leave the obligation alarm pointed at a stale partition.
  */
 
-export type ActiveTurnRecord = {
-  threadKey: string;
-  conversationKey: string;
-};
-
-/** KV slot: which thread partition currently owns an in-flight turn. */
-export const ACTIVE_TURN_KV_PREFIX = "active-turn:";
-
-/** Per-thread active-turn record (obligation / SessionEventDO partition). */
-export function activeTurnKvKey(threadKey: string): string {
-  return `${ACTIVE_TURN_KV_PREFIX}${threadKey}`;
-}
-
-/** Channel-level index of in-flight turns (top-level stop without thread_ts). */
-export function channelActiveTurnsKvKey(channelId: string): string {
-  return `${ACTIVE_TURN_KV_PREFIX}channel:${channelId}`;
-}
-
 /** First Slack `ts`-shaped string among candidates (thread root / message ts). */
 export function firstSlackTs(
   ...candidates: Array<string | undefined>
@@ -50,7 +32,7 @@ export function slackObligationThreadKey(
   return `slack:${channelId}:${scope}`;
 }
 
-/** Inverse of {@link slackObligationThreadKey} for abort routing when KV is stale. */
+/** Inverse of {@link slackObligationThreadKey} for abort routing when registry state is stale. */
 export function conversationKeyFromThreadKey(threadKey: string): string {
   const match = /^slack:([^:]+):(.+)$/.exec(threadKey);
   if (!match) return "";

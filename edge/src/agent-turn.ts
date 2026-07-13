@@ -9,7 +9,7 @@ import {
 } from "./tools/index.js";
 import { resolveAllowedTools } from "./config/access-bundle.js";
 import { loadTurnAccess } from "./config/workspace-config-do.js";
-import { getCurrentTeamId } from "./request-context.js";
+import { requireRequestContext } from "./request-context.js";
 import { createDurableObjectStore } from "./store/index.js";
 import {
   appendThreadMemory,
@@ -21,7 +21,9 @@ import {
   readThreadMemory,
 } from "./slack/thread-memory.js";
 import type { Env } from "./env.js";
+import type { Renderable } from "@copilotkit/channels-ui";
 import type { AgentContentPart } from "./slack/download-files.js";
+export type { AgentContentPart } from "./slack/download-files.js";
 import { createSlackWebClient } from "./slack/web-api.js";
 import { getInboundMessage } from "./slack/inbound-target.js";
 import {
@@ -33,8 +35,12 @@ import {
   resolveThreadOverrides,
   type ResolvedThreadOverrides,
 } from "./store/thread-overrides.js";
-import { runHarnessTurn } from "./harness/client.js";
-import type { SessionEventsRpc } from "./store/conversation-state-do.js";
+import {
+  runHarnessTurn,
+  type HarnessFailureKind,
+} from "./harness/client.js";
+import { makeWireTurnIdentity } from "./harness/wire-id.js";
+import { isRepositoryCodingIntent } from "./coding-intent.js";
 
 type Requester = {
   id?: string;
@@ -45,7 +51,15 @@ type Requester = {
   timezone?: string;
   /** Best-effort GitHub handle scraped from the Slack profile (SPEC §5-A5 item 5). */
   githubHandle?: string;
+  /** Prevent repeated users.info calls when Slack has no GitHub profile data. */
+  profileEnrichmentAttempted?: boolean;
 };
+
+const PROFILE_REFRESH_COOLDOWN_MS = 5 * 60_000;
+const profileRefreshCache = new Map<
+  string,
+  { at: number; requester: Requester }
+>();
 
 /** Ensure we have profile email from Slack (users:read.email). */
 async function ensureRequesterProfile(
@@ -53,7 +67,21 @@ async function ensureRequesterProfile(
   requester?: Requester,
 ): Promise<Requester | undefined> {
   if (!requester?.id) return requester;
-  if (requester.email?.trim() && timezoneOf(requester)) return requester;
+  const cachedRefresh = profileRefreshCache.get(requester.id);
+  if (
+    requester.email?.trim() &&
+    timezoneOf(requester) &&
+    (requester.githubHandle?.trim() ||
+      requester.profileEnrichmentAttempted)
+  ) {
+    return requester;
+  }
+  if (
+    cachedRefresh &&
+    Date.now() - cachedRefresh.at < PROFILE_REFRESH_COOLDOWN_MS
+  ) {
+    return { ...requester, ...cachedRefresh.requester, id: requester.id };
+  }
   if (!env.SLACK_BOT_TOKEN) return requester;
   try {
     const fresh = await createSlackWebClient(env.SLACK_BOT_TOKEN).resolveUser(
@@ -61,20 +89,31 @@ async function ensureRequesterProfile(
     );
     const freshTz = timezoneOf(fresh as Requester);
     const freshGithub = (fresh as Requester).githubHandle;
-    return {
+    const enriched: Requester = {
       ...requester,
       email: fresh.email?.trim() || requester.email,
       name: fresh.name ?? requester.name,
       handle: fresh.handle ?? requester.handle,
       timezone: freshTz ?? requester.timezone,
       githubHandle: freshGithub ?? requester.githubHandle,
+      profileEnrichmentAttempted: true,
     };
+    profileRefreshCache.set(requester.id, {
+      at: Date.now(),
+      requester: enriched,
+    });
+    return enriched;
   } catch (err) {
     console.warn(
       "[agent-turn] resolveUser refresh failed",
       err instanceof Error ? err.message : err,
     );
-    return requester;
+    const attempted = { ...requester, profileEnrichmentAttempted: true };
+    profileRefreshCache.set(requester.id, {
+      at: Date.now(),
+      requester: attempted,
+    });
+    return attempted;
   }
 }
 
@@ -91,10 +130,11 @@ type ThreadMessageLite = {
   user?: { name?: string; handle?: string; id?: string };
 };
 
-type AgentThread = {
+export type AgentThread = {
   conversationKey?: string;
   /** Subset of Thread.post(ui: Renderable) — plain strings are valid Renderables. */
   post: (ui: string) => Promise<unknown>;
+  awaitChoice<T = unknown>(ui: Renderable): Promise<T>;
   getMessages?: () => Promise<ThreadMessageLite[]>;
   runAgent: (opts: {
     prompt: string | AgentContentPart[];
@@ -102,6 +142,31 @@ type AgentThread = {
     tools?: ReturnType<typeof guardToolsByBundle>;
   }) => Promise<unknown>;
 };
+
+export interface TurnExecutionIdentity {
+  executionId: string;
+  forwardedMessageId: string;
+  /** Set only by an upstream HITL approval handler. */
+  remoteGitApproved?: boolean;
+  /** The approved action specifically requires a GitHub pull request. */
+  createPullRequest?: boolean;
+}
+
+export type AgentTurnOutcome =
+  | { status: "completed"; terminalPersisted?: boolean }
+  | { status: "interrupted" }
+  | { status: "rejected"; reason: "duplicate" | "concurrent" };
+
+export class AuthoritativeHarnessError extends Error {
+  constructor(
+    readonly failureKind: HarnessFailureKind,
+    message: string,
+    readonly terminalPersisted = false,
+  ) {
+    super(message);
+    this.name = "AuthoritativeHarnessError";
+  }
+}
 
 function channelFromThread(thread: { conversationKey?: string }): string {
   return (thread.conversationKey ?? "").split("::")[0] ?? "";
@@ -243,14 +308,50 @@ function embedTranscriptInPrompt(
  * has something to read regardless of which path a turn takes. Lines with no
  * data are omitted entirely rather than printed empty.
  */
-function buildRequesterContextBlock(requester?: Requester): string | undefined {
+const VERIFIED_GITHUB_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const VERIFIED_SLACK_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,79})$/;
+
+function safeSlackDisplayName(value?: string): string | undefined {
+  const normalized = value
+    ?.normalize("NFKC")
+    .replace(/[^\p{L}\p{N} ._'()-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return normalized && /^[\p{L}\p{N}]/u.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+export function buildRequesterContextBlock(requester?: Requester): string | undefined {
   if (!requester) return undefined;
   const lines: string[] = [];
-  const name = requester.name ?? requester.handle;
+  const githubHandle = requester.githubHandle?.trim();
+  const slackHandle = requester.handle?.trim();
+  const name =
+    safeSlackDisplayName(requester.name) ??
+    (slackHandle && VERIFIED_SLACK_HANDLE_RE.test(slackHandle)
+      ? slackHandle
+      : undefined);
   if (name) lines.push(`Name: ${name}`);
-  if (requester.handle) lines.push(`Slack: @${requester.handle}`);
-  if (requester.email) lines.push(`Email: ${requester.email}`);
-  if (requester.githubHandle) lines.push(`GitHub: @${requester.githubHandle}`);
+  if (slackHandle && VERIFIED_SLACK_HANDLE_RE.test(slackHandle)) {
+    lines.push(`Slack: @${slackHandle}`);
+  }
+  const email = requester.email?.trim();
+  if (email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    lines.push(`Email: ${email}`);
+  }
+  if (githubHandle && VERIFIED_GITHUB_HANDLE_RE.test(githubHandle)) {
+    lines.push(`GitHub: @${githubHandle}`);
+  }
+  const attribution =
+    githubHandle && VERIFIED_GITHUB_HANDLE_RE.test(githubHandle)
+      ? `@${githubHandle}`
+      : slackHandle && VERIFIED_SLACK_HANDLE_RE.test(slackHandle)
+        ? `@${slackHandle}`
+        : safeSlackDisplayName(requester.name);
+  if (attribution) lines.push(`Prompted by: ${attribution}`);
   if (lines.length === 0) return undefined;
   return ["[Requester Context]", ...lines].join("\n");
 }
@@ -368,17 +469,15 @@ async function stripOverridesFromPrompt(
   return { cleanedPrompt, resolved };
 }
 
-export type BundledAgentTurnOutcome = "completed" | "aborted";
-
 export async function runBundledAgentTurn(
   env: Env,
   thread: AgentThread,
   promptIn: string | AgentContentPart[],
   requesterIn?: Requester,
-  turnContext?: { executionId?: string },
-): Promise<BundledAgentTurnOutcome> {
+  executionIdentity?: TurnExecutionIdentity,
+): Promise<AgentTurnOutcome> {
   const requester = await ensureRequesterProfile(env, requesterIn);
-  const teamId = getCurrentTeamId();
+  const teamId = requireRequestContext(thread).teamId;
   const channelId = channelFromThread(thread);
   const conversationKey = thread.conversationKey ?? "";
   const store = createDurableObjectStore(env.BOT_STATE);
@@ -412,7 +511,7 @@ export async function runBundledAgentTurn(
         err instanceof Error ? err.message : err,
       );
     }
-    return "completed";
+    return { status: "completed" };
   }
 
   const { config, bundle } = await loadTurnAccess(
@@ -456,6 +555,9 @@ export async function runBundledAgentTurn(
       if (!titled) {
         const scope = conversationKey.split("::")[1];
         const inbound = getInboundMessage(conversationKey, thread);
+        // The conversation scope is authoritative for this turn. Request-scoped
+        // inbound metadata may describe a reply while the title belongs to the
+        // root assistant thread.
         const titleThreadTs = firstSlackTs(scope, inbound?.threadTs, inbound?.ts);
         if (titleThreadTs) {
           await createSlackWebClient(env.SLACK_BOT_TOKEN).setTitle({
@@ -676,18 +778,51 @@ export async function runBundledAgentTurn(
       conversationKey,
       thread,
     );
+    // Production Slack callers always pass the lifecycle-issued identity.
+    // The deterministic prompt tuple is retained only for direct unit/admin
+    // invocations; it never fabricates a retry-defeating random id.
+    const identity: TurnExecutionIdentity = executionIdentity ?? await makeWireTurnIdentity(
+      "direct-agent-turn",
+      [
+        teamId,
+        conversationKey,
+        requireRequestContext(thread).inbound?.identity ??
+          requireRequestContext(thread).inbound?.ts ?? harnessPromptText(prompt),
+      ],
+    );
+    const codingTask =
+      Boolean(env.HARNESS_REPO_URL) &&
+      (identity.createPullRequest === true || isRepositoryCodingIntent(promptText));
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
       conversationKey,
+      executionId: identity.executionId,
+      forwardedMessageId: identity.forwardedMessageId,
       prompt: harnessPromptText(prompt),
       model: overrides.effectiveModel,
       requesterContext: requesterContextBlock,
       transcript: buildHarnessTranscript(history),
-      executionId: turnContext?.executionId,
+      codingTask,
+      remoteGitApproved: identity.remoteGitApproved === true,
+      createPullRequest: identity.createPullRequest === true,
     });
 
-    if (harnessResult.error === "aborted") {
-      return "aborted";
+    // Stop owns the sole durable terminal transition. Never fall back to
+    // AG-UI and never post accumulated text after an interrupt.
+    if (!harnessResult.ok && harnessResult.failureKind === "interrupted") {
+      return { status: "interrupted" };
+    }
+
+    // These failures mean the turn either already ran/is running, or the
+    // harness completed but its terminal record could not be committed.
+    // Falling back would duplicate coding work. Surface persistence failure
+    // to the outer error path; redelivery/concurrency are intentional no-ops.
+    if (
+      !harnessResult.ok &&
+      (harnessResult.failureKind === "duplicate" ||
+        harnessResult.failureKind === "concurrent")
+    ) {
+      return { status: "rejected", reason: harnessResult.failureKind };
     }
 
     if (harnessResult.ok) {
@@ -698,29 +833,25 @@ export async function runBundledAgentTurn(
       await thread.post(
         text || "_(Claude Code harness turn completed with no output.)_",
       );
-      return "completed";
+      return {
+        status: "completed",
+        terminalPersisted: harnessResult.terminalPersisted,
+      };
+    }
+
+    if (codingTask) {
+      throw new AuthoritativeHarnessError(
+        harnessResult.failureKind,
+        harnessResult.error,
+        harnessResult.terminalPersisted,
+      );
     }
 
     // Harness configured but the turn failed (unavailable, duplicate
     // execution, container error, stream ended without `done`, etc.) — fall
     // back to the normal AG-UI path below so users aren't stranded, rather
-    // than surfacing a harness-specific error. `runHarnessTurn` may have
-    // cleared `session:executing` via a terminal harness `done` — restore it
-    // so the render-obligation alarm keeps deferring until AG-UI finishes.
-    if (turnContext?.executionId && env.SESSION_EVENTS) {
-      try {
-        const sessionDo = env.SESSION_EVENTS.get(
-          env.SESSION_EVENTS.idFromName(harnessThreadKey),
-        ) as unknown as SessionEventsRpc & {
-          resumeExecuting(args: { executionId: string }): Promise<void>;
-        };
-        await sessionDo.resumeExecuting({
-          executionId: turnContext.executionId,
-        });
-      } catch (err) {
-        console.error("[agent-turn] resumeExecuting failed", err);
-      }
-    }
+    // than surfacing a harness-specific error. `runHarnessTurn` has already
+    // given the SessionEventDO event log a terminal `done` event of its own.
     logMetric("harness_fallback", {
       threadKey: harnessThreadKey,
       error: harnessResult.error ?? "unknown",
@@ -735,5 +866,5 @@ export async function runBundledAgentTurn(
       allowed,
     ),
   });
-  return "completed";
+  return { status: "completed" };
 }

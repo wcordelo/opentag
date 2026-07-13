@@ -15,7 +15,7 @@ import {
   type QuickRef,
 } from "./quick-card.js";
 import { conversationKeyOf, DM_SCOPE } from "./channels-slack-lite.js";
-import { rememberInboundMessage } from "./inbound-target.js";
+import { bindRequestContext } from "../request-context.js";
 import { createSlackWebClient } from "./web-api.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
@@ -125,6 +125,16 @@ export function isQuickInteraction(payload: unknown): boolean {
   );
 }
 
+/** Stable identity for a standard Slack click; absent means reject ingress. */
+export function quickActionEventId(payload: unknown): string | undefined {
+  const body = payload as QuickInteractionPayload;
+  const actionTs = body.actions?.[0]?.action_ts?.trim();
+  const messageTs = body.message?.ts?.trim();
+  const channel = body.channel?.id?.trim();
+  if (!actionTs || !messageTs || !channel) return undefined;
+  return `quick:${channel}:${messageTs}:${actionTs}`;
+}
+
 /**
  * Turn a quick button click into a synthetic agent turn via the bot's normal
  * ingress sink. Best-effort: malformed payloads log and return handled:false;
@@ -133,6 +143,7 @@ export function isQuickInteraction(payload: unknown): boolean {
 export async function handleQuickAction(
   env: Env,
   payload: unknown,
+  teamId = "unknown",
 ): Promise<{ handled: boolean }> {
   const body = payload as QuickInteractionPayload;
   const action = body.actions?.[0];
@@ -160,7 +171,13 @@ export async function handleQuickAction(
   const conversationKey = conversationKeyOf({ channelId: channel, scope });
 
   const { adapter } = await getOrCreateBot(env);
-  const resolved = await resolveClickingUser(env, userId);
+  const resolvedProfile = await resolveClickingUser(env, userId);
+  const resolved = { ...resolvedProfile, id: resolvedProfile?.id ?? userId };
+  const quickEventId = quickActionEventId(body);
+  if (!quickEventId) {
+    console.warn("[quick-actions] rejecting click without message.ts/action_ts");
+    return { handled: false };
+  }
 
   const turn: IncomingTurn = {
     conversationKey,
@@ -183,21 +200,24 @@ export async function handleQuickAction(
     user: resolved,
     // Deterministic per click: Slack redelivers interactions; the pipeline's
     // event dedup keys on this (house rule 3).
-    eventId:
-      messageTs && action.action_ts
-        ? `quick:${channel}:${messageTs}:${action.action_ts}`
-        : `quick:${body.trigger_id ?? crypto.randomUUID()}`,
+    eventId: quickEventId,
     platform: "slack",
   };
 
-  if (messageTs ?? threadTs) {
-    rememberInboundMessage(
-      conversationKey,
-      channel,
-      (messageTs ?? threadTs)!,
-      threadTs,
-    );
-  }
+  bindRequestContext(resolved, {
+    teamId,
+    requesterId: resolved.id,
+    ...((messageTs ?? threadTs)
+      ? {
+          inbound: {
+            channel,
+            ts: (messageTs ?? threadTs)!,
+            threadTs,
+            identity: quickEventId,
+          },
+        }
+      : {}),
+  });
   await adapter.getSink().onTurn(turn);
   console.log(
     JSON.stringify({

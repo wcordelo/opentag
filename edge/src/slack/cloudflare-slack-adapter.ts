@@ -44,10 +44,10 @@ import {
   truncateFallbackText,
 } from "./stream-render.js";
 import {
-  rememberInboundMessage,
   getInboundMessage,
   type InboundMessageTarget,
 } from "./inbound-target.js";
+import { bindRequestContext } from "../request-context.js";
 import {
   buildFileContentParts,
   extractSlackFiles,
@@ -189,7 +189,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     meta?: { teamId?: string },
   ): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
-    if (meta?.teamId) this.teamId = meta.teamId;
+    const bodyTeamId =
+      typeof body === "object" && body !== null && "team_id" in body &&
+      typeof (body as { team_id?: unknown }).team_id === "string"
+        ? (body as { team_id: string }).team_id
+        : undefined;
+    if (meta?.teamId ?? bodyTeamId) this.teamId = meta?.teamId ?? bodyTeamId;
     await this.ensureBotUserId();
 
     const normalized = normalizeSlackEvent(
@@ -222,9 +227,16 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           recipientUserId: normalized.senderUserId,
         };
 
-    const user = normalized.senderUserId
+    const resolvedUser = normalized.senderUserId
       ? await this.client.resolveUser(normalized.senderUserId)
       : undefined;
+    // Always allocate a per-turn key even if the web client later caches
+    // profiles; reusing a PlatformUser object would reintroduce cross-turn
+    // context overwrite for two messages from the same Slack user.
+    const user = {
+      ...(resolvedUser ?? {}),
+      id: resolvedUser?.id ?? normalized.senderUserId ?? "",
+    };
 
     let contentParts: AgentContentPart[] | undefined;
     if (normalized.hasFiles && normalized.files?.length) {
@@ -246,14 +258,20 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       eventId: normalized.eventId,
       platform: "slack",
     };
-    if (normalized.ts) {
-      rememberInboundMessage(
-        conversationKey,
-        normalized.channel,
-        normalized.ts,
-        normalized.threadTs ?? normalized.ts,
-      );
-    }
+    bindRequestContext(user, {
+      teamId: meta?.teamId ?? bodyTeamId ?? this.teamId ?? "unknown",
+      requesterId: user.id,
+      ...(normalized.ts
+        ? {
+            inbound: {
+              channel: normalized.channel,
+              ts: normalized.ts,
+              threadTs: normalized.threadTs ?? normalized.ts,
+              identity: normalized.eventId,
+            },
+          }
+        : {}),
+    });
     await this.sink.onTurn(turn);
     return { handled: true };
   }
@@ -353,17 +371,24 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     if (!normalized || normalized.kind !== "command") {
       return { handled: false };
     }
+    if (!normalized.eventId) {
+      console.warn("[slack] rejecting slash command without trigger_id");
+      return { handled: false };
+    }
 
     const threadTs = body.thread_ts?.trim() || undefined;
-    const scope =
-      threadTs ?? `slash::${normalized.senderUserId ?? "anon"}`;
+    const scope = threadTs ?? normalized.channel;
     const conversationKey = conversationKeyOf({
       channelId: normalized.channel,
       scope,
     });
-    const user = normalized.senderUserId
+    const resolvedUser = normalized.senderUserId
       ? await this.client.resolveUser(normalized.senderUserId)
       : undefined;
+    const user = {
+      ...(resolvedUser ?? {}),
+      id: resolvedUser?.id ?? normalized.senderUserId ?? "",
+    };
     const cmd: IncomingCommand = {
       command: normalized.command.replace(/^\//, ""),
       text: normalized.text,
@@ -377,16 +402,18 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       platform: "slack",
       triggerId: normalized.triggerId,
     };
-    // Slash commands have no message ts to react to; bind thread parent only so
-    // react_message does not reuse a stale event-turn target from request scope.
-    if (threadTs && normalized.channel) {
-      rememberInboundMessage(
-        conversationKey,
-        normalized.channel,
-        threadTs,
-        threadTs,
-      );
-    }
+    // Commands have no message ts, but trigger_id is immutable per invocation.
+    // It may identify the turn while never being used as a Slack reaction ts.
+    bindRequestContext(user, {
+      teamId: body.team_id ?? this.teamId ?? "unknown",
+      requesterId: user.id,
+      inbound: {
+        channel: normalized.channel,
+        ts: normalized.eventId,
+        ...(threadTs ? { threadTs } : {}),
+        identity: normalized.eventId,
+      },
+    });
     await this.sink.onCommand(cmd);
     return { handled: true };
   }

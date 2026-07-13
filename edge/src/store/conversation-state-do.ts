@@ -67,6 +67,7 @@ export interface SessionEventsRpc {
     sessionId?: string;
     executing?: { executionId: string; startedAt: number };
     interrupted: boolean;
+    interruptedExecutionId?: string;
   }>;
   replay(afterEventId?: number): Promise<
     Array<{
@@ -79,8 +80,9 @@ export interface SessionEventsRpc {
   >;
   execute(args: {
     executionId: string;
+    forwardedMessageId?: string;
     inputLines: string[];
-  }): Promise<{ accepted: boolean; duplicate: boolean }>;
+  }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
     executionId: string;
     kind: "output" | "error" | "done";

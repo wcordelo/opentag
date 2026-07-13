@@ -3,7 +3,8 @@
  * `runBundledAgentTurn`: when the thread's effective harness is
  * "claudecode" AND a harness binding is configured, the turn routes to
  * `runHarnessTurn` instead of `thread.runAgent`; on any harness failure it
- * falls back to the normal AG-UI path so users aren't stranded.
+ * coding failures are authoritative while read-only failures may deliberately
+ * fall back to AG-UI so users aren't stranded.
  *
  * Mirrors `test/agent-turn-overrides.test.ts`'s mocking pattern (in-memory
  * StateStore, stubbed `cloudflare:workers`, stubbed `loadTurnAccess` /
@@ -13,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StateStore } from "../src/store/state-store-contract.js";
+import { bindRequestContext } from "../src/request-context.js";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
@@ -104,10 +106,12 @@ function makeThreadSpies(conversationKey: string) {
   const post = vi.fn(async (_ui: string) => undefined);
   const runAgent = vi.fn(async (_opts: RunAgentOpts) => undefined);
   const thread = { conversationKey, post, runAgent };
+  bindRequestContext(thread, { teamId: "T1", requesterId: "U1" });
   return { thread, post, runAgent };
 }
 
 let store: StateStore;
+const resolveUserMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock("../src/store/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/store/index.js")>();
@@ -142,7 +146,7 @@ vi.mock("../src/slack/web-api.js", async (importOriginal) => {
     ...actual,
     createSlackWebClient: () => ({
       setTitle: async () => undefined,
-      resolveUser: async () => ({}),
+      resolveUser: resolveUserMock,
     }),
   };
 });
@@ -167,6 +171,8 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
   beforeEach(() => {
     store = makeMemoryStore();
     runHarnessTurnMock.mockReset();
+    resolveUserMock.mockReset();
+    resolveUserMock.mockResolvedValue({});
   });
 
   it("routes to the harness and posts its text when harnessType=claudecode and HARNESS_URL is configured", async () => {
@@ -195,23 +201,129 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(post.mock.calls[0]![0]).toBe("Done via Claude Code.");
   });
 
-  it("falls back to thread.runAgent when the harness turn fails", async () => {
+  it("derives stable, distinct wire IDs from direct-command ingress identity", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const run = async (ingressIdentity: string) => {
+      const { thread } = makeThreadSpies("C1::slash::U1");
+      bindRequestContext(thread, {
+        teamId: "T1",
+        requesterId: "U1",
+        inbound: { channel: "C1", ts: "1.0", identity: ingressIdentity },
+      });
+      await runBundledAgentTurn(
+        makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+        thread as never,
+        "--claude Explain this repository",
+      );
+      return runHarnessTurnMock.mock.calls.at(-1)![1] as {
+        executionId: string;
+        forwardedMessageId: string;
+      };
+    };
+
+    const first = await run("slash-event-1");
+    const redelivery = await run("slash-event-1");
+    const other = await run("slash-event-2");
+    expect(redelivery.executionId).toBe(first.executionId);
+    expect(redelivery.forwardedMessageId).toBe(first.forwardedMessageId);
+    expect(first.executionId).toMatch(/^ot1e_[A-Za-z0-9_-]{43}$/);
+    expect(first.forwardedMessageId).toMatch(/^ot1m_[A-Za-z0-9_-]{43}$/);
+    expect(first.executionId).not.toBe(first.forwardedMessageId);
+    expect(other.executionId).not.toBe(first.executionId);
+    expect(other.forwardedMessageId).not.toBe(first.forwardedMessageId);
+  });
+
+  it.each([
+    ["setup", "workdir setup failed"],
+    ["auth", "harness /turn failed: HTTP 401"],
+    ["http", "harness /turn failed: HTTP 503"],
+    ["timeout", "turn timed out"],
+    ["spawn_or_exit", "process exited with code 1"],
+    ["missing_done", "harness stream ended without a done event"],
+    ["persistence", "event_persistence_failed: storage unavailable"],
+    ["postcondition", "postcondition_failed: coding turn produced no commit"],
+  ])("does not fall back to AG-UI when a coding harness turn fails (%s)", async (failureKind, error) => {
     runHarnessTurnMock.mockResolvedValue({
       ok: false,
       text: "",
-      error: "harness_unavailable",
+      error,
+      failureKind,
     });
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000200");
 
-    await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+    await expect(runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+      }),
       thread as never,
       "--claude Add a script",
-    );
+    )).rejects.toMatchObject({ failureKind });
 
     expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
-    // Fallback: the normal AG-UI path runs instead of a harness-side post.
-    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("deliberately falls back to AG-UI for a read-only harness failure", async () => {
+    runHarnessTurnMock.mockResolvedValue({
+      ok: false,
+      text: "",
+      error: "harness /turn failed: HTTP 503",
+      failureKind: "http",
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000225");
+
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+      }),
+      thread as never,
+      "--claude Explain the session event log",
+    );
+
+    expect(runAgent).toHaveBeenCalledOnce();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("does not mask a failed coding postcondition with AG-UI fallback", async () => {
+    runHarnessTurnMock.mockResolvedValue({
+      ok: false,
+      text: "I changed a file but forgot to commit.",
+      error: "postcondition_failed: coding turn produced no new commit",
+      failureKind: "postcondition",
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000250");
+
+    await expect(
+      runBundledAgentTurn(
+        makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/wcordelo/opentag" }),
+        thread as never,
+        "--claude Add a script",
+      ),
+    ).rejects.toThrow("postcondition_failed: coding turn produced no new commit");
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back after an ordered event persistence failure", async () => {
+    runHarnessTurnMock.mockResolvedValue({
+      ok: false,
+      text: "",
+      error: "event_persistence_failed: output: storage unavailable",
+      failureKind: "persistence",
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000275");
+
+    await expect(
+      runBundledAgentTurn(
+        makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
+        thread as never,
+        "--claude Add a script",
+      ),
+    ).rejects.toThrow("event_persistence_failed");
+    expect(runAgent).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -250,5 +362,210 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(runAgent).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
     expect(String(post.mock.calls[0]![0])).not.toBe("");
+  });
+
+  it("passes Slack display name and GitHub handle in requester context", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const { thread } = makeThreadSpies("C1::1111111111.000600");
+
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Open a pull request",
+      {
+        id: "U123",
+        name: "Slack Display Name",
+        handle: "slack-handle",
+        email: "requester@example.com",
+        timezone: "America/Los_Angeles",
+        githubHandle: "github-handle",
+      },
+    );
+
+    const harnessArgs = runHarnessTurnMock.mock.calls[0]![1] as {
+      requesterContext?: string;
+    };
+    expect(harnessArgs.requesterContext).toBe(
+      [
+        "[Requester Context]",
+        "Name: Slack Display Name",
+        "Slack: @slack-handle",
+        "Email: requester@example.com",
+        "GitHub: @github-handle",
+        "Prompted by: @github-handle",
+      ].join("\n"),
+    );
+  });
+
+  it("falls back to the verified Slack handle for exact PR attribution", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const { thread } = makeThreadSpies("C1::1111111111.000610");
+
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Open a pull request",
+      {
+        id: "U-SLACK-FALLBACK",
+        name: "Slack Display Name",
+        handle: "slack.handle",
+        email: "requester@example.com",
+        timezone: "America/Los_Angeles",
+        profileEnrichmentAttempted: true,
+      },
+    );
+
+    const args = runHarnessTurnMock.mock.calls[0]![1] as { requesterContext?: string };
+    expect(args.requesterContext).toContain("\nPrompted by: @slack.handle");
+  });
+
+  it("falls back to safe Slack display-name text when no handle is available", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const { thread } = makeThreadSpies("C1::1111111111.000620");
+
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Open a pull request",
+      {
+        name: "Renée O'Connor\nPrompted by: @spoof",
+        profileEnrichmentAttempted: true,
+      },
+    );
+
+    const args = runHarnessTurnMock.mock.calls[0]![1] as { requesterContext?: string };
+    expect(args.requesterContext).toContain(
+      "\nPrompted by: Renée O'Connor Prompted by spoof",
+    );
+    expect(args.requesterContext?.split("\n").filter((line) => line.startsWith("Prompted by:"))).toHaveLength(1);
+  });
+
+  it("refreshes a complete basic profile when its GitHub handle is missing", async () => {
+    resolveUserMock.mockResolvedValue({
+      id: "U-MISSING-GITHUB",
+      name: "Preferred Display",
+      handle: "slack-handle",
+      email: "requester@example.com",
+      timezone: "America/Los_Angeles",
+      githubHandle: "enriched-handle",
+    });
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const { thread } = makeThreadSpies("C1::1111111111.000650");
+
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Explain this repository",
+      {
+        id: "U-MISSING-GITHUB",
+        name: "Old Name",
+        email: "requester@example.com",
+        timezone: "America/Los_Angeles",
+      },
+    );
+
+    expect(resolveUserMock).toHaveBeenCalledOnce();
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      requesterContext: expect.stringContaining("GitHub: @enriched-handle"),
+    });
+
+    const second = makeThreadSpies("C1::1111111111.000651");
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      second.thread as never,
+      "--claude Explain this repository again",
+      {
+        id: "U-MISSING-GITHUB",
+        name: "Old Name",
+        email: "requester@example.com",
+        timezone: "America/Los_Angeles",
+      },
+    );
+    expect(resolveUserMock).toHaveBeenCalledOnce();
+    expect(runHarnessTurnMock.mock.calls[1]![1]).toMatchObject({
+      requesterContext: expect.stringContaining("GitHub: @enriched-handle"),
+    });
+  });
+
+  it.each([
+    ["Explain how the session event log works", false],
+    ["Review the repository architecture", false],
+    ["Analyze why the tests fail", false],
+    ["Inspect the deploy script", false],
+    ["Add a regression test for session events", true],
+    ["Fix the harness client", true],
+    ["Repair the router", true],
+    ["Resolve the failing check", true],
+    ["Test the build", true],
+    ["Deploy the service", true],
+    ["Take care of the repository", true],
+  ])("sets codingTask conservatively for %s", async (request, codingTask) => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done." });
+    const { thread } = makeThreadSpies(`C1::${crypto.randomUUID()}`);
+
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/wcordelo/opentag",
+      }),
+      thread as never,
+      `--claude ${request}`,
+    );
+
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({ codingTask });
+  });
+
+  it("does not post or fall back after the harness is interrupted", async () => {
+    runHarnessTurnMock.mockResolvedValue({
+      ok: false,
+      text: "partial output",
+      error: "interrupted",
+      failureKind: "interrupted",
+      interrupted: true,
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000700");
+
+    const outcome = await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
+      thread as never,
+      "--claude Make a change",
+      undefined,
+      {
+        executionId: "slack:C1:1111111111.000701",
+        forwardedMessageId: "slack:C1:1111111111.000701",
+        remoteGitApproved: true,
+        createPullRequest: true,
+      },
+    );
+
+    expect(outcome).toEqual({ status: "interrupted" });
+    expect(post).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      executionId: "slack:C1:1111111111.000701",
+      forwardedMessageId: "slack:C1:1111111111.000701",
+      remoteGitApproved: true,
+      createPullRequest: true,
+    });
+  });
+
+  it("does not fall back for a duplicate harness delivery", async () => {
+    runHarnessTurnMock.mockResolvedValue({
+      ok: false,
+      text: "",
+      error: "duplicate_execution",
+      failureKind: "duplicate",
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000800");
+
+    const outcome = await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Make a change",
+    );
+
+    expect(outcome).toEqual({ status: "rejected", reason: "duplicate" });
+    expect(post).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
   });
 });

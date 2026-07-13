@@ -71,15 +71,65 @@ export type SlackWebClient = {
 /**
  * Best-effort GitHub handle extraction (GOAL.md Phase A5 / SPEC.md §5-A5
  * item 5). No dedicated Slack scope for this — `users.profile.get` is a
- * separate OAuth scope we don't request — so instead we scan the entire
- * `users.info` JSON response (custom profile fields, status text, etc.) for
- * a `github.com/<handle>` URL. Cheap and lossy by design: a false negative
- * just means the `[Requester Context]` block omits the GitHub line.
+ * separate OAuth scope we don't request. Only explicitly named `github` /
+ * `github_url` profile fields are trusted; arbitrary status/profile text must
+ * never establish attribution. Named fields accept URL, @handle, and plain
+ * handle forms.
  */
-const GITHUB_HANDLE_RE = /github\.com\/([A-Za-z0-9-]+)/i;
+const GITHUB_HANDLE_RE = /github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/|$)/i;
+const PLAIN_GITHUB_HANDLE_RE = /^@?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))$/;
+const GITHUB_PROFILE_FIELD_NAMES = new Set(["github", "github_url"]);
 
-function extractGithubHandle(rawJson: string): string | undefined {
-  return rawJson.match(GITHUB_HANDLE_RE)?.[1];
+function githubHandleFromFieldValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return (
+      trimmed.match(GITHUB_HANDLE_RE)?.[1] ??
+      trimmed.match(PLAIN_GITHUB_HANDLE_RE)?.[1]
+    );
+  }
+  if (value && typeof value === "object" && "value" in value) {
+    return githubHandleFromFieldValue((value as { value?: unknown }).value);
+  }
+  return undefined;
+}
+
+function githubHandleFromNamedProfileField(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (GITHUB_PROFILE_FIELD_NAMES.has(key.toLowerCase())) {
+      const handle = githubHandleFromFieldValue(fieldValue);
+      if (handle) return handle;
+    }
+
+    if (fieldValue && typeof fieldValue === "object") {
+      const field = fieldValue as Record<string, unknown>;
+      const fieldName = field.name ?? field.label;
+      if (
+        typeof fieldName === "string" &&
+        GITHUB_PROFILE_FIELD_NAMES.has(fieldName.toLowerCase())
+      ) {
+        const handle = githubHandleFromFieldValue(field.value);
+        if (handle) return handle;
+      }
+    }
+
+    const nested = githubHandleFromNamedProfileField(fieldValue);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function extractGithubHandle(profile: unknown): string | undefined {
+  return githubHandleFromNamedProfileField(profile);
+}
+
+function preferredSlackName(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 export function createSlackWebClient(botToken: string): SlackWebClient {
@@ -179,7 +229,9 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             tz?: string;
             profile?: {
               real_name?: string;
+              real_name_normalized?: string;
               display_name?: string;
+              display_name_normalized?: string;
               email?: string;
               fields?: unknown;
               status_text?: string;
@@ -188,17 +240,17 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
         }>("users.info", { user: userId });
         const u = r.user;
         if (r.ok && u?.id) {
-          // Scan the whole raw response (custom profile fields, status text,
-          // etc.) rather than one known field — the cheapest thing that
-          // catches most real-world "github.com/handle" placements.
-          const githubHandle = extractGithubHandle(JSON.stringify(r));
+          const githubHandle = extractGithubHandle(u.profile);
           user = {
             id: u.id,
-            name:
-              u.real_name ??
-              u.profile?.real_name ??
-              u.profile?.display_name ??
+            name: preferredSlackName(
+              u.profile?.display_name,
+              u.profile?.display_name_normalized,
+              u.profile?.real_name,
+              u.profile?.real_name_normalized,
+              u.real_name,
               u.name,
+            ),
             handle: u.name,
             email: u.profile?.email,
             ...(u.tz ? { timezone: u.tz } : {}),

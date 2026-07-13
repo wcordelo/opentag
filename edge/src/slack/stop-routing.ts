@@ -9,17 +9,21 @@
 import { isSlackStopCommand } from "./stop-command.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
 import { createSlackWebClient } from "./web-api.js";
-import { abortHarnessTurn } from "../harness/turn-abort.js";
 import {
-  activeTurnKvKey,
-  channelActiveTurnsKvKey,
   conversationKeyFromThreadKey,
   firstSlackTs,
   slackObligationThreadKey,
-  type ActiveTurnRecord,
 } from "./obligation-thread-key.js";
+import {
+  clearActiveTurn,
+  getActiveTurnForThread,
+  getLatestActiveTurn,
+  type ActiveTurnRecord,
+} from "./active-turn-registry.js";
+import { cancelHitlChoice } from "../hitl/durable-choice.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
+import { interruptHarnessTurn } from "../harness/client.js";
 
 /** The subset of a Slack Events API `event` object this module reads. */
 export interface SlackStopEvent {
@@ -52,6 +56,13 @@ export interface SlackEventCallbackPayload {
  */
 interface SessionInterruptRpc {
   interrupt(): Promise<{ interrupted: boolean }>;
+  interruptExpected(
+    executionId: string,
+  ): Promise<{ interrupted: boolean; cancelled: true }>;
+  getState(): Promise<{
+    sessionId?: string;
+    executing?: { executionId: string; startedAt: number };
+  }>;
 }
 
 /**
@@ -59,10 +70,9 @@ interface SessionInterruptRpc {
  * should short-circuit routing to the bot engine.
  *
  * Matches only `event_callback` payloads whose `event.type` is
- * `"app_mention"` or (for threaded replies) `"message"`, with a non-empty
- * `event.text`, and not authored by a bot (`event.bot_id` absent).
- * Channel-level stops require `app_mention` so ordinary channel chatter
- * cannot cancel unrelated in-flight turns. `event.subtype` is deliberately
+ * `"app_mention"` or (for threaded replies and DMs) `"message"`, with a
+ * non-empty `event.text`, and not authored by a bot (`event.bot_id` absent).
+ * Top-level channel stops require an app mention. `event.subtype` is deliberately
  * not inspected — a stop message flows through this check the same way
  * regardless of subtype.
  *
@@ -78,8 +88,8 @@ export function extractStopCommandEvent(
   if (event.type !== "app_mention" && event.type !== "message") {
     return undefined;
   }
-  // Top-level channel messages must @mention the bot; thread replies and DMs may
-  // stop without a mention because the user is already in the bot's conversation.
+  // Ordinary top-level channel chatter must never cancel an unrelated turn.
+  // Thread replies and DMs are already scoped to a bot conversation.
   if (!event.thread_ts && event.type !== "app_mention") {
     const channel = event.channel;
     if (!(typeof channel === "string" && channel.startsWith("D"))) {
@@ -127,46 +137,18 @@ export async function handleStopCommand(
     const stateStore = createBotStoreAdapter(env.BOT_STATE);
 
     const statusThreadTs = firstSlackTs(event.thread_ts, event.ts);
-    const threadKey = slackObligationThreadKey(channel, statusThreadTs);
-
-    let stopTargets: ActiveTurnRecord[];
-    if (event.thread_ts) {
-      let activeTurn: ActiveTurnRecord | undefined;
-      try {
-        activeTurn = await stateStore.kv.get<ActiveTurnRecord>(
-          activeTurnKvKey(threadKey),
-        );
-      } catch (err) {
-        console.error("[stop-command] active turn lookup failed", threadKey, err);
-      }
-      stopTargets = activeTurn
-        ? [activeTurn]
-        : [{ threadKey, conversationKey: conversationKeyFromThreadKey(threadKey) }];
-    } else {
-      try {
-        const channelTurns = await stateStore.kv.get<ActiveTurnRecord[]>(
-          channelActiveTurnsKvKey(channel),
-        );
-        stopTargets =
-          channelTurns && channelTurns.length > 0
-            ? channelTurns
-            : [
-                {
-                  threadKey,
-                  conversationKey: conversationKeyFromThreadKey(threadKey),
-                },
-              ];
-      } catch (err) {
-        console.error("[stop-command] channel active turns lookup failed", channel, err);
-        stopTargets = [
-          { threadKey, conversationKey: conversationKeyFromThreadKey(threadKey) },
-        ];
-      }
+    const directThreadKey = slackObligationThreadKey(channel, statusThreadTs);
+    let activeTurn: ActiveTurnRecord | undefined;
+    try {
+      activeTurn = event.thread_ts || channel.startsWith("D")
+        ? await getActiveTurnForThread(stateStore, directThreadKey)
+        : await getLatestActiveTurn(stateStore, channel);
+    } catch (err) {
+      console.error("[stop-command] active turn lookup failed", channel, err);
     }
 
-    const primaryTarget = stopTargets[0]!;
-    const postThreadTs =
-      statusThreadTs ?? primaryTarget.threadKey.split(":")[2];
+    const threadKey = activeTurn?.threadKey ?? directThreadKey;
+    const postThreadTs = activeTurn?.threadTs ?? statusThreadTs;
     if (!postThreadTs) return;
 
     // Idempotency (house rule 3): a redelivered stop event must be a total
@@ -175,42 +157,72 @@ export async function handleStopCommand(
     const alreadySeen = await stateStore.dedup.seen(dedupKey, 10 * 60_000);
     if (alreadySeen) return;
 
-    for (const target of stopTargets) {
-      abortHarnessTurn(target.threadKey);
+    const hitlCancellation = activeTurn?.choiceId
+      ? cancelHitlChoice(stateStore, {
+          conversationKey: activeTurn.conversationKey,
+          choiceId: activeTurn.choiceId,
+        }).catch((err) => {
+          console.error("[stop-command] cancellation marker failed", threadKey, err);
+        })
+      : Promise.resolve();
 
-      if (env.SESSION_EVENTS) {
-        try {
-          const sessionDo = env.SESSION_EVENTS.get(
-            env.SESSION_EVENTS.idFromName(target.threadKey),
-          ) as unknown as SessionInterruptRpc;
-          await sessionDo.interrupt();
-        } catch (err) {
-          console.error("[stop-command] interrupt failed", target.threadKey, err);
-        }
-      }
-
-      const conversationKey =
-        target.conversationKey || conversationKeyFromThreadKey(target.threadKey);
-      if (conversationKey) {
-        try {
-          const { adapter } = await getOrCreateBot(env);
-          adapter.abortConversation(conversationKey);
-        } catch (err) {
-          console.error(
-            "[stop-command] abortConversation failed",
-            conversationKey,
-            err,
-          );
-        }
-      }
-
+    if (env.SESSION_EVENTS) {
       try {
-        // No executionId: a stop clears whatever obligation is currently
-        // pending for this thread, regardless of which turn wrote it.
-        await stateStore.obligation.clear({ threadKey: target.threadKey });
+        const sessionDo = env.SESSION_EVENTS.get(
+          env.SESSION_EVENTS.idFromName(threadKey),
+        ) as unknown as SessionInterruptRpc;
+        if (activeTurn) {
+          // Exact durable revocation is the first awaited action in this DO;
+          // session metadata remains available after terminalization.
+          await sessionDo.interruptExpected(activeTurn.executionId);
+          const state: { sessionId?: string } = typeof sessionDo.getState === "function"
+            ? await sessionDo.getState().catch(() => ({}))
+            : {};
+          // The live control plane works before /turn headers and aborts
+          // clone/spawn; polling remains defense-in-depth.
+          if (state.sessionId) {
+            await interruptHarnessTurn(env, {
+              sessionId: state.sessionId,
+              threadKey,
+              executionId: activeTurn.executionId,
+            });
+          }
+        } else await sessionDo.interrupt();
       } catch (err) {
-        console.error("[stop-command] obligation clear failed", target.threadKey, err);
+        console.error("[stop-command] interrupt failed", threadKey, err);
       }
+    }
+    await hitlCancellation;
+
+    const conversationKey =
+      activeTurn?.conversationKey || conversationKeyFromThreadKey(threadKey);
+    if (conversationKey) {
+      try {
+        const { adapter } = await getOrCreateBot(env);
+        adapter.abortConversation(conversationKey);
+      } catch (err) {
+        console.error(
+          "[stop-command] abortConversation failed",
+          conversationKey,
+          err,
+        );
+      }
+    }
+
+    if (activeTurn) {
+      try {
+        await clearActiveTurn(stateStore, activeTurn);
+      } catch (err) {
+        console.error("[stop-command] active turn clear failed", threadKey, err);
+      }
+    }
+
+    try {
+      // No executionId: a stop clears whatever obligation is currently
+      // pending for this thread, regardless of which turn wrote it.
+      await stateStore.obligation.clear({ threadKey });
+    } catch (err) {
+      console.error("[stop-command] obligation clear failed", threadKey, err);
     }
 
     if (env.SLACK_BOT_TOKEN) {
@@ -235,12 +247,7 @@ export async function handleStopCommand(
       }
     }
 
-    console.log(
-      JSON.stringify({
-        metric: "stop_command_received",
-        threadKeys: stopTargets.map((t) => t.threadKey),
-      }),
-    );
+    console.log(JSON.stringify({ metric: "stop_command_received", threadKey }));
   } catch (err) {
     console.error("[stop-command] handleStopCommand failed", err);
   }

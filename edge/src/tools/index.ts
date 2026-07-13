@@ -20,7 +20,7 @@ import { createSlackWebClient } from "../slack/web-api.js";
 import { getInboundMessage } from "../slack/inbound-target.js";
 import { normalizeEmojiToken } from "../react-intent.js";
 import type { Env } from "../env.js";
-import { getCurrentTeamId } from "../request-context.js";
+import { requireRequestContext } from "../request-context.js";
 import {
   IssueCard,
   IssueList,
@@ -390,7 +390,7 @@ export const memorySearchTool = defineBotTool({
   }),
   async handler({ query }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
     const hits = await memorySearch(env.KNOWLEDGE, teamId, channelId, query, 5);
     return hits.map((h) => ({ title: h.title, body: h.body.slice(0, 400) }));
@@ -406,7 +406,7 @@ export const memoryWriteTool = defineBotTool({
   }),
   async handler({ title, body }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
     await memoryWrite(env.KNOWLEDGE, {
       id: crypto.randomUUID(),
@@ -428,7 +428,7 @@ export const startTaskTool = defineBotTool({
   }),
   async handler({ objective }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
     const threadTs = threadTsFromThread(thread);
     const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;

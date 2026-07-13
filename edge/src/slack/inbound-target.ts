@@ -8,28 +8,12 @@
  * Prefer thread-bound targets (WeakMap) so concurrent turns in the same isolate
  * cannot steal each other's reaction target via a shared conversation Map.
  */
-import {
-  getCurrentInboundMessage,
-  setCurrentInboundMessage,
-  type InboundMessageTarget,
-} from "../request-context.js";
+import type { InboundMessageTarget } from "../request-context.js";
 
 export type { InboundMessageTarget };
 
 /** Per-turn Thread instance → inbound message to react on. */
 const inboundByThread = new WeakMap<object, InboundMessageTarget>();
-
-export function rememberInboundMessage(
-  conversationKey: string,
-  channel: string,
-  ts: string,
-  threadTs?: string,
-): void {
-  if (!channel || !ts) return;
-  // Request-scoped for short-circuit reacts in the same waitUntil turn.
-  void conversationKey;
-  setCurrentInboundMessage(channel, ts, threadTs);
-}
 
 /** Bind the react target to this turn's Thread (call once at onMention start). */
 export function bindInboundToThread(
@@ -48,7 +32,7 @@ export function getInboundForThread(
 
 /**
  * Resolve inbound target for reactions.
- * Prefer thread-bound (concurrent-safe), then request-scoped.
+ * Prefer thread-bound (concurrent-safe).
  * Does NOT use a conversation-wide Map (that raced across overlapping turns
  * and leaked stale targets into slash-command turns).
  */
@@ -60,8 +44,6 @@ export function getInboundMessage(
     const bound = inboundByThread.get(thread);
     if (bound) return bound;
   }
-  const fromTurn = getCurrentInboundMessage();
-  if (fromTurn) return fromTurn;
   // Last resort: conversation key encodes channel::threadTs (or message ts).
   if (!conversationKey.includes("::")) return undefined;
   const [channel, scope] = conversationKey.split("::");

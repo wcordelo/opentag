@@ -62,6 +62,8 @@ export interface Env {
    * appends the path itself (`/turn`); do not include it here.
    */
   HARNESS_URL?: string;
+  /** Required bearer secret for the harness `/turn` endpoint. */
+  HARNESS_AUTH_TOKEN?: string;
   /**
    * Default repo to clone for a harness turn when the caller doesn't supply
    * one (SPEC.md §4.4). Forwarded as `repo.url` in the `/turn` POST body.

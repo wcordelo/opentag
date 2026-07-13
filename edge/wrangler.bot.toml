@@ -69,3 +69,4 @@ ENVIRONMENT = "production"
 # above). Set only once the container Worker is deployed:
 # HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
 # HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
+# HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml`

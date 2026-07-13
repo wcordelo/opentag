@@ -303,3 +303,42 @@ export function IncidentCard({
     ],
   });
 }
+
+export function RemoteGitApprovalCard({
+  repository,
+  requester,
+  choiceId,
+}: {
+  repository: string;
+  requester: string;
+  choiceId: string;
+}): BotNode {
+  return jsxs(Message, {
+    accent: "#F2994A",
+    children: [
+      jsx(Header, { children: "GitHub push + pull request approval" }),
+      jsx(Section, {
+        children:
+          `This coding task may push its dedicated temporary branch to **${repository}** ` +
+          `and open a GitHub pull request for that repository, attributed to **${requester}**.`,
+      }),
+      jsx(Context, {
+        children:
+          "Approve only if you want these remote GitHub writes. Cancel keeps all remote-git actions disabled.",
+      }),
+      jsxs(Actions, {
+        children: [
+          jsx(Button, {
+            value: { confirmed: true, choiceId },
+            style: "primary",
+            children: "Approve push + PR",
+          }),
+          jsx(Button, {
+            value: { confirmed: false, choiceId },
+            children: "Cancel",
+          }),
+        ],
+      }),
+    ],
+  });
+}

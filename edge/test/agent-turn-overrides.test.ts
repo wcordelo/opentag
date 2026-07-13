@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StateStore } from "../src/store/state-store-contract.js";
+import { bindRequestContext } from "../src/request-context.js";
 
 // agent-turn.ts transitively imports tools/index.ts → memory/knowledge-do.ts
 // (and, via the mocked modules' `importOriginal`, workspace-config-do.ts /
@@ -107,6 +108,7 @@ function makeThreadSpies(conversationKey: string) {
   const post = vi.fn(async (_ui: string) => undefined);
   const runAgent = vi.fn(async (_opts: RunAgentOpts) => undefined);
   const thread = { conversationKey, post, runAgent };
+  bindRequestContext(thread, { teamId: "T1", requesterId: "U1" });
   return { thread, post, runAgent };
 }
 

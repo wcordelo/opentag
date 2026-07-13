@@ -11,24 +11,35 @@ import {
 import { ALL_EDGE_TOOL_NAMES } from "../tools/index.js";
 import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { startTask } from "../tasks/runtime.js";
-import { getCurrentTeamId } from "../request-context.js";
-import { runBundledAgentTurn } from "../agent-turn.js";
+import {
+  copyRequestContext,
+  requireRequestContext,
+} from "../request-context.js";
 import { trivialAck } from "../trivial-ack.js";
 import {
   bindInboundToThread,
   getInboundMessage,
 } from "../slack/inbound-target.js";
 import type { Env } from "../env.js";
+import type { CloudflareSlackAdapter } from "../slack/cloudflare-slack-adapter.js";
+import { runSlackTurnLifecycle } from "../slack/turn-lifecycle.js";
 
 let boundEnv: Env | null = null;
+let boundAdapter: CloudflareSlackAdapter | null = null;
 
-export function bindCommandEnv(env: Env): void {
+export function bindCommandEnv(env: Env, adapter?: CloudflareSlackAdapter): void {
   boundEnv = env;
+  if (adapter) boundAdapter = adapter;
 }
 
 function requireEnv(): Env {
   if (!boundEnv) throw new Error("command env not bound");
   return boundEnv;
+}
+
+function requireAdapter(): CloudflareSlackAdapter {
+  if (!boundAdapter) throw new Error("command adapter not bound");
+  return boundAdapter;
 }
 
 function conversationKeyOf(thread: { conversationKey?: string }): string {
@@ -49,11 +60,13 @@ export const edgeCommands = [
   defineBotCommand({
     name: "config",
     description: "Set the channel system prompt (preserves bundle + policies).",
-    async handler({ thread, text }) {
+    async handler({ thread, text, user }) {
       const env = requireEnv();
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
       const key = conversationKeyOf(thread as { conversationKey?: string });
       const channelId = channelFromKey(key);
-      const teamId = getCurrentTeamId();
+      const teamId = requireRequestContext(thread).teamId;
       const { config: existing } = await loadTurnAccess(
         env.WORKSPACE_CONFIG,
         teamId,
@@ -87,8 +100,10 @@ export const edgeCommands = [
   defineBotCommand({
     name: "research",
     description: "Run deep research on a topic.",
-    async handler({ thread, text }) {
+    async handler({ thread, text, user }) {
       const env = requireEnv();
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
       if (!text?.trim()) {
         await thread.post("Usage: `/research <topic>`");
         return;
@@ -96,7 +111,7 @@ export const edgeCommands = [
       const key = conversationKeyOf(thread as { conversationKey?: string });
       const channelId = channelFromKey(key);
       const threadTs = threadTsFromKey(key);
-      const teamId = getCurrentTeamId();
+      const teamId = requireRequestContext(thread).teamId;
       const { config, bundle } = await loadTurnAccess(
         env.WORKSPACE_CONFIG,
         teamId,
@@ -142,12 +157,17 @@ export const edgeCommands = [
     description: "Talk to the agent without an @-mention.",
     async handler({ thread, text, user }) {
       const env = requireEnv();
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
       if (!text?.trim()) {
         await thread.post("Usage: `/agent <message>`");
         return;
       }
       const key = conversationKeyOf(thread as { conversationKey?: string });
-      bindInboundToThread(thread, getInboundMessage(key));
+      bindInboundToThread(
+        thread,
+        requireRequestContext(thread).inbound ?? getInboundMessage(key),
+      );
       try {
         const trivial = trivialAck(text);
         if (trivial) {
@@ -162,9 +182,10 @@ export const edgeCommands = [
           );
           return;
         }
-        await runBundledAgentTurn(
+        await runSlackTurnLifecycle(
           env,
-          thread as Parameters<typeof runBundledAgentTurn>[1],
+          requireAdapter(),
+          thread as Parameters<typeof runSlackTurnLifecycle>[2],
           text.trim(),
           user,
         );

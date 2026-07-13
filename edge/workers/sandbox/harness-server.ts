@@ -10,7 +10,8 @@
  *     -> { ok: true, service: "opentag-harness", claudeCode: "<version|missing>" }
  *   POST /turn
  *     body: { sessionId, executionId, threadKey, inputLines: string[],
- *              model?, repo?: { url, branch? }, requesterContext?, transcript? }
+ *              model?, repo?: { url, branch? }, requesterContext?, transcript?,
+ *              codingTask?, remoteGitApproved?, createPullRequest? }
  *     response: Content-Type: application/x-ndjson, one JSON object per line,
  *       streamed as they happen:
  *         {"kind":"output","payload":{"text":"…"}}
@@ -27,12 +28,34 @@
  * around those pure functions and are exercised only via Docker/manual
  * testing (out of scope here — see the mission report).
  */
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import {
+  isSafeIdentifier,
+  EXECUTION_BINDING_HEADER,
+  requesterAttribution,
+  validateRepoSpec,
+  validateTurnRequest,
+  validateInterruptRequest,
+  type RepoPolicy,
+  type RepoSpec,
+  type TurnRequestBody,
+  type TurnValidation,
+} from "./turn-contract.js";
+
+export {
+  EXECUTION_BINDING_HEADER,
+  isSafeIdentifier,
+  requesterAttribution,
+  validateRepoSpec,
+  validateTurnRequest,
+};
+export type { RepoPolicy, RepoSpec, TurnRequestBody, TurnValidation };
 
 // ---------------------------------------------------------------------------
 // Config (env-overridable; sane container defaults)
@@ -42,6 +65,10 @@ const PORT = Number(process.env.PORT || 8080);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const WORK_ROOT = process.env.WORK_ROOT || "/work";
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 10 * 60_000);
+const MAX_BODY_BYTES = Number(process.env.HARNESS_MAX_BODY_BYTES || 1024 * 1024);
+const GIT_TIMEOUT_MS = Number(process.env.HARNESS_GIT_TIMEOUT_MS || 2 * 60_000);
+const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
+const MAX_SYSTEM_PROMPT_BYTES = 1024 * 1024;
 const SYSTEM_PROMPT_PATH =
   process.env.SYSTEM_PROMPT_PATH || "/opt/harness/SYSTEM_PROMPT.md";
 /**
@@ -52,28 +79,30 @@ const SYSTEM_PROMPT_PATH =
  * section. Settable to "" to disable (falls back to interactive prompting,
  * which will just time out — useful only for debugging the CLI itself).
  */
-const CLAUDE_PERMISSION_MODE =
-  process.env.CLAUDE_PERMISSION_MODE ?? "bypassPermissions";
+// Claude runs headlessly, so interactive approval modes cannot make progress.
+// `bypassPermissions` is safe only inside this boundary: a non-root container,
+// one allowlisted repository/workdir, platform egress policy, guarded git/gh
+// remote writes, and credentials stripped unless the request carries HITL
+// approval. Keep those enforcement layers independent of the model prompt.
+const CLAUDE_PERMISSION_MODE = process.env.CLAUDE_PERMISSION_MODE ?? "bypassPermissions";
+
+
+export function repoPolicyFromEnv(env: NodeJS.ProcessEnv = process.env): RepoPolicy {
+  const csv = (name: string): Set<string> =>
+    new Set(
+      (env[name] ?? "")
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
+    );
+  const hosts = csv("HARNESS_ALLOWED_REPO_HOSTS");
+  if (hosts.size === 0) hosts.add("github.com");
+  return { allowedHosts: hosts, allowedOrgs: csv("HARNESS_ALLOWED_REPO_ORGS") };
+}
 
 // ---------------------------------------------------------------------------
 // Wire types
 // ---------------------------------------------------------------------------
-
-export interface RepoSpec {
-  url: string;
-  branch?: string;
-}
-
-export interface TurnRequestBody {
-  sessionId: string;
-  executionId: string;
-  threadKey: string;
-  inputLines: string[];
-  model?: string;
-  repo?: RepoSpec;
-  requesterContext?: string;
-  transcript?: string;
-}
 
 export type NdjsonEvent =
   | { kind: "output"; payload: { text: string } }
@@ -94,15 +123,37 @@ export function assemblePrompt(input: {
   requesterContext?: string;
   transcript?: string;
   inputLines: string[];
+  gitPolicy?: string;
 }): string {
   const sections: string[] = [];
   const context = input.requesterContext?.trim();
   if (context) sections.push(context);
   const transcript = input.transcript?.trim();
   if (transcript) sections.push(transcript);
+  const gitPolicy = input.gitPolicy?.trim();
+  if (gitPolicy) sections.push(gitPolicy);
   const body = (input.inputLines ?? []).join("\n").trim();
   if (body) sections.push(body);
   return sections.join("\n\n");
+}
+
+
+/** Runtime instructions mirror the credential gate; the prompt alone is never the gate. */
+export function gitPolicyPrompt(body: TurnRequestBody): string {
+  const lines = ["[Git Policy]"];
+  if (body.codingTask) {
+    lines.push("This is a coding turn. Make the requested changes and commit them on the current dedicated branch before finishing.");
+  }
+  if (!body.remoteGitApproved) {
+    lines.push("Remote git approval was NOT obtained. Do not push, create or edit pull requests, or perform any other remote git write. Remote credentials are unavailable to you.");
+  } else if (body.createPullRequest) {
+    lines.push("Remote git approval was obtained for this turn. Push the dedicated branch and create the requested GitHub pull request before finishing.");
+    const attribution = requesterAttribution(body.requesterContext);
+    if (attribution) lines.push(`The pull request body must contain this exact standalone line: ${attribution}`);
+  } else {
+    lines.push("Remote git approval was obtained for this turn. Remote git writes needed for the requested work are allowed.");
+  }
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +192,14 @@ export function summarizeToolInput(name: string, input: unknown): string {
 export function workBranchName(sessionId: string): string {
   const prefix = sessionId.replace(/[^a-zA-Z0-9-]/g, "").slice(0, 12) || "session";
   return `opentag/session-${prefix}`;
+}
+
+export function resolveSessionWorkdir(root: string, sessionId: string): string {
+  if (!isSafeIdentifier(sessionId)) throw new Error("invalid sessionId");
+  const resolvedRoot = path.resolve(root);
+  const workdir = path.resolve(resolvedRoot, sessionId);
+  if (path.dirname(workdir) !== resolvedRoot) throw new Error("unsafe session workdir");
+  return workdir;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,24 +327,92 @@ export function buildClaudeArgs(opts: {
 // ---------------------------------------------------------------------------
 
 export interface ExecutionTracker {
-  begin(executionId: string): boolean;
+  begin(executionId: string, sessionId?: string, controller?: AbortController): boolean;
   end(executionId: string): void;
   has(executionId: string): boolean;
+  interrupt(sessionId: string, executionId: string): boolean;
+  pendingCount(): number;
+  dispose(): void;
 }
 
-export function createExecutionTracker(): ExecutionTracker {
-  const active = new Set<string>();
+export interface ExecutionTrackerOptions {
+  pendingTtlMs?: number;
+  maxPending?: number;
+  sweepIntervalMs?: number;
+  now?: () => number;
+}
+
+export function createExecutionTracker(options: ExecutionTrackerOptions = {}): ExecutionTracker {
+  const active = new Map<string, { sessionId: string; controller: AbortController }>();
+  const pendingInterrupts = new Map<string, number>();
+  const recentlyEnded = new Map<string, number>();
+  const pendingTtlMs = options.pendingTtlMs ?? 30_000;
+  const maxPending = options.maxPending ?? 1024;
+  const sweepIntervalMs = options.sweepIntervalMs ?? Math.min(1000, pendingTtlMs);
+  const now = options.now ?? Date.now;
+  const pendingKey = (sessionId: string, executionId: string): string => `${sessionId}\0${executionId}`;
+  const sweep = (): void => {
+    const current = now();
+    for (const [key, expiresAt] of pendingInterrupts) {
+      if (expiresAt <= current) pendingInterrupts.delete(key);
+    }
+    for (const [key, expiresAt] of recentlyEnded) {
+      if (expiresAt <= current) recentlyEnded.delete(key);
+    }
+  };
+  const sweepTimer = setInterval(sweep, Math.max(1, sweepIntervalMs));
+  sweepTimer.unref();
   return {
-    begin(executionId) {
+    begin(executionId, sessionId = "", controller = new AbortController()) {
+      sweep();
+      const key = pendingKey(sessionId, executionId);
+      const pendingUntil = pendingInterrupts.get(key);
+      if (pendingUntil !== undefined) {
+        pendingInterrupts.delete(key);
+        if (pendingUntil > now()) return false;
+      }
       if (active.has(executionId)) return false;
-      active.add(executionId);
+      recentlyEnded.delete(key);
+      active.set(executionId, { sessionId, controller });
       return true;
     },
     end(executionId) {
+      const execution = active.get(executionId);
       active.delete(executionId);
+      if (execution) recentlyEnded.set(pendingKey(execution.sessionId, executionId), now() + pendingTtlMs);
     },
     has(executionId) {
       return active.has(executionId);
+    },
+    interrupt(sessionId, executionId) {
+      sweep();
+      const execution = active.get(executionId);
+      if (!execution || execution.sessionId !== sessionId) {
+        const key = pendingKey(sessionId, executionId);
+        // A late/repeated Stop must not poison reuse of an execution that has
+        // already ended. Pending entries exist only for pre-admission reorder.
+        if (recentlyEnded.has(key)) return false;
+        // Covers frontend/container-start reordering. Exact and short-lived:
+        // it cannot poison another execution or arbitrary future work.
+        pendingInterrupts.delete(key);
+        pendingInterrupts.set(key, now() + pendingTtlMs);
+        while (pendingInterrupts.size > maxPending) {
+          const oldest = pendingInterrupts.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          pendingInterrupts.delete(oldest);
+        }
+        return false;
+      }
+      execution.controller.abort();
+      return true;
+    },
+    pendingCount() {
+      return pendingInterrupts.size;
+    },
+    dispose() {
+      clearInterval(sweepTimer);
+      pendingInterrupts.clear();
+      recentlyEnded.clear();
     },
   };
 }
@@ -294,8 +421,10 @@ export function createExecutionTracker(): ExecutionTracker {
 export function decideTurnAdmission(
   tracker: ExecutionTracker,
   executionId: string,
+  sessionId?: string,
+  controller?: AbortController,
 ): "accept" | "duplicate" {
-  return tracker.begin(executionId) ? "accept" : "duplicate";
+  return tracker.begin(executionId, sessionId, controller) ? "accept" : "duplicate";
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +455,8 @@ export function createSessionQueue(): SessionQueue {
 }
 
 // ---------------------------------------------------------------------------
-// Side-effecting helpers (git clone, claude --version) — integration-only,
-// not covered by unit tests (no Docker/git/claude binary assumed available
-// in the test environment; see mission report).
+// Side-effecting helpers (git clone, claude --version). Process execution is
+// async so the HTTP event loop can always admit an exact /interrupt.
 // ---------------------------------------------------------------------------
 
 export interface WorkdirResult {
@@ -337,68 +465,568 @@ export interface WorkdirResult {
   error?: string;
 }
 
-/** `git clone --depth=1 [--branch <branch>]` into workdir, then check out the session work branch. */
-export function ensureWorkdir(
+export interface CloneOperations {
+  execFile(file: string, args: string[], options: AsyncCommandOptions): string | void | Promise<string | void>;
+}
+
+const defaultCloneOperations: CloneOperations = {
+  execFile(file, args, options) {
+    return runAbortableCommand(file, args, options);
+  },
+};
+
+export interface AsyncCommandOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+  timeoutMs?: number;
+}
+
+function abortError(): DOMException {
+  return new DOMException("interrupted", "AbortError");
+}
+
+/** Async, AbortSignal-aware subprocess execution with process-group cleanup. */
+export async function runAbortableCommand(
+  file: string,
+  args: string[],
+  options: AsyncCommandOptions,
+): Promise<string> {
+  const { signal, timeoutMs = GIT_TIMEOUT_MS } = options;
+  if (signal.aborted) throw abortError();
+  const child = spawn(file, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform === "linux",
+  });
+  const terminator = createChildTerminator(child);
+  let stdout = "";
+  let stderr = "";
+  let failure: Error | undefined;
+  let timedOut = false;
+  let outputExceeded = false;
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    stdout += chunk;
+    if (Buffer.byteLength(stdout) > MAX_COMMAND_OUTPUT_BYTES) {
+      outputExceeded = true;
+      terminator.terminate();
+    }
+  });
+  child.stderr?.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
+  const onAbort = (): void => { terminator.terminate(); };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    terminator.terminate();
+  }, timeoutMs);
+  timeout.unref();
+  const code = await new Promise<number | null>((resolve) => {
+    child.once("error", (error) => {
+      failure = error;
+      resolve(null);
+    });
+    child.once("close", resolve);
+  });
+  clearTimeout(timeout);
+  signal.removeEventListener("abort", onAbort);
+  terminator.markExited();
+  terminator.terminate();
+  await terminator.waitForCleanup();
+  if (signal.aborted) throw abortError();
+  if (timedOut) throw new Error(`${file} timed out after ${timeoutMs}ms`);
+  if (outputExceeded) throw new Error(`${file} exceeded ${MAX_COMMAND_OUTPUT_BYTES} output bytes`);
+  if (failure) throw failure;
+  if (code !== 0) {
+    throw new Error(`${file} exited with code ${code}: ${truncateSummary(stderr.trim(), 500)}`);
+  }
+  return stdout.trim();
+}
+
+interface WorkdirIdentity {
+  repoUrl: string;
+  baseBranch: string | null;
+}
+
+const WORKDIR_IDENTITY_FILE = "opentag-workdir.json";
+const MAX_WORKDIR_IDENTITY_BYTES = 4096;
+
+interface WorkdirStat {
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+  size: number;
+}
+
+export interface WorkdirFilesystem {
+  lstat(target: string): Promise<WorkdirStat>;
+  mkdir(target: string, options: { recursive: true }): Promise<unknown>;
+  rename(from: string, to: string): Promise<void>;
+  rm(target: string, options: { recursive: true; force: true }): Promise<void>;
+  writeFile(target: string, data: string, options: { mode: number }): Promise<void>;
+  readIdentity(target: string, maxBytes: number, signal: AbortSignal): Promise<string>;
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortError();
+}
+
+async function filesystemBoundary<T>(
+  signal: AbortSignal,
+  operation: () => Promise<T>,
+): Promise<T> {
+  throwIfAborted(signal);
+  const result = await operation();
+  throwIfAborted(signal);
+  return result;
+}
+
+async function readBoundedFile(
+  target: string,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal);
+  const handle = await fs.promises.open(
+    target,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    throwIfAborted(signal);
+    const stat = await filesystemBoundary(signal, () => handle.stat());
+    if (!stat.isFile() || stat.size > maxBytes) throw new Error("invalid workdir identity");
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let offset = 0;
+    while (offset <= maxBytes) {
+      const { bytesRead } = await filesystemBoundary(signal, () =>
+        handle.read(buffer, offset, buffer.length - offset, offset),
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > maxBytes) throw new Error("workdir identity too large");
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    // Closing cannot mutate session state, but is still awaited so descriptors
+    // cannot accumulate across malformed identity attempts.
+    await handle.close();
+    throwIfAborted(signal);
+  }
+}
+
+export const defaultWorkdirFilesystem: WorkdirFilesystem = {
+  lstat: (target) => fs.promises.lstat(target),
+  mkdir: (target, options) => fs.promises.mkdir(target, options),
+  rename: (from, to) => fs.promises.rename(from, to),
+  rm: (target, options) => fs.promises.rm(target, options),
+  writeFile: (target, data, options) => fs.promises.writeFile(target, data, options),
+  readIdentity: readBoundedFile,
+};
+
+async function optionalLstat(
+  target: string,
+  filesystem: WorkdirFilesystem,
+  signal: AbortSignal,
+): Promise<WorkdirStat | undefined> {
+  try {
+    return await filesystemBoundary(signal, () => filesystem.lstat(target));
+  } catch (err) {
+    if (signal.aborted) throw abortError();
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
+/** Detach live names before recursive removal so late cleanup can only touch quarantine. */
+async function quarantineAndRemove(
+  target: string,
+  filesystem: WorkdirFilesystem,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!await optionalLstat(target, filesystem, signal)) return;
+  const quarantine = `${target}.quarantine-${process.pid}-${randomUUID()}`;
+  throwIfAborted(signal);
+  try {
+    await filesystem.rename(target, quarantine);
+  } catch (err) {
+    if (signal.aborted) throw abortError();
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  // Start cleanup before observing an abort that may have arrived with rename:
+  // from this point only the unique quarantine name is ever removed.
+  const cleanup = filesystem.rm(quarantine, { recursive: true, force: true });
+  const abortedAfterRename = signal.aborted;
+  try {
+    await cleanup;
+  } catch (err) {
+    if (signal.aborted) throw abortError();
+    throw err;
+  }
+  if (abortedAfterRename) throw abortError();
+  throwIfAborted(signal);
+}
+
+function parseWorkdirIdentity(raw: string): WorkdirIdentity {
+  const value: unknown = JSON.parse(raw);
+  if (
+    !value ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    typeof (value as Record<string, unknown>).repoUrl !== "string" ||
+    !(
+      (value as Record<string, unknown>).baseBranch === null ||
+      typeof (value as Record<string, unknown>).baseBranch === "string"
+    )
+  ) throw new Error("invalid workdir identity");
+  return value as WorkdirIdentity;
+}
+
+async function existingWorkdirMatches(
+  workdir: string,
+  repo: RepoSpec,
+  operations: CloneOperations,
+  signal: AbortSignal,
+  filesystem: WorkdirFilesystem,
+): Promise<boolean> {
+  try {
+    throwIfAborted(signal);
+    const origin = await operations.execFile(
+      "/usr/bin/git",
+      ["-C", workdir, "remote", "get-url", "origin"],
+      { env: gitAuthenticationEnv(process.env), signal },
+    );
+    throwIfAborted(signal);
+    if (typeof origin !== "string" || origin.trim() !== repo.url) return false;
+    const identityPath = path.join(workdir, ".git", WORKDIR_IDENTITY_FILE);
+    const identity = parseWorkdirIdentity(await filesystemBoundary(
+      signal,
+      () => filesystem.readIdentity(identityPath, MAX_WORKDIR_IDENTITY_BYTES, signal),
+    ));
+    if (identity.repoUrl !== repo.url || identity.baseBranch !== (repo.branch ?? null)) return false;
+    if (repo.branch) {
+      await operations.execFile(
+        "/usr/bin/git",
+        ["-C", workdir, "rev-parse", "--verify", `refs/remotes/origin/${repo.branch}`],
+        { env: gitAuthenticationEnv(process.env), signal },
+      );
+      throwIfAborted(signal);
+    }
+    return true;
+  } catch (err) {
+    if (signal.aborted) throw err;
+    return false;
+  }
+}
+
+export function gitAuthenticationEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...source,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: source.GIT_ASKPASS || "/usr/local/bin/opentag-git-askpass",
+  };
+}
+
+/** Clone into a disposable sibling and rename only after checkout succeeds. */
+export async function ensureWorkdir(
   workdir: string,
   repo: RepoSpec,
   sessionId: string,
-): WorkdirResult {
+  operations: CloneOperations = defaultCloneOperations,
+  signal: AbortSignal = new AbortController().signal,
+  filesystem: WorkdirFilesystem = defaultWorkdirFilesystem,
+): Promise<WorkdirResult> {
   const branch = workBranchName(sessionId);
-  if (fs.existsSync(path.join(workdir, ".git"))) {
-    return { ok: true, branch };
-  }
+  const partial = `${workdir}.partial-${process.pid}-${randomUUID()}`;
   try {
-    fs.mkdirSync(path.dirname(workdir), { recursive: true });
+    await filesystemBoundary(signal, () => filesystem.mkdir(path.dirname(workdir), { recursive: true }));
+    const workdirStat = await optionalLstat(workdir, filesystem, signal);
+    const gitStat = workdirStat?.isDirectory() && !workdirStat.isSymbolicLink()
+      ? await optionalLstat(path.join(workdir, ".git"), filesystem, signal)
+      : undefined;
+    if (
+      gitStat?.isDirectory() &&
+      !gitStat.isSymbolicLink() &&
+      await existingWorkdirMatches(workdir, repo, operations, signal, filesystem)
+    ) {
+      throwIfAborted(signal);
+      return { ok: true, branch };
+    }
+    // A stale, mismatched, symlinked, or partial live path is first detached.
+    await quarantineAndRemove(workdir, filesystem, signal);
+    throwIfAborted(signal);
     const cloneArgs = ["clone", "--depth=1"];
     if (repo.branch) cloneArgs.push("--branch", repo.branch);
-    cloneArgs.push(repo.url, workdir);
-    execFileSync("git", cloneArgs, { stdio: "pipe" });
-    execFileSync("git", ["-C", workdir, "checkout", "-q", "-b", branch], {
-      stdio: "pipe",
+    cloneArgs.push(repo.url, partial);
+    await operations.execFile("/usr/bin/git", cloneArgs, {
+      env: gitAuthenticationEnv(process.env),
+      signal,
     });
+    throwIfAborted(signal);
+    await operations.execFile("/usr/bin/git", ["-C", partial, "checkout", "-q", "-b", branch], {
+      env: gitAuthenticationEnv(process.env),
+      signal,
+    });
+    throwIfAborted(signal);
+    await filesystemBoundary(signal, () => filesystem.writeFile(
+      path.join(partial, ".git", WORKDIR_IDENTITY_FILE),
+      `${JSON.stringify({ repoUrl: repo.url, baseBranch: repo.branch ?? null })}\n`,
+      { mode: 0o600 },
+    ));
+    throwIfAborted(signal);
+    await filesystem.rename(partial, workdir);
+    // Never remove the live path if Stop lands after this atomic publication.
+    throwIfAborted(signal);
     return { ok: true, branch };
   } catch (err) {
+    try {
+      // Cleanup is restricted to this attempt's unique, never-published name.
+      await quarantineAndRemove(partial, filesystem, new AbortController().signal);
+    } catch {
+      // The setup error remains authoritative; future unique attempts cannot
+      // collide with or publish this partial path.
+    }
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-let cachedClaudeVersion: string | undefined;
+export interface PullRequestInfo {
+  body: string;
+  headSha: string;
+  url?: string;
+}
 
-function getClaudeVersion(): string {
-  if (cachedClaudeVersion !== undefined) return cachedClaudeVersion;
-  try {
-    const out = execFileSync(CLAUDE_BIN, ["--version"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    cachedClaudeVersion = out.trim() || "missing";
-  } catch {
-    cachedClaudeVersion = "missing";
+export interface OutcomeOperations {
+  execFile(
+    file: string,
+    args: string[],
+    options: AsyncCommandOptions & { cwd: string },
+  ): string | Promise<string>;
+}
+
+const defaultOutcomeOperations: OutcomeOperations = {
+  execFile(file, args, options) {
+    return runAbortableCommand(file, args, options);
+  },
+};
+
+export interface GitBaseline {
+  head: string;
+  tree: string;
+}
+
+export type TurnOutcome = { ok: true; prUrl?: string } | { ok: false; error: string };
+
+export function outcomeTerminalEvents(
+  outcome: TurnOutcome,
+  successSummary: string,
+): NdjsonEvent[] {
+  if (!outcome.ok) {
+    const message = `postcondition_failed: ${outcome.error}`;
+    return [
+      { kind: "error", payload: { message } },
+      { kind: "done", payload: { ok: false, summary: message } },
+    ];
   }
+  return [
+    {
+      kind: "done",
+      payload: {
+        ok: true,
+        summary: outcome.prUrl ? `completed; pull request: ${outcome.prUrl}` : successSummary,
+      },
+    },
+  ];
+}
+
+/** Mechanical postconditions; injected operations keep all unit tests offline. */
+export async function verifyTurnOutcome(
+  body: TurnRequestBody,
+  workdir: string,
+  baseline: GitBaseline | undefined,
+  operations: OutcomeOperations = defaultOutcomeOperations,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<TurnOutcome> {
+  if (!body.codingTask) return { ok: true };
+  const branch = workBranchName(body.sessionId);
+  try {
+    const git = async (args: string[]): Promise<string> =>
+      await operations.execFile("/usr/bin/git", args, {
+        cwd: workdir,
+        env: gitAuthenticationEnv(process.env),
+        signal,
+      });
+    const currentBranch = await git(["branch", "--show-current"]);
+    const currentHead = await git(["rev-parse", "HEAD"]);
+    const currentTree = await git(["rev-parse", "HEAD^{tree}"]);
+    if (currentBranch !== branch) return { ok: false, error: `expected commit on ${branch}` };
+    if (!baseline || currentHead === baseline.head) {
+      return { ok: false, error: "coding turn produced no new commit" };
+    }
+    await git(["merge-base", "--is-ancestor", baseline.head, currentHead]);
+    if (currentTree === baseline.tree) {
+      return { ok: false, error: "coding turn produced no changed tree" };
+    }
+    if (!body.createPullRequest) return { ok: true };
+    if (!body.remoteGitApproved) return { ok: false, error: "remote git was not approved" };
+    const attribution = requesterAttribution(body.requesterContext);
+    if (!attribution) return { ok: false, error: "requester attribution is missing" };
+    if (!body.repo) return { ok: false, error: "pull request repository is missing" };
+    const repoUrl = new URL(body.repo.url);
+    const [owner, repoNameWithSuffix] = repoUrl.pathname.split("/").filter(Boolean);
+    const repoName = repoNameWithSuffix?.replace(/\.git$/i, "");
+    if (!owner || !repoName) return { ok: false, error: "pull request repository is invalid" };
+    const rawPr = await operations.execFile(
+      "/usr/bin/gh",
+      [
+        "api",
+        "--method",
+        "GET",
+        `repos/${owner}/${repoName}/pulls?head=${encodeURIComponent(`${owner}:${branch}`)}&state=open`,
+      ],
+      {
+        cwd: workdir,
+        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
+        signal,
+      },
+    );
+    const parsedPrs = JSON.parse(rawPr) as Array<{
+      body?: unknown;
+      html_url?: unknown;
+      head?: { ref?: unknown; sha?: unknown };
+    }>;
+    const parsedPr = Array.isArray(parsedPrs)
+      ? parsedPrs.find((candidate) => candidate.head?.ref === branch)
+      : undefined;
+    const pr: PullRequestInfo | undefined = parsedPr &&
+      typeof parsedPr.body === "string" && typeof parsedPr.head?.sha === "string"
+        ? {
+            body: parsedPr.body,
+            headSha: parsedPr.head.sha,
+            ...(typeof parsedPr.html_url === "string" ? { url: parsedPr.html_url } : {}),
+          }
+        : undefined;
+    if (!pr) return { ok: false, error: `no pull request exists for ${branch}` };
+    if (pr.headSha !== currentHead) {
+      return { ok: false, error: "pull request head does not match the verified local commit" };
+    }
+    const attributionLines = pr.body
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("Prompted by:"));
+    if (attributionLines.length !== 1 || attributionLines[0] !== attribution) {
+      return { ok: false, error: `pull request body must contain exactly '${attribution}'` };
+    }
+    return { ok: true, ...(pr.url ? { prUrl: pr.url } : {}) };
+  } catch (err) {
+    if (signal.aborted) throw err;
+    return { ok: false, error: `git outcome verification failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+let cachedClaudeVersion: Promise<string> | undefined;
+
+async function getClaudeVersion(): Promise<string> {
+  if (cachedClaudeVersion !== undefined) return cachedClaudeVersion;
+  const controller = new AbortController();
+  cachedClaudeVersion = runAbortableCommand(CLAUDE_BIN, ["--version"], {
+    signal: controller.signal,
+    timeoutMs: 5000,
+  }).then((out) => out || "missing", () => "missing");
   return cachedClaudeVersion;
 }
 
 let cachedSystemPromptText: string | undefined;
 
-function loadSystemPromptText(): string {
+async function loadSystemPromptText(signal: AbortSignal): Promise<string> {
   if (cachedSystemPromptText !== undefined) return cachedSystemPromptText;
   try {
-    cachedSystemPromptText = fs.readFileSync(SYSTEM_PROMPT_PATH, "utf8");
-  } catch {
+    cachedSystemPromptText = await readBoundedFile(
+      SYSTEM_PROMPT_PATH,
+      MAX_SYSTEM_PROMPT_BYTES,
+      signal,
+    );
+  } catch (err) {
+    if (signal.aborted) throw err;
     cachedSystemPromptText = "";
   }
   return cachedSystemPromptText;
+}
+
+export function buildClaudeEnv(
+  source: NodeJS.ProcessEnv,
+  model?: string,
+  _remoteGitApproved = false,
+  repo?: RepoSpec,
+  sessionId?: string,
+  executionId?: string,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
+  // Repository-controlled code receives only obvious sentinels. Real Anthropic,
+  // GitHub, OAuth, and frontend bearer credentials exist solely in the trusted
+  // Worker outbound handlers and can never be read from /proc or child env.
+  delete env.HARNESS_AUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.OPENTAG_REMOTE_GIT_APPROVED;
+  delete env.OPENTAG_EXECUTION_ID;
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete env[key];
+  }
+  env.ANTHROPIC_API_KEY = "opentag-egress-injected-not-a-secret";
+  env.GITHUB_TOKEN = "opentag-egress-injected-not-a-secret";
+  env.GH_TOKEN = "opentag-egress-injected-not-a-secret";
+  if (repo) {
+    const url = new URL(repo.url);
+    env.OPENTAG_REPO_SLUG = url.pathname.replace(/^\//, "").replace(/\.git$/i, "");
+  }
+  if (sessionId) env.OPENTAG_WORK_BRANCH = workBranchName(sessionId);
+  if (executionId) {
+    env.OPENTAG_EXECUTION_ID = executionId;
+    // Git's per-process configuration propagates the exact execution binding
+    // to smart-HTTP descendants without persisting it in repository config.
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraHeader";
+    env.GIT_CONFIG_VALUE_0 = `${EXECUTION_BINDING_HEADER}: ${executionId}`;
+  }
+  if (model) env.CLAUDE_MODEL = model;
+  return env;
 }
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+export class BodyTooLargeError extends Error {}
+
+function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    let size = 0;
+    let settled = false;
+    const declaredLength = Number(req.headers["content-length"] ?? 0);
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      req.resume();
+      reject(new BodyTooLargeError("request body too large"));
+      return;
+    }
+    const onData = (chunk: Buffer): void => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        settled = true;
+        req.off("data", onData);
+        req.resume();
+        reject(new BodyTooLargeError("request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    };
+    req.on("data", onData);
+    req.on("end", () => {
+      if (!settled) resolve(Buffer.concat(chunks).toString("utf8"));
+    });
     req.on("error", reject);
   });
 }
@@ -413,18 +1041,108 @@ function writeNdjson(res: http.ServerResponse, event: NdjsonEvent): void {
   res.write(`${JSON.stringify(event)}\n`);
 }
 
-function isValidTurnRequest(body: unknown): body is TurnRequestBody {
-  if (!body || typeof body !== "object") return false;
-  const record = body as Record<string, unknown>;
-  return (
-    typeof record.sessionId === "string" &&
-    record.sessionId.length > 0 &&
-    typeof record.executionId === "string" &&
-    record.executionId.length > 0 &&
-    typeof record.threadKey === "string" &&
-    record.threadKey.length > 0 &&
-    Array.isArray(record.inputLines)
-  );
+export function hasValidBearerToken(header: string | undefined, secret: string | undefined): boolean {
+  if (!secret || !header?.startsWith("Bearer ")) return false;
+  const presented = Buffer.from(header.slice("Bearer ".length), "utf8");
+  const expected = Buffer.from(secret, "utf8");
+  return presented.length === expected.length && timingSafeEqual(presented, expected);
+}
+
+export interface ChildTerminator {
+  terminate(): boolean;
+  markExited(): void;
+  waitForCleanup(): Promise<void>;
+}
+
+export interface ProcessGroupOperations {
+  platform: NodeJS.Platform;
+  kill(pid: number, signal: NodeJS.Signals): void;
+}
+
+const defaultProcessGroupOperations: ProcessGroupOperations = {
+  platform: process.platform,
+  kill(pid, signal) {
+    process.kill(pid, signal);
+  },
+};
+
+/** Idempotent graceful termination with one bounded SIGKILL escalation. */
+export function createChildTerminator(
+  child: { pid?: number; kill(signal?: NodeJS.Signals): boolean },
+  graceMs = 5000,
+  processGroups: ProcessGroupOperations = defaultProcessGroupOperations,
+): ChildTerminator {
+  let requested = false;
+  let leaderExited = false;
+  let cleanupFinished = false;
+  let escalation: NodeJS.Timeout | undefined;
+  let finishCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => {
+    finishCleanup = resolve;
+  });
+  const finish = (): void => {
+    if (cleanupFinished) return;
+    cleanupFinished = true;
+    if (escalation) clearTimeout(escalation);
+    finishCleanup();
+  };
+  const signal = (value: NodeJS.Signals): boolean => {
+    if (processGroups.platform === "linux" && typeof child.pid === "number" && child.pid > 0) {
+      try {
+        processGroups.kill(-child.pid, value);
+        return true;
+      } catch (err) {
+        // ESRCH means the group already exited; anything else is unexpected.
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
+        return false;
+      }
+    }
+    // ChildProcess.kill() addresses a PID, not an owned process handle. Never
+    // call it after exit, when that PID could already belong to another process.
+    return leaderExited ? false : child.kill(value);
+  };
+  return {
+    terminate() {
+      if (requested) return false;
+      requested = true;
+      if (!signal("SIGTERM")) {
+        finish();
+        return true;
+      }
+      escalation = setTimeout(() => {
+        if (!cleanupFinished) {
+          signal("SIGKILL");
+          finish();
+        }
+      }, graceMs);
+      escalation.unref();
+      return true;
+    },
+    markExited() {
+      leaderExited = true;
+      // A detached Linux leader can leave descendants in its process group.
+      // Their lifecycle ends only after terminate() has swept that group.
+      if (processGroups.platform !== "linux") finish();
+      else if (requested && !signal("SIGTERM")) finish();
+    },
+    waitForCleanup() {
+      return cleanup;
+    },
+  };
+}
+
+export function buildClaudeSpawnOptions(
+  workdir: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): { cwd: string; env: NodeJS.ProcessEnv; detached: boolean } {
+  return {
+    cwd: workdir,
+    env,
+    // On Linux Claude leads a process group, allowing abort/timeout to reach
+    // every tool descendant via a negative PGID.
+    detached: platform === "linux",
+  };
 }
 
 /**
@@ -433,21 +1151,38 @@ function isValidTurnRequest(body: unknown): body is TurnRequestBody {
  * timeout) resolves after writing its own terminal `done` event, per the
  * never-silent contract (GOAL.md house rule 3 / this file's mission).
  */
-async function runTurnStreaming(
+export async function runTurnStreaming(
   body: TurnRequestBody,
   res: http.ServerResponse,
+  signal: AbortSignal,
 ): Promise<void> {
   let doneWritten = false;
   const emit = (event: NdjsonEvent): void => {
     if (doneWritten) return;
+    if (signal.aborted && event.kind !== "done") return;
+    if (event.kind === "done" && event.payload.ok && signal.aborted) {
+      event = { kind: "done", payload: { ok: false, summary: "interrupted" } };
+    }
     writeNdjson(res, event);
     if (event.kind === "done") doneWritten = true;
   };
+  const emitInterrupted = (): void => {
+    emit({ kind: "done", payload: { ok: false, summary: "interrupted" } });
+  };
 
-  const workdir = path.join(WORK_ROOT, body.sessionId);
+  if (signal.aborted) { emitInterrupted(); return; }
+  const workdir = resolveSessionWorkdir(WORK_ROOT, body.sessionId);
+  let baseline: GitBaseline | undefined;
 
   if (body.repo) {
-    const cloneResult = ensureWorkdir(workdir, body.repo, body.sessionId);
+    const cloneResult = await ensureWorkdir(
+      workdir,
+      body.repo,
+      body.sessionId,
+      defaultCloneOperations,
+      signal,
+    );
+    if (signal.aborted) { emitInterrupted(); return; }
     if (!cloneResult.ok) {
       emit({
         kind: "error",
@@ -458,8 +1193,16 @@ async function runTurnStreaming(
     }
   } else {
     try {
-      fs.mkdirSync(workdir, { recursive: true });
+      const stat = await optionalLstat(workdir, defaultWorkdirFilesystem, signal);
+      if (stat && (stat.isSymbolicLink() || !stat.isDirectory())) {
+        await quarantineAndRemove(workdir, defaultWorkdirFilesystem, signal);
+      }
+      await filesystemBoundary(
+        signal,
+        () => defaultWorkdirFilesystem.mkdir(workdir, { recursive: true }),
+      );
     } catch (err) {
+      if (signal.aborted) { emitInterrupted(); return; }
       emit({
         kind: "error",
         payload: {
@@ -470,25 +1213,58 @@ async function runTurnStreaming(
       return;
     }
   }
+  if (signal.aborted) { emitInterrupted(); return; }
+
+  if (body.codingTask) {
+    try {
+      const readRevision = (revision: string): Promise<string> =>
+        runAbortableCommand("/usr/bin/git", ["rev-parse", revision], {
+          cwd: workdir,
+          signal,
+          timeoutMs: GIT_TIMEOUT_MS,
+          env: gitAuthenticationEnv(process.env),
+        });
+      baseline = { head: await readRevision("HEAD"), tree: await readRevision("HEAD^{tree}") };
+    } catch {
+      if (signal.aborted) { emitInterrupted(); return; }
+      emit({ kind: "error", payload: { message: "coding workdir has no baseline commit" } });
+      emit({ kind: "done", payload: { ok: false, summary: "coding workdir invalid" } });
+      return;
+    }
+  }
 
   const prompt = assemblePrompt({
     requesterContext: body.requesterContext,
     transcript: body.transcript,
+    gitPolicy: gitPolicyPrompt(body),
     inputLines: body.inputLines,
   });
-  const args = buildClaudeArgs({
-    prompt,
-    model: body.model,
-    systemPromptText: loadSystemPromptText(),
-  });
+  let systemPromptText: string;
+  try {
+    systemPromptText = await loadSystemPromptText(signal);
+  } catch {
+    emitInterrupted();
+    return;
+  }
+  throwIfAborted(signal);
+  const args = buildClaudeArgs({ prompt, model: body.model, systemPromptText });
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (body.model) env.CLAUDE_MODEL = body.model;
+  const env = buildClaudeEnv(
+    process.env,
+    body.model,
+    body.remoteGitApproved === true,
+    body.repo,
+    body.sessionId,
+    body.executionId,
+  );
+  let claudeResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(CLAUDE_BIN, args, { cwd: workdir, env });
+    throwIfAborted(signal);
+    child = spawn(CLAUDE_BIN, args, buildClaudeSpawnOptions(workdir, env));
   } catch (err) {
+    if (signal.aborted) { emitInterrupted(); return; }
     emit({
       kind: "error",
       payload: {
@@ -499,21 +1275,40 @@ async function runTurnStreaming(
     return;
   }
 
+  let terminalFailure: string | undefined;
+  const terminator = createChildTerminator(child);
+  const abortChild = (): void => {
+    terminalFailure = "interrupted";
+    terminator.terminate();
+  };
+  signal.addEventListener("abort", abortChild, { once: true });
+  if (signal.aborted) abortChild();
+
+  // `exit` is earlier than `close`: descendants can inherit Claude's stdio and
+  // keep `close` pending. Sweep the detached group as soon as its leader exits.
+  child.once("exit", () => {
+    terminator.markExited();
+    terminator.terminate();
+  });
+
   const timeout = setTimeout(() => {
+    terminalFailure = "turn timed out";
     emit({
       kind: "error",
       payload: { message: `turn timed out after ${TURN_TIMEOUT_MS}ms` },
     });
-    emit({ kind: "done", payload: { ok: false, summary: "turn timed out" } });
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+    terminator.terminate();
   }, TURN_TIMEOUT_MS);
   timeout.unref();
 
   if (child.stdout) {
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
-      for (const event of mapStreamJsonLine(line)) emit(event);
+      for (const event of mapStreamJsonLine(line)) {
+        // A successful terminal event is held until git/PR postconditions pass.
+        if (event.kind === "done") claudeResult = event;
+        else emit(event);
+      }
     });
   }
 
@@ -523,16 +1318,26 @@ async function runTurnStreaming(
   });
 
   await new Promise<void>((resolve) => {
-    child.on("error", (err) => {
+    child.on("error", async (err) => {
       clearTimeout(timeout);
+      terminator.markExited();
+      terminator.terminate();
+      await terminator.waitForCleanup();
+      signal.removeEventListener("abort", abortChild);
       emit({ kind: "error", payload: { message: `claude process error: ${err.message}` } });
       emit({ kind: "done", payload: { ok: false, summary: "claude process error" } });
       resolve();
     });
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       clearTimeout(timeout);
+      terminator.markExited();
+      terminator.terminate();
+      await terminator.waitForCleanup();
+      signal.removeEventListener("abort", abortChild);
       if (!doneWritten) {
-        if (code !== 0) {
+        if (terminalFailure) {
+          emit({ kind: "done", payload: { ok: false, summary: terminalFailure } });
+        } else if (code !== 0) {
           emit({
             kind: "error",
             payload: {
@@ -540,16 +1345,42 @@ async function runTurnStreaming(
             },
           });
         }
-        emit({
-          kind: "done",
-          payload: {
-            ok: code === 0,
-            summary:
-              code === 0
-                ? "completed without an explicit result event"
-                : `process exited with code ${code}`,
-          },
-        });
+        if (!terminalFailure && !signal.aborted && code === 0 && claudeResult?.payload.ok !== false) {
+          let outcome: TurnOutcome;
+          try {
+            outcome = await verifyTurnOutcome(
+              body,
+              workdir,
+              baseline,
+              defaultOutcomeOperations,
+              signal,
+            );
+          } catch {
+            emitInterrupted();
+            resolve();
+            return;
+          }
+          // Give an already-arrived /interrupt request one event-loop turn to
+          // run before the success gate. No await occurs after this check.
+          await new Promise<void>((next) => setImmediate(next));
+          if (signal.aborted) {
+            emitInterrupted();
+            resolve();
+            return;
+          }
+          for (const event of outcomeTerminalEvents(
+            outcome,
+            claudeResult?.payload.summary ?? "completed without an explicit result event",
+          )) emit(event);
+        } else if (!terminalFailure) {
+          emit({
+            kind: "done",
+            payload: {
+              ok: false,
+              summary: claudeResult?.payload.summary ?? `process exited with code ${code}`,
+            },
+          });
+        }
       }
       resolve();
     });
@@ -559,6 +1390,10 @@ async function runTurnStreaming(
 interface ServerContext {
   executionTracker: ExecutionTracker;
   sessionQueue: SessionQueue;
+  authToken: string | undefined;
+  maxBodyBytes: number;
+  repoPolicy: RepoPolicy;
+  runTurn: typeof runTurnStreaming;
 }
 
 async function handleRequest(
@@ -572,13 +1407,67 @@ async function handleRequest(
     sendJson(res, 200, {
       ok: true,
       service: "opentag-harness",
-      claudeCode: getClaudeVersion(),
+      claudeCode: await getClaudeVersion(),
     });
     return;
   }
 
+  if (url.pathname === "/interrupt" && req.method === "POST") {
+    if (!ctx.authToken) {
+      sendJson(res, 503, { error: "harness_auth_not_configured" });
+      return;
+    }
+    const authorization = req.headers.authorization;
+    if (!hasValidBearerToken(Array.isArray(authorization) ? authorization[0] : authorization, ctx.authToken)) {
+      res.setHeader("www-authenticate", "Bearer");
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+    let raw: string;
+    try {
+      raw = await readBody(req, ctx.maxBodyBytes);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "body_too_large" });
+        return;
+      }
+      throw err;
+    }
+    let body: unknown;
+    try { body = raw ? JSON.parse(raw) : {}; }
+    catch { sendJson(res, 400, { error: "invalid_json" }); return; }
+    const validation = validateInterruptRequest(body);
+    if (!validation.ok) { sendJson(res, 400, { error: validation.error }); return; }
+    const interrupted = ctx.executionTracker.interrupt(
+      validation.body.sessionId,
+      validation.body.executionId,
+    );
+    sendJson(res, 200, { interrupted });
+    return;
+  }
+
   if (url.pathname === "/turn" && req.method === "POST") {
-    const raw = await readBody(req);
+    if (!ctx.authToken) {
+      sendJson(res, 503, { error: "harness_auth_not_configured" });
+      return;
+    }
+    const authorization = req.headers.authorization;
+    if (!hasValidBearerToken(Array.isArray(authorization) ? authorization[0] : authorization, ctx.authToken)) {
+      res.setHeader("www-authenticate", "Bearer");
+      sendJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    let raw: string;
+    try {
+      raw = await readBody(req, ctx.maxBodyBytes);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "body_too_large" });
+        return;
+      }
+      throw err;
+    }
     let body: unknown;
     try {
       body = raw ? JSON.parse(raw) : {};
@@ -586,35 +1475,69 @@ async function handleRequest(
       sendJson(res, 400, { error: "invalid_json" });
       return;
     }
-    if (!isValidTurnRequest(body)) {
-      sendJson(res, 400, { error: "invalid_request" });
+    const validation = validateTurnRequest(body, ctx.repoPolicy);
+    if (!validation.ok) {
+      sendJson(res, 400, { error: validation.error });
       return;
     }
+    const turnBody = validation.body;
 
-    if (decideTurnAdmission(ctx.executionTracker, body.executionId) === "duplicate") {
+    const abortController = new AbortController();
+    if (decideTurnAdmission(
+      ctx.executionTracker,
+      turnBody.executionId,
+      turnBody.sessionId,
+      abortController,
+    ) === "duplicate") {
       sendJson(res, 409, { error: "execution_in_flight" });
       return;
     }
 
     res.writeHead(200, { "content-type": "application/x-ndjson" });
+    const abort = (): void => abortController.abort();
+    const abortOnResponseClose = (): void => {
+      if (!res.writableEnded) abort();
+    };
+    req.once("aborted", abort);
+    res.once("close", abortOnResponseClose);
     try {
-      await ctx.sessionQueue.run(body.sessionId, () => runTurnStreaming(body, res));
+      await ctx.sessionQueue.run(turnBody.sessionId, async () => {
+        if (abortController.signal.aborted) return;
+        await ctx.runTurn(turnBody, res, abortController.signal);
+      });
     } finally {
-      ctx.executionTracker.end(body.executionId);
+      req.off("aborted", abort);
+      res.off("close", abortOnResponseClose);
+      ctx.executionTracker.end(turnBody.executionId);
     }
-    res.end();
+    if (!res.writableEnded && !res.destroyed) res.end();
     return;
   }
 
   sendJson(res, 404, { error: "not_found" });
 }
 
-export function createHarnessServer(): http.Server {
+export interface HarnessServerOptions {
+  /** null explicitly exercises/configures fail-closed mode; undefined reads the environment. */
+  authToken?: string | null;
+  maxBodyBytes?: number;
+  repoPolicy?: RepoPolicy;
+  runTurn?: typeof runTurnStreaming;
+}
+
+export function createHarnessServer(options: HarnessServerOptions = {}): http.Server {
   const ctx: ServerContext = {
     executionTracker: createExecutionTracker(),
     sessionQueue: createSessionQueue(),
+    authToken: options.authToken === null ? undefined : (options.authToken ?? process.env.HARNESS_AUTH_TOKEN),
+    maxBodyBytes:
+      Number.isFinite(options.maxBodyBytes ?? MAX_BODY_BYTES) && (options.maxBodyBytes ?? MAX_BODY_BYTES) > 0
+        ? (options.maxBodyBytes ?? MAX_BODY_BYTES)
+        : 1024 * 1024,
+    repoPolicy: options.repoPolicy ?? repoPolicyFromEnv(),
+    runTurn: options.runTurn ?? runTurnStreaming,
   };
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     handleRequest(req, res, ctx).catch((err) => {
       if (!res.headersSent) {
         sendJson(res, 500, {
@@ -626,6 +1549,8 @@ export function createHarnessServer(): http.Server {
       }
     });
   });
+  server.once("close", () => ctx.executionTracker.dispose());
+  return server;
 }
 
 function startServer(): void {
@@ -633,6 +1558,21 @@ function startServer(): void {
   server.listen(PORT, () => {
     console.log(`opentag-harness listening on :${PORT}`);
   });
+  let shuttingDown = false;
+  const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    server.close((error) => {
+      if (error) {
+        console.error("opentag-harness shutdown failed", error);
+        process.exitCode = 1;
+      }
+    });
+    const forceClose = setTimeout(() => server.closeAllConnections(), 5000);
+    forceClose.unref();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
 // Only start listening when invoked directly (`node harness-server.js`) —

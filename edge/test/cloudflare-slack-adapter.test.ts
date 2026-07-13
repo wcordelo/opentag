@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { CloudflareSlackAdapter } from "../src/slack/cloudflare-slack-adapter.js";
 import type { IngressSink } from "@copilotkit/channels";
+import { requireRequestContext } from "../src/request-context.js";
 
 function makeSink(): IngressSink & {
   turns: unknown[];
@@ -136,9 +137,22 @@ describe("CloudflareSlackAdapter", () => {
       });
       expect(result.handled).toBe(true);
       expect(sink.commands).toHaveLength(1);
-      const cmd = sink.commands[0] as { command: string; text: string };
+      const cmd = sink.commands[0] as {
+        command: string;
+        text: string;
+        conversationKey: string;
+        eventId?: string;
+        user: object;
+      };
       expect(cmd.command).toBe("research");
       expect(cmd.text).toBe("durable objects");
+      expect(cmd.conversationKey).toBe("C9::C9");
+      expect(cmd.eventId).toBe("/research:U9:trig1");
+      expect(requireRequestContext(cmd.user).inbound).toMatchObject({
+        channel: "C9",
+        ts: "/research:U9:trig1",
+        identity: "/research:U9:trig1",
+      });
     } finally {
       restoreFetch();
     }
@@ -166,6 +180,63 @@ describe("CloudflareSlackAdapter", () => {
       };
       expect(cmd.conversationKey).toBe("C9::999.111");
       expect(cmd.replyTarget.threadTs).toBe("999.111");
+      expect(requireRequestContext((cmd as unknown as { user: object }).user).inbound)
+        .toMatchObject({
+          channel: "C9",
+          ts: "/research:U9:trig1",
+          threadTs: "999.111",
+          identity: "/research:U9:trig1",
+        });
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("rejects slash commands without Slack's stable trigger identity", async () => {
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+    });
+    const sink = makeSink();
+    await adapter.start(sink);
+    expect(await adapter.handleCommandBody({
+      command: "/agent",
+      text: "do work",
+      channel_id: "C9",
+      user_id: "U9",
+      team_id: "T9",
+    })).toEqual({ handled: false });
+    expect(sink.commands).toHaveLength(0);
+  });
+
+  it("binds identical command identity and partition on Slack redelivery", async () => {
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const body = {
+        command: "/agent",
+        text: "do work",
+        channel_id: "C9",
+        user_id: "U9",
+        trigger_id: "stable-trigger",
+        team_id: "T9",
+      };
+      await adapter.handleCommandBody(body);
+      await adapter.handleCommandBody(body);
+      const commands = sink.commands as Array<{
+        eventId?: string;
+        conversationKey: string;
+        user: object;
+      }>;
+      expect(commands.map((cmd) => cmd.eventId)).toEqual([
+        "/agent:U9:stable-trigger",
+        "/agent:U9:stable-trigger",
+      ]);
+      expect(commands.map((cmd) => cmd.conversationKey)).toEqual(["C9::C9", "C9::C9"]);
+      expect(commands.map((cmd) => requireRequestContext(cmd.user).inbound?.identity))
+        .toEqual(["/agent:U9:stable-trigger", "/agent:U9:stable-trigger"]);
     } finally {
       restoreFetch();
     }
@@ -247,7 +318,14 @@ describe("CloudflareSlackAdapter", () => {
       });
       expect(result.handled).toBe(true);
       expect(sink.turns).toHaveLength(1);
-      const ok = await adapter.react("C1::50.0", "heart");
+      const turn = sink.turns[0] as { user: object };
+      const context = requireRequestContext(turn.user);
+      expect(context).toMatchObject({
+        teamId: "T1",
+        requesterId: "U1",
+        inbound: { channel: "C1", ts: "55.5", threadTs: "50.0" },
+      });
+      const ok = await adapter.react("C1::50.0", "heart", context.inbound);
       expect(ok).toBe(true);
       expect(reactions[0]).toMatchObject({
         channel: "C1",

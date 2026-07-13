@@ -45,6 +45,27 @@ const EVENTS_DDL = [
      created_at INTEGER NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS events_execution ON events(execution_id, id)`,
+  `CREATE TABLE IF NOT EXISTS executions (
+     execution_id TEXT PRIMARY KEY,
+     forwarded_message_id TEXT UNIQUE,
+     started_at INTEGER NOT NULL,
+     terminal_at INTEGER
+   )`,
+  `INSERT OR IGNORE INTO executions
+     (execution_id, forwarded_message_id, started_at, terminal_at)
+   SELECT execution_id, NULL, MIN(created_at),
+          MAX(CASE WHEN kind = 'done' THEN created_at ELSE NULL END)
+   FROM events
+   GROUP BY execution_id`,
+  `CREATE TABLE IF NOT EXISTS cancelled_executions (
+     execution_id TEXT PRIMARY KEY,
+     cancelled_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS pending_cancellation (
+     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+     cancelled_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL
+   )`,
 ];
 
 /** Create the events table + index. Idempotent; safe on every DO construction. */
@@ -74,6 +95,8 @@ const KEY_INTERRUPTED = "session:interrupted";
 
 /** Sentinel used when a caller doesn't pin a harness explicitly. */
 const DEFAULT_HARNESS = "default";
+/** Covers Slack ingress/registry interleavings without poisoning a quiet thread. */
+export const PENDING_CANCELLATION_TTL_MS = 30_000;
 
 // ── KV seam ─────────────────────────────────────────────────────────────────
 
@@ -136,9 +159,14 @@ export class SessionEventEngine {
         // Idempotent: same harness, same session — no-op.
         return { sessionId: existing.sessionId, restarted: false };
       }
+      const executing = this.activeExecution();
+      if (executing) {
+        throw new Error(`harness_change_while_executing:${executing.executionId}`);
+      }
       // Harness mismatch: centaur's "409 → restart" semantics. Wipe the
       // event log + KV slots and start a fresh session under the new harness.
       this.sql.exec(`DELETE FROM events`);
+      this.sql.exec(`DELETE FROM executions`);
       await this.kv.delete(KEY_CREATED);
       await this.kv.delete(KEY_EXECUTING);
       await this.kv.delete(KEY_INTERRUPTED);
@@ -165,17 +193,35 @@ export class SessionEventEngine {
 
   async execute(args: {
     executionId: string;
+    forwardedMessageId?: string;
     inputLines: string[];
-  }): Promise<{ accepted: boolean; duplicate: boolean }> {
+  }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }> {
+    // Cancellation and admission live in this DO and run without an await
+    // between the check and insert. A Stop that arrives before this RPC leaves
+    // a durable tombstone; a Stop that arrives after it sees the admitted row.
+    // There is therefore no cross-DO check/claim window.
+    const cancelled = this.sql
+      .exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM cancelled_executions WHERE execution_id = ?`,
+        args.executionId,
+      )
+      .one().n;
+    if (cancelled > 0) {
+      return { accepted: false, duplicate: false, cancelled: true };
+    }
+
     // Dedup key discipline (GOAL.md house rule 3): an executionId that's
     // already the in-flight execution, or that already produced an 'input'
     // row, must be a no-op redelivery.
-    const executing = await this.kv.get<ExecutingSlot>(KEY_EXECUTING);
+    const executing = this.activeExecution();
+    if (executing?.executionId === args.executionId) {
+      return { accepted: false, duplicate: true };
+    }
+
+    // A session owns exactly one active execution. A different delivery must
+    // not replace the active slot: doing so loses the only handle Stop has to
+    // the in-flight container request.
     if (executing) {
-      if (executing.executionId === args.executionId) {
-        return { accepted: false, duplicate: true };
-      }
-      // A different execution is already in flight — never overwrite it.
       return { accepted: false, duplicate: false };
     }
 
@@ -188,8 +234,48 @@ export class SessionEventEngine {
     if (seen > 0) {
       return { accepted: false, duplicate: true };
     }
+    const existingExecution = this.sql
+      .exec<{ execution_id: string }>(
+        `SELECT execution_id FROM executions WHERE execution_id = ?`,
+        args.executionId,
+      )
+      .toArray();
+    if (existingExecution.length > 0) {
+      return { accepted: false, duplicate: true };
+    }
 
-    const createdAt = this.now();
+    if (args.forwardedMessageId) {
+      const forwarded = this.sql
+        .exec<{ execution_id: string }>(
+          `SELECT execution_id FROM executions WHERE forwarded_message_id = ?`,
+          args.forwardedMessageId,
+        )
+        .toArray();
+      if (forwarded.length > 0) {
+        return { accepted: false, duplicate: true };
+      }
+    }
+
+    // A non-exact Stop can beat BOT_STATE publication. Consume its short-lived
+    // admission barrier in the same synchronous SQLite turn as admission.
+    const now = this.now();
+    this.sql.exec(`DELETE FROM pending_cancellation WHERE expires_at <= ?`, now);
+    const pending = this.sql
+      .exec<{ expires_at: number }>(
+        `DELETE FROM pending_cancellation WHERE singleton = 1 RETURNING expires_at`,
+      )
+      .toArray()[0];
+    if (pending) return { accepted: false, duplicate: false, cancelled: true };
+
+    const createdAt = now;
+    this.sql.exec(
+      `INSERT INTO executions
+         (execution_id, forwarded_message_id, started_at, terminal_at)
+       VALUES (?, ?, ?, NULL)`,
+      args.executionId,
+      args.forwardedMessageId ?? null,
+      createdAt,
+    );
     for (const line of args.inputLines) {
       this.sql.exec(
         `INSERT INTO events (execution_id, kind, payload, created_at) VALUES (?, 'input', ?, ?)`,
@@ -199,13 +285,19 @@ export class SessionEventEngine {
       );
     }
 
-    await this.kv.put<ExecutingSlot>(KEY_EXECUTING, {
-      executionId: args.executionId,
-      startedAt: createdAt,
-    });
-    await this.kv.delete(KEY_INTERRUPTED);
-
     return { accepted: true, duplicate: false };
+  }
+
+  private activeExecution(): ExecutingSlot | undefined {
+    const row = this.sql
+      .exec<{ execution_id: string; started_at: number }>(
+        `SELECT execution_id, started_at FROM executions
+         WHERE terminal_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      )
+      .toArray()[0];
+    return row
+      ? { executionId: row.execution_id, startedAt: row.started_at }
+      : undefined;
   }
 
   async appendEvent(args: {
@@ -213,6 +305,24 @@ export class SessionEventEngine {
     kind: Exclude<EventKind, "input">;
     payload: unknown;
   }): Promise<{ id: number }> {
+    const terminal = this.sql
+      .exec<{ terminal_at: number | null }>(
+        `SELECT terminal_at FROM executions WHERE execution_id = ?`,
+        args.executionId,
+      )
+      .toArray()[0];
+    if (!terminal) {
+      throw new Error(`execution_not_found:${args.executionId}`);
+    }
+    if (terminal.terminal_at !== null) {
+      throw new Error(`execution_already_terminal:${args.executionId}`);
+    }
+
+    const executing = this.activeExecution();
+    if (executing?.executionId !== args.executionId) {
+      throw new Error(`execution_not_active:${args.executionId}`);
+    }
+
     const createdAt = this.now();
     const row = this.sql
       .exec<{ id: number }>(
@@ -225,7 +335,12 @@ export class SessionEventEngine {
       )
       .one();
 
-    if (args.kind === "done" || args.kind === "error") {
+    if (args.kind === "done") {
+      this.sql.exec(
+        `UPDATE executions SET terminal_at = ? WHERE execution_id = ?`,
+        createdAt,
+        args.executionId,
+      );
       await this.kv.delete(KEY_EXECUTING);
     }
 
@@ -264,46 +379,82 @@ export class SessionEventEngine {
       }));
   }
 
-  /**
-   * Re-mark a session executing after a non-terminal harness failure when the
-   * caller continues the same `executionId` on another runtime (AG-UI fallback).
-   */
-  async resumeExecuting(args: { executionId: string }): Promise<void> {
-    await this.kv.put<ExecutingSlot>(KEY_EXECUTING, {
-      executionId: args.executionId,
-      startedAt: this.now(),
-    });
+  async interruptExpected(executionId: string): Promise<{ interrupted: boolean; cancelled: true }> {
+    const cancelledAt = this.now();
+    this.sql.exec(
+      `INSERT OR IGNORE INTO cancelled_executions (execution_id, cancelled_at)
+       VALUES (?, ?)`,
+      executionId,
+      cancelledAt,
+    );
+    const executing = this.activeExecution();
+    if (executing?.executionId !== executionId) {
+      return { interrupted: false, cancelled: true };
+    }
+
+    // Terminalize synchronously with the tombstone. appendEvent is not used
+    // here because its KV await would reopen a cancellation/terminal window.
+    this.sql.exec(
+      `INSERT INTO events (execution_id, kind, payload, created_at)
+       VALUES (?, 'done', ?, ?)`,
+      executionId,
+      JSON.stringify({ interrupted: true }),
+      cancelledAt,
+    );
+    this.sql.exec(
+      `UPDATE executions SET terminal_at = ?
+       WHERE execution_id = ? AND terminal_at IS NULL`,
+      cancelledAt,
+      executionId,
+    );
+    await this.kv.delete(KEY_EXECUTING);
+    return { interrupted: true, cancelled: true };
   }
 
   async interrupt(): Promise<{ interrupted: boolean }> {
-    const executing = await this.kv.get<ExecutingSlot>(KEY_EXECUTING);
-    if (!executing) return { interrupted: false };
-
-    // Route through appendEvent so the "clear session:executing on done"
-    // behavior stays in one place.
-    await this.appendEvent({
-      executionId: executing.executionId,
-      kind: "done",
-      payload: { interrupted: true },
-    });
-    await this.kv.put(KEY_INTERRUPTED, true);
-    return { interrupted: true };
+    const executing = this.activeExecution();
+    if (!executing) {
+      const cancelledAt = this.now();
+      this.sql.exec(
+        `INSERT INTO pending_cancellation (singleton, cancelled_at, expires_at)
+         VALUES (1, ?, ?)
+         ON CONFLICT(singleton) DO UPDATE SET
+           cancelled_at = excluded.cancelled_at,
+           expires_at = excluded.expires_at`,
+        cancelledAt,
+        cancelledAt + PENDING_CANCELLATION_TTL_MS,
+      );
+      return { interrupted: false };
+    }
+    const result = await this.interruptExpected(executing.executionId);
+    return { interrupted: result.interrupted };
   }
 
   async getState(): Promise<{
     sessionId?: string;
     executing?: { executionId: string; startedAt: number };
     interrupted: boolean;
+    interruptedExecutionId?: string;
   }> {
-    const [created, executing, interrupted] = await Promise.all([
-      this.kv.get<CreatedSlot>(KEY_CREATED),
-      this.kv.get<ExecutingSlot>(KEY_EXECUTING),
-      this.kv.get<boolean>(KEY_INTERRUPTED),
-    ]);
+    const created = await this.kv.get<CreatedSlot>(KEY_CREATED);
+    const executing = this.activeExecution();
+    const cancelled = this.sql
+      .exec<{ execution_id: string }>(
+        `SELECT execution_id FROM cancelled_executions
+         ORDER BY cancelled_at DESC LIMIT 1`,
+      )
+      .toArray()[0];
+    const interruptedExecutionId = cancelled?.execution_id;
     return {
       sessionId: created?.sessionId,
       executing,
-      interrupted: interrupted ?? false,
+      // A later execution may start before the stopped client's next poll.
+      // Preserve the stopped execution id without making the new execution's
+      // obligation look interrupted.
+      interrupted:
+        Boolean(interruptedExecutionId) &&
+        (!executing || interruptedExecutionId === executing.executionId),
+      interruptedExecutionId,
     };
   }
 }
@@ -358,19 +509,27 @@ export class SessionEventDO extends DurableObject {
    * Idempotent by `executionId`: a redelivered execute with an `executionId`
    * that's already in flight (`session:executing`) or that already produced
    * an `input` event is a no-op (`duplicate: true`). Otherwise appends one
-   * `input` event per line, marks the session executing, and clears any
-   * prior interrupt flag.
+   * `input` event per line and marks the session executing. The prior
+   * interrupted execution id remains available to its streaming client.
    */
   async execute(args: {
     executionId: string;
+    forwardedMessageId?: string;
     inputLines: string[];
-  }): Promise<{ accepted: boolean; duplicate: boolean }> {
+  }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }> {
     return this.engine.execute(args);
   }
 
+  /** Persist cancellation for this exact id, even if execute has not arrived. */
+  async interruptExpected(
+    executionId: string,
+  ): Promise<{ interrupted: boolean; cancelled: true }> {
+    return this.engine.interruptExpected(executionId);
+  }
+
   /**
-   * Append one event row. `done`/`error` clear `session:executing` — those
-   * are the two kinds that terminate an execution.
+   * Append one event row. Only `done` clears `session:executing`; `error`
+   * remains non-terminal so the pinned `error` then `done` stream is valid.
    */
   async appendEvent(args: {
     executionId: string;
@@ -393,11 +552,6 @@ export class SessionEventDO extends DurableObject {
     return this.engine.replay(afterEventId);
   }
 
-  /** See {@link SessionEventEngine.resumeExecuting}. */
-  async resumeExecuting(args: { executionId: string }): Promise<void> {
-    return this.engine.resumeExecuting(args);
-  }
-
   /**
    * If an execution is in flight: append a `done` event
    * (`{ interrupted: true }`), clear `session:executing`, and set
@@ -412,6 +566,7 @@ export class SessionEventDO extends DurableObject {
     sessionId?: string;
     executing?: { executionId: string; startedAt: number };
     interrupted: boolean;
+    interruptedExecutionId?: string;
   }> {
     return this.engine.getState();
   }

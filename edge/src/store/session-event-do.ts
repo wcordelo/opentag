@@ -171,8 +171,12 @@ export class SessionEventEngine {
     // already the in-flight execution, or that already produced an 'input'
     // row, must be a no-op redelivery.
     const executing = await this.kv.get<ExecutingSlot>(KEY_EXECUTING);
-    if (executing?.executionId === args.executionId) {
-      return { accepted: false, duplicate: true };
+    if (executing) {
+      if (executing.executionId === args.executionId) {
+        return { accepted: false, duplicate: true };
+      }
+      // A different execution is already in flight — never overwrite it.
+      return { accepted: false, duplicate: false };
     }
 
     const seen = this.sql

@@ -511,6 +511,13 @@ export class ConversationStateDO extends DurableObject {
         if (ob.attempt + 1 < OBLIGATION_MAX_ATTEMPTS) {
           this.obligations.reinsertForRetry(ob, OBLIGATION_LIVE_DEFER_MS);
           await this.rescheduleAlarm();
+        } else {
+          await this.postFallback(
+            ob,
+            env,
+            "⚠️ This turn was interrupted before an answer could be delivered. Please retry.",
+            "error_visible",
+          );
         }
         return;
       }

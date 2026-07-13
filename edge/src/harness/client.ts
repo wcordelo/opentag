@@ -25,6 +25,10 @@
  */
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
+import {
+  clearHarnessTurnAbort,
+  registerHarnessTurnAbort,
+} from "./turn-abort.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -42,6 +46,14 @@ export interface RunHarnessTurnArgs {
   transcript?: string;
   /** Called once per `output` event carrying a text delta (best-effort live rendering hook — unused in v1's single-final-post path, kept for a later incremental-render phase). */
   onText?: (delta: string) => void;
+  /**
+   * When set, reuse the execution already begun by `bot-engine.ts`
+   * (`beginSessionExecution`) instead of generating a new id and calling
+   * `execute()` again — keeps the render obligation and SessionEventDO slot aligned.
+   */
+  executionId?: string;
+  /** Optional external abort (e.g. from `registerHarnessTurnAbort`). */
+  signal?: AbortSignal;
 }
 
 export interface RunHarnessTurnResult {
@@ -144,130 +156,148 @@ export async function runHarnessTurn(
     env.SESSION_EVENTS.idFromName(args.threadKey),
   ) as unknown as SessionEventsFullRpc;
 
-  const created = await sessionDo.create({
-    threadKey: args.threadKey,
-    harnessType: "claudecode",
-    model: args.model,
-  });
-
-  const executionId = crypto.randomUUID();
-  const executed = await sessionDo.execute({
-    executionId,
-    inputLines: [args.prompt],
-  });
-  if (!executed.accepted) {
-    return { ok: false, text: "", error: "duplicate_execution" };
-  }
-
-  const body: Record<string, unknown> = {
-    sessionId: created.sessionId,
-    executionId,
-    threadKey: args.threadKey,
-    inputLines: [args.prompt],
-  };
-  if (args.model) body.model = args.model;
-  if (args.requesterContext) body.requesterContext = args.requesterContext;
-  // SPEC §3.6: the caller supplies the transcript re-feed; we truncate it
-  // here regardless of whether this create() actually restarted, so a
-  // caller that always passes the current transcript doesn't need to know
-  // about restart semantics.
-  const transcript = truncateTranscript(args.transcript);
-  if (transcript) body.transcript = transcript;
-  if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
-
-  let accumulatedText = "";
-  let sawDone = false;
-  let doneOk = false;
-  let doneSummary: string | undefined;
-
-  /** Parse + mirror one NDJSON line into the event log, in order, awaited. */
-  const consumeLine = async (line: string): Promise<void> => {
-    let parsed: { kind?: string; payload?: unknown };
-    try {
-      parsed = JSON.parse(line) as { kind?: string; payload?: unknown };
-    } catch {
-      // Malformed line from the container — never crash the stream over it.
-      console.error("[harness-client] malformed NDJSON line", line.slice(0, 200));
-      return;
-    }
-
-    if (parsed.kind === "output") {
-      const payload = (parsed.payload ?? {}) as {
-        text?: string;
-        tool?: string;
-        summary?: string;
-      };
-      await safeAppend(sessionDo, executionId, "output", payload);
-      if (typeof payload.text === "string" && payload.text) {
-        accumulatedText += payload.text;
-        args.onText?.(payload.text);
-      }
-    } else if (parsed.kind === "error") {
-      await safeAppend(sessionDo, executionId, "error", parsed.payload ?? {});
-    } else if (parsed.kind === "done") {
-      const payload = (parsed.payload ?? {}) as { ok?: boolean; summary?: string };
-      await safeAppend(sessionDo, executionId, "done", payload);
-      sawDone = true;
-      doneOk = payload.ok === true;
-      doneSummary = payload.summary;
-    }
-    // Unknown kinds are ignored — forward compatibility with new event types.
-  };
+  const signal = args.signal ?? registerHarnessTurnAbort(args.threadKey);
 
   try {
-    const res = await fetcher({
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+    const created = await sessionDo.create({
+      threadKey: args.threadKey,
+      harnessType: "claudecode",
+      model: args.model,
     });
 
-    if (res.status === 409) {
-      return { ok: false, text: "", error: "execution_in_flight" };
-    }
-    if (!res.ok || !res.body) {
-      throw new Error(`harness /turn failed: HTTP ${res.status}`);
+    const executionId = args.executionId ?? crypto.randomUUID();
+    if (!args.executionId) {
+      const executed = await sessionDo.execute({
+        executionId,
+        inputLines: [args.prompt],
+      });
+      if (!executed.accepted) {
+        return {
+          ok: false,
+          text: "",
+          error: executed.duplicate ? "duplicate_execution" : "execution_in_flight",
+        };
+      }
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const body: Record<string, unknown> = {
+      sessionId: created.sessionId,
+      executionId,
+      threadKey: args.threadKey,
+      inputLines: [args.prompt],
+    };
+    if (args.model) body.model = args.model;
+    if (args.requesterContext) body.requesterContext = args.requesterContext;
+    // SPEC §3.6: the caller supplies the transcript re-feed; we truncate it
+    // here regardless of whether this create() actually restarted, so a
+    // caller that always passes the current transcript doesn't need to know
+    // about restart semantics.
+    const transcript = truncateTranscript(args.transcript);
+    if (transcript) body.transcript = transcript;
+    if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
 
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (value && value.length > 0) {
-        buffer += decoder.decode(value, { stream: true });
+    let accumulatedText = "";
+    let sawDone = false;
+    let doneOk = false;
+    let doneSummary: string | undefined;
+
+    /** Parse + mirror one NDJSON line into the event log, in order, awaited. */
+    const consumeLine = async (line: string): Promise<void> => {
+      let parsed: { kind?: string; payload?: unknown };
+      try {
+        parsed = JSON.parse(line) as { kind?: string; payload?: unknown };
+      } catch {
+        // Malformed line from the container — never crash the stream over it.
+        console.error("[harness-client] malformed NDJSON line", line.slice(0, 200));
+        return;
       }
-      if (done) {
-        buffer += decoder.decode(); // flush any trailing multi-byte sequence
-        const rest = buffer.trim();
-        if (rest) await consumeLine(rest);
-        break;
+
+      if (parsed.kind === "output") {
+        const payload = (parsed.payload ?? {}) as {
+          text?: string;
+          tool?: string;
+          summary?: string;
+        };
+        await safeAppend(sessionDo, executionId, "output", payload);
+        if (typeof payload.text === "string" && payload.text) {
+          accumulatedText += payload.text;
+          args.onText?.(payload.text);
+        }
+      } else if (parsed.kind === "error") {
+        await safeAppend(sessionDo, executionId, "error", parsed.payload ?? {});
+      } else if (parsed.kind === "done") {
+        const payload = (parsed.payload ?? {}) as { ok?: boolean; summary?: string };
+        await safeAppend(sessionDo, executionId, "done", payload);
+        sawDone = true;
+        doneOk = payload.ok === true;
+        doneSummary = payload.summary;
       }
-      let newlineIdx: number;
-      while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newlineIdx).trim();
-        buffer = buffer.slice(newlineIdx + 1);
-        if (line) await consumeLine(line);
+      // Unknown kinds are ignored — forward compatibility with new event types.
+    };
+
+    try {
+      const res = await fetcher({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      if (res.status === 409) {
+        return { ok: false, text: "", error: "execution_in_flight" };
       }
+      if (!res.ok || !res.body) {
+        throw new Error(`harness /turn failed: HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value && value.length > 0) {
+          buffer += decoder.decode(value, { stream: true });
+        }
+        if (done) {
+          buffer += decoder.decode(); // flush any trailing multi-byte sequence
+          const rest = buffer.trim();
+          if (rest) await consumeLine(rest);
+          break;
+        }
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+          if (line) await consumeLine(line);
+        }
+      }
+    } catch (err) {
+      if (signal.aborted) {
+        return { ok: false, text: accumulatedText, error: "aborted" };
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      await safeAppend(sessionDo, executionId, "error", { message });
+      await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
+      return { ok: false, text: accumulatedText, error: message };
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await safeAppend(sessionDo, executionId, "error", { message });
-    await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
-    return { ok: false, text: accumulatedText, error: message };
+
+    if (!sawDone) {
+      // The event log must always terminate (GOAL.md never-silent house
+      // rule) — synthesize the terminal events ourselves so a replay/alarm
+      // recovery downstream never sees an execution stuck "executing" forever.
+      const message = "harness stream ended without a done event";
+      await safeAppend(sessionDo, executionId, "error", { message });
+      await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
+      return { ok: false, text: accumulatedText, error: message };
+    }
+
+    return doneOk
+      ? { ok: true, text: accumulatedText }
+      : { ok: false, text: accumulatedText, error: doneSummary ?? "harness turn failed" };
+  } finally {
+    if (!args.signal) {
+      clearHarnessTurnAbort(args.threadKey);
+    }
   }
-
-  if (!sawDone) {
-    // The event log must always terminate (GOAL.md never-silent house
-    // rule) — synthesize the terminal events ourselves so a replay/alarm
-    // recovery downstream never sees an execution stuck "executing" forever.
-    const message = "harness stream ended without a done event";
-    await safeAppend(sessionDo, executionId, "error", { message });
-    await safeAppend(sessionDo, executionId, "done", { ok: false, summary: message });
-    return { ok: false, text: accumulatedText, error: message };
-  }
-
-  return doneOk
-    ? { ok: true, text: accumulatedText }
-    : { ok: false, text: accumulatedText, error: doneSummary ?? "harness turn failed" };
 }

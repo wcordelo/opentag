@@ -372,6 +372,7 @@ export async function runBundledAgentTurn(
   thread: AgentThread,
   promptIn: string | AgentContentPart[],
   requesterIn?: Requester,
+  turnContext?: { executionId?: string },
 ): Promise<void> {
   const requester = await ensureRequesterProfile(env, requesterIn);
   const teamId = getCurrentTeamId();
@@ -681,7 +682,12 @@ export async function runBundledAgentTurn(
       model: overrides.effectiveModel,
       requesterContext: requesterContextBlock,
       transcript: buildHarnessTranscript(history),
+      executionId: turnContext?.executionId,
     });
+
+    if (harnessResult.error === "aborted") {
+      return;
+    }
 
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();

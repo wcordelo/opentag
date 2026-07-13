@@ -30,6 +30,7 @@ import {
 } from "./slack/inbound-target.js";
 import {
   activeTurnKvKey,
+  channelActiveTurnsKvKey,
   firstSlackTs,
   slackObligationThreadKey,
   type ActiveTurnRecord,
@@ -418,12 +419,26 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         threadTs: statusThreadTs,
       });
       await beginSessionExecution(env, obligationThreadKey, executionId, text);
+      const turnRecord: ActiveTurnRecord = {
+        threadKey: obligationThreadKey,
+        conversationKey,
+      };
       try {
         await stateStore.kv.set<ActiveTurnRecord>(
-          activeTurnKvKey(channelId),
-          { threadKey: obligationThreadKey, conversationKey },
+          activeTurnKvKey(obligationThreadKey),
+          turnRecord,
           RENDER_OBLIGATION_TIMEOUT_MS,
         );
+        const channelTurnsKey = channelActiveTurnsKvKey(channelId);
+        const channelTurns =
+          (await stateStore.kv.get<ActiveTurnRecord[]>(channelTurnsKey)) ?? [];
+        if (!channelTurns.some((r) => r.threadKey === obligationThreadKey)) {
+          await stateStore.kv.set(
+            channelTurnsKey,
+            [...channelTurns, turnRecord],
+            RENDER_OBLIGATION_TIMEOUT_MS,
+          );
+        }
       } catch (err) {
         console.error("[bot] active turn registration failed", err);
       }
@@ -437,6 +452,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
               ? message.contentParts
               : text,
             message.user,
+            { executionId },
           );
         } finally {
           if (statusThreadTs) {
@@ -458,7 +474,22 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         throw turnErr;
       } finally {
         try {
-          await stateStore.kv.delete(activeTurnKvKey(channelId));
+          await stateStore.kv.delete(activeTurnKvKey(obligationThreadKey));
+          const channelTurnsKey = channelActiveTurnsKvKey(channelId);
+          const channelTurns =
+            (await stateStore.kv.get<ActiveTurnRecord[]>(channelTurnsKey)) ?? [];
+          const next = channelTurns.filter(
+            (r) => r.threadKey !== obligationThreadKey,
+          );
+          if (next.length === 0) {
+            await stateStore.kv.delete(channelTurnsKey);
+          } else {
+            await stateStore.kv.set(
+              channelTurnsKey,
+              next,
+              RENDER_OBLIGATION_TIMEOUT_MS,
+            );
+          }
         } catch {
           /* best-effort */
         }

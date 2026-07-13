@@ -9,8 +9,10 @@
 import { isSlackStopCommand } from "./stop-command.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
 import { createSlackWebClient } from "./web-api.js";
+import { abortHarnessTurn } from "../harness/turn-abort.js";
 import {
   activeTurnKvKey,
+  channelActiveTurnsKvKey,
   firstSlackTs,
   slackObligationThreadKey,
   type ActiveTurnRecord,
@@ -113,22 +115,40 @@ export async function handleStopCommand(
 
     const stateStore = createBotStoreAdapter(env.BOT_STATE);
 
-    let activeTurn: ActiveTurnRecord | undefined;
-    try {
-      activeTurn = await stateStore.kv.get<ActiveTurnRecord>(
-        activeTurnKvKey(channel),
-      );
-    } catch (err) {
-      console.error("[stop-command] active turn lookup failed", channel, err);
-    }
-
     const statusThreadTs = firstSlackTs(event.thread_ts, event.ts);
-    let threadKey = slackObligationThreadKey(channel, statusThreadTs);
-    if (!event.thread_ts && activeTurn?.threadKey) {
-      threadKey = activeTurn.threadKey;
+    const threadKey = slackObligationThreadKey(channel, statusThreadTs);
+
+    let stopTargets: ActiveTurnRecord[];
+    if (event.thread_ts) {
+      let activeTurn: ActiveTurnRecord | undefined;
+      try {
+        activeTurn = await stateStore.kv.get<ActiveTurnRecord>(
+          activeTurnKvKey(threadKey),
+        );
+      } catch (err) {
+        console.error("[stop-command] active turn lookup failed", threadKey, err);
+      }
+      stopTargets = activeTurn
+        ? [activeTurn]
+        : [{ threadKey, conversationKey: "" }];
+    } else {
+      try {
+        const channelTurns = await stateStore.kv.get<ActiveTurnRecord[]>(
+          channelActiveTurnsKvKey(channel),
+        );
+        stopTargets =
+          channelTurns && channelTurns.length > 0
+            ? channelTurns
+            : [{ threadKey, conversationKey: "" }];
+      } catch (err) {
+        console.error("[stop-command] channel active turns lookup failed", channel, err);
+        stopTargets = [{ threadKey, conversationKey: "" }];
+      }
     }
 
-    const postThreadTs = statusThreadTs ?? activeTurn?.threadKey.split(":")[2];
+    const primaryTarget = stopTargets[0]!;
+    const postThreadTs =
+      statusThreadTs ?? primaryTarget.threadKey.split(":")[2];
     if (!postThreadTs) return;
 
     // Idempotency (house rule 3): a redelivered stop event must be a total
@@ -137,39 +157,40 @@ export async function handleStopCommand(
     const alreadySeen = await stateStore.dedup.seen(dedupKey, 10 * 60_000);
     if (alreadySeen) return;
 
-    if (env.SESSION_EVENTS) {
-      try {
-        const sessionDo = env.SESSION_EVENTS.get(
-          env.SESSION_EVENTS.idFromName(threadKey),
-        ) as unknown as SessionInterruptRpc;
-        await sessionDo.interrupt();
-      } catch (err) {
-        console.error("[stop-command] interrupt failed", threadKey, err);
-      }
-    }
+    for (const target of stopTargets) {
+      abortHarnessTurn(target.threadKey);
 
-    if (
-      activeTurn?.conversationKey &&
-      activeTurn.threadKey === threadKey
-    ) {
-      try {
-        const { adapter } = await getOrCreateBot(env);
-        adapter.abortConversation(activeTurn.conversationKey);
-      } catch (err) {
-        console.error(
-          "[stop-command] abortConversation failed",
-          activeTurn.conversationKey,
-          err,
-        );
+      if (env.SESSION_EVENTS) {
+        try {
+          const sessionDo = env.SESSION_EVENTS.get(
+            env.SESSION_EVENTS.idFromName(target.threadKey),
+          ) as unknown as SessionInterruptRpc;
+          await sessionDo.interrupt();
+        } catch (err) {
+          console.error("[stop-command] interrupt failed", target.threadKey, err);
+        }
       }
-    }
 
-    try {
-      // No executionId: a stop clears whatever obligation is currently
-      // pending for this thread, regardless of which turn wrote it.
-      await stateStore.obligation.clear({ threadKey });
-    } catch (err) {
-      console.error("[stop-command] obligation clear failed", threadKey, err);
+      if (target.conversationKey) {
+        try {
+          const { adapter } = await getOrCreateBot(env);
+          adapter.abortConversation(target.conversationKey);
+        } catch (err) {
+          console.error(
+            "[stop-command] abortConversation failed",
+            target.conversationKey,
+            err,
+          );
+        }
+      }
+
+      try {
+        // No executionId: a stop clears whatever obligation is currently
+        // pending for this thread, regardless of which turn wrote it.
+        await stateStore.obligation.clear({ threadKey: target.threadKey });
+      } catch (err) {
+        console.error("[stop-command] obligation clear failed", target.threadKey, err);
+      }
     }
 
     if (env.SLACK_BOT_TOKEN) {
@@ -194,7 +215,12 @@ export async function handleStopCommand(
       }
     }
 
-    console.log(JSON.stringify({ metric: "stop_command_received", threadKey }));
+    console.log(
+      JSON.stringify({
+        metric: "stop_command_received",
+        threadKeys: stopTargets.map((t) => t.threadKey),
+      }),
+    );
   } catch (err) {
     console.error("[stop-command] handleStopCommand failed", err);
   }

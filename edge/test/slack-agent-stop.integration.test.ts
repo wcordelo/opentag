@@ -853,13 +853,14 @@ describe("real /agent ingress and Stop lifecycle", () => {
     expect((await worker.request(exactRetryRequest, undefined, env, executionCtx)).status).toBe(200);
     await Promise.all(waitUntil.slice(retryStart));
     expect(harnessTurns).toHaveLength(1);
-    expect(sessions.executeCalls).toHaveLength(2);
-    expect(sessions.executeCalls[1]).toEqual(sessions.executeCalls[0]);
+    expect(sessions.executeCalls).toHaveLength(3);
     expect(sessions.executeCalls[0]).toMatchObject({
       threadKey,
       executionId,
       forwardedMessageId,
     });
+    expect(sessions.executeCalls[1]).toEqual(sessions.executeCalls[0]);
+    expect(sessions.executeCalls[2]).toEqual(sessions.executeCalls[0]);
 
     // An idle non-exact Stop is a true no-op. A distinct trigger must expose
     // fresh production-generated IDs and complete normally; it must not be
@@ -877,11 +878,12 @@ describe("real /agent ingress and Stop lifecycle", () => {
     const distinctStart = waitUntil.length;
     expect((await worker.request(distinctRequest, undefined, env, executionCtx)).status).toBe(200);
     await vi.waitFor(() => expect(harnessTurns).toHaveLength(2));
-    expect(sessions.executeCalls).toHaveLength(3);
-    expect(sessions.executeCalls[2]!.executionId).toMatch(/^ot1e_[A-Za-z0-9_-]{43}$/);
-    expect(sessions.executeCalls[2]!.forwardedMessageId).toMatch(/^ot1m_[A-Za-z0-9_-]{43}$/);
-    expect(sessions.executeCalls[2]!.executionId).not.toBe(executionId);
-    expect(sessions.executeCalls[2]!.forwardedMessageId).not.toBe(forwardedMessageId);
+    expect(sessions.executeCalls).toHaveLength(5);
+    expect(sessions.executeCalls[3]!.executionId).toMatch(/^ot1e_[A-Za-z0-9_-]{43}$/);
+    expect(sessions.executeCalls[3]!.forwardedMessageId).toMatch(/^ot1m_[A-Za-z0-9_-]{43}$/);
+    expect(sessions.executeCalls[3]!.executionId).not.toBe(executionId);
+    expect(sessions.executeCalls[3]!.forwardedMessageId).not.toBe(forwardedMessageId);
+    expect(sessions.executeCalls[4]).toEqual(sessions.executeCalls[3]);
     turnStream!.enqueue(new TextEncoder().encode(
       `${JSON.stringify({ kind: "output", payload: { text: "UNRELATED_TURN_OK" } })}\n` +
       `${JSON.stringify({ kind: "done", payload: { ok: true } })}\n`,

@@ -533,7 +533,7 @@ describe("production Slack remote-git ingress", () => {
 
       expect(interruptExpected).toHaveBeenCalledWith("slack:C1:111.333");
       expect(interrupt).not.toHaveBeenCalled();
-      expect(execute).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledOnce();
       expect(runBundledAgentTurn).not.toHaveBeenCalled();
       expect(slackCalls.filter((url) => url.includes("chat.postMessage"))).toHaveLength(1);
       expect(thread.post).not.toHaveBeenCalled();

@@ -101,6 +101,12 @@ describe("Slack turn pre-admission identity", () => {
       eventId: "/research:U9:trigger-2",
     });
     expect(preAdmissionIdentityForCommand({
+      command: "/agent",
+      channel_id: "D1",
+      user_id: "U9",
+      trigger_id: "trigger-dm",
+    })?.conversationKey).toBe("D1::dm");
+    expect(preAdmissionIdentityForCommand({
       command: "/config",
       channel_id: "C9",
       user_id: "U9",

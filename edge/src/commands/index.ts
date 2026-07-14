@@ -9,6 +9,7 @@ import {
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
 import { ALL_EDGE_TOOL_NAMES } from "../tools/index.js";
+import { createBotStoreAdapter } from "../create-bot-store.js";
 import { loadTurnAccess } from "../config/workspace-config-do.js";
 import {
   cancelTask,
@@ -25,7 +26,9 @@ import {
 } from "../slack/inbound-target.js";
 import type { Env } from "../env.js";
 import type { CloudflareSlackAdapter } from "../slack/cloudflare-slack-adapter.js";
+import { slackObligationThreadKey } from "../slack/obligation-thread-key.js";
 import { runSlackTurnLifecycle } from "../slack/turn-lifecycle.js";
+import { resolveThreadOverrides } from "../store/thread-overrides.js";
 import {
   adoptSlackShortcut,
   postFinalShortcut,
@@ -164,7 +167,14 @@ export const edgeCommands = [
           );
           return;
         }
-        const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;
+        const stateStore = createBotStoreAdapter(env.BOT_STATE);
+        const { cleanedText, effectiveModel } = await resolveThreadOverrides(
+          stateStore,
+          key,
+          text,
+        );
+        if (!(await shortcutStillPending(adopted))) return;
+        const threadKey = slackObligationThreadKey(channelId, threadTs);
         const effect = await runShortcutEffect(adopted, "command_research", () =>
           startTask(env, {
             type: "research",
@@ -172,7 +182,8 @@ export const edgeCommands = [
             threadKey,
             channelId,
             threadTs,
-            payload: { objective: text.trim() },
+            model: effectiveModel,
+            payload: { objective: cleanedText.trim() },
           }), {
             resource: (started) => started.status === "error" ? undefined : {
               kind: "research_task",

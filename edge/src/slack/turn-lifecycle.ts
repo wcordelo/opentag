@@ -33,6 +33,56 @@ function logMetric(metric: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ metric, ...fields }));
 }
 
+function sessionInputLine(prompt: string | AgentContentPart[]): string {
+  if (typeof prompt === "string") return prompt;
+  const text = prompt
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join(" ")
+    .trim();
+  return text || "[non-text prompt]";
+}
+
+async function admitSessionExecution(
+  env: Env,
+  args: {
+    threadKey: string;
+    executionId: string;
+    forwardedMessageId?: string;
+    inputLine: string;
+  },
+): Promise<"accepted" | "duplicate" | "cancelled" | "rejected"> {
+  if (!env.SESSION_EVENTS) return "accepted";
+  const sessionDo = env.SESSION_EVENTS.get(
+    env.SESSION_EVENTS.idFromName(args.threadKey),
+  ) as unknown as SessionEventsRpc;
+  const executed = await sessionDo.execute({
+    executionId: args.executionId,
+    forwardedMessageId: args.forwardedMessageId,
+    inputLines: [args.inputLine],
+  });
+  if (executed.cancelled) return "cancelled";
+  if (executed.accepted) return "accepted";
+  if (executed.duplicate) return "duplicate";
+  return "rejected";
+}
+
+async function terminalizeSessionExecution(
+  env: Env,
+  threadKey: string,
+  executionId: string,
+): Promise<void> {
+  if (!env.SESSION_EVENTS) return;
+  const sessionDo = env.SESSION_EVENTS.get(
+    env.SESSION_EVENTS.idFromName(threadKey),
+  ) as unknown as SessionEventsRpc;
+  try {
+    await sessionDo.appendEvent({ executionId, kind: "done", payload: {} });
+  } catch {
+    // Harness or an earlier terminal may have already closed the execution.
+  }
+}
+
 async function isExactTurnPending(
   store: ReturnType<typeof createBotStoreAdapter>,
   record: Pick<ActiveTurnRecord, "threadKey" | "executionId">,
@@ -209,6 +259,28 @@ export async function runSlackTurnLifecycle(
       });
       return;
     }
+    const sessionAdmission = await admitSessionExecution(env, {
+      threadKey: obligationThreadKey,
+      executionId,
+      forwardedMessageId,
+      inputLine: sessionInputLine(prompt),
+    });
+    if (sessionAdmission === "cancelled" || sessionAdmission === "rejected") {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
+      if (sessionAdmission === "cancelled") {
+        await discardInterruptedActiveTurnRedelivery(stateStore, activeTurn);
+      }
+      logMetric(
+        sessionAdmission === "cancelled"
+          ? "turn_interrupted_pre_execution"
+          : "turn_concurrent_rejected",
+        { threadKey: obligationThreadKey, executionId },
+      );
+      return;
+    }
     if (statusThreadTs) {
       await adapter.setStatus({
         channel: channelId,
@@ -257,6 +329,9 @@ export async function runSlackTurnLifecycle(
       );
     } else {
       logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
+      if (!outcome.terminalPersisted) {
+        await terminalizeSessionExecution(env, obligationThreadKey, executionId);
+      }
     }
     // Every completed path terminalizes on its actual final Slack request:
     // harness/direct posts mark that request final and the AG-UI renderer

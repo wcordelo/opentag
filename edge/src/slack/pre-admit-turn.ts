@@ -99,7 +99,8 @@ export function preAdmissionIdentityForCommand(body: {
   if (!triggerId || !channelId || !requesterId) return undefined;
   const eventId = `${body.command}:${requesterId}:${triggerId}`;
   const threadTs = body.thread_ts?.trim() || undefined;
-  const scope = threadTs ?? channelId;
+  const isDm = channelId.startsWith("D");
+  const scope = isDm ? DM_SCOPE : (threadTs ?? channelId);
   return {
     teamId,
     channelId,

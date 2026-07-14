@@ -352,10 +352,22 @@ export async function runHarnessTurn(
   }
   if (!executed.accepted) {
     if (executed.cancelled) return failed("interrupted", "interrupted");
-    return failed(
-      executed.duplicate ? "duplicate" : "concurrent",
-      executed.duplicate ? "duplicate_execution" : "execution_in_flight",
-    );
+    if (executed.duplicate) {
+      let state: Awaited<ReturnType<SessionEventsFullRpc["getState"]>>;
+      try {
+        state = await sessionDo.getState();
+      } catch (err) {
+        return failed(
+          "persistence",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (state.executing?.executionId !== executionId) {
+        return failed("duplicate", "duplicate_execution");
+      }
+    } else {
+      return failed("concurrent", "execution_in_flight");
+    }
   }
 
   // Give a Stop that lands immediately after admission an exact durable

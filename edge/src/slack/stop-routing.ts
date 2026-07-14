@@ -293,35 +293,34 @@ export async function handleStopCommand(
         executionId: activeTurn.executionId,
       });
 
-      if (!env.SESSION_EVENTS) {
-        throw new Error("session_events_unavailable");
-      }
-      const sessionDo = env.SESSION_EVENTS.get(
-        env.SESSION_EVENTS.idFromName(threadKey),
-      ) as unknown as SessionInterruptRpc;
-      const durableInterrupt = await sessionDo.interruptExpected(
-        activeTurn.executionId,
-      );
-      if (durableInterrupt.cancelled !== true) {
-        throw new Error("durable_interrupt_not_accepted");
-      }
+      if (env.SESSION_EVENTS) {
+        const sessionDo = env.SESSION_EVENTS.get(
+          env.SESSION_EVENTS.idFromName(threadKey),
+        ) as unknown as SessionInterruptRpc;
+        const durableInterrupt = await sessionDo.interruptExpected(
+          activeTurn.executionId,
+        );
+        if (durableInterrupt.cancelled !== true) {
+          throw new Error("durable_interrupt_not_accepted");
+        }
 
-      const state = typeof sessionDo.getState === "function"
-        ? await sessionDo.getState()
-        : durableInterrupt.interrupted
-          ? (() => { throw new Error("session_state_unavailable"); })()
-          : {};
-      // A session id proves a container turn was created. In that case the
-      // authenticated exact /interrupt request must be accepted (a 200 no-op
-      // is valid for an already-terminal/no-live-process execution).
-      if (state.sessionId) {
-        const harnessInterrupt = await interruptHarnessTurn(env, {
-          sessionId: state.sessionId,
-          threadKey,
-          executionId: activeTurn.executionId,
-        });
-        if (!harnessInterrupt.accepted) {
-          throw new Error("harness_interrupt_not_accepted");
+        const state = typeof sessionDo.getState === "function"
+          ? await sessionDo.getState()
+          : durableInterrupt.interrupted
+            ? (() => { throw new Error("session_state_unavailable"); })()
+            : {};
+        // A session id proves a container turn was created. In that case the
+        // authenticated exact /interrupt request must be accepted (a 200 no-op
+        // is valid for an already-terminal/no-live-process execution).
+        if (state.sessionId) {
+          const harnessInterrupt = await interruptHarnessTurn(env, {
+            sessionId: state.sessionId,
+            threadKey,
+            executionId: activeTurn.executionId,
+          });
+          if (!harnessInterrupt.accepted) {
+            throw new Error("harness_interrupt_not_accepted");
+          }
         }
       }
 

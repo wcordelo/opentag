@@ -74,6 +74,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
     stateStore,
+    ...(env.SESSION_EVENTS ? { sessionEvents: env.SESSION_EVENTS } : {}),
   });
   bindCommandEnv(env, adapter);
 

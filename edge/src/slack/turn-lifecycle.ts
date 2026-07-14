@@ -200,10 +200,15 @@ export async function runSlackTurnLifecycle(
   const conversationKey = thread.conversationKey ?? "";
   const channelId = conversationKey.split("::")[0] ?? "";
   const scope = conversationKey.split("::")[1];
+  const replyTarget = (
+    thread as { deps?: { replyTarget?: { threadTs?: string; statusTs?: string } } }
+  ).deps?.replyTarget;
   const statusThreadTs = firstSlackTs(
     scope,
     requestContext.inbound?.threadTs,
     requestContext.inbound?.ts,
+    replyTarget?.threadTs,
+    replyTarget?.statusTs,
   );
   const obligationThreadKey = slackObligationThreadKey(
     channelId,

@@ -227,10 +227,13 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     return c.json({ error: "missing_stable_command_identity" }, 400);
   }
 
+  const identity = preAdmissionIdentityForCommand(body);
+  const preAdmittedTurn = identity
+    ? await preAdmitSlackTurn(c.env, identity)
+    : undefined;
+
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
   const run = async () => {
-    const identity = preAdmissionIdentityForCommand(body);
-    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
     if (identity && !preAdmittedTurn) {
       console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
       return;
@@ -254,22 +257,16 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     await run();
   }
 
-  const command = body.command ?? "";
-  if (command === "/research") {
-    return c.json({
-      response_type: "in_channel",
-      text: "🔍 Research started…",
-    });
-  }
-  if (command === "/config") {
+  if (identity && !preAdmittedTurn) {
     return c.json({
       response_type: "ephemeral",
-      text: "Updating channel config…",
+      text: "Already handling that command.",
     });
   }
+
   return c.json({
-    response_type: "in_channel",
-    text: "🤖 On it…",
+    response_type: "ephemeral",
+    text: "Working on it…",
   });
 });
 

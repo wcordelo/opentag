@@ -64,6 +64,8 @@ import {
   type ActiveTurnRecord,
 } from "./active-turn-registry.js";
 import type { PreAdmittedTurn } from "./pre-admit-turn.js";
+import type { SessionEventDO } from "../store/session-event-do.js";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 
 const EXECUTION_FENCE = "__opentagExecutionFence";
 const NEXT_RENDER_FINAL = "__opentagNextRenderFinal";
@@ -118,6 +120,8 @@ type CloudflareSlackAdapterBaseOptions = {
    * per-call `Date.now()` throttle floor. Injectable for tests.
    */
   streamUpdateIntervalMs?: number;
+  /** Replay source for incremental AG-UI renders (obligation recovery). */
+  sessionEvents?: DurableObjectNamespace<SessionEventDO>;
 };
 
 /** Production construction always carries the authoritative lifecycle store. */
@@ -217,6 +221,35 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     return value && typeof value === "object"
       ? (value as FencedTarget)[EXECUTION_FENCE]
       : undefined;
+  }
+
+  /** Best-effort mirror of streamed markdown into SessionEventDO for replay. */
+  private async mirrorSessionOutput(
+    fence: ExecutionFence | undefined,
+    text: string,
+  ): Promise<void> {
+    if (!fence || !text || !this.opts.sessionEvents) return;
+    try {
+      const sessionDo = this.opts.sessionEvents.get(
+        this.opts.sessionEvents.idFromName(fence.threadKey),
+      ) as unknown as {
+        appendEvent(args: {
+          executionId: string;
+          kind: "output";
+          payload: unknown;
+        }): Promise<unknown>;
+      };
+      await sessionDo.appendEvent({
+        executionId: fence.executionId,
+        kind: "output",
+        payload: { text },
+      });
+    } catch (err) {
+      console.warn(
+        "[slack] session output mirror failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   private async preAdmittedStillPending(
@@ -591,9 +624,27 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       channelId: normalized.channel,
       scope,
     });
+    let statusTs: string | undefined;
+    if (isDmCommand && !threadTs) {
+      try {
+        const recent = await this.client.getChannelHistory({
+          channel: normalized.channel,
+          limit: 10,
+        });
+        statusTs = recent
+          .map((m) => m.ts)
+          .find((ts): ts is string => Boolean(ts && /^\d+\.\d+$/.test(ts)));
+      } catch (err) {
+        console.warn(
+          "[slack] DM slash status lookup failed",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
     const replyTarget: ReplyTarget = {
       channel: normalized.channel,
       ...(threadTs ? { threadTs, messageTs: threadTs } : {}),
+      ...(statusTs ? { statusTs } : {}),
     };
     if (meta?.preAdmittedTurn) {
       const expected = meta.preAdmittedTurn.record;
@@ -789,6 +840,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     let acc = "";
     let lastUpdateAt = 0;
     let lastSent: string | undefined;
+    let lastMirroredLen = 0;
+    const fence = this.fenceOf(target);
+    const mirrorAccDelta = async (full: string) => {
+      if (full.length <= lastMirroredLen) return;
+      const delta = full.slice(lastMirroredLen);
+      lastMirroredLen = full.length;
+      await this.mirrorSessionOutput(fence, delta);
+    };
 
     const attemptUpdate = async (text: string, final: boolean): Promise<void> => {
       await this.fenced(target, async () => requireSlackOk(
@@ -807,6 +866,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     // called at least once more (the final call) with the true end state.
     const pushUpdate = async (text: string, isFinal: boolean) => {
       if (text === lastSent && !isFinal) return;
+      await mirrorAccDelta(text);
       await attemptUpdate(text, isFinal);
       lastSent = text;
     };
@@ -831,7 +891,6 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     await pushUpdate(acc, true);
 
     const ref: FencedRef = { id: ts, channel, ts };
-    const fence = this.fenceOf(target);
     if (fence) Object.defineProperty(ref, EXECUTION_FENCE, { value: fence });
     return ref;
   }
@@ -856,7 +915,15 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     let textEndUpdates: SlackUpdateArgs[] | undefined;
     let terminalTextCommitted = false;
     let runErrorPostFinal = false;
+    let lastMirroredLen = 0;
+    const renderFence = this.fenceOf(target);
     const sendUpdate = async (args: SlackUpdateArgs, final: boolean): Promise<void> => {
+      const text = args.text;
+      if (text.length > lastMirroredLen) {
+        const delta = text.slice(lastMirroredLen);
+        lastMirroredLen = text.length;
+        await this.mirrorSessionOutput(renderFence, delta);
+      }
       await this.fenced(target, async () => requireSlackOk(
         "chat.update",
         await this.client.updateMessage(args),

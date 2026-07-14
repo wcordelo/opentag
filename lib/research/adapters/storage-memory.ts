@@ -107,6 +107,13 @@ export class MemoryStorageAdapter implements StorageAdapter {
     this.outbox.push(msg);
   }
 
+  async appendOutboxIfTaskActive(msg: OutboxMessage): Promise<boolean> {
+    const task = this.tasks.get(msg.sessionId);
+    if (!task || (task.status !== "pending" && task.status !== "running")) return false;
+    this.outbox.push(msg);
+    return true;
+  }
+
   async getPendingOutbox(sessionId: string): Promise<OutboxMessage[]> {
     return this.outbox.filter((m) => m.sessionId === sessionId && m.status === "pending");
   }
@@ -149,12 +156,66 @@ export class MemoryStorageAdapter implements StorageAdapter {
     if (t) this.tasks.set(taskId, { ...t, status, metadata: metadata ?? t.metadata });
   }
 
+  async updateTaskStatusIfActive(
+    taskId: string,
+    status: TaskRecord["status"],
+    metadata?: Record<string, unknown>,
+  ): Promise<boolean> {
+    const task = this.tasks.get(taskId);
+    if (!task || (task.status !== "pending" && task.status !== "running")) return false;
+    this.tasks.set(taskId, { ...task, status, metadata: metadata ?? task.metadata });
+    return true;
+  }
+
   async getTasksByThread(threadKey: string): Promise<TaskRecord[]> {
     return [...this.tasks.values()].filter((t) => t.threadKey === threadKey);
   }
 
+  async cancelResearchTask(taskId: string, expectedThreadKey: string) {
+    const task = this.tasks.get(taskId);
+    if (!task) return { status: "not_found" as const, taskId };
+    if (task.threadKey !== expectedThreadKey) {
+      return { status: "thread_mismatch" as const, taskId };
+    }
+    const already = task.status === "cancelled";
+    this.tasks.set(taskId, { ...task, status: "cancelled" });
+    const session = this.sessions.get(taskId);
+    if (session && session.data.status !== "cancelled") {
+      this.sessions.set(taskId, {
+        ...session,
+        data: { ...session.data, status: "cancelled", externalJob: undefined },
+        versionId: session.versionId + 1,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    for (const msg of this.outbox) {
+      if (msg.sessionId === taskId && msg.status === "pending") msg.status = "failed";
+    }
+    for (const delivery of this.deliveries) {
+      if (delivery.payload.taskId === taskId && delivery.status === "pending") {
+        delivery.status = "failed";
+      }
+    }
+    this.alarms = this.alarms.filter((alarm) => alarm.sessionId !== taskId);
+    const quiescent = !this.deliveries.some(
+      (delivery) => delivery.payload.taskId === taskId && delivery.status === "in_flight",
+    );
+    return {
+      status: already ? "already_cancelled" as const : "cancelled" as const,
+      taskId,
+      quiescent,
+    };
+  }
+
   async appendDeliveryObligation(obligation: DeliveryObligation): Promise<void> {
     this.deliveries.push(obligation);
+  }
+
+  async appendDeliveryObligationIfTaskActive(obligation: DeliveryObligation): Promise<boolean> {
+    const task = this.tasks.get(obligation.payload.taskId);
+    if (!task || (task.status !== "pending" && task.status !== "running")) return false;
+    this.deliveries.push(obligation);
+    return true;
   }
 
   async getPendingDeliveries(threadKey?: string): Promise<DeliveryObligation[]> {
@@ -163,15 +224,45 @@ export class MemoryStorageAdapter implements StorageAdapter {
     );
   }
 
+  async getDeliveriesToDrain(threadKey?: string): Promise<DeliveryObligation[]> {
+    return this.deliveries.filter(
+      (d) => (d.status === "pending" || d.status === "in_flight") &&
+        (!threadKey || d.threadKey === threadKey),
+    );
+  }
+
+  async claimDelivery(id: string): Promise<DeliveryObligation | null> {
+    const delivery = this.deliveries.find((item) => item.id === id);
+    if (!delivery) return null;
+    if (delivery.status === "in_flight") return { ...delivery, payload: { ...delivery.payload } };
+    if (delivery.status !== "pending") return null;
+    const task = this.tasks.get(delivery.payload.taskId);
+    if (!task || (task.status !== "pending" && task.status !== "running")) return null;
+    delivery.status = "in_flight";
+    return { ...delivery, payload: { ...delivery.payload } };
+  }
+
   async markDeliveryDelivered(id: string): Promise<void> {
     const d = this.deliveries.find((o) => o.id === id);
-    if (d) d.status = "delivered";
+    if (d?.status === "in_flight") d.status = "delivered";
+  }
+
+  async markDeliverySuppressed(id: string): Promise<void> {
+    const d = this.deliveries.find((o) => o.id === id);
+    if (d?.status === "in_flight") d.status = "failed";
   }
 
   async enqueueAlarm(item: AlarmQueueItem): Promise<void> {
     const idx = this.alarms.findIndex((a) => a.id === item.id);
     if (idx >= 0) this.alarms[idx] = item;
     else this.alarms.push(item);
+  }
+
+  async enqueueAlarmIfTaskActive(item: AlarmQueueItem): Promise<boolean> {
+    const task = this.tasks.get(item.sessionId);
+    if (!task || (task.status !== "pending" && task.status !== "running")) return false;
+    await this.enqueueAlarm(item);
+    return true;
   }
 
   async getDueAlarms(nowMs: number, limit = 10): Promise<AlarmQueueItem[]> {

@@ -202,6 +202,19 @@ export function resolveSessionWorkdir(root: string, sessionId: string): string {
   return workdir;
 }
 
+/**
+ * A turn gets a disposable HOME outside its repository checkout. Execution
+ * IDs are wire-safe and namespace-distinct from session IDs, so this cannot
+ * alias a live session checkout under the shared /work root.
+ */
+export function resolveExecutionHome(root: string, executionId: string): string {
+  if (!isSafeIdentifier(executionId)) throw new Error("invalid executionId");
+  const resolvedRoot = path.resolve(root);
+  const executionRoot = path.resolve(resolvedRoot, executionId);
+  if (path.dirname(executionRoot) !== resolvedRoot) throw new Error("unsafe execution home");
+  return path.join(executionRoot, "home");
+}
+
 // ---------------------------------------------------------------------------
 // Pure helpers — claude-code stream-json -> NDJSON event mapping
 // ---------------------------------------------------------------------------
@@ -308,16 +321,17 @@ export function finalizeEvents(
 export function buildClaudeArgs(opts: {
   prompt: string;
   model?: string;
-  systemPromptText?: string;
+  systemPromptText: string;
   permissionMode?: string;
 }): string[] {
+  if (!opts.systemPromptText.trim()) {
+    throw new Error("authoritative system prompt is empty");
+  }
   const args = ["--print", "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
   const permissionMode = opts.permissionMode ?? CLAUDE_PERMISSION_MODE;
   if (permissionMode) args.push("--permission-mode", permissionMode);
-  if (opts.systemPromptText && opts.systemPromptText.trim()) {
-    args.push("--append-system-prompt", opts.systemPromptText);
-  }
+  args.push("--append-system-prompt", opts.systemPromptText);
   args.push(opts.prompt);
   return args;
 }
@@ -331,6 +345,11 @@ export interface ExecutionTracker {
   end(executionId: string): void;
   has(executionId: string): boolean;
   interrupt(sessionId: string, executionId: string): boolean;
+  waitForQuiescence(
+    sessionId: string,
+    executionId: string,
+    timeoutMs: number,
+  ): Promise<boolean>;
   pendingCount(): number;
   dispose(): void;
 }
@@ -343,7 +362,12 @@ export interface ExecutionTrackerOptions {
 }
 
 export function createExecutionTracker(options: ExecutionTrackerOptions = {}): ExecutionTracker {
-  const active = new Map<string, { sessionId: string; controller: AbortController }>();
+  const active = new Map<string, {
+    sessionId: string;
+    controller: AbortController;
+    completion: Promise<void>;
+    resolveCompletion: () => void;
+  }>();
   const pendingInterrupts = new Map<string, number>();
   const recentlyEnded = new Map<string, number>();
   const pendingTtlMs = options.pendingTtlMs ?? 30_000;
@@ -373,11 +397,21 @@ export function createExecutionTracker(options: ExecutionTrackerOptions = {}): E
       }
       if (active.has(executionId)) return false;
       recentlyEnded.delete(key);
-      active.set(executionId, { sessionId, controller });
+      let resolveCompletion!: () => void;
+      const completion = new Promise<void>((resolve) => {
+        resolveCompletion = resolve;
+      });
+      active.set(executionId, {
+        sessionId,
+        controller,
+        completion,
+        resolveCompletion,
+      });
       return true;
     },
     end(executionId) {
       const execution = active.get(executionId);
+      execution?.resolveCompletion();
       active.delete(executionId);
       if (execution) recentlyEnded.set(pendingKey(execution.sessionId, executionId), now() + pendingTtlMs);
     },
@@ -387,7 +421,8 @@ export function createExecutionTracker(options: ExecutionTrackerOptions = {}): E
     interrupt(sessionId, executionId) {
       sweep();
       const execution = active.get(executionId);
-      if (!execution || execution.sessionId !== sessionId) {
+      if (execution && execution.sessionId !== sessionId) return false;
+      if (!execution) {
         const key = pendingKey(sessionId, executionId);
         // A late/repeated Stop must not poison reuse of an execution that has
         // already ended. Pending entries exist only for pre-admission reorder.
@@ -405,6 +440,29 @@ export function createExecutionTracker(options: ExecutionTrackerOptions = {}): E
       }
       execution.controller.abort();
       return true;
+    },
+    async waitForQuiescence(sessionId, executionId, timeoutMs) {
+      sweep();
+      const key = pendingKey(sessionId, executionId);
+      const execution = active.get(executionId);
+      if (execution) {
+        if (execution.sessionId !== sessionId) return false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            execution.completion.then(() => true),
+            new Promise<false>((resolve) => {
+              timer = setTimeout(() => resolve(false), Math.max(1, timeoutMs));
+              timer.unref();
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }
+      // A pre-admission tombstone is quiescent: begin() will consume it and
+      // reject the exact future execution before clone/tool/write work.
+      return pendingInterrupts.has(key) || recentlyEnded.has(key);
     },
     pendingCount() {
       return pendingInterrupts.size;
@@ -670,6 +728,65 @@ async function quarantineAndRemove(
   throwIfAborted(signal);
 }
 
+function assertPrivateDirectory(stat: fs.Stats, target: string): void {
+  const expectedUid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    (expectedUid !== undefined && stat.uid !== expectedUid) ||
+    (stat.mode & 0o777) !== 0o700
+  ) throw new Error(`unsafe execution home component: ${target}`);
+}
+
+/** Create a fresh, non-symlinked 0700 HOME for exactly one execution. */
+export async function prepareExecutionHome(
+  root: string,
+  executionId: string,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<string> {
+  const home = resolveExecutionHome(root, executionId);
+  const executionRoot = path.dirname(home);
+  // A crashed/recycled process may leave state behind. Detach and remove it
+  // before exclusive creation; repository code can never make stale global
+  // ~/.claude state authoritative for the next execution.
+  await quarantineAndRemove(executionRoot, defaultWorkdirFilesystem, signal);
+  try {
+    throwIfAborted(signal);
+    await fs.promises.mkdir(executionRoot, { mode: 0o700 });
+    throwIfAborted(signal);
+    await fs.promises.mkdir(home, { mode: 0o700 });
+    const [executionStat, homeStat] = await Promise.all([
+      fs.promises.lstat(executionRoot),
+      fs.promises.lstat(home),
+    ]);
+    throwIfAborted(signal);
+    assertPrivateDirectory(executionStat, executionRoot);
+    assertPrivateDirectory(homeStat, home);
+    return home;
+  } catch (err) {
+    try {
+      await quarantineAndRemove(
+        executionRoot,
+        defaultWorkdirFilesystem,
+        new AbortController().signal,
+      );
+    } catch {
+      // Preserve the authoritative setup error.
+    }
+    throw err;
+  }
+}
+
+/** Cleanup ignores a turn abort because writable config must never survive it. */
+export async function cleanupExecutionHome(root: string, executionId: string): Promise<void> {
+  const executionRoot = path.dirname(resolveExecutionHome(root, executionId));
+  await quarantineAndRemove(
+    executionRoot,
+    defaultWorkdirFilesystem,
+    new AbortController().signal,
+  );
+}
+
 function parseWorkdirIdentity(raw: string): WorkdirIdentity {
   const value: unknown = JSON.parse(raw);
   if (
@@ -691,13 +808,14 @@ async function existingWorkdirMatches(
   operations: CloneOperations,
   signal: AbortSignal,
   filesystem: WorkdirFilesystem,
+  executionId?: string,
 ): Promise<boolean> {
   try {
     throwIfAborted(signal);
     const origin = await operations.execFile(
       "/usr/bin/git",
       ["-C", workdir, "remote", "get-url", "origin"],
-      { env: gitAuthenticationEnv(process.env), signal },
+      { env: gitAuthenticationEnv(process.env, executionId), signal },
     );
     throwIfAborted(signal);
     if (typeof origin !== "string" || origin.trim() !== repo.url) return false;
@@ -711,7 +829,7 @@ async function existingWorkdirMatches(
       await operations.execFile(
         "/usr/bin/git",
         ["-C", workdir, "rev-parse", "--verify", `refs/remotes/origin/${repo.branch}`],
-        { env: gitAuthenticationEnv(process.env), signal },
+        { env: gitAuthenticationEnv(process.env, executionId), signal },
       );
       throwIfAborted(signal);
     }
@@ -722,12 +840,24 @@ async function existingWorkdirMatches(
   }
 }
 
-export function gitAuthenticationEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
+export function gitAuthenticationEnv(
+  source: NodeJS.ProcessEnv,
+  executionId?: string,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...source,
     GIT_TERMINAL_PROMPT: "0",
     GIT_ASKPASS: source.GIT_ASKPASS || "/usr/local/bin/opentag-git-askpass",
   };
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete env[key];
+  }
+  if (executionId) {
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraHeader";
+    env.GIT_CONFIG_VALUE_0 = `${EXECUTION_BINDING_HEADER}: ${executionId}`;
+  }
+  return env;
 }
 
 /** Clone into a disposable sibling and rename only after checkout succeeds. */
@@ -738,6 +868,7 @@ export async function ensureWorkdir(
   operations: CloneOperations = defaultCloneOperations,
   signal: AbortSignal = new AbortController().signal,
   filesystem: WorkdirFilesystem = defaultWorkdirFilesystem,
+  executionId?: string,
 ): Promise<WorkdirResult> {
   const branch = workBranchName(sessionId);
   const partial = `${workdir}.partial-${process.pid}-${randomUUID()}`;
@@ -750,7 +881,7 @@ export async function ensureWorkdir(
     if (
       gitStat?.isDirectory() &&
       !gitStat.isSymbolicLink() &&
-      await existingWorkdirMatches(workdir, repo, operations, signal, filesystem)
+      await existingWorkdirMatches(workdir, repo, operations, signal, filesystem, executionId)
     ) {
       throwIfAborted(signal);
       return { ok: true, branch };
@@ -762,12 +893,12 @@ export async function ensureWorkdir(
     if (repo.branch) cloneArgs.push("--branch", repo.branch);
     cloneArgs.push(repo.url, partial);
     await operations.execFile("/usr/bin/git", cloneArgs, {
-      env: gitAuthenticationEnv(process.env),
+      env: gitAuthenticationEnv(process.env, executionId),
       signal,
     });
     throwIfAborted(signal);
     await operations.execFile("/usr/bin/git", ["-C", partial, "checkout", "-q", "-b", branch], {
-      env: gitAuthenticationEnv(process.env),
+      env: gitAuthenticationEnv(process.env, executionId),
       signal,
     });
     throwIfAborted(signal);
@@ -849,6 +980,7 @@ export async function verifyTurnOutcome(
   baseline: GitBaseline | undefined,
   operations: OutcomeOperations = defaultOutcomeOperations,
   signal: AbortSignal = new AbortController().signal,
+  turnEnv: NodeJS.ProcessEnv = process.env,
 ): Promise<TurnOutcome> {
   if (!body.codingTask) return { ok: true };
   const branch = workBranchName(body.sessionId);
@@ -856,7 +988,7 @@ export async function verifyTurnOutcome(
     const git = async (args: string[]): Promise<string> =>
       await operations.execFile("/usr/bin/git", args, {
         cwd: workdir,
-        env: gitAuthenticationEnv(process.env),
+        env: gitAuthenticationEnv(turnEnv, body.executionId),
         signal,
       });
     const currentBranch = await git(["branch", "--show-current"]);
@@ -885,11 +1017,13 @@ export async function verifyTurnOutcome(
         "api",
         "--method",
         "GET",
+        "--header",
+        `${EXECUTION_BINDING_HEADER}: ${body.executionId}`,
         `repos/${owner}/${repoName}/pulls?head=${encodeURIComponent(`${owner}:${branch}`)}&state=open`,
       ],
       {
         cwd: workdir,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1" },
+        env: { ...turnEnv, GH_PROMPT_DISABLED: "1" },
         signal,
       },
     );
@@ -938,21 +1072,22 @@ async function getClaudeVersion(): Promise<string> {
   return cachedClaudeVersion;
 }
 
-let cachedSystemPromptText: string | undefined;
-
-async function loadSystemPromptText(signal: AbortSignal): Promise<string> {
-  if (cachedSystemPromptText !== undefined) return cachedSystemPromptText;
-  try {
-    cachedSystemPromptText = await readBoundedFile(
-      SYSTEM_PROMPT_PATH,
-      MAX_SYSTEM_PROMPT_BYTES,
-      signal,
-    );
-  } catch (err) {
-    if (signal.aborted) throw err;
-    cachedSystemPromptText = "";
+/**
+ * Reads the image-owned prompt on every turn. A missing, non-regular,
+ * oversized, or empty prompt is an authoritative setup failure: callers must
+ * not start Claude without these instructions.
+ */
+export async function loadAuthoritativeSystemPrompt(
+  target: string,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("invalid system prompt size limit");
   }
-  return cachedSystemPromptText;
+  const text = await readBoundedFile(target, maxBytes, signal);
+  if (!text.trim()) throw new Error("system prompt is empty");
+  return text;
 }
 
 export function buildClaudeEnv(
@@ -962,6 +1097,7 @@ export function buildClaudeEnv(
   repo?: RepoSpec,
   sessionId?: string,
   executionId?: string,
+  executionHome?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
   // Repository-controlled code receives only obvious sentinels. Real Anthropic,
@@ -977,6 +1113,19 @@ export function buildClaudeEnv(
   env.ANTHROPIC_API_KEY = "opentag-egress-injected-not-a-secret";
   env.GITHUB_TOKEN = "opentag-egress-injected-not-a-secret";
   env.GH_TOKEN = "opentag-egress-injected-not-a-secret";
+  if (executionHome) {
+    // Do not inherit any writable global user/config location. Claude and all
+    // of its tool descendants share only this execution-scoped HOME, which is
+    // quarantined and removed after terminal outcome verification.
+    env.HOME = executionHome;
+    env.USERPROFILE = executionHome;
+    delete env.HOMEDRIVE;
+    delete env.HOMEPATH;
+    env.XDG_CONFIG_HOME = path.join(executionHome, ".config");
+    env.XDG_CACHE_HOME = path.join(executionHome, ".cache");
+    env.XDG_DATA_HOME = path.join(executionHome, ".local", "share");
+    env.CLAUDE_CONFIG_DIR = path.join(executionHome, ".claude");
+  }
   if (repo) {
     const url = new URL(repo.url);
     env.OPENTAG_REPO_SLUG = url.pathname.replace(/^\//, "").replace(/\.git$/i, "");
@@ -1157,11 +1306,18 @@ export async function runTurnStreaming(
   signal: AbortSignal,
 ): Promise<void> {
   let doneWritten = false;
+  let deferTerminalUntilHomeCleanup = false;
+  let deferredTerminal: Extract<NdjsonEvent, { kind: "done" }> | undefined;
   const emit = (event: NdjsonEvent): void => {
     if (doneWritten) return;
     if (signal.aborted && event.kind !== "done") return;
     if (event.kind === "done" && event.payload.ok && signal.aborted) {
       event = { kind: "done", payload: { ok: false, summary: "interrupted" } };
+    }
+    if (event.kind === "done" && deferTerminalUntilHomeCleanup) {
+      deferredTerminal = event;
+      doneWritten = true;
+      return;
     }
     writeNdjson(res, event);
     if (event.kind === "done") doneWritten = true;
@@ -1181,6 +1337,8 @@ export async function runTurnStreaming(
       body.sessionId,
       defaultCloneOperations,
       signal,
+      defaultWorkdirFilesystem,
+      body.executionId,
     );
     if (signal.aborted) { emitInterrupted(); return; }
     if (!cloneResult.ok) {
@@ -1222,7 +1380,7 @@ export async function runTurnStreaming(
           cwd: workdir,
           signal,
           timeoutMs: GIT_TIMEOUT_MS,
-          env: gitAuthenticationEnv(process.env),
+          env: gitAuthenticationEnv(process.env, body.executionId),
         });
       baseline = { head: await readRevision("HEAD"), tree: await readRevision("HEAD^{tree}") };
     } catch {
@@ -1241,13 +1399,42 @@ export async function runTurnStreaming(
   });
   let systemPromptText: string;
   try {
-    systemPromptText = await loadSystemPromptText(signal);
-  } catch {
-    emitInterrupted();
+    systemPromptText = await loadAuthoritativeSystemPrompt(
+      SYSTEM_PROMPT_PATH,
+      MAX_SYSTEM_PROMPT_BYTES,
+      signal,
+    );
+  } catch (err) {
+    if (signal.aborted) {
+      emitInterrupted();
+      return;
+    }
+    emit({
+      kind: "error",
+      payload: {
+        message: `system prompt setup failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    });
+    emit({ kind: "done", payload: { ok: false, summary: "system prompt unavailable" } });
     return;
   }
   throwIfAborted(signal);
   const args = buildClaudeArgs({ prompt, model: body.model, systemPromptText });
+
+  let executionHome: string;
+  try {
+    executionHome = await prepareExecutionHome(WORK_ROOT, body.executionId, signal);
+  } catch (err) {
+    if (signal.aborted) { emitInterrupted(); return; }
+    emit({
+      kind: "error",
+      payload: {
+        message: `execution home setup failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    });
+    emit({ kind: "done", payload: { ok: false, summary: "execution home unavailable" } });
+    return;
+  }
 
   const env = buildClaudeEnv(
     process.env,
@@ -1256,6 +1443,7 @@ export async function runTurnStreaming(
     body.repo,
     body.sessionId,
     body.executionId,
+    executionHome,
   );
   let claudeResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 
@@ -1264,6 +1452,7 @@ export async function runTurnStreaming(
     throwIfAborted(signal);
     child = spawn(CLAUDE_BIN, args, buildClaudeSpawnOptions(workdir, env));
   } catch (err) {
+    try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* reported by setup next turn */ }
     if (signal.aborted) { emitInterrupted(); return; }
     emit({
       kind: "error",
@@ -1274,6 +1463,10 @@ export async function runTurnStreaming(
     emit({ kind: "done", payload: { ok: false, summary: "failed to start claude" } });
     return;
   }
+  // Once repository-controlled code starts, hold the terminal frame until its
+  // writable HOME has been quarantined and removed. This closes the lifecycle
+  // race where a client could observe done and recycle the container first.
+  deferTerminalUntilHomeCleanup = true;
 
   let terminalFailure: string | undefined;
   const terminator = createChildTerminator(child);
@@ -1354,6 +1547,7 @@ export async function runTurnStreaming(
               baseline,
               defaultOutcomeOperations,
               signal,
+              env,
             );
           } catch {
             emitInterrupted();
@@ -1385,6 +1579,25 @@ export async function runTurnStreaming(
       resolve();
     });
   });
+  let cleanupFailure: unknown;
+  try {
+    await cleanupExecutionHome(WORK_ROOT, body.executionId);
+  } catch (err) {
+    cleanupFailure = err;
+    console.error("execution home cleanup failed", err);
+  }
+  deferTerminalUntilHomeCleanup = false;
+  if (cleanupFailure) {
+    writeNdjson(res, {
+      kind: "error",
+      payload: {
+        message: `execution home cleanup failed: ${cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure)}`,
+      },
+    });
+    writeNdjson(res, { kind: "done", payload: { ok: false, summary: "execution home cleanup failed" } });
+  } else if (deferredTerminal) {
+    writeNdjson(res, deferredTerminal);
+  }
 }
 
 interface ServerContext {
@@ -1394,6 +1607,7 @@ interface ServerContext {
   maxBodyBytes: number;
   repoPolicy: RepoPolicy;
   runTurn: typeof runTurnStreaming;
+  interruptWaitMs: number;
 }
 
 async function handleRequest(
@@ -1442,6 +1656,15 @@ async function handleRequest(
       validation.body.sessionId,
       validation.body.executionId,
     );
+    const quiescent = await ctx.executionTracker.waitForQuiescence(
+      validation.body.sessionId,
+      validation.body.executionId,
+      ctx.interruptWaitMs,
+    );
+    if (!quiescent) {
+      sendJson(res, 503, { error: "interrupt_quiescence_timeout" });
+      return;
+    }
     sendJson(res, 200, { interrupted });
     return;
   }
@@ -1523,6 +1746,8 @@ export interface HarnessServerOptions {
   maxBodyBytes?: number;
   repoPolicy?: RepoPolicy;
   runTurn?: typeof runTurnStreaming;
+  /** Bounded exact-execution quiescence wait; injectable for tests. */
+  interruptWaitMs?: number;
 }
 
 export function createHarnessServer(options: HarnessServerOptions = {}): http.Server {
@@ -1536,6 +1761,7 @@ export function createHarnessServer(options: HarnessServerOptions = {}): http.Se
         : 1024 * 1024,
     repoPolicy: options.repoPolicy ?? repoPolicyFromEnv(),
     runTurn: options.runTurn ?? runTurnStreaming,
+    interruptWaitMs: options.interruptWaitMs ?? 30_000,
   };
   const server = http.createServer((req, res) => {
     handleRequest(req, res, ctx).catch((err) => {

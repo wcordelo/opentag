@@ -13,8 +13,10 @@
  * harness wire protocol itself is covered by `test/harness-client.test.ts`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { StateStore } from "../src/store/state-store-contract.js";
+import type { LifecycleStateStore } from "../src/store/state-store-contract.js";
 import { bindRequestContext } from "../src/request-context.js";
+import { bindTurnExecutionContext } from "../src/slack/turn-execution-context.js";
+import { withTestLifecycleStore } from "./helpers/lifecycle-state-store.js";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
@@ -27,10 +29,10 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 
-function makeMemoryStore(): StateStore {
+function makeMemoryStore(): LifecycleStateStore {
   const kv = new Map<string, { value: unknown; exp?: number }>();
   const lists = new Map<string, unknown[]>();
-  return {
+  return withTestLifecycleStore({
     kv: {
       async get<T>(key: string) {
         const e = kv.get(key);
@@ -93,7 +95,7 @@ function makeMemoryStore(): StateStore {
         return 0;
       },
     },
-  };
+  });
 }
 
 type RunAgentOpts = {
@@ -110,8 +112,20 @@ function makeThreadSpies(conversationKey: string) {
   return { thread, post, runAgent };
 }
 
-let store: StateStore;
+let store: LifecycleStateStore;
 const resolveUserMock = vi.hoisted(() => vi.fn(async () => ({})));
+const loadTurnAccessMock = vi.hoisted(() => vi.fn(async () => ({
+  config: {
+    teamId: "T1",
+    channelId: null,
+    systemPrompt: "sys",
+    policies: {},
+    accessBundleId: "default",
+    updatedAt: "now",
+  },
+  bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
+})));
+const setTitleMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../src/store/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/store/index.js")>();
@@ -126,17 +140,7 @@ vi.mock("../src/config/workspace-config-do.js", async (importOriginal) => {
     await importOriginal<typeof import("../src/config/workspace-config-do.js")>();
   return {
     ...actual,
-    loadTurnAccess: async () => ({
-      config: {
-        teamId: "T1",
-        channelId: null,
-        systemPrompt: "sys",
-        policies: {},
-        accessBundleId: "default",
-        updatedAt: "now",
-      },
-      bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
-    }),
+    loadTurnAccess: loadTurnAccessMock,
   };
 });
 
@@ -145,7 +149,7 @@ vi.mock("../src/slack/web-api.js", async (importOriginal) => {
   return {
     ...actual,
     createSlackWebClient: () => ({
-      setTitle: async () => undefined,
+      setTitle: setTitleMock,
       resolveUser: resolveUserMock,
     }),
   };
@@ -173,7 +177,89 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     runHarnessTurnMock.mockReset();
     resolveUserMock.mockReset();
     resolveUserMock.mockResolvedValue({});
+    loadTurnAccessMock.mockClear();
+    loadTurnAccessMock.mockResolvedValue({
+      config: {
+        teamId: "T1",
+        channelId: null,
+        systemPrompt: "sys",
+        policies: {},
+        accessBundleId: "default",
+        updatedAt: "now",
+      },
+      bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
+    });
+    setTitleMock.mockReset();
+    setTitleMock.mockResolvedValue(undefined);
   });
+
+  it.each(["profile", "access", "title", "history"] as const)(
+    "never launches after exact Stop during %s preparation",
+    async (barrier) => {
+      const executionId = `ot1e_${barrier.padEnd(43, "A").slice(0, 43)}`;
+      const forwardedMessageId = `ot1m_${barrier.padEnd(43, "B").slice(0, 43)}`;
+      const threadKey = "slack:C1:1111111111.009000";
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.009000");
+      const withHistory = thread as typeof thread & { getMessages?: () => Promise<[]> };
+      let historySpy: ReturnType<typeof vi.fn> | undefined;
+      if (barrier === "profile") resolveUserMock.mockImplementationOnce(async () => {
+        await blocked;
+        return {};
+      });
+      if (barrier === "access") loadTurnAccessMock.mockImplementationOnce(async () => {
+        await blocked;
+        return {
+          config: { teamId: "T1", channelId: null, systemPrompt: "sys", policies: {}, accessBundleId: "default", updatedAt: "now" },
+          bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
+        };
+      });
+      if (barrier === "title") setTitleMock.mockImplementationOnce(async () => {
+        await blocked;
+      });
+      if (barrier === "history") historySpy = vi.fn(async () => {
+        await blocked;
+        return [];
+      });
+      if (historySpy) withHistory.getMessages = historySpy as () => Promise<[]>;
+      bindRequestContext(thread, {
+        teamId: "T1",
+        requesterId: `U-${barrier}`,
+        inbound: { channel: "C1", ts: "1111111111.009001", threadTs: "1111111111.009000", identity: `Ev-${barrier}` },
+      });
+      bindTurnExecutionContext(thread, { threadKey, executionId });
+      await store.activeTurn.register({
+        channelId: "C1",
+        threadKey,
+        conversationKey: "C1::1111111111.009000",
+        executionId,
+        threadTs: "1111111111.009000",
+        registeredAt: Date.now(),
+      });
+      const pending = runBundledAgentTurn(
+        makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+        withHistory as never,
+        "--claude inspect repository",
+        { id: `U-${barrier}` },
+        { executionId, forwardedMessageId },
+      );
+      if (barrier === "profile") await vi.waitFor(() => expect(resolveUserMock).toHaveBeenCalled());
+      if (barrier === "access") await vi.waitFor(() => expect(loadTurnAccessMock).toHaveBeenCalled());
+      if (barrier === "title") await vi.waitFor(() => expect(setTitleMock).toHaveBeenCalled());
+      if (barrier === "history") await vi.waitFor(() => expect(historySpy).toHaveBeenCalled());
+      await store.activeTurn.claimCancellation({
+        threadKey,
+        executionId,
+        stopEventId: `Stop-${barrier}`,
+      });
+      release();
+      await expect(pending).resolves.toEqual({ status: "interrupted" });
+      expect(runHarnessTurnMock).not.toHaveBeenCalled();
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    },
+  );
 
   it("routes to the harness and posts its text when harnessType=claudecode and HARNESS_URL is configured", async () => {
     runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done via Claude Code." });
@@ -199,6 +285,46 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(runAgent).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0]![0]).toBe("Done via Claude Code.");
+  });
+
+  it("suppresses success when exact Stop lands after durable done but before the visible post", async () => {
+    const executionId = "ot1e_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const threadKey = "slack:C1:1111111111.000150";
+    runHarnessTurnMock.mockImplementation(async () => {
+      // Model the real barrier: SessionEventDO has already committed done and
+      // runHarnessTurn is about to return, while Stop durably marks this exact
+      // execution before agent-turn can post the result.
+      await store.activeTurn.claimCancellation({
+        threadKey,
+        executionId,
+        stopEventId: "stop-after-done",
+      });
+      return { ok: true, text: "LATE_SUCCESS", terminalPersisted: true };
+    });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000150");
+    bindTurnExecutionContext(thread, { threadKey, executionId });
+    await store.activeTurn.register({
+      channelId: "C1",
+      threadKey,
+      conversationKey: "C1::1111111111.000150",
+      executionId,
+      registeredAt: Date.now(),
+    });
+
+    const outcome = await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claude Explain this repository",
+      undefined,
+      {
+        executionId,
+        forwardedMessageId: "ot1m_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      },
+    );
+
+    expect(outcome).toEqual({ status: "interrupted" });
+    expect(post).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   it("derives stable, distinct wire IDs from direct-command ingress identity", async () => {
@@ -524,6 +650,16 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
       interrupted: true,
     });
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000700");
+    const executionId = "slack:C1:1111111111.000701";
+    const threadKey = "slack:C1:1111111111.000700";
+    bindTurnExecutionContext(thread, { threadKey, executionId });
+    await store.activeTurn.register({
+      channelId: "C1",
+      threadKey,
+      conversationKey: "C1::1111111111.000700",
+      executionId,
+      registeredAt: Date.now(),
+    });
 
     const outcome = await runBundledAgentTurn(
       makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
@@ -531,7 +667,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
       "--claude Make a change",
       undefined,
       {
-        executionId: "slack:C1:1111111111.000701",
+        executionId,
         forwardedMessageId: "slack:C1:1111111111.000701",
         remoteGitApproved: true,
         createPullRequest: true,

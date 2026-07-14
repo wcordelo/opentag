@@ -107,8 +107,9 @@ export const githubWebOutbound: OutboundHandler<Env> = async (request, workerEnv
     try { bodyText = await requestBodyText(request); } catch { return deny("body denied", 413); }
   }
   const attempt = attemptFor(request, bound.executionId, bodyText);
-  const isClone = isAllowedGitCloneRequest(attempt, repositoryAllowlist(workerEnv));
-  const isWrite = !isClone && await approvalStub(workerEnv, ctx).authorizeGithubOutbound(attempt);
+  const stub = approvalStub(workerEnv, ctx);
+  const isClone = await stub.authorizeGithubRead(attempt);
+  const isWrite = !isClone && await stub.authorizeGithubOutbound(attempt);
   if (!isClone && !isWrite) return deny("GitHub git request denied");
   if (!workerEnv.GITHUB_TOKEN) return fetch(request);
   return fetch(withCredentialHeader(request, "authorization", `Basic ${btoa(`x-access-token:${workerEnv.GITHUB_TOKEN}`)}`));
@@ -122,8 +123,9 @@ export const githubApiOutbound: OutboundHandler<Env> = async (request, workerEnv
     try { bodyText = await requestBodyText(request); } catch { return deny("body denied", 413); }
   }
   const attempt = attemptFor(request, bound.executionId, bodyText);
-  const allowed = isAllowedGithubRead(attempt, repositoryAllowlist(workerEnv))
-    || await approvalStub(workerEnv, ctx).authorizeGithubOutbound(attempt);
+  const stub = approvalStub(workerEnv, ctx);
+  const allowed = await stub.authorizeGithubRead(attempt)
+    || await stub.authorizeGithubOutbound(attempt);
   if (!allowed) return deny("GitHub API request denied");
   if (!workerEnv.GITHUB_TOKEN) return deny("GitHub credential unavailable", 503);
   return fetch(withCredentialHeader(request, "authorization", `Bearer ${workerEnv.GITHUB_TOKEN}`));
@@ -175,6 +177,15 @@ export class HarnessContainer extends Container<Env> {
   async authorizeGithubOutbound(attempt: GithubOutboundAttempt): Promise<boolean> {
     const scope = await this.ctx.storage.get<GithubApprovalScope>(APPROVAL_KEY);
     const allowed = authorizeGithubWrite(attempt, scope);
+    if (!allowed && scope && scope.expiresAt <= Date.now()) await this.ctx.storage.delete(APPROVAL_KEY);
+    return allowed;
+  }
+
+  async authorizeGithubRead(attempt: GithubOutboundAttempt): Promise<boolean> {
+    const scope = await this.ctx.storage.get<GithubApprovalScope>(APPROVAL_KEY);
+    const allowed = attempt.host === "github.com"
+      ? isAllowedGitCloneRequest(attempt, scope)
+      : isAllowedGithubRead(attempt, scope);
     if (!allowed && scope && scope.expiresAt <= Date.now()) await this.ctx.storage.delete(APPROVAL_KEY);
     return allowed;
   }

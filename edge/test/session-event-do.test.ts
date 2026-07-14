@@ -100,11 +100,6 @@ const EVENTS_DDL = [
      execution_id TEXT PRIMARY KEY,
      cancelled_at INTEGER NOT NULL
    )`,
-  `CREATE TABLE IF NOT EXISTS pending_cancellation (
-     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-     cancelled_at INTEGER NOT NULL,
-     expires_at INTEGER NOT NULL
-   )`,
 ];
 
 function makeEngine(now?: () => number) {
@@ -262,34 +257,22 @@ describe("SessionEventEngine", () => {
     expect(doneEvent?.executionId).toBe("exec-4");
     expect(doneEvent?.payload).toEqual({ interrupted: true });
 
-    // A second non-exact stop installs the short pre-admission barrier.
+    // A second non-exact stop is idle and must not poison later work.
     const noop = await engine.interrupt();
     expect(noop).toEqual({ interrupted: false });
 
     expect(await engine.execute({ executionId: "exec-after-stop", inputLines: ["new"] }))
-      .toEqual({ accepted: false, duplicate: false, cancelled: true });
-    await engine.execute({ executionId: "exec-later", inputLines: ["new"] });
+      .toEqual({ accepted: true, duplicate: false });
     const newer = await engine.getState();
     expect(newer.interrupted).toBe(false);
     expect(newer.interruptedExecutionId).toBe("exec-4");
-    expect(newer.executing?.executionId).toBe("exec-later");
+    expect(newer.executing?.executionId).toBe("exec-after-stop");
   });
 
-  it("non-exact Stop before registry publication cancels exactly the next immediate admission", async () => {
+  it("idle non-exact Stop never cancels the next unrelated admission", async () => {
     const { engine } = makeEngine();
     expect(await engine.interrupt()).toEqual({ interrupted: false });
     expect(await engine.execute({ executionId: "pre-registry", inputLines: ["go"] }))
-      .toEqual({ accepted: false, duplicate: false, cancelled: true });
-    expect(await engine.execute({ executionId: "normal-later", inputLines: ["go"] }))
-      .toEqual({ accepted: true, duplicate: false });
-  });
-
-  it("expires an ancient non-exact Stop instead of cancelling arbitrary later work", async () => {
-    let now = 1_000;
-    const { engine } = makeEngine(() => now);
-    await engine.interrupt();
-    now += 30_001;
-    expect(await engine.execute({ executionId: "much-later", inputLines: ["go"] }))
       .toEqual({ accepted: true, duplicate: false });
   });
 

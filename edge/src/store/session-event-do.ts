@@ -61,11 +61,6 @@ const EVENTS_DDL = [
      execution_id TEXT PRIMARY KEY,
      cancelled_at INTEGER NOT NULL
    )`,
-  `CREATE TABLE IF NOT EXISTS pending_cancellation (
-     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-     cancelled_at INTEGER NOT NULL,
-     expires_at INTEGER NOT NULL
-   )`,
 ];
 
 /** Create the events table + index. Idempotent; safe on every DO construction. */
@@ -95,9 +90,6 @@ const KEY_INTERRUPTED = "session:interrupted";
 
 /** Sentinel used when a caller doesn't pin a harness explicitly. */
 const DEFAULT_HARNESS = "default";
-/** Covers Slack ingress/registry interleavings without poisoning a quiet thread. */
-export const PENDING_CANCELLATION_TTL_MS = 30_000;
-
 // ── KV seam ─────────────────────────────────────────────────────────────────
 
 /**
@@ -256,17 +248,11 @@ export class SessionEventEngine {
       }
     }
 
-    // A non-exact Stop can beat BOT_STATE publication. Consume its short-lived
-    // admission barrier in the same synchronous SQLite turn as admission.
+    // Exact pre-admission cancellation is keyed by executionId above. Never
+    // consume a generic "cancel next" marker here: an idle Stop must not
+    // poison a later, unrelated turn. The lifecycle publishes the active-turn
+    // record before this RPC, so a racing Stop has the exact executionId.
     const now = this.now();
-    this.sql.exec(`DELETE FROM pending_cancellation WHERE expires_at <= ?`, now);
-    const pending = this.sql
-      .exec<{ expires_at: number }>(
-        `DELETE FROM pending_cancellation WHERE singleton = 1 RETURNING expires_at`,
-      )
-      .toArray()[0];
-    if (pending) return { accepted: false, duplicate: false, cancelled: true };
-
     const createdAt = now;
     this.sql.exec(
       `INSERT INTO executions
@@ -413,19 +399,11 @@ export class SessionEventEngine {
 
   async interrupt(): Promise<{ interrupted: boolean }> {
     const executing = this.activeExecution();
-    if (!executing) {
-      const cancelledAt = this.now();
-      this.sql.exec(
-        `INSERT INTO pending_cancellation (singleton, cancelled_at, expires_at)
-         VALUES (1, ?, ?)
-         ON CONFLICT(singleton) DO UPDATE SET
-           cancelled_at = excluded.cancelled_at,
-           expires_at = excluded.expires_at`,
-        cancelledAt,
-        cancelledAt + PENDING_CANCELLATION_TTL_MS,
-      );
-      return { interrupted: false };
-    }
+    // Non-exact fallback is only allowed to stop work that is already
+    // admitted. When the session is idle this is a true no-op; creating a
+    // singleton tombstone here would cancel whichever unrelated execution
+    // happened to arrive next.
+    if (!executing) return { interrupted: false };
     const result = await this.interruptExpected(executing.executionId);
     return { interrupted: result.interrupted };
   }

@@ -6,7 +6,7 @@ import {
   resolveAllowedTools,
 } from "../src/config/access-bundle.js";
 import { guardToolsByBundle } from "../src/tools/guard.js";
-import { startTask } from "../src/tasks/runtime.js";
+import { cancelTask, startTask } from "../src/tasks/runtime.js";
 
 describe("access bundle resolver", () => {
   it("filters tools to the bundle allowlist", () => {
@@ -152,6 +152,42 @@ describe("TaskRuntime", () => {
     );
     expect(result.status).toBe("error");
     expect(result.detail).toMatch(/503/);
+  });
+
+  it("authenticates exact cancellation and requires a quiescent response", async () => {
+    let request: { url: string; auth: string | null; body: unknown } | undefined;
+    await expect(cancelTask(
+      {
+        RESEARCH_TASKS: {
+          fetch: async (url: RequestInfo, init?: RequestInit) => {
+            request = {
+              url: String(url),
+              auth: new Headers(init?.headers).get("Authorization"),
+              body: JSON.parse(String(init?.body)),
+            };
+            return Response.json({ cancelled: true, quiescent: true, taskId: "task-1" });
+          },
+        } as unknown as Fetcher,
+        INTERNAL_SECRET: "sekrit",
+      },
+      { teamId: "T1", taskId: "task-1", threadKey: "slack:C1:1.0" },
+    )).resolves.toEqual({ cancelled: true, quiescent: true, taskId: "task-1" });
+    expect(request).toEqual({
+      url: "https://research/internal/tasks/task-1/cancel",
+      auth: "Bearer sekrit",
+      body: { teamId: "T1", threadKey: "slack:C1:1.0" },
+    });
+  });
+
+  it("rejects an ambiguous cancellation response", async () => {
+    await expect(cancelTask(
+      {
+        RESEARCH_TASKS: {
+          fetch: async () => Response.json({ cancelled: true, taskId: "task-1" }),
+        } as unknown as Fetcher,
+      },
+      { teamId: "T1", taskId: "task-1", threadKey: "slack:C1:1.0" },
+    )).rejects.toThrow("cancellation unconfirmed");
   });
 });
 

@@ -6,13 +6,16 @@
  * the turn that posted the card — the waiter is missing and Create/Cancel
  * appear dead.
  *
- * Fix: embed a `choiceId` in every button value, persist clicks under
- * `hitl-id:{choiceId}` (and conversationKey as a fallback), and race the
- * in-memory waiter against a DO poll of that id. Matching conversationKey is
- * no longer required for the click to unblock the waiting turn.
+ * Fix: embed a `choiceId` in every button value, persist modern clicks under
+ * `hitl-id:{choiceId}` (conversationKey remains for legacy id-less values),
+ * and resolve privileged choices from a DO poll of that id. Generic choices
+ * may still race the local waiter for compatibility, but remote-git approval
+ * requires the exact durable receipt. Matching conversationKey is no longer
+ * required to unblock the turn.
  */
 import type { StateStore } from "../store/state-store-contract.js";
 import type { Renderable } from "@copilotkit/channels-ui";
+import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
 
 export const HITL_CHOICE_TTL_MS = 10 * 60_000;
 export const HITL_CHOICE_POLL_MS = 100;
@@ -52,18 +55,24 @@ export async function persistHitlChoice(
   conversationKey: string,
   value: unknown,
   ttlMs: number = HITL_CHOICE_TTL_MS,
-): Promise<void> {
+): Promise<"persisted" | "cancelled"> {
   const choiceId = choiceIdFromValue(value);
-  if (choiceId && (await store.kv.get<boolean>(hitlCancelledKey(choiceId)))) {
-    return;
-  }
   const record: HitlChoiceRecord = { value, at: Date.now() };
+  // The exact choice-id receipt is the single commit point whenever modern
+  // button values carry one. Conversation keys remain a legacy fallback only
+  // for values without an id, avoiding partially persisted affirmatives.
   if (choiceId) {
-    await store.kv.set(hitlIdKey(choiceId), record, ttlMs);
-  }
-  if (conversationKey) {
+    if (!store.hitl) throw new Error("atomic_hitl_unavailable");
+    return store.hitl.persistChoiceUnlessCancelled({
+      choiceKey: hitlIdKey(choiceId),
+      cancelledKey: hitlCancelledKey(choiceId),
+      record,
+      ttlMs,
+    });
+  } else if (conversationKey) {
     await store.kv.set(hitlChoiceKey(conversationKey), record, ttlMs);
   }
+  return "persisted";
 }
 
 /** Wake a durable waiter with a denial and make all later clicks no-ops. */
@@ -71,16 +80,17 @@ export async function cancelHitlChoice(
   store: StateStore,
   opts: { conversationKey?: string; choiceId: string },
 ): Promise<void> {
-  await clearHitlChoice(store, opts);
   const record: HitlChoiceRecord = { value: {
     confirmed: false,
     choiceId: opts.choiceId,
   }, at: Date.now() };
-  await store.kv.set(hitlIdKey(opts.choiceId), record, HITL_CHOICE_TTL_MS);
-  if (opts.conversationKey) {
-    await store.kv.set(hitlChoiceKey(opts.conversationKey), record, HITL_CHOICE_TTL_MS);
-  }
-  await store.kv.set(hitlCancelledKey(opts.choiceId), true, HITL_CHOICE_TTL_MS);
+  if (!store.hitl) throw new Error("atomic_hitl_unavailable");
+  await store.hitl.cancelChoice({
+    choiceKey: hitlIdKey(opts.choiceId),
+    cancelledKey: hitlCancelledKey(opts.choiceId),
+    denial: record,
+    ttlMs: HITL_CHOICE_TTL_MS,
+  });
 }
 
 export async function clearHitlChoice(
@@ -114,6 +124,13 @@ export async function readHitlChoice(
   return undefined;
 }
 
+function valueFromRecord(record: unknown): unknown {
+  if (record && typeof record === "object" && "value" in record) {
+    return (record as HitlChoiceRecord).value;
+  }
+  throw new Error("invalid_hitl_choice_record");
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -144,24 +161,37 @@ export async function pollHitlChoice(
     timeoutMs?: number;
     pollMs?: number;
     signal?: AbortSignal;
+    choiceIdOnly?: boolean;
   },
 ): Promise<unknown> {
   const timeoutMs = opts.timeoutMs ?? HITL_CHOICE_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? HITL_CHOICE_POLL_MS;
   const deadline = Date.now() + timeoutMs;
-  const keys = {
-    conversationKey: opts.conversationKey,
-    choiceId: opts.choiceId,
-  };
 
   while (Date.now() < deadline) {
     if (opts.signal?.aborted) {
       throw new DOMException("aborted", "AbortError");
     }
-    const value = await readHitlChoice(store, keys);
-    if (value !== undefined) {
-      await clearHitlChoice(store, keys);
-      return value;
+    if (opts.choiceId) {
+      if (!store.hitl) throw new Error("atomic_hitl_unavailable");
+      const consumed = await store.hitl.consumeChoice({
+        choiceKey: hitlIdKey(opts.choiceId),
+        cancelledKey: hitlCancelledKey(opts.choiceId),
+      });
+      if (consumed.status !== "pending") {
+        return valueFromRecord(consumed.record);
+      }
+    }
+    if (!opts.choiceIdOnly && opts.conversationKey) {
+      const value = await readHitlChoice(store, {
+        conversationKey: opts.conversationKey,
+      });
+      if (value !== undefined) {
+        await clearHitlChoice(store, {
+          conversationKey: opts.conversationKey,
+        });
+        return value;
+      }
     }
     await sleep(pollMs, opts.signal);
   }
@@ -188,47 +218,109 @@ export async function awaitChoiceDurable<T>(
     timeoutMs?: number;
     pollMs?: number;
     conversationKey?: string;
+    /** Require the exact durable choice-id receipt; in-memory delivery cannot grant. */
+    requireDurableReceipt?: boolean;
+    /** Isolated unit-test escape hatch; forbidden on production tool paths. */
+    unsafeAllowMissingExecutionContextTestOnly?: boolean;
   },
 ): Promise<T> {
   const conversationKey = opts.conversationKey ?? thread.conversationKey ?? "";
-  // Stop may publish this tombstone before override resolution reaches HITL.
-  // Consume it as an immediate denial; do not erase it and post a live card.
-  if (await store.kv.get<boolean>(hitlCancelledKey(opts.choiceId))) {
-    return { confirmed: false, choiceId: opts.choiceId } as T;
+  if (!store.hitl) throw new Error("atomic_hitl_unavailable");
+  const exact = getTurnExecutionContext(thread);
+  if (!exact && opts.unsafeAllowMissingExecutionContextTestOnly !== true) {
+    throw new Error("exact_execution_context_required_for_hitl");
   }
-  await clearHitlChoice(store, {
-    choiceId: opts.choiceId,
-    conversationKey: conversationKey || undefined,
-  });
-
-  const ac = new AbortController();
-  const memory = thread.awaitChoice<T>(ui).then((v) => {
-    ac.abort();
-    return v;
-  });
-
-  const durable = pollHitlChoice(store, {
-    choiceId: opts.choiceId,
-    conversationKey: conversationKey || undefined,
-    timeoutMs: opts.timeoutMs,
-    pollMs: opts.pollMs,
-    signal: ac.signal,
-  })
-    .then((v) => v as T)
-    .catch((err: unknown) => {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return memory;
-      }
-      throw err;
+  const lifecycle = store as StateStore & {
+    activeTurn?: {
+      registerChoice(args: {
+        threadKey: string;
+        executionId: string;
+        choiceId: string;
+      }): Promise<"registered" | "cancelled" | "missing">;
+      unregisterChoice(args: {
+        threadKey: string;
+        executionId: string;
+        choiceId: string;
+      }): Promise<boolean>;
+    };
+  };
+  let registered = false;
+  if (exact) {
+    if (!lifecycle.activeTurn) {
+      throw new Error("active_turn_choice_registry_unavailable");
+    }
+    const result = await lifecycle.activeTurn.registerChoice({
+      ...exact,
+      choiceId: opts.choiceId,
     });
-
+    if (result !== "registered") {
+      // Never render or resolve a picker after exact Stop (or after its active
+      // row has disappeared). Throwing prevents non-confirmation tools from
+      // misreading a denial-shaped object as a successful action.
+      throw new Error("active_turn_not_active_for_hitl");
+    }
+    registered = true;
+  }
+  let ac: AbortController | undefined;
   try {
-    return await Promise.race([memory, durable]);
-  } finally {
-    ac.abort();
-    await clearHitlChoice(store, {
+    // One DO transaction either clears an old receipt or observes the exact
+    // Stop denial. A separate tombstone read followed by delete would let a
+    // Stop land between those calls and have its denial erased by setup.
+    const prepared = await store.hitl.prepareChoice({
+      choiceKey: hitlIdKey(opts.choiceId),
+      cancelledKey: hitlCancelledKey(opts.choiceId),
+    });
+    if (prepared.status === "cancelled") {
+      return valueFromRecord(prepared.record) as T;
+    }
+    if (conversationKey) {
+      await clearHitlChoice(store, { conversationKey });
+    }
+
+    ac = new AbortController();
+    const memory = thread.awaitChoice<T>(ui);
+    const requireDurableReceipt =
+      exact !== undefined || opts.requireDurableReceipt === true;
+    const memoryWinner = requireDurableReceipt
+      ? undefined
+      : memory.then((v) => {
+          ac!.abort();
+          return v;
+        });
+    if (requireDurableReceipt) void memory.catch(() => undefined);
+
+    const durable = pollHitlChoice(store, {
       choiceId: opts.choiceId,
       conversationKey: conversationKey || undefined,
+      timeoutMs: opts.timeoutMs,
+      pollMs: opts.pollMs,
+      signal: ac.signal,
+      choiceIdOnly: requireDurableReceipt,
+    })
+      .then((v) => v as T)
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return memoryWinner ?? Promise.reject(err);
+        }
+        throw err;
+      });
+
+    return requireDurableReceipt
+      ? await durable
+      : await Promise.race([memoryWinner!, durable]);
+  } finally {
+    ac?.abort();
+    // Exact-id receipts are consumed transactionally by pollHitlChoice. Never
+    // issue an unconditional exact-key delete here: Stop may have installed a
+    // newer denial after the consume linearization point.
+    await clearHitlChoice(store, {
+      conversationKey: conversationKey || undefined,
     });
+    if (registered && exact) {
+      await lifecycle.activeTurn!.unregisterChoice({
+        ...exact,
+        choiceId: opts.choiceId,
+      });
+    }
   }
 }

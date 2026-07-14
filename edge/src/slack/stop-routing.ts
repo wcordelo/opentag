@@ -8,22 +8,39 @@
  */
 import { isSlackStopCommand } from "./stop-command.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
-import { createSlackWebClient } from "./web-api.js";
+import {
+  createSlackWebClient,
+  isDefinitiveSlackFailure,
+  SlackApiError,
+} from "./web-api.js";
 import {
   conversationKeyFromThreadKey,
   firstSlackTs,
   slackObligationThreadKey,
 } from "./obligation-thread-key.js";
 import {
-  clearActiveTurn,
+  beginActiveTurnCancelAck,
+  claimActiveTurnCancellation,
+  failActiveTurnCancelAck,
   getActiveTurnForThread,
   getLatestActiveTurn,
+  markActiveTurnCancelConfirmed,
+  markActiveTurnCancelControlled,
   type ActiveTurnRecord,
 } from "./active-turn-registry.js";
-import { cancelHitlChoice } from "../hitl/durable-choice.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
 import { interruptHarnessTurn } from "../harness/client.js";
+import { cancelTask } from "../tasks/runtime.js";
+async function stableSlackClientMessageId(input: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)),
+  ).slice(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** The subset of a Slack Events API `event` object this module reads. */
 export interface SlackStopEvent {
@@ -59,7 +76,7 @@ interface SessionInterruptRpc {
   interruptExpected(
     executionId: string,
   ): Promise<{ interrupted: boolean; cancelled: true }>;
-  getState(): Promise<{
+  getState?(): Promise<{
     sessionId?: string;
     executing?: { executionId: string; startedAt: number };
   }>;
@@ -115,15 +132,13 @@ export function extractStopCommandEvent(
  *     writes (`slack:{channel}:{statusThreadTs ?? channel}`), falling back
  *     to the channel's registered active turn when stop is sent outside a
  *     thread while a threaded turn is in flight.
- *  2. Dedup on `stop:${event_id}` (Slack redelivers events aggressively —
- *     house rule 3) so a redelivered stop is a total no-op.
- *  3. Interrupt the thread's `SessionEventDO`, if registered.
+ *  2. Atomically claim cancellation for this exact execution and Stop event.
+ *  3. Interrupt the thread's `SessionEventDO` and harness execution.
  *  4. Abort any in-flight AG-UI run for the active conversation.
- *  5. Clear the render obligation for the thread (no `executionId` — a stop
- *     clears whatever is pending, not just the latest turn).
- *  6. Clear the assistant status.
- *  7. Post a short confirmation to the thread.
- *  8. Log a structured `stop_command_received` metric line.
+ *  5. Post an idempotent acknowledgement keyed by the Stop event.
+ *  6. Atomically clear the exact active turn and render obligation. If that
+ *     cleanup fails, the same Slack event may replay step 5 with the same
+ *     client_msg_id and retry cleanup; a distinct event cannot adopt it.
  */
 export async function handleStopCommand(
   env: Env,
@@ -143,6 +158,19 @@ export async function handleStopCommand(
       activeTurn = event.thread_ts || channel.startsWith("D")
         ? await getActiveTurnForThread(stateStore, directThreadKey)
         : await getLatestActiveTurn(stateStore, channel);
+      if (!activeTurn && (event.thread_ts || channel.startsWith("D"))) {
+        const obligation = await stateStore.obligation.get(directThreadKey);
+        if (obligation) {
+          activeTurn = {
+            channelId: channel,
+            threadKey: directThreadKey,
+            conversationKey: conversationKeyFromThreadKey(directThreadKey) ?? "",
+            executionId: obligation.executionId,
+            threadTs: obligation.threadTs ?? statusThreadTs,
+            registeredAt: 0,
+          };
+        }
+      }
     } catch (err) {
       console.error("[stop-command] active turn lookup failed", channel, err);
     }
@@ -151,84 +179,182 @@ export async function handleStopCommand(
     const postThreadTs = activeTurn?.threadTs ?? statusThreadTs;
     if (!postThreadTs) return;
 
-    // Idempotency (house rule 3): a redelivered stop event must be a total
-    // no-op, not a second interrupt/clear/post cycle.
-    const dedupKey = `stop:${eventId ?? `${channel}:${postThreadTs}:${event.ts ?? "noeventid"}`}`;
-    const alreadySeen = await stateStore.dedup.seen(dedupKey, 10 * 60_000);
-    if (alreadySeen) return;
+    // The active-turn row owns retry/final state for this exact Slack event.
+    // Do not consume generic dedup before control succeeds: Slack may redeliver
+    // the identical event after a binding/container/Slack failure.
+    const stopEventId = eventId ?? `${channel}:${postThreadTs}:${event.ts ?? "noeventid"}`;
 
-    const hitlCancellation = activeTurn?.choiceId
-      ? cancelHitlChoice(stateStore, {
-          conversationKey: activeTurn.conversationKey,
-          choiceId: activeTurn.choiceId,
-        }).catch((err) => {
-          console.error("[stop-command] cancellation marker failed", threadKey, err);
-        })
-      : Promise.resolve();
+    // An idle Stop has no exact execution to revoke. It is deliberately a
+    // no-op: never create a generic cancel-next tombstone and never claim a
+    // visible stop for unrelated future work.
+    if (!activeTurn) {
+      console.log(JSON.stringify({ metric: "stop_command_idle", threadKey }));
+      return;
+    }
 
-    if (env.SESSION_EVENTS) {
+    const slackClient = env.SLACK_BOT_TOKEN
+      ? createSlackWebClient(env.SLACK_BOT_TOKEN)
+      : undefined;
+
+    // First make success delivery durably impossible. The short state lock is
+    // already released when this function returns; none of the network calls
+    // below are protected by a fixed-TTL lease.
+    let cancellationClaim = await claimActiveTurnCancellation(
+      stateStore,
+      activeTurn,
+      stopEventId,
+    );
+    // A non-Slack mutation has a durable pending-Stop marker. Give its RPC a
+    // short chance to become definitive; effect completion atomically moves
+    // the row to cancelled before another tool can begin. Ambiguous outcomes
+    // retain the token and therefore never produce a false acknowledgement.
+    // Effect RPCs have a bounded lifecycle and the Worker waitUntil budget is
+    // long enough to keep this exact Stop delivery alive. Render requests get
+    // the shorter ambiguity window; an unresolved network render must remain
+    // silent rather than risk a false acknowledgement.
+    // The lifecycle DO alarm durably resumes a Stop whose effect resolves
+    // after this short request-local window; do not burn the Worker
+    // subrequest budget polling hundreds of times.
+    const maxInFlightPolls = 20;
+    for (let attempt = 0;
+      (cancellationClaim === "effect_in_flight" ||
+        cancellationClaim === "render_in_flight") && attempt < maxInFlightPolls;
+      attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      cancellationClaim = await claimActiveTurnCancellation(
+        stateStore,
+        activeTurn,
+        stopEventId,
+      );
+    }
+    if (
+      cancellationClaim === "effect_in_flight" ||
+      cancellationClaim === "render_in_flight"
+    ) {
+      console.log(JSON.stringify({
+        metric: cancellationClaim === "effect_in_flight"
+          ? "stop_command_effect_unresolved"
+          : "stop_command_render_unresolved",
+        threadKey,
+      }));
+      return;
+    }
+    if (cancellationClaim === "committed") {
+      // Completion has crossed its irreversible Slack-delivery fence. It is
+      // too late to promise Stopped, even if the network request is slow.
+      console.log(JSON.stringify({ metric: "stop_command_delivery_committed", threadKey }));
+      return;
+    }
+    if (cancellationClaim === "lock_unavailable") {
+      console.error("[stop-command] delivery fence unavailable", threadKey);
+      return;
+    }
+
+    // The pre-claim record intentionally contains routing fields only. Read
+    // the exact row again after the cancellation/effect fence settles so a
+    // persisted downstream research resource can never be missed. This check
+    // also runs for cancel-ack recovery: a prior control transition does not
+    // make it safe to acknowledge while its delivery effect is non-quiescent.
+    const currentTurn = await stateStore.activeTurn.get(threadKey);
+    if (!currentTurn || currentTurn.record.executionId !== activeTurn.executionId) {
+      console.error("[stop-command] exact active turn disappeared", threadKey);
+      return;
+    }
+    if (currentTurn.effectResource?.kind === "research_task") {
+      if (!env.RESEARCH_TASKS || !env.INTERNAL_SECRET) {
+        console.error("[stop-command] research cancellation unavailable", threadKey);
+        return;
+      }
       try {
-        const sessionDo = env.SESSION_EVENTS.get(
-          env.SESSION_EVENTS.idFromName(threadKey),
-        ) as unknown as SessionInterruptRpc;
-        if (activeTurn) {
-          // Exact durable revocation is the first awaited action in this DO;
-          // session metadata remains available after terminalization.
-          await sessionDo.interruptExpected(activeTurn.executionId);
-          const state: { sessionId?: string } = typeof sessionDo.getState === "function"
-            ? await sessionDo.getState().catch(() => ({}))
-            : {};
-          // The live control plane works before /turn headers and aborts
-          // clone/spawn; polling remains defense-in-depth.
-          if (state.sessionId) {
-            await interruptHarnessTurn(env, {
-              sessionId: state.sessionId,
-              threadKey,
-              executionId: activeTurn.executionId,
-            });
-          }
-        } else await sessionDo.interrupt();
+        await cancelTask(env, {
+          teamId: currentTurn.effectResource.teamId,
+          taskId: currentTurn.effectResource.taskId,
+          threadKey: currentTurn.effectResource.threadKey,
+        });
       } catch (err) {
-        console.error("[stop-command] interrupt failed", threadKey, err);
+        // Non-2xx, mismatched/malformed/false-quiescent responses and
+        // transport ambiguity all leave the exact Stop row retryable and
+        // silent. The lifecycle alarm will invoke the same contract again.
+        console.error("[stop-command] research cancellation unconfirmed", threadKey, err);
+        return;
       }
     }
-    await hitlCancellation;
 
-    const conversationKey =
-      activeTurn?.conversationKey || conversationKeyFromThreadKey(threadKey);
-    if (conversationKey) {
-      try {
+    const retryAcknowledgementCleanup = cancellationClaim === "ack_retry";
+
+    let controlAccepted = false;
+    if (!retryAcknowledgementCleanup) try {
+      // Revoke every dynamically registered exact-id picker in the same DO
+      // transaction that owns the cancelled active row. A picker registering
+      // concurrently is therefore either included or observes cancellation
+      // and never renders.
+      await stateStore.activeTurn.cancelRegisteredChoices({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
+
+      if (!env.SESSION_EVENTS) {
+        throw new Error("session_events_unavailable");
+      }
+      const sessionDo = env.SESSION_EVENTS.get(
+        env.SESSION_EVENTS.idFromName(threadKey),
+      ) as unknown as SessionInterruptRpc;
+      const durableInterrupt = await sessionDo.interruptExpected(
+        activeTurn.executionId,
+      );
+      if (durableInterrupt.cancelled !== true) {
+        throw new Error("durable_interrupt_not_accepted");
+      }
+
+      const state = typeof sessionDo.getState === "function"
+        ? await sessionDo.getState()
+        : durableInterrupt.interrupted
+          ? (() => { throw new Error("session_state_unavailable"); })()
+          : {};
+      // A session id proves a container turn was created. In that case the
+      // authenticated exact /interrupt request must be accepted (a 200 no-op
+      // is valid for an already-terminal/no-live-process execution).
+      if (state.sessionId) {
+        const harnessInterrupt = await interruptHarnessTurn(env, {
+          sessionId: state.sessionId,
+          threadKey,
+          executionId: activeTurn.executionId,
+        });
+        if (!harnessInterrupt.accepted) {
+          throw new Error("harness_interrupt_not_accepted");
+        }
+      }
+
+      const conversationKey =
+        activeTurn.conversationKey || conversationKeyFromThreadKey(threadKey);
+      if (conversationKey) {
         const { adapter } = await getOrCreateBot(env);
-        adapter.abortConversation(conversationKey);
-      } catch (err) {
-        console.error(
-          "[stop-command] abortConversation failed",
-          conversationKey,
-          err,
-        );
+        if (typeof adapter.abortConversation === "function") {
+          adapter.abortConversation(conversationKey);
+        }
       }
-    }
-
-    if (activeTurn) {
-      try {
-        await clearActiveTurn(stateStore, activeTurn);
-      } catch (err) {
-        console.error("[stop-command] active turn clear failed", threadKey, err);
-      }
-    }
-
-    try {
-      // No executionId: a stop clears whatever obligation is currently
-      // pending for this thread, regardless of which turn wrote it.
-      await stateStore.obligation.clear({ threadKey });
+      controlAccepted = await markActiveTurnCancelControlled(
+        stateStore,
+        activeTurn,
+        stopEventId,
+      );
+      if (!controlAccepted) throw new Error("cancel_control_state_failed");
     } catch (err) {
-      console.error("[stop-command] obligation clear failed", threadKey, err);
+      console.error("[stop-command] exact interrupt failed", threadKey, err);
+      // Keep both the exact active mapping and durable suppression marker so a
+      // later explicit Stop can retry control without risking late success.
+      return;
     }
 
-    if (env.SLACK_BOT_TOKEN) {
-      const client = createSlackWebClient(env.SLACK_BOT_TOKEN);
+    if (slackClient) {
+      if (!retryAcknowledgementCleanup &&
+          !await beginActiveTurnCancelAck(stateStore, activeTurn, stopEventId)) {
+        // An identical concurrent delivery already owns the acknowledgement,
+        // or this attempt no longer owns the exact execution.
+        return;
+      }
       try {
-        await client.setStatus({
+        await slackClient.setStatus({
           channel_id: channel,
           thread_ts: postThreadTs,
           status: "",
@@ -237,14 +363,72 @@ export async function handleStopCommand(
         console.error("[stop-command] setStatus failed", threadKey, err);
       }
       try {
-        await client.postMessage({
-          channel,
-          thread_ts: postThreadTs,
-          text: "🛑 Stopped.",
-        });
+        // This is intentionally last: durable suppression, exact DO
+        // cancellation, approval revocation, and container /interrupt have
+        // all completed successfully before the user sees this promise.
+        const clientMessageId = await stableSlackClientMessageId(stopEventId);
+        let posted = false;
+        let lastError: unknown;
+        // A thrown network failure is ambiguous. Retry only with the same
+        // Slack idempotency key, so at most one acknowledgement is visible.
+        for (let attempt = 0; attempt < 2 && !posted; attempt += 1) {
+          try {
+            const result = await slackClient.postMessage({
+              channel,
+              thread_ts: postThreadTs,
+              text: "🛑 Stopped.",
+              client_msg_id: clientMessageId,
+            });
+            if (!result.ok) {
+              throw new SlackApiError(
+                "chat.postMessage",
+                result.error ?? "unknown",
+              );
+            }
+            posted = true;
+          } catch (err) {
+            lastError = err;
+            if (isDefinitiveSlackFailure(err)) throw err;
+          }
+        }
+        if (!posted) throw lastError ?? new Error("stop_ack_transport_unknown");
       } catch (err) {
         console.error("[stop-command] postMessage failed", threadKey, err);
+        // Only a parsed Slack rejection proves the acknowledgement was not
+        // applied. Ambiguous transport failures retain cancel_ack_in_flight;
+        // a different Stop cannot steal it, and TTL/obligation recovery owns
+        // the unresolved outcome.
+        if (isDefinitiveSlackFailure(err)) {
+          await failActiveTurnCancelAck(stateStore, activeTurn, stopEventId);
+        }
+        return;
       }
+    } else {
+      // Without a visible acknowledgement the cancellation lifecycle is not
+      // complete; preserve exact routing for a later retry.
+      return;
+    }
+
+    let confirmed = false;
+    let confirmationError: unknown;
+    for (let attempt = 0; attempt < 3 && !confirmed; attempt += 1) {
+      try {
+        confirmed = await markActiveTurnCancelConfirmed(
+          stateStore,
+          activeTurn,
+          stopEventId,
+        );
+      } catch (err) {
+        confirmationError = err;
+      }
+    }
+    if (!confirmed) {
+      console.error(
+        "[stop-command] atomic confirmation/cleanup failed",
+        threadKey,
+        confirmationError,
+      );
+      return;
     }
 
     console.log(JSON.stringify({ metric: "stop_command_received", threadKey }));

@@ -11,7 +11,8 @@ export type SlackWebClient = {
     text: string;
     blocks?: unknown[];
     attachments?: unknown[];
-  }): Promise<{ ok: boolean; ts?: string; error?: string }>;
+    client_msg_id?: string;
+  }): Promise<{ ok: boolean; ts?: string; error?: string; duplicate?: boolean }>;
   updateMessage(args: {
     channel: string;
     ts: string;
@@ -67,6 +68,20 @@ export type SlackWebClient = {
     }>
   >;
 };
+
+/** A parsed Slack `ok:false` is a definitive rejection, unlike a thrown
+ * transport error where the request may already have been applied. */
+export class SlackApiError extends Error {
+  readonly definitive = true;
+  constructor(readonly method: string, readonly slackError: string) {
+    super(`${method} failed: ${slackError}`);
+    this.name = "SlackApiError";
+  }
+}
+
+export function isDefinitiveSlackFailure(error: unknown): boolean {
+  return error instanceof SlackApiError;
+}
 
 /**
  * Best-effort GitHub handle extraction (GOAL.md Phase A5 / SPEC.md §5-A5
@@ -182,17 +197,31 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     },
     async postMessage(args) {
       const r = await api<{ ts?: string }>("chat.postMessage", args);
+      // A replay of the same client_msg_id can be reported as an explicit
+      // duplicate instead of returning the original timestamp. The original
+      // idempotent write is already visible, so this is a committed success.
+      if (!r.ok && (r.error === "duplicate_message" || r.error === "duplicate_client_msg_id")) {
+        return { ok: true, ts: r.ts, error: r.error, duplicate: true };
+      }
+      if (!r.ok) throw new SlackApiError("chat.postMessage", r.error ?? "unknown");
       return { ok: r.ok, ts: r.ts, error: r.error };
     },
     async updateMessage(args) {
       const r = await api("chat.update", args);
+      if (!r.ok) throw new SlackApiError("chat.update", r.error ?? "unknown");
       return { ok: r.ok, error: r.error };
     },
     async setStatus(args) {
-      await api("assistant.threads.setStatus", args).catch(() => undefined);
+      const r = await api("assistant.threads.setStatus", args);
+      if (!r.ok) {
+        throw new SlackApiError("assistant.threads.setStatus", r.error ?? "unknown");
+      }
     },
     async setTitle(args) {
-      await api("assistant.threads.setTitle", args).catch(() => undefined);
+      const r = await api("assistant.threads.setTitle", args);
+      if (!r.ok) {
+        throw new SlackApiError("assistant.threads.setTitle", r.error ?? "unknown");
+      }
     },
     async addReaction(args) {
       const r = await api("reactions.add", {

@@ -14,6 +14,7 @@ import {
   buildClaudeArgs,
   buildClaudeEnv,
   buildClaudeSpawnOptions,
+  cleanupExecutionHome,
   createExecutionTracker,
   createChildTerminator,
   createHarnessServer,
@@ -25,7 +26,10 @@ import {
   gitPolicyPrompt,
   gitAuthenticationEnv,
   hasValidBearerToken,
+  loadAuthoritativeSystemPrompt,
   mapStreamJsonLine,
+  prepareExecutionHome,
+  resolveExecutionHome,
   resolveSessionWorkdir,
   requesterAttribution,
   runAbortableCommand,
@@ -212,7 +216,11 @@ describe("git approval and outcome contract", () => {
     });
     expect(execFile).toHaveBeenCalledWith(
       "/usr/bin/gh",
-      ["api", "--method", "GET", "repos/wcordelo/opentag/pulls?head=wcordelo%3Aopentag%2Fsession-session-1&state=open"],
+      [
+        "api", "--method", "GET", "--header",
+        `x-opentag-execution-id: ${body.executionId}`,
+        "repos/wcordelo/opentag/pulls?head=wcordelo%3Aopentag%2Fsession-session-1&state=open",
+      ],
       expect.objectContaining({ cwd: "/work/session-1" }),
     );
     for (const args of [
@@ -557,21 +565,17 @@ describe("createSessionQueue — same-session serialization, cross-session concu
 });
 
 describe("buildClaudeArgs", () => {
-  it("builds the pinned invocation shape with the prompt as the final positional arg", () => {
-    const args = buildClaudeArgs({ prompt: "do the thing", systemPromptText: "" });
-    expect(args).toEqual([
-      "--print",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--permission-mode",
-      "bypassPermissions",
-      "do the thing",
-    ]);
+  it("fails closed instead of omitting an empty authoritative system prompt", () => {
+    expect(() => buildClaudeArgs({ prompt: "do the thing", systemPromptText: "" }))
+      .toThrow("authoritative system prompt is empty");
   });
 
   it("adds --model when a model override is given", () => {
-    const args = buildClaudeArgs({ prompt: "p", model: "claude-opus-4-8" });
+    const args = buildClaudeArgs({
+      prompt: "p",
+      model: "claude-opus-4-8",
+      systemPromptText: "OpenTag instructions",
+    });
     expect(args).toContain("--model");
     expect(args).toContain("claude-opus-4-8");
     expect(args.at(-1)).toBe("p");
@@ -585,8 +589,49 @@ describe("buildClaudeArgs", () => {
   });
 
   it("omits --permission-mode when explicitly disabled", () => {
-    const args = buildClaudeArgs({ prompt: "p", permissionMode: "" });
+    const args = buildClaudeArgs({
+      prompt: "p",
+      permissionMode: "",
+      systemPromptText: "OpenTag instructions",
+    });
     expect(args).not.toContain("--permission-mode");
+  });
+});
+
+describe("loadAuthoritativeSystemPrompt", () => {
+  it("returns a bounded non-empty regular file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "opentag-prompt-"));
+    const promptPath = path.join(root, "SYSTEM_PROMPT.md");
+    fs.writeFileSync(promptPath, "# Required instructions\n");
+    await expect(
+      loadAuthoritativeSystemPrompt(promptPath, 1024, new AbortController().signal),
+    ).resolves.toBe("# Required instructions\n");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["missing", (root: string) => path.join(root, "missing.md")],
+    ["non-regular", (root: string) => root],
+  ])("rejects a %s prompt", async (_label, promptPath) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "opentag-prompt-"));
+    await expect(
+      loadAuthoritativeSystemPrompt(promptPath(root), 1024, new AbortController().signal),
+    ).rejects.toThrow();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects empty and oversized prompts", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "opentag-prompt-"));
+    const promptPath = path.join(root, "SYSTEM_PROMPT.md");
+    fs.writeFileSync(promptPath, " \n\t");
+    await expect(
+      loadAuthoritativeSystemPrompt(promptPath, 1024, new AbortController().signal),
+    ).rejects.toThrow("system prompt is empty");
+    fs.writeFileSync(promptPath, "x".repeat(1025));
+    await expect(
+      loadAuthoritativeSystemPrompt(promptPath, 1024, new AbortController().signal),
+    ).rejects.toThrow();
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 
@@ -692,12 +737,43 @@ describe("security validation", () => {
     expect(child.GIT_CONFIG_VALUE_1).toBeUndefined();
   });
 
-  it("keeps clone credentials in askpass environment rather than argv", () => {
-    const env = gitAuthenticationEnv({ GITHUB_TOKEN: "private-token" });
+  it("binds Claude and tool config to only the execution-scoped HOME", () => {
+    const home = "/work/ot1e_execution/home";
+    const child = buildClaudeEnv({
+      HOME: "/home/harness",
+      USERPROFILE: "/global-user",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\global",
+      XDG_CONFIG_HOME: "/global-config",
+      XDG_CACHE_HOME: "/global-cache",
+      CLAUDE_CONFIG_DIR: "/global-claude",
+    }, undefined, false, undefined, "session-1", "ot1e_execution", home);
+    expect(child).toMatchObject({
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: `${home}/.config`,
+      XDG_CACHE_HOME: `${home}/.cache`,
+      XDG_DATA_HOME: `${home}/.local/share`,
+      CLAUDE_CONFIG_DIR: `${home}/.claude`,
+    });
+    expect(child.HOMEDRIVE).toBeUndefined();
+    expect(child.HOMEPATH).toBeUndefined();
+  });
+
+  it("keeps clone credentials in askpass and binds the exact execution outside argv", () => {
+    const env = gitAuthenticationEnv({
+      GITHUB_TOKEN: "private-token",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.proxy",
+      GIT_CONFIG_VALUE_0: "https://evil.example",
+    }, "exec-clone");
     expect(env).toMatchObject({
       GITHUB_TOKEN: "private-token",
       GIT_TERMINAL_PROMPT: "0",
       GIT_ASKPASS: "/usr/local/bin/opentag-git-askpass",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader",
+      GIT_CONFIG_VALUE_0: "x-opentag-execution-id: exec-clone",
     });
     expect(["clone", "https://github.com/wcordelo/opentag.git"].join(" ")).not.toContain(
       "private-token",
@@ -808,6 +884,31 @@ describe("clone and child lifecycle cleanup", () => {
       baseBranch: null,
     });
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("creates a fresh private execution HOME and quarantines stale symlinks on cleanup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "opentag-home-"));
+    const executionId = "ot1e_execution-home";
+    const home = resolveExecutionHome(root, executionId);
+    const executionRoot = path.dirname(home);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "opentag-home-outside-"));
+    fs.writeFileSync(path.join(outside, "sentinel"), "keep");
+    fs.symlinkSync(outside, executionRoot, "dir");
+
+    const prepared = await prepareExecutionHome(root, executionId);
+    expect(prepared).toBe(home);
+    expect(fs.lstatSync(executionRoot).isDirectory()).toBe(true);
+    expect(fs.lstatSync(home).isDirectory()).toBe(true);
+    expect(fs.statSync(executionRoot).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(home).mode & 0o777).toBe(0o700);
+    fs.mkdirSync(path.join(home, ".claude"));
+    fs.writeFileSync(path.join(home, ".claude", "settings.json"), "poison");
+
+    await cleanupExecutionHome(root, executionId);
+    expect(fs.existsSync(executionRoot)).toBe(false);
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("keep");
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
   });
 
   it("reclones when the requested base branch differs from the session identity", async () => {
@@ -1132,16 +1233,22 @@ describe("/turn HTTP boundaries", () => {
         }),
       });
       await cleanupStarted;
-      const interrupt = await Promise.race([
-        fetch(`${baseUrl}/interrupt`, {
-          method: "POST",
-          headers: { authorization: "Bearer test-secret" },
-          body: JSON.stringify(validTurn),
-        }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("interrupt blocked")), 500)),
-      ]);
-      await expect(interrupt.json()).resolves.toEqual({ interrupted: true });
+      let interruptSettled = false;
+      const interruptRequest = fetch(`${baseUrl}/interrupt`, {
+        method: "POST",
+        headers: { authorization: "Bearer test-secret" },
+        body: JSON.stringify(validTurn),
+      }).then((response) => {
+        interruptSettled = true;
+        return response;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // Abort was delivered, but acknowledgement waits for the exact cleanup
+      // and turn promise to settle.
+      expect(interruptSettled).toBe(false);
       releaseCleanup();
+      const interrupt = await interruptRequest;
+      await expect(interrupt.json()).resolves.toEqual({ interrupted: true });
       expect(await (await turnResponse).text()).toContain('"summary":"interrupted"');
       expect(cloneCalls).toBe(0);
     });
@@ -1218,6 +1325,52 @@ describe("/turn HTTP boundaries", () => {
     });
   });
 
+  it("does not acknowledge Stop until an in-flight authorized push outcome is known", async () => {
+    let pushStartedResolve!: () => void;
+    const pushStarted = new Promise<void>((resolve) => { pushStartedResolve = resolve; });
+    let releasePush!: () => void;
+    const pushReleased = new Promise<void>((resolve) => { releasePush = resolve; });
+    let pushSawAbort = false;
+    await withServer({
+      authToken: "test-secret",
+      repoPolicy,
+      runTurn: async (_body, res, signal) => {
+        // Models a credentialed git/gh subprocess whose remote outcome is
+        // temporarily ambiguous even after SIGTERM has been requested.
+        pushStartedResolve();
+        signal.addEventListener("abort", () => { pushSawAbort = true; }, { once: true });
+        await pushReleased;
+        res.write(`${JSON.stringify({
+          kind: "done",
+          payload: { ok: !signal.aborted, summary: signal.aborted ? "push interrupted" : "push landed" },
+        })}\n`);
+      },
+    }, async (baseUrl) => {
+      const pendingTurn = fetch(`${baseUrl}/turn`, {
+        method: "POST",
+        headers: { authorization: "Bearer test-secret" },
+        body: JSON.stringify({ ...validTurn, remoteGitApproved: true }),
+      });
+      await pushStarted;
+      let interruptSettled = false;
+      const interruptRequest = fetch(`${baseUrl}/interrupt`, {
+        method: "POST",
+        headers: { authorization: "Bearer test-secret" },
+        body: JSON.stringify(validTurn),
+      }).then((response) => {
+        interruptSettled = true;
+        return response;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(pushSawAbort).toBe(true);
+      expect(interruptSettled).toBe(false);
+      releasePush();
+      const interrupt = await interruptRequest;
+      await expect(interrupt.json()).resolves.toEqual({ interrupted: true });
+      expect(await (await pendingTurn).text()).toContain('"summary":"push interrupted"');
+    });
+  });
+
   it("interrupts an exact admitted turn before response headers and cannot kill another turn", async () => {
     let admittedResolve!: () => void;
     const admitted = new Promise<void>((resolve) => { admittedResolve = resolve; });
@@ -1240,7 +1393,8 @@ describe("/turn HTTP boundaries", () => {
         headers: { authorization: "Bearer test-secret" },
         body: JSON.stringify({ ...validTurn, sessionId: "session-other" }),
       });
-      await expect(wrong.json()).resolves.toEqual({ interrupted: false });
+      expect(wrong.status).toBe(503);
+      await expect(wrong.json()).resolves.toEqual({ error: "interrupt_quiescence_timeout" });
       const unauthorized = await fetch(`${baseUrl}/interrupt`, {
         method: "POST",
         headers: { authorization: "Bearer wrong" },

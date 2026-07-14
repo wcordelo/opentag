@@ -57,6 +57,7 @@ export async function awaitRemoteGitApproval(
     choiceId?: string;
     timeoutMs?: number;
     pollMs?: number;
+    unsafeAllowMissingExecutionContextTestOnly?: boolean;
   },
 ): Promise<RemoteGitApproval> {
   const choiceId = args.choiceId ?? newHitlChoiceId();
@@ -77,6 +78,10 @@ export async function awaitRemoteGitApproval(
         conversationKey: thread.conversationKey,
         timeoutMs: args.timeoutMs ?? HITL_CHOICE_TIMEOUT_MS,
         pollMs: args.pollMs,
+        requireDurableReceipt: true,
+        ...(args.unsafeAllowMissingExecutionContextTestOnly
+          ? { unsafeAllowMissingExecutionContextTestOnly: true }
+          : {}),
       },
     );
     if (choice?.confirmed !== true || choice.choiceId !== choiceId) {

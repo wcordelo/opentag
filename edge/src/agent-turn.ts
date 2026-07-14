@@ -24,7 +24,10 @@ import type { Env } from "./env.js";
 import type { Renderable } from "@copilotkit/channels-ui";
 import type { AgentContentPart } from "./slack/download-files.js";
 export type { AgentContentPart } from "./slack/download-files.js";
-import { createSlackWebClient } from "./slack/web-api.js";
+import {
+  createSlackWebClient,
+  isDefinitiveSlackFailure,
+} from "./slack/web-api.js";
 import { getInboundMessage } from "./slack/inbound-target.js";
 import {
   firstSlackTs,
@@ -41,6 +44,12 @@ import {
 } from "./harness/client.js";
 import { makeWireTurnIdentity } from "./harness/wire-id.js";
 import { isRepositoryCodingIntent } from "./coding-intent.js";
+import {
+  deliverActiveTurnOutput,
+  renderActiveTurnStep,
+} from "./slack/active-turn-registry.js";
+import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
+import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
 
 type Requester = {
   id?: string;
@@ -476,11 +485,32 @@ export async function runBundledAgentTurn(
   requesterIn?: Requester,
   executionIdentity?: TurnExecutionIdentity,
 ): Promise<AgentTurnOutcome> {
-  const requester = await ensureRequesterProfile(env, requesterIn);
   const teamId = requireRequestContext(thread).teamId;
   const channelId = channelFromThread(thread);
   const conversationKey = thread.conversationKey ?? "";
   const store = createDurableObjectStore(env.BOT_STATE);
+  const exact = getTurnExecutionContext(thread);
+  if (executionIdentity && !exact) {
+    throw new Error("active_turn_context_required");
+  }
+  const exactTurnPending = async (): Promise<boolean> => {
+    // Direct unit tests may exercise this exported core without the production
+    // lifecycle wrapper. Every production caller supplies executionIdentity.
+    if (!executionIdentity) return true;
+    if (!exact) return false;
+    const snapshot = await store.activeTurn.get(exact.threadKey);
+    return Boolean(
+      snapshot &&
+      snapshot.record.executionId === exact.executionId &&
+      snapshot.status === "pending" &&
+      !snapshot.stopEventId &&
+      !snapshot.renderToken &&
+      !snapshot.effectToken,
+    );
+  };
+  if (!(await exactTurnPending())) return { status: "interrupted" };
+  const requester = await ensureRequesterProfile(env, requesterIn);
+  if (!(await exactTurnPending())) return { status: "interrupted" };
 
   // Phase A3 (GOAL.md / SPEC §2.2): parse + strip --model/--harness/-rsn
   // flags before anything downstream sees raw text, and resolve sticky
@@ -491,6 +521,7 @@ export async function runBundledAgentTurn(
     conversationKey,
     promptIn,
   );
+  if (!(await exactTurnPending())) return { status: "interrupted" };
   const prompt = cleanedPrompt;
 
   // Phase A5 (GOAL.md / SPEC §3.6 + §4.4): route to the Claude Code harness
@@ -504,12 +535,13 @@ export async function runBundledAgentTurn(
 
   if (overrides.hasMessageFlags && isEmptyAfterStrip(prompt)) {
     try {
+      markThreadNextRenderFinal(thread);
       await thread.post(formatOverrideConfirmation(overrides));
     } catch (err) {
-      console.warn(
-        "[agent-turn] override confirmation post failed",
-        err instanceof Error ? err.message : err,
-      );
+      if (err instanceof Error && err.message === "active_turn_render_suppressed") {
+        return { status: "interrupted" };
+      }
+      throw err;
     }
     return { status: "completed" };
   }
@@ -519,6 +551,7 @@ export async function runBundledAgentTurn(
     teamId,
     channelId,
   );
+  if (!(await exactTurnPending())) return { status: "interrupted" };
   const allowed = new Set(
     resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
   );
@@ -548,10 +581,8 @@ export async function runBundledAgentTurn(
   // dedup makes this once-per-thread across isolates; errors are best-effort.
   if (env.SLACK_BOT_TOKEN && promptText.trim() && conversationKey) {
     try {
-      const titled = await store.dedup.seen(
-        `title:${conversationKey}`,
-        30 * 86_400_000,
-      );
+      const titleKey = `title:${conversationKey}`;
+      const titled = await store.kv.get<boolean>(titleKey);
       if (!titled) {
         const scope = conversationKey.split("::")[1];
         const inbound = getInboundMessage(conversationKey, thread);
@@ -560,20 +591,37 @@ export async function runBundledAgentTurn(
         // root assistant thread.
         const titleThreadTs = firstSlackTs(scope, inbound?.threadTs, inbound?.ts);
         if (titleThreadTs) {
-          await createSlackWebClient(env.SLACK_BOT_TOKEN).setTitle({
-            channel_id: channelId,
-            thread_ts: titleThreadTs,
-            title: promptText.trim().slice(0, 100),
+          const fence = getTurnExecutionContext(thread);
+          if (!fence) throw new Error("exact_execution_context_required_for_title");
+          const setTitle = () => createSlackWebClient(env.SLACK_BOT_TOKEN!).setTitle({
+              channel_id: channelId,
+              thread_ts: titleThreadTs,
+              title: promptText.trim().slice(0, 100),
+            });
+          const result = await renderActiveTurnStep(store, fence, setTitle, false, {
+            output: false,
+            isDefinitiveFailure: isDefinitiveSlackFailure,
           });
+          if (result.status !== "rendered") {
+            return { status: "interrupted" };
+          }
+          if (!(await exactTurnPending())) return { status: "interrupted" };
+          // Mark only after Slack confirms the effect; failures remain retryable.
+          await store.kv.set(titleKey, true, 30 * 86_400_000);
         }
       }
     } catch (err) {
+      if (
+        err instanceof Error &&
+        ["active_turn_render_suppressed", "active_turn_title_suppressed"].includes(err.message)
+      ) return { status: "interrupted" };
       console.warn(
         "[agent-turn] setTitle failed",
         err instanceof Error ? err.message : err,
       );
     }
   }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
 
   // Durable mid-thread memory (survives isolate hops / empty Slack history).
   if (promptText.trim()) {
@@ -591,6 +639,7 @@ export async function runBundledAgentTurn(
       );
     }
   }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
 
   let slackHistory: ThreadMessageLite[] = [];
   if (typeof thread.getMessages === "function") {
@@ -603,6 +652,7 @@ export async function runBundledAgentTurn(
       );
     }
   }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
 
   let durableHistory: Awaited<ReturnType<typeof readThreadMemory>> = [];
   try {
@@ -613,6 +663,7 @@ export async function runBundledAgentTurn(
       err instanceof Error ? err.message : err,
     );
   }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
 
   const history = mergeHistory(slackHistory, durableHistory);
 
@@ -773,6 +824,7 @@ export async function runBundledAgentTurn(
   const enrichedPrompt = embedTranscriptInPrompt(prompt, history);
 
   if (useHarness) {
+    if (!(await exactTurnPending())) return { status: "interrupted" };
     const harnessThreadKey = deriveHarnessThreadKey(
       channelId,
       conversationKey,
@@ -793,6 +845,7 @@ export async function runBundledAgentTurn(
     const codingTask =
       Boolean(env.HARNESS_REPO_URL) &&
       (identity.createPullRequest === true || isRepositoryCodingIntent(promptText));
+    if (!(await exactTurnPending())) return { status: "interrupted" };
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
       conversationKey,
@@ -830,9 +883,35 @@ export async function runBundledAgentTurn(
       // Never-silent guarantee: even a nominally "ok" turn must not post
       // nothing (GOAL.md house rule / SPEC §3.1 taxonomy — error_visible /
       // answer_visible, never silent).
-      await thread.post(
-        text || "_(Claude Code harness turn completed with no output.)_",
-      );
+      const target = (thread as unknown as {
+        deps?: { replyTarget?: { __opentagExecutionFence?: unknown } };
+      }).deps?.replyTarget;
+      if (target?.__opentagExecutionFence) {
+        try {
+          markThreadNextRenderFinal(thread);
+          await thread.post(
+            text || "_(Claude Code harness turn completed with no output.)_",
+          );
+        } catch (err) {
+          if (err instanceof Error && err.message === "active_turn_render_suppressed") {
+            return { status: "interrupted" };
+          }
+          throw err;
+        }
+      } else {
+        // Direct unit/library callers do not have the production adapter's
+        // per-target fence. Preserve the same exact suppression semantics.
+        const delivery = await deliverActiveTurnOutput(
+          store,
+          { threadKey: harnessThreadKey, executionId: identity.executionId },
+          async () => {
+            await thread.post(
+              text || "_(Claude Code harness turn completed with no output.)_",
+            );
+          },
+        );
+        if (delivery !== "delivered") return { status: "interrupted" };
+      }
       return {
         status: "completed",
         terminalPersisted: harnessResult.terminalPersisted,
@@ -858,6 +937,7 @@ export async function runBundledAgentTurn(
     });
   }
 
+  if (!(await exactTurnPending())) return { status: "interrupted" };
   await thread.runAgent({
     prompt: enrichedPrompt,
     context: toolContext,

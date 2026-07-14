@@ -28,6 +28,12 @@ import {
   handleQuickAction,
   quickActionEventId,
 } from "./slack/quick-actions.js";
+import {
+  abandonPreAdmittedTurn,
+  preAdmissionIdentityForCommand,
+  preAdmissionIdentityForEvent,
+  preAdmitSlackTurn,
+} from "./slack/pre-admit-turn.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -170,8 +176,23 @@ app.post("/slack/events", slackVerify(), async (c) => {
   }
 
   const run = async () => {
-    const { adapter } = await getOrCreateBot(c.env);
-    await adapter.handleEventsBody(payload, { teamId });
+    const identity = preAdmissionIdentityForEvent(payload);
+    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
+    if (identity && !preAdmittedTurn) {
+      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+      return;
+    }
+    let handedOff = false;
+    try {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleEventsBody(payload, {
+        teamId,
+        preAdmittedTurn,
+        onTurnHandoff: () => { handedOff = true; },
+      });
+    } finally {
+      if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
+    }
   };
 
   if (exec?.waitUntil) {
@@ -208,8 +229,22 @@ app.post("/slack/commands", slackVerify(), async (c) => {
 
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
   const run = async () => {
-    const { adapter } = await getOrCreateBot(c.env);
-    await adapter.handleCommandBody(body);
+    const identity = preAdmissionIdentityForCommand(body);
+    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
+    if (identity && !preAdmittedTurn) {
+      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+      return;
+    }
+    let handedOff = false;
+    try {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleCommandBody(body, {
+        preAdmittedTurn,
+        onTurnHandoff: () => { handedOff = true; },
+      });
+    } finally {
+      if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
+    }
   };
 
   const exec = c.executionCtx;
@@ -270,6 +305,19 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
     const { adapter } = await getOrCreateBot(c.env);
     await adapter.handleInteractionPayload(payload);
   };
+
+  // HITL buttons must not be acknowledged until BOT_STATE has durably
+  // received the choice. A 503 is observable and retryable by Slack; returning
+  // 200 from waitUntil after a failed write would silently lose the decision.
+  if (!isQuick) {
+    try {
+      await run();
+    } catch (err) {
+      console.error("[slack/interactions] durable handling failed", err);
+      return c.json({ error: "interaction_persistence_failed" }, 503);
+    }
+    return c.json({ ok: true });
+  }
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {

@@ -18,6 +18,9 @@ const { default: worker } = await import("../src/worker.js");
 const { resetBotSingleton } = await import("../src/bot-engine.js");
 const { resetRequestContext } = await import("../src/request-context.js");
 const { SessionEventEngine } = await import("../src/store/session-event-do.js");
+const { ActiveTurnEngine } = await import("../src/store/active-turn-engine.js");
+const { SqlStateEngine } = await import("../src/store/sql-state-engine.js");
+const { migrate } = await import("../src/store/schema.js");
 const { activeTurnThreadKvKey } = await import(
   "../src/slack/active-turn-registry.js"
 );
@@ -40,11 +43,6 @@ const SESSION_SCHEMA = [
   `CREATE TABLE cancelled_executions (
      execution_id TEXT PRIMARY KEY,
      cancelled_at INTEGER NOT NULL
-   )`,
-  `CREATE TABLE pending_cancellation (
-     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-     cancelled_at INTEGER NOT NULL,
-     expires_at INTEGER NOT NULL
    )`,
 ];
 
@@ -163,10 +161,84 @@ function makeBotState() {
     timeoutMs?: number;
   }> = [];
   const obligationClearCalls: Array<{ threadKey: string; executionId?: string }> = [];
+  const activeDb = new DatabaseSync(":memory:");
+  const activeSql = sqliteExecutor(activeDb);
+  migrate(activeSql);
+  const activeTx = <T>(fn: () => T): T => {
+    activeDb.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      activeDb.exec("COMMIT");
+      return result;
+    } catch (err) {
+      activeDb.exec("ROLLBACK");
+      throw err;
+    }
+  };
+  const activeTurns = new ActiveTurnEngine(activeSql, activeTx);
+  const atomicState = new SqlStateEngine({ sql: activeSql, tx: activeTx });
+  const syncAtomicClear = <T>(
+    threadKey: string,
+    executionId: string,
+    action: () => T,
+  ): T => {
+    const had = obligations.get(threadKey)?.executionId === executionId;
+    const result = action();
+    const remaining = activeDb.prepare(
+      `SELECT execution_id FROM render_obligations WHERE thread_key = ?`,
+    ).get(threadKey) as { execution_id?: string } | undefined;
+    if (had && remaining?.execution_id !== executionId) {
+      obligations.delete(threadKey);
+      obligationClearCalls.push({ threadKey, executionId });
+    }
+    return result;
+  };
   const stub = {
     kvGet: async <T>(key: string) => values.get(key) as T | undefined,
     kvSet: async (key: string, value: unknown) => { values.set(key, value); },
     kvDelete: async (key: string) => { values.delete(key); },
+    hitlPrepareChoice: async (args: {
+      choiceKey: string;
+      cancelledKey: string;
+    }) => {
+      const result = atomicState.hitlPrepareChoice(args.choiceKey, args.cancelledKey);
+      return result.status === "ready"
+        ? result
+        : { status: result.status, record: JSON.parse(result.record) as unknown };
+    },
+    hitlConsumeChoice: async (args: {
+      choiceKey: string;
+      cancelledKey: string;
+    }) => {
+      const result = atomicState.hitlConsumeChoice(args.choiceKey, args.cancelledKey);
+      return result.status === "pending"
+        ? result
+        : { status: result.status, record: JSON.parse(result.record) as unknown };
+    },
+    hitlPersistChoiceUnlessCancelled: async (args: {
+      choiceKey: string;
+      cancelledKey: string;
+      record: unknown;
+    }) => {
+      return atomicState.hitlPersistChoiceUnlessCancelled(
+        args.choiceKey,
+        args.cancelledKey,
+        JSON.stringify(args.record),
+        10 * 60_000,
+      );
+    },
+    hitlCancelChoice: async (args: {
+      choiceKey: string;
+      cancelledKey: string;
+      denial: unknown;
+    }) => {
+      atomicState.hitlCancelChoice(
+        args.choiceKey,
+        args.cancelledKey,
+        JSON.stringify(args.denial),
+        10 * 60_000,
+      );
+    },
     listAppend: async (key: string, value: unknown, opts?: { maxLen?: number }) => {
       const list = lists.get(key) ?? [];
       list.push(value);
@@ -211,6 +283,25 @@ function makeBotState() {
         deadline: Date.now() + (args.timeoutMs ?? 16 * 60_000),
         attempt: 0,
       });
+      activeDb.prepare(
+        `INSERT INTO render_obligations
+         (thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt)
+         VALUES (?, ?, ?, ?, ?, ?, 0)
+         ON CONFLICT(thread_key) DO UPDATE SET
+           execution_id = excluded.execution_id,
+           after_event_id = excluded.after_event_id,
+           channel = excluded.channel,
+           thread_ts = excluded.thread_ts,
+           deadline = excluded.deadline,
+           attempt = 0`,
+      ).run(
+        args.threadKey,
+        args.executionId,
+        args.afterEventId,
+        args.channel,
+        args.threadTs ?? null,
+        Date.now() + (args.timeoutMs ?? 16 * 60_000),
+      );
     },
     obligationClear: async (args: { threadKey: string; executionId?: string }) => {
       obligationClearCalls.push({ ...args });
@@ -218,8 +309,108 @@ function makeBotState() {
       if (current && (args.executionId === undefined || current.executionId === args.executionId)) {
         obligations.delete(args.threadKey);
       }
+      activeDb.prepare(
+        args.executionId
+          ? `DELETE FROM render_obligations WHERE thread_key = ? AND execution_id = ?`
+          : `DELETE FROM render_obligations WHERE thread_key = ?`,
+      ).run(...(args.executionId
+        ? [args.threadKey, args.executionId]
+        : [args.threadKey]));
     },
     obligationGet: async ({ threadKey }: { threadKey: string }) => obligations.get(threadKey),
+    activeTurnRegister: async (record: import("../src/store/active-turn-types.js").ActiveTurnRecord) =>
+      activeTurns.register(record, 2 * 60 * 60_000),
+    activeTurnRegisterWithObligation: async (args: {
+      record: import("../src/store/active-turn-types.js").ActiveTurnRecord;
+      obligation: {
+        afterEventId: number;
+        channel: string;
+        threadTs?: string;
+        timeoutMs: number;
+      };
+    }) => {
+      const result = activeTurns.register(
+        args.record,
+        2 * 60 * 60_000,
+        args.obligation,
+      );
+      if (result.accepted) {
+        const row = {
+          threadKey: args.record.threadKey,
+          executionId: args.record.executionId,
+          afterEventId: args.obligation.afterEventId,
+          channel: args.obligation.channel,
+          ...(args.obligation.threadTs ? { threadTs: args.obligation.threadTs } : {}),
+          deadline: Date.now() + args.obligation.timeoutMs,
+          attempt: 0,
+        };
+        obligations.set(args.record.threadKey, row);
+        obligationSetCalls.push({
+          threadKey: args.record.threadKey,
+          executionId: args.record.executionId,
+          ...args.obligation,
+        });
+      }
+      return result;
+    },
+    activeTurnRefresh: async (record: import("../src/store/active-turn-types.js").ActiveTurnRecord) =>
+      activeTurns.refresh(record, 2 * 60 * 60_000),
+    activeTurnGet: async ({ threadKey }: { threadKey: string }) => activeTurns.get(threadKey),
+    activeTurnLatest: async ({ channelId }: { channelId: string }) => activeTurns.latest(channelId),
+    activeTurnRegisterChoice: async (args: {
+      threadKey: string; executionId: string; choiceId: string;
+    }) => activeTurns.registerChoice(args.threadKey, args.executionId, args.choiceId),
+    activeTurnUnregisterChoice: async (args: {
+      threadKey: string; executionId: string; choiceId: string;
+    }) => activeTurns.unregisterChoice(args.threadKey, args.executionId, args.choiceId),
+    activeTurnCancelRegisteredChoices: async (args: {
+      threadKey: string; executionId: string;
+    }) => activeTurns.cancelRegisteredChoices(args.threadKey, args.executionId),
+    activeTurnClaimCancellation: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => activeTurns.claimCancellation(args.threadKey, args.executionId, args.stopEventId),
+    activeTurnMarkCancelControlled: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => activeTurns.markCancelControlled(args.threadKey, args.executionId, args.stopEventId),
+    activeTurnBeginCancelAck: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => activeTurns.beginCancelAck(args.threadKey, args.executionId, args.stopEventId),
+    activeTurnFailCancelAck: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => activeTurns.failCancelAck(args.threadKey, args.executionId, args.stopEventId),
+    activeTurnConfirmCancellationAndClear: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => syncAtomicClear(args.threadKey, args.executionId, () =>
+      activeTurns.confirmCancellationAndClear(
+        args.threadKey,
+        args.executionId,
+        args.stopEventId,
+      )),
+    activeTurnBeginRender: async (args: { threadKey: string; executionId: string }) =>
+      activeTurns.beginRender(args.threadKey, args.executionId),
+    activeTurnConfirmRender: async (args: {
+      threadKey: string; executionId: string; token: string; final: boolean; output: boolean;
+    }) => syncAtomicClear(args.threadKey, args.executionId, () =>
+      activeTurns.confirmRender(
+        args.threadKey,
+        args.executionId,
+        args.token,
+        args.final,
+        args.output,
+      )),
+    activeTurnFailRender: async (args: {
+      threadKey: string; executionId: string; token: string;
+    }) => activeTurns.failRender(args.threadKey, args.executionId, args.token),
+    activeTurnLifecycleComplete: async (args: { threadKey: string; executionId: string }) =>
+      syncAtomicClear(args.threadKey, args.executionId, () =>
+        activeTurns.lifecycleComplete(args.threadKey, args.executionId)),
+    activeTurnAbandonPristine: async (args: { threadKey: string; executionId: string }) =>
+      syncAtomicClear(args.threadKey, args.executionId, () =>
+        activeTurns.abandonPristine(args.threadKey, args.executionId)),
+    activeTurnDiscardInterruptedRedelivery: async (args: {
+      threadKey: string; executionId: string;
+    }) => syncAtomicClear(args.threadKey, args.executionId, () =>
+      activeTurns.discardInterruptedRedelivery(args.threadKey, args.executionId)),
   };
   return {
     namespace: {
@@ -329,6 +520,172 @@ describe("real /agent ingress and Stop lifecycle", () => {
     resetBotSingleton();
     resetRequestContext();
   });
+
+  it("terminalizes a real /agent trivial shortcut with no pending active row", async () => {
+    const signingSecret = "signing-secret";
+    const botState = makeBotState();
+    const env = {
+      SLACK_SIGNING_SECRET: signingSecret,
+      SLACK_BOT_TOKEN: "xoxb-test",
+      AGENT_URL: "https://agent.test/run",
+      BOT_STATE: botState.namespace,
+      WORKSPACE_CONFIG: makeWorkspaceConfig(),
+      KNOWLEDGE: {} as never,
+    } as unknown as Env;
+    const waitUntil: Promise<unknown>[] = [];
+    const executionCtx = {
+      waitUntil: (promise: Promise<unknown>) => { waitUntil.push(promise); },
+      passThroughOnException: () => undefined,
+      props: {},
+    } as unknown as ExecutionContext;
+    const params = new URLSearchParams({
+      command: "/agent",
+      text: "thanks!",
+      channel_id: "C_SHORTCUT",
+      user_id: "U1",
+      trigger_id: "trigger-shortcut",
+      team_id: "T1",
+    });
+    const request = await signedRequest(
+      "/slack/commands",
+      params.toString(),
+      signingSecret,
+      "application/x-www-form-urlencoded",
+    );
+    expect((await worker.request(request, undefined, env, executionCtx)).status).toBe(200);
+    await Promise.all(waitUntil);
+    expect(slackPosts).toHaveLength(1);
+    expect(JSON.stringify(slackPosts[0])).toContain("You're welcome.");
+    expect([...botState.values.keys()].some((key) => key.startsWith("active-turn:")))
+      .toBe(false);
+    expect(botState.obligations.size).toBe(0);
+  });
+
+  it.each(["/config", "/research"] as const)(
+    "pre-admits and stops %s before its first command-specific effect",
+    async (command) => {
+      const signingSecret = "signing-secret";
+      const botState = makeBotState();
+      let releaseProfile!: () => void;
+      const profileReleased = new Promise<void>((resolve) => { releaseProfile = resolve; });
+      let profileStarted!: () => void;
+      const profileLookup = new Promise<void>((resolve) => { profileStarted = resolve; });
+      const configWrites: string[] = [];
+      const researchStarts: string[] = [];
+
+      globalThis.fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        if (url.endsWith("/auth.test")) return Response.json({ ok: true, user_id: "UBOT" });
+        if (url.endsWith("/users.info")) {
+          profileStarted();
+          await profileReleased;
+          return Response.json({
+            ok: true,
+            user: { id: "U1", name: "ada", real_name: "Ada", profile: { email: "ada@example.com" } },
+          });
+        }
+        if (url.endsWith("/chat.postMessage")) slackPosts.push(Object.fromEntries(params));
+        return Response.json({ ok: true, ts: "900.001" });
+      }) as typeof fetch;
+
+      const workspaceStub = {
+        fetch: async (request: RequestInfo | URL) => {
+          const path = new URL(String(request)).pathname;
+          if (path === "/getConfig") {
+            return Response.json({
+              teamId: "T1",
+              channelId: "C_SHORT",
+              systemPrompt: "before",
+              policies: { allowMemoryWrite: true, allowTasks: true },
+              accessBundleId: "default",
+              updatedAt: "now",
+            });
+          }
+          if (path === "/getBundle") {
+            return Response.json({
+              id: "default",
+              tools: ["start_task"],
+              mcpEndpoints: [],
+              secretRefs: [],
+            });
+          }
+          configWrites.push(path);
+          return Response.json({ ok: true });
+        },
+      };
+      const env = {
+        SLACK_SIGNING_SECRET: signingSecret,
+        SLACK_BOT_TOKEN: "xoxb-test",
+        AGENT_URL: "https://agent.test/run",
+        BOT_STATE: botState.namespace,
+        WORKSPACE_CONFIG: {
+          idFromName: (name: string) => ({ name }),
+          get: () => workspaceStub,
+        },
+        SESSION_EVENTS: makeSessionEvents().namespace,
+        RESEARCH_TASKS: {
+          fetch: async () => {
+            researchStarts.push("start");
+            return Response.json({ status: "accepted", taskId: "task-1" });
+          },
+        },
+        KNOWLEDGE: {} as never,
+      } as unknown as Env;
+      const waitUntil: Promise<unknown>[] = [];
+      const executionCtx = {
+        waitUntil: (promise: Promise<unknown>) => { waitUntil.push(promise); },
+        passThroughOnException: () => undefined,
+        props: {},
+      } as unknown as ExecutionContext;
+      const params = new URLSearchParams({
+        command,
+        text: command === "/config" ? "new prompt" : "investigate safely",
+        channel_id: "C_SHORT",
+        user_id: "U1",
+        trigger_id: `trigger-${command}`,
+        team_id: "T1",
+      });
+      const commandRequest = await signedRequest(
+        "/slack/commands",
+        params.toString(),
+        signingSecret,
+        "application/x-www-form-urlencoded",
+      );
+      expect((await worker.request(commandRequest, undefined, env, executionCtx)).status).toBe(200);
+      await profileLookup;
+      expect(botState.obligations.size).toBe(1);
+
+      const stopBody = JSON.stringify({
+        type: "event_callback",
+        event_id: `EvStop-${command}`,
+        team_id: "T1",
+        event: {
+          type: "app_mention",
+          channel: "C_SHORT",
+          user: "U1",
+          text: "stop",
+          ts: "1710000099.000100",
+        },
+      });
+      const stopStart = waitUntil.length;
+      const stopRequest = await signedRequest(
+        "/slack/events",
+        stopBody,
+        signingSecret,
+        "application/json",
+      );
+      expect((await worker.request(stopRequest, undefined, env, executionCtx)).status).toBe(200);
+      await Promise.all(waitUntil.slice(stopStart));
+      releaseProfile();
+      await Promise.all(waitUntil);
+
+      expect(configWrites).toEqual([]);
+      expect(researchStarts).toEqual([]);
+      expect(slackPosts.map((post) => post.text)).toEqual(["🛑 Stopped."]);
+      expect(botState.obligations.size).toBe(0);
+    },
+  );
 
   it.each([
     { label: "top-level channel", channel: "C_TOP", threadTs: undefined, root: "C_TOP" },
@@ -459,7 +816,7 @@ describe("real /agent ingress and Stop lifecycle", () => {
     // NDJSON consumer. One chunk proves both output and done were attempted
     // before reader cancellation can react to the rejected terminal append.
     expect(botState.obligations.has(threadKey)).toBe(false);
-    expect(botState.obligationClearCalls).toEqual([{ threadKey }]);
+    expect(botState.obligationClearCalls).toEqual([{ threadKey, executionId }]);
     turnStream!.enqueue(new TextEncoder().encode(
       `${JSON.stringify({ kind: "output", payload: { text: "LATE_SUCCESS_MUST_NOT_POST" } })}\n` +
       `${JSON.stringify({ kind: "done", payload: { ok: true, summary: "late success" } })}\n`,
@@ -474,10 +831,7 @@ describe("real /agent ingress and Stop lifecycle", () => {
     }]);
     expect(botState.values.has(activeTurnThreadKvKey(threadKey))).toBe(false);
     expect(botState.obligations.has(threadKey)).toBe(false);
-    expect(botState.obligationClearCalls).toEqual([
-      { threadKey },
-      { threadKey, executionId },
-    ]);
+    expect(botState.obligationClearCalls).toEqual([{ threadKey, executionId }]);
 
     const events = await sessions.engineFor(threadKey).replay();
     expect(events.filter((event) => event.kind === "done")).toEqual([
@@ -507,8 +861,9 @@ describe("real /agent ingress and Stop lifecycle", () => {
       forwardedMessageId,
     });
 
-    // Arm the real engine's one-shot pending cancellation so a distinct
-    // trigger exposes its production-generated IDs without a second post.
+    // An idle non-exact Stop is a true no-op. A distinct trigger must expose
+    // fresh production-generated IDs and complete normally; it must not be
+    // poisoned as the old singleton "cancel next" behavior did.
     await sessions.engineFor(threadKey).interrupt();
     botState.seen.clear();
     const distinct = new URLSearchParams(params);
@@ -521,16 +876,28 @@ describe("real /agent ingress and Stop lifecycle", () => {
     );
     const distinctStart = waitUntil.length;
     expect((await worker.request(distinctRequest, undefined, env, executionCtx)).status).toBe(200);
-    await Promise.all(waitUntil.slice(distinctStart));
+    await vi.waitFor(() => expect(harnessTurns).toHaveLength(2));
     expect(sessions.executeCalls).toHaveLength(3);
     expect(sessions.executeCalls[2]!.executionId).toMatch(/^ot1e_[A-Za-z0-9_-]{43}$/);
     expect(sessions.executeCalls[2]!.forwardedMessageId).toMatch(/^ot1m_[A-Za-z0-9_-]{43}$/);
     expect(sessions.executeCalls[2]!.executionId).not.toBe(executionId);
     expect(sessions.executeCalls[2]!.forwardedMessageId).not.toBe(forwardedMessageId);
+    turnStream!.enqueue(new TextEncoder().encode(
+      `${JSON.stringify({ kind: "output", payload: { text: "UNRELATED_TURN_OK" } })}\n` +
+      `${JSON.stringify({ kind: "done", payload: { ok: true } })}\n`,
+    ));
+    turnStream!.close();
+    await Promise.all(waitUntil.slice(distinctStart));
     expect(botState.obligations.has(threadKey)).toBe(false);
-    expect(slackPosts.map((post) => post.text)).toEqual(["🛑 Stopped."]);
+    expect(slackPosts).toHaveLength(2);
+    expect(slackPosts[0]!.text).toBe("🛑 Stopped.");
+    // Channels may render a successful assistant response as blocks with the
+    // plain-text fallback "(message)"; the second post proves the unrelated
+    // turn was admitted and delivered after the idle non-exact Stop.
+    expect(slackPosts[1]!.text).not.toBe("🛑 Stopped.");
+    expect(JSON.stringify(slackPosts[1])).toContain("UNRELATED_TURN_OK");
     expect(metricLines.some((line) => line.includes('"metric":"turn_interrupted"'))).toBe(true);
-    expect(metricLines.some((line) => line.includes('"metric":"turn_completed"'))).toBe(false);
+    expect(metricLines.some((line) => line.includes('"metric":"turn_completed"'))).toBe(true);
 
     const identityFields = JSON.stringify({
       executionId: turn.executionId,

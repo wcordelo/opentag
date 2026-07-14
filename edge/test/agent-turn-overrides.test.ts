@@ -12,6 +12,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StateStore } from "../src/store/state-store-contract.js";
 import { bindRequestContext } from "../src/request-context.js";
+import { bindTurnExecutionContext } from "../src/slack/turn-execution-context.js";
+import { withTestLifecycleStore } from "./helpers/lifecycle-state-store.js";
 
 // agent-turn.ts transitively imports tools/index.ts → memory/knowledge-do.ts
 // (and, via the mocked modules' `importOriginal`, workspace-config-do.ts /
@@ -109,6 +111,10 @@ function makeThreadSpies(conversationKey: string) {
   const runAgent = vi.fn(async (_opts: RunAgentOpts) => undefined);
   const thread = { conversationKey, post, runAgent };
   bindRequestContext(thread, { teamId: "T1", requesterId: "U1" });
+  bindTurnExecutionContext(thread, {
+    threadKey: `slack:${conversationKey.replace("::", ":")}`,
+    executionId: `test-title-${conversationKey}`,
+  });
   return { thread, post, runAgent };
 }
 
@@ -173,7 +179,7 @@ function serialize(value: unknown): string {
 
 describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
   beforeEach(() => {
-    store = makeMemoryStore();
+    store = withTestLifecycleStore(makeMemoryStore());
     setTitleSpy.mockClear();
   });
 

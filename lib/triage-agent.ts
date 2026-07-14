@@ -17,6 +17,8 @@ export interface TriageAgentEnv {
   LINEAR_MCP_URL?: string;
   NOTION_MCP_AUTH_TOKEN?: string;
   NOTION_MCP_URL?: string;
+  /** Exact `provider/tool` read allowlist. Empty means no server-side MCP tools. */
+  MCP_READ_TOOL_ALLOWLIST?: string;
   AGENT_MODEL?: string;
   /** Resolve secret *refs* from AG-UI context (name → value). */
   getSecret?: (name: string) => string | undefined;
@@ -211,8 +213,51 @@ async function connectMcp(transport: McpHttpTransport) {
   }
 }
 
+function exactMcpReadAllowlist(value?: string): ReadonlySet<string> {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function filterReadOnlyMcpTools<T extends { name: string }>(
+  provider: string,
+  tools: readonly T[],
+  allowlist: ReadonlySet<string>,
+): T[] {
+  const prefix = `${provider.toLowerCase()}/`;
+  return tools.filter((tool) => allowlist.has(prefix + tool.name.toLowerCase()));
+}
+
+type ConnectedMcp = Awaited<ReturnType<typeof connectMcp>>;
+
+/** Preserve resources/prompts and discovery while exposing only classified reads. */
+function readOnlyMcpClient(
+  client: ConnectedMcp,
+  provider: string,
+  allowlist: ReadonlySet<string>,
+): ConnectedMcp {
+  const tools = client.tools.bind(client) as (
+    ...args: unknown[]
+  ) => Promise<Array<{ name: string }>>;
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      if (property === "tools") {
+        return async (...args: unknown[]) =>
+          filterReadOnlyMcpTools(provider, await tools(...args), allowlist);
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
 export function buildSystemPrompt(env: TriageAgentEnv): string {
-  // Linear MCP list_issues/save_issue want team NAME or ID (not a bare key).
+  // Linear MCP read tools want team NAME or ID (not a bare key).
   // Workspace default: Berendo (issue prefix BER-…).
   const LINEAR_TEAM_KEY = (env.LINEAR_TEAM_KEY?.trim() || "Berendo");
   const model = (env.AGENT_MODEL ?? "openai/gpt-5.5").replace(/^openai\//, "");
@@ -257,16 +302,17 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
   "- Cite sources (links) for schedule/score claims.",
   "",
   "Data access:",
-  "- Linear and Notion are connected via MCP. Use those tools to search, read,",
-  `  and create issues and pages. The default Linear team is "${LINEAR_TEAM_KEY}"`,
+  "- Linear and Notion MCP connections are read-only. Use them to search and read.",
+  "  Never claim an MCP create/update/delete succeeded: mutating MCP tools are",
+  "  intentionally absent from the production agent surface.",
+  `- The default Linear team is "${LINEAR_TEAM_KEY}"`,
   "  unless the user names another team.",
   "",
   "Linear tool tips (the filters are picky — follow these to avoid empty results):",
-  `- ALWAYS pass {team: "${LINEAR_TEAM_KEY}"} to list_issues and save_issue unless the`,
+  `- ALWAYS pass {team: "${LINEAR_TEAM_KEY}"} to list_issues unless the`,
   "  user explicitly names a different team. That string is the team display name",
   "  (or ID) — Linear MCP rejects unknown names. Do not invent or reuse a team from",
-  "  earlier chats. If save_issue rejects the team, call list_teams once, pick the",
-  "  matching name/id, and retry — do not ask the user unless list_teams is empty.",
+  "  earlier chats. Use list_teams/get_team to resolve a named team when needed.",
   "  get_team accepts UUID, key, or name when you need to resolve a team.",
   '- For "my issues" / "assigned to me": set assignee to the requesting user\'s',
   '  email (it\'s in your context) or the literal "me" — both work.',
@@ -281,23 +327,15 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
   "  the ~15 most recent and note the rest (e.g. 'showing 15 of 39') instead of",
   "  dumping the whole backlog; a 39-row card is noise, not an answer.",
   "- Use get_issue for one issue; render it with issue_card.",
-  "- After save_issue succeeds: IMMEDIATELY call issue_card with identifier, title,",
-  "  url (from the tool result), assignee, justCreated:true. Also put the URL on its",
-  "  own short line in text (e.g. https://linear.app/...). Never omit the link.",
-  "- SPEED after confirm_write returns APPROVED: in that same turn call save_issue",
-  "  immediately with the returned title/description/assigneeEmail/team — no",
-  "  clarifying questions, no list_teams first, no web_search, no extra tools.",
-  "  Only if save_issue fails on team, then list_teams once and retry.",
   "- If 'Last created Linear issue in this thread' is set and the user asks for the",
-  "  link / URL / ticket, reply with that URL only — do NOT confirm_write or save_issue.",
+  "  link / URL / ticket, reply with that URL only.",
   "- When drafting title/description from the user, keep them SEPARATE.",
   "- Messy human input is normal: typos in labels (any misspelling of",
   "  'description', 'title', 'email'), missing colons, one-line dumps, shorthand.",
   "  Read the transcript and infer intent — never ask them to retype because of a typo.",
   "  Only clarify when a field is genuinely absent after reading the whole thread.",
-  "- For Linear creates, call confirm_write with structured args:",
-  "  action, title, description, assigneeEmail, team — then save_issue with those",
-  "  same values. Never stuff description text into the title.",
+  "- If the user requests a write and no guarded edge write tool is exposed, say",
+  "  the write path is unavailable; never substitute an MCP mutation.",
   "- Prefer the thread transcript over any 'heuristic' draft hint when they disagree.",
   "- To act on a Slack conversation (e.g. 'write this thread up'), call the",
   "  read_thread tool to fetch the messages first — never invent thread content.",
@@ -356,12 +394,9 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
   "  not the object. Map the issue's workflow status into state. Include",
   "  assignee, url, and updated too when you have them.",
   "",
-  "WRITE GATING: a 'write' is CREATING or MODIFYING something in Linear or Notion",
-  "(save_issue, create_page, …). ONLY before such a write, call the",
-  "confirm_write tool with structured fields when creating an issue",
-  "(title, description, assigneeEmail, team) plus a short action summary;",
-  "wait for approval; perform the write only if confirmed, using the approved",
-  "field values exactly. Rendering a card (issue_list, issue_card,",
+  "WRITE GATING: MCP is read-only. Perform a write only through an explicitly",
+  "offered edge tool whose durable lifecycle enforces confirmation. Never call or",
+  "invent a Linear/Notion MCP mutation. Rendering a card (issue_list, issue_card,",
   "show_incident, show_status, show_links) and any read (search/list/get,",
   "read_thread) are NOT writes — never gate them, and never add an",
   "'I'll need approval' disclaimer to a pure render or read.",
@@ -392,11 +427,16 @@ export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
       const settled = await Promise.allSettled(
         transports.map((t) => connectMcp(t.transport)),
       );
+      const mcpReadAllowlist = exactMcpReadAllowlist(env.MCP_READ_TOOL_ALLOWLIST);
       const clients: Array<Awaited<ReturnType<typeof connectMcp>>> = [];
       const unavailable: string[] = [];
       settled.forEach((result, i) => {
         if (result.status === "fulfilled") {
-          clients.push(result.value);
+          clients.push(readOnlyMcpClient(
+            result.value,
+            transports[i]!.name,
+            mcpReadAllowlist,
+          ));
         } else {
           unavailable.push(transports[i]!.name);
           console.error(

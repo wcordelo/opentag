@@ -26,6 +26,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("Slack idempotent message responses", () => {
+  it.each(["duplicate_message", "duplicate_client_msg_id"])(
+    "treats %s as an already-visible client_msg_id write",
+    async (error) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ ok: false, error })),
+      );
+      await expect(createSlackWebClient("xoxb-test").postMessage({
+        channel: "C1",
+        text: "stopped",
+        client_msg_id: "11111111-1111-5111-8111-111111111111",
+      })).resolves.toMatchObject({ ok: true, duplicate: true, error });
+    },
+  );
+
+  it("preserves an ok response even when Slack omits the timestamp on a replay", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
+    await expect(createSlackWebClient("xoxb-test").postMessage({
+      channel: "C1",
+      text: "stopped",
+      client_msg_id: "11111111-1111-5111-8111-111111111111",
+    })).resolves.toEqual({ ok: true, ts: undefined, error: undefined });
+  });
+});
+
 describe("Slack requester GitHub profile extraction", () => {
   it("uses display_name instead of a divergent real name", async () => {
     mockUsersInfo({

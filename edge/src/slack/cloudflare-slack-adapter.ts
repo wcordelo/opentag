@@ -35,6 +35,8 @@ import {
 } from "./channels-slack-lite.js";
 import {
   createSlackWebClient,
+  isDefinitiveSlackFailure,
+  SlackApiError,
   type SlackWebClient,
 } from "./web-api.js";
 import { conflateChatSdkStream } from "./conflate.js";
@@ -55,19 +57,61 @@ import {
   type AgentContentPart,
 } from "./download-files.js";
 
-import type { StateStore } from "../store/state-store-contract.js";
+import type { LifecycleStateStore } from "../store/state-store-contract.js";
 import { persistHitlChoice } from "../hitl/durable-choice.js";
+import {
+  renderActiveTurnStep,
+  type ActiveTurnRecord,
+} from "./active-turn-registry.js";
+import type { PreAdmittedTurn } from "./pre-admit-turn.js";
 
-export type CloudflareSlackAdapterOptions = {
+const EXECUTION_FENCE = "__opentagExecutionFence";
+const NEXT_RENDER_FINAL = "__opentagNextRenderFinal";
+type ExecutionFence = Pick<ActiveTurnRecord, "threadKey" | "executionId">;
+type FencedTarget = { [EXECUTION_FENCE]?: ExecutionFence };
+type FinalFencedTarget = FencedTarget & { [NEXT_RENDER_FINAL]?: boolean };
+type FencedRef = MessageRef & { [EXECUTION_FENCE]?: ExecutionFence };
+
+export class ActiveTurnRenderSuppressedError extends Error {
+  constructor() {
+    super("active_turn_render_suppressed");
+    this.name = "ActiveTurnRenderSuppressedError";
+  }
+}
+
+/** Mark the next `thread.post` as the turn's final visible effect. */
+export function markThreadNextRenderFinal(thread: unknown): void {
+  const target = (thread as { deps?: { replyTarget?: unknown } })?.deps?.replyTarget;
+  if (!target || typeof target !== "object") return;
+  Object.defineProperty(target, NEXT_RENDER_FINAL, {
+    value: true,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+}
+
+function requireSlackOk<T extends { ok: boolean; error?: string }>(
+  method: string,
+  result: T,
+): T {
+  if (!result.ok) throw new SlackApiError(method, result.error ?? "unknown");
+  return result;
+}
+
+function requireSlackPost<T extends { ok: boolean; ts?: string; error?: string }>(
+  result: T,
+): T & { ts: string } {
+  requireSlackOk("chat.postMessage", result);
+  if (!result.ts) throw new SlackApiError("chat.postMessage", "no_ts");
+  return result as T & { ts: string };
+}
+
+type CloudflareSlackAdapterBaseOptions = {
   botToken: string;
   /** Optional bot user id for loop guards; resolved lazily if omitted. */
   botUserId?: string;
   teamId?: string;
-  /**
-   * When set, block_actions values are mirrored into StateStore so
-   * `awaitChoiceDurable` can resolve across Worker isolates.
-   */
-  stateStore?: StateStore;
   /**
    * Minimum ms between `chat.update` calls while streaming (default 800).
    * Conflation absorbs bursts while an update is in flight; this is the
@@ -75,6 +119,20 @@ export type CloudflareSlackAdapterOptions = {
    */
   streamUpdateIntervalMs?: number;
 };
+
+/** Production construction always carries the authoritative lifecycle store. */
+export type CloudflareSlackAdapterOptions = CloudflareSlackAdapterBaseOptions &
+  (
+    | {
+        stateStore: LifecycleStateStore;
+        unsafeAllowUnfencedTestOnly?: false;
+      }
+    | {
+        /** Explicit escape hatch for isolated adapter unit tests only. */
+        unsafeAllowUnfencedTestOnly: true;
+        stateStore?: LifecycleStateStore;
+      }
+  );
 
 function messageTsFromRef(
   messageRef: MessageRef,
@@ -133,6 +191,80 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     };
   }
 
+  /**
+   * Attach exact execution identity to this request's opaque reply target.
+   * The context travels with the Thread/MessageRef; it is not isolate-global
+   * mutable state and cannot bleed into another conversation.
+   */
+  bindExecutionFence(target: unknown, record: ExecutionFence): void {
+    if (!target || typeof target !== "object") {
+      throw new Error("reply_target_not_fenceable");
+    }
+    Object.defineProperty(target, EXECUTION_FENCE, {
+      value: Object.freeze({ ...record }),
+      configurable: true,
+      enumerable: false,
+      writable: false,
+    });
+  }
+
+  bindThreadExecutionFence(thread: unknown, record: ExecutionFence): void {
+    const target = (thread as { deps?: { replyTarget?: unknown } })?.deps?.replyTarget;
+    this.bindExecutionFence(target, record);
+  }
+
+  private fenceOf(value: unknown): ExecutionFence | undefined {
+    return value && typeof value === "object"
+      ? (value as FencedTarget)[EXECUTION_FENCE]
+      : undefined;
+  }
+
+  private async preAdmittedStillPending(
+    turn: PreAdmittedTurn | undefined,
+  ): Promise<boolean> {
+    if (!turn) return true;
+    if (!this.opts.stateStore) throw new Error("lifecycle_state_store_required");
+    const snapshot = await this.opts.stateStore.activeTurn.get(turn.record.threadKey);
+    return Boolean(
+      snapshot &&
+        snapshot.record.executionId === turn.record.executionId &&
+        snapshot.status === "pending" &&
+        !snapshot.stopEventId &&
+        !snapshot.renderToken &&
+        !snapshot.effectToken,
+    );
+  }
+
+  private async fenced<T>(
+    value: unknown,
+    action: () => Promise<T>,
+    final = false,
+    output = true,
+  ): Promise<T> {
+    const fence = this.fenceOf(value);
+    if (!fence) {
+      if (this.opts.unsafeAllowUnfencedTestOnly === true) return action();
+      throw new Error("exact_execution_fence_required");
+    }
+    if (!this.opts.stateStore) {
+      throw new Error("lifecycle_state_store_required");
+    }
+    const target = value as FinalFencedTarget;
+    const effectiveFinal = final || target[NEXT_RENDER_FINAL] === true;
+    if (target[NEXT_RENDER_FINAL] === true) target[NEXT_RENDER_FINAL] = false;
+    const result = await renderActiveTurnStep(
+      this.opts.stateStore,
+      fence,
+      action,
+      effectiveFinal,
+      { output, isDefinitiveFailure: isDefinitiveSlackFailure },
+    );
+    if (result.status === "suppressed") {
+      throw new ActiveTurnRenderSuppressedError();
+    }
+    return result.value;
+  }
+
   /** Expose sink for tests after `bot.start()`. */
   getSink(): IngressSink {
     if (!this.sink) {
@@ -186,7 +318,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
    */
   async handleEventsBody(
     body: unknown,
-    meta?: { teamId?: string },
+    meta?: {
+      teamId?: string;
+      preAdmittedTurn?: PreAdmittedTurn;
+      onTurnHandoff?: () => void;
+    },
   ): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
     const bodyTeamId =
@@ -196,6 +332,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         : undefined;
     if (meta?.teamId ?? bodyTeamId) this.teamId = meta?.teamId ?? bodyTeamId;
     await this.ensureBotUserId();
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
 
     const normalized = normalizeSlackEvent(
       body as Parameters<typeof normalizeSlackEvent>[0],
@@ -227,9 +366,23 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           recipientUserId: normalized.senderUserId,
         };
 
+    if (meta?.preAdmittedTurn) {
+      const expected = meta.preAdmittedTurn.record;
+      if (
+        expected.channelId !== normalized.channel ||
+        expected.conversationKey !== conversationKey
+      ) {
+        throw new Error("pre_admitted_turn_identity_mismatch");
+      }
+      this.bindExecutionFence(replyTarget, expected);
+    }
+
     const resolvedUser = normalized.senderUserId
       ? await this.client.resolveUser(normalized.senderUserId)
       : undefined;
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
     // Always allocate a per-turn key even if the web client later caches
     // profiles; reusing a PlatformUser object would reintroduce cross-turn
     // context overwrite for two messages from the same Slack user.
@@ -248,6 +401,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       const merged = mergePromptParts(normalized.userText, parts, notes);
       if (Array.isArray(merged)) contentParts = merged;
     }
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
 
     const turn: IncomingTurn = {
       conversationKey,
@@ -261,6 +417,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     bindRequestContext(user, {
       teamId: meta?.teamId ?? bodyTeamId ?? this.teamId ?? "unknown",
       requesterId: user.id,
+      ...(meta?.preAdmittedTurn
+        ? { preAdmittedTurn: meta.preAdmittedTurn }
+        : {}),
       ...(normalized.ts
         ? {
             inbound: {
@@ -272,6 +431,10 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           }
         : {}),
     });
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
+    meta?.onTurnHandoff?.();
     await this.sink.onTurn(turn);
     return { handled: true };
   }
@@ -281,6 +444,8 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     conversationKey: string,
     emoji: string,
     targetOverride?: InboundMessageTarget,
+    fence?: ExecutionFence,
+    final = false,
   ): Promise<boolean> {
     const target =
       targetOverride ?? getInboundMessage(conversationKey);
@@ -289,15 +454,29 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       return false;
     }
     const name = emoji.replace(/^:|:$/g, "");
-    const r = await this.client.addReaction({
-      channel: target.channel,
-      timestamp: target.ts,
-      name,
-    });
-    if (!r.ok && r.error !== "already_reacted") {
+    let r: Awaited<ReturnType<SlackWebClient["addReaction"]>>;
+    try {
+      r = await this.fenced(
+        fence ? { [EXECUTION_FENCE]: fence } : undefined,
+        async () => {
+          const result = await this.client.addReaction({
+            channel: target.channel,
+            timestamp: target.ts,
+            name,
+          });
+          if (!result.ok && result.error !== "already_reacted") {
+            throw new SlackApiError("reactions.add", result.error ?? "unknown");
+          }
+          return result;
+        },
+        final,
+        true,
+      );
+    } catch (err) {
+      if (err instanceof ActiveTurnRenderSuppressedError) throw err;
       console.error(
         "[slack] reactions.add failed",
-        r.error,
+        err instanceof Error ? err.message : err,
         name,
         target.channel,
         target.ts,
@@ -312,12 +491,18 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     channel: string;
     threadTs: string;
     status: string;
+    fence?: ExecutionFence;
   }): Promise<void> {
-    await this.client.setStatus({
-      channel_id: args.channel,
-      thread_ts: args.threadTs,
-      status: args.status,
-    });
+    await this.fenced(
+      args.fence ? { [EXECUTION_FENCE]: args.fence } : undefined,
+      () => this.client.setStatus({
+        channel_id: args.channel,
+        thread_ts: args.threadTs,
+        status: args.status,
+      }),
+      false,
+      false,
+    );
   }
 
   /** Assistant (DM pane) thread title — best-effort, errors swallowed by the client. */
@@ -325,12 +510,18 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     channel: string;
     threadTs: string;
     title: string;
+    fence?: ExecutionFence;
   }): Promise<void> {
-    await this.client.setTitle({
-      channel_id: args.channel,
-      thread_ts: args.threadTs,
-      title: args.title,
-    });
+    await this.fenced(
+      args.fence ? { [EXECUTION_FENCE]: args.fence } : undefined,
+      () => this.client.setTitle({
+        channel_id: args.channel,
+        thread_ts: args.threadTs,
+        title: args.title,
+      }),
+      false,
+      false,
+    );
   }
 
   async unreact(
@@ -363,6 +554,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     team_id?: string;
     /** Present when the slash command is invoked inside a thread. */
     thread_ts?: string;
+  }, meta?: {
+    preAdmittedTurn?: PreAdmittedTurn;
+    onTurnHandoff?: () => void;
   }): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
     if (body.team_id) this.teamId = body.team_id;
@@ -382,9 +576,26 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       channelId: normalized.channel,
       scope,
     });
+    const replyTarget: ReplyTarget = {
+      channel: normalized.channel,
+      ...(threadTs ? { threadTs, messageTs: threadTs } : {}),
+    };
+    if (meta?.preAdmittedTurn) {
+      const expected = meta.preAdmittedTurn.record;
+      if (
+        expected.channelId !== normalized.channel ||
+        expected.conversationKey !== conversationKey
+      ) {
+        throw new Error("pre_admitted_turn_identity_mismatch");
+      }
+      this.bindExecutionFence(replyTarget, expected);
+    }
     const resolvedUser = normalized.senderUserId
       ? await this.client.resolveUser(normalized.senderUserId)
       : undefined;
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
     const user = {
       ...(resolvedUser ?? {}),
       id: resolvedUser?.id ?? normalized.senderUserId ?? "",
@@ -393,10 +604,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       command: normalized.command.replace(/^\//, ""),
       text: normalized.text,
       conversationKey,
-      replyTarget: {
-        channel: normalized.channel,
-        ...(threadTs ? { threadTs, messageTs: threadTs } : {}),
-      },
+      replyTarget,
       user,
       eventId: normalized.eventId,
       platform: "slack",
@@ -407,6 +615,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     bindRequestContext(user, {
       teamId: body.team_id ?? this.teamId ?? "unknown",
       requesterId: user.id,
+      ...(meta?.preAdmittedTurn
+        ? { preAdmittedTurn: meta.preAdmittedTurn }
+        : {}),
       inbound: {
         channel: normalized.channel,
         ts: normalized.eventId,
@@ -414,6 +625,10 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         identity: normalized.eventId,
       },
     });
+    if (!(await this.preAdmittedStillPending(meta?.preAdmittedTurn))) {
+      return { handled: true };
+    }
+    meta?.onTurnHandoff?.();
     await this.sink.onCommand(cmd);
     return { handled: true };
   }
@@ -429,13 +644,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     // isolate has no in-memory awaitChoice waiter.
     if (this.opts.stateStore && evt.value !== undefined) {
       try {
-        await persistHitlChoice(
+        const persisted = await persistHitlChoice(
           this.opts.stateStore,
           evt.conversationKey,
           evt.value,
         );
         console.log(
-          "[slack] hitl persisted",
+          "[slack] hitl durable result",
+          persisted,
           evt.conversationKey,
           typeof evt.value === "object" &&
             evt.value &&
@@ -443,8 +659,23 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
             ? (evt.value as { choiceId?: string }).choiceId
             : undefined,
         );
+        // Exact-id choices are consumed from the durable receipt. Never also
+        // resolve an isolate-local waiter: Stop may atomically replace the
+        // receipt with a denial immediately after this RPC returns.
+        if (
+          persisted === "cancelled" ||
+          (typeof evt.value === "object" &&
+            evt.value !== null &&
+            typeof (evt.value as { choiceId?: unknown }).choiceId === "string")
+        ) {
+          return { handled: true };
+        }
       } catch (err) {
         console.error("[slack] persistHitlChoice failed", err);
+        // Durable receipt is authoritative. Returning an error lets Slack
+        // retry; invoking the isolate-local sink here could otherwise grant a
+        // remote-git approval that BOT_STATE never committed.
+        throw err;
       }
     }
     await this.sink.onInteraction(evt);
@@ -472,18 +703,22 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     } else {
       body.blocks = msg.blocks;
     }
-    const r = await this.client.postMessage(
+    const r = await this.fenced(target, async () => requireSlackPost(
+      await this.client.postMessage(
       body as {
         channel: string;
         thread_ts?: string;
         text: string;
         blocks?: unknown[];
-      },
-    );
+      }),
+    ));
     if (!r.ok || !r.ts) {
       throw new Error(`chat.postMessage failed: ${r.error ?? "unknown"}`);
     }
-    return { id: r.ts, channel, ts: r.ts };
+    const ref: FencedRef = { id: r.ts, channel, ts: r.ts };
+    const fence = this.fenceOf(target);
+    if (fence) Object.defineProperty(ref, EXECUTION_FENCE, { value: fence });
+    return ref;
   }
 
   async update(ref: MessageRef, ir: BotNode[]): Promise<void> {
@@ -493,12 +728,15 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       (ref as { channel?: string }).channel ??
       String((ref as { id?: string }).id ?? "");
     const ts = (ref as { ts?: string }).ts ?? ref.id;
-    await this.client.updateMessage({
+    await this.fenced(ref, async () => requireSlackOk(
+      "chat.update",
+      await this.client.updateMessage({
       channel,
       ts,
       text,
       blocks: msg.blocks,
-    });
+      }),
+    ));
   }
 
   /**
@@ -520,9 +758,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       unfurl_links: false,
       unfurl_media: false,
     };
-    const placeholder = await this.client.postMessage(
+    const placeholder = await this.fenced(target, async () => requireSlackPost(
+      await this.client.postMessage(
       placeholderBody as { channel: string; thread_ts?: string; text: string },
-    );
+      ),
+    ));
     if (!placeholder.ok || !placeholder.ts) {
       throw new Error(
         `chat.postMessage failed: ${placeholder.error ?? "unknown"}`,
@@ -535,43 +775,25 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     let lastUpdateAt = 0;
     let lastSent: string | undefined;
 
-    const attemptUpdate = async (text: string): Promise<boolean> => {
-      try {
-        const r = await this.client.updateMessage({
+    const attemptUpdate = async (text: string, final: boolean): Promise<void> => {
+      await this.fenced(target, async () => requireSlackOk(
+          "chat.update",
+          await this.client.updateMessage({
           channel,
           ts,
           text: truncateFallbackText(text),
           blocks: buildMrkdwnBlocks(text),
-        });
-        if (!r.ok) {
-          console.error("[slack] chat.update failed", r.error, channel, ts);
-          return false;
-        }
-        return true;
-      } catch (err) {
-        console.error(
-          "[slack] chat.update threw",
-          err instanceof Error ? err.message : err,
-          channel,
-          ts,
-        );
-        return false;
-      }
+          }),
+        ), final,
+      );
     };
 
     // Skip-if-unchanged guard: cheap, safe because `pushUpdate` is always
     // called at least once more (the final call) with the true end state.
     const pushUpdate = async (text: string, isFinal: boolean) => {
-      if (text === lastSent) return;
-      const ok = await attemptUpdate(text);
-      if (ok) {
-        lastSent = text;
-        return;
-      }
-      if (isFinal) {
-        const retryOk = await attemptUpdate(text);
-        if (retryOk) lastSent = text;
-      }
+      if (text === lastSent && !isFinal) return;
+      await attemptUpdate(text, isFinal);
+      lastSent = text;
     };
 
     try {
@@ -593,7 +815,10 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
 
     await pushUpdate(acc, true);
 
-    return { id: ts, channel, ts };
+    const ref: FencedRef = { id: ts, channel, ts };
+    const fence = this.fenceOf(target);
+    if (fence) Object.defineProperty(ref, EXECUTION_FENCE, { value: fence });
+    return ref;
   }
 
   async delete(_ref: MessageRef): Promise<void> {
@@ -606,10 +831,41 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       threadTs?: string;
       statusTs?: string;
     };
+    let finalMessage: {
+      channel: string;
+      ts: string;
+      text: string;
+      blocks?: unknown[];
+    } | undefined;
+    type SlackUpdateArgs = Parameters<SlackRenderTransport["updateMessage"]>[0];
+    let textEndUpdates: SlackUpdateArgs[] | undefined;
+    let terminalTextCommitted = false;
+    let runErrorPostFinal = false;
+    const sendUpdate = async (args: SlackUpdateArgs, final: boolean): Promise<void> => {
+      await this.fenced(target, async () => requireSlackOk(
+        "chat.update",
+        await this.client.updateMessage(args),
+      ), final);
+      finalMessage = {
+        channel: args.channel,
+        ts: args.ts,
+        text: args.text,
+      };
+      if (final) terminalTextCommitted = true;
+    };
     const transport: SlackRenderTransport = {
-      setStatus: (args) => this.client.setStatus(args),
+      setStatus: (args) => this.fenced(
+        target,
+        () => this.client.setStatus(args),
+        false,
+        false,
+      ),
       postMessage: async (args) => {
-        const r = await this.client.postMessage(args);
+        const r = await this.fenced(
+          target,
+          async () => requireSlackPost(await this.client.postMessage(args)),
+          runErrorPostFinal,
+        );
         if (!r.ok || !r.ts) {
           console.error(
             "[slack] chat.postMessage failed",
@@ -618,14 +874,29 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
             args.thread_ts,
           );
         }
+        if (r.ok && r.ts) {
+          finalMessage = {
+            channel: args.channel,
+            ts: r.ts,
+            text: args.text,
+          };
+          if (runErrorPostFinal) terminalTextCommitted = true;
+        }
         return { ts: r.ts };
       },
       updateMessage: async (args) => {
-        await this.client.updateMessage(args);
+        // TEXT_MESSAGE_END may drain more than one continuation chunk. Buffer
+        // those transport calls in the wrapper below so only the actual last
+        // visible update is the atomic final lifecycle commit.
+        if (textEndUpdates) {
+          textEndUpdates.push({ ...args });
+          return;
+        }
+        await sendUpdate(args, false);
       },
     };
     const statusTs = t.threadTs ?? t.statusTs;
-    return createRunRenderer({
+    const renderer = createRunRenderer({
       transport,
       target: { channel: t.channel, threadTs: t.threadTs },
       status: statusTs
@@ -636,6 +907,59 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       // was posting emoji as text).
       showToolStatus: false,
     });
+    const baseSubscriber = renderer.subscriber;
+    type TextEndArgs = Parameters<
+      NonNullable<typeof baseSubscriber.onTextMessageEndEvent>
+    >[0];
+    const subscriber = {
+      ...baseSubscriber,
+      onTextMessageEndEvent: async (args: TextEndArgs) => {
+        const captured: SlackUpdateArgs[] = [];
+        textEndUpdates = captured;
+        try {
+          await baseSubscriber.onTextMessageEndEvent?.(args);
+        } finally {
+          textEndUpdates = undefined;
+        }
+        // A fast stream can already have sent its final bytes before END. In
+        // that case, repeat the exact update here (at END, not turn finish) so
+        // the user-visible terminal write and durable cleanup are atomic.
+        if (captured.length === 0 && finalMessage) {
+          captured.push(finalMessage);
+        }
+        for (let i = 0; i < captured.length; i++) {
+          await sendUpdate(captured[i]!, i === captured.length - 1);
+        }
+      },
+      onRunErrorEvent: async (
+        args: Parameters<NonNullable<typeof baseSubscriber.onRunErrorEvent>>[0],
+      ) => {
+        runErrorPostFinal = true;
+        try {
+          await baseSubscriber.onRunErrorEvent?.(args);
+        } finally {
+          runErrorPostFinal = false;
+        }
+      },
+    };
+    return {
+      ...renderer,
+      subscriber,
+      finish: async () => {
+        await renderer.finish?.();
+        if (terminalTextCommitted) return;
+
+        // Tool-only and empty AG-UI runs still owe the user a visible terminal
+        // result. This final post is also the atomic lifecycle commit point.
+        await this.fenced(target, async () => requireSlackPost(
+          await this.client.postMessage({
+            channel: t.channel,
+            thread_ts: t.threadTs,
+            text: "_(Agent completed without a text response.)_",
+          }),
+        ), true);
+      },
+    };
   }
 
   async addReaction(
@@ -650,11 +974,13 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       return { ok: false, error: "no_message_target" };
     }
     const name = emoji.replace(/^:|:$/g, "").trim();
-    const r = await this.client.addReaction({
-      channel,
-      timestamp: ts,
-      name,
-    });
+    const r = await this.fenced(target, async () => {
+      const result = await this.client.addReaction({ channel, timestamp: ts, name });
+      if (!result.ok && result.error !== "already_reacted") {
+        throw new SlackApiError("reactions.add", result.error ?? "unknown");
+      }
+      return result;
+    }, false, false);
     if (!r.ok && r.error !== "already_reacted") {
       console.error("[slack] reactions.add failed", r.error, name);
       return { ok: false, error: r.error ?? "reactions_add_failed" };
@@ -674,11 +1000,13 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       return { ok: false, error: "no_message_target" };
     }
     const name = emoji.replace(/^:|:$/g, "").trim();
-    const r = await this.client.removeReaction({
-      channel,
-      timestamp: ts,
-      name,
-    });
+    const r = await this.fenced(target, async () => {
+      const result = await this.client.removeReaction({ channel, timestamp: ts, name });
+      if (!result.ok && result.error !== "no_reaction") {
+        throw new SlackApiError("reactions.remove", result.error ?? "unknown");
+      }
+      return result;
+    }, false, false);
     if (!r.ok && r.error !== "no_reaction") {
       console.error("[slack] reactions.remove failed", r.error, name);
       return { ok: false, error: r.error ?? "reactions_remove_failed" };

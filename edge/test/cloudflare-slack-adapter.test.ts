@@ -1,10 +1,11 @@
 /**
  * Unit tests for CloudflareSlackAdapter ingress (no live Slack).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CloudflareSlackAdapter } from "../src/slack/cloudflare-slack-adapter.js";
 import type { IngressSink } from "@copilotkit/channels";
 import { requireRequestContext } from "../src/request-context.js";
+import type { LifecycleStateStore } from "../src/store/state-store-contract.js";
 
 function makeSink(): IngressSink & {
   turns: unknown[];
@@ -64,10 +65,91 @@ function mockSlackApi(): () => void {
 }
 
 describe("CloudflareSlackAdapter", () => {
+  it.each(["profile", "file"] as const)(
+    "suppresses pre-admitted handoff when Stop lands during %s preparation",
+    async (barrier) => {
+      let status: "pending" | "cancelled" = "pending";
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const record = {
+        channelId: "C1",
+        threadKey: "slack:C1:1.0",
+        conversationKey: "C1::1.0",
+        executionId: "ot1e_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        threadTs: "1.0",
+        registeredAt: 1,
+      };
+      const stateStore = {
+        activeTurn: {
+          get: vi.fn(async () => ({ record, status, updatedAt: Date.now() })),
+        },
+      } as unknown as LifecycleStateStore;
+      const orig = globalThis.fetch;
+      const entered = vi.fn();
+      globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+        const value = String(url);
+        if (value.includes("users.info")) {
+          if (barrier === "profile") {
+            entered();
+            await blocked;
+          }
+          return Response.json({ ok: true, user: { id: "U1", name: "ada" } });
+        }
+        if (value === "https://files.slack.test/note") {
+          entered();
+          await blocked;
+          return new Response("notes", { status: 200 });
+        }
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      try {
+        const adapter = new CloudflareSlackAdapter({
+          botToken: "xoxb-test",
+          botUserId: "UBOT",
+          stateStore,
+        });
+        const sink = makeSink();
+        await adapter.start(sink);
+        const handedOff = vi.fn();
+        const pending = adapter.handleEventsBody({
+          team_id: "T1",
+          event_id: `Ev-${barrier}`,
+          event: {
+            type: "app_mention",
+            channel: "C1",
+            user: "U1",
+            text: "<@UBOT> inspect",
+            ts: "1.1",
+            thread_ts: "1.0",
+            ...(barrier === "file" ? {
+              files: [{
+                id: "F1",
+                name: "note.txt",
+                mimetype: "text/plain",
+                url_private: "https://files.slack.test/note",
+              }],
+            } : {}),
+          },
+        }, {
+          preAdmittedTurn: { record },
+          onTurnHandoff: handedOff,
+        });
+        await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce());
+        status = "cancelled";
+        release();
+        await expect(pending).resolves.toEqual({ handled: true });
+        expect(handedOff).not.toHaveBeenCalled();
+        expect(sink.turns).toHaveLength(0);
+      } finally {
+        globalThis.fetch = orig;
+      }
+    },
+  );
+
   it("start stores sink; handleEventsBody emits onTurn for app_mention", async () => {
     const restoreFetch = mockSlackApi();
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
 
@@ -103,6 +185,7 @@ describe("CloudflareSlackAdapter", () => {
 
   it("ignores bot-only messages", async () => {
     const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
       botUserId: "UBOT",
     });
@@ -124,7 +207,7 @@ describe("CloudflareSlackAdapter", () => {
   it("handleCommandBody emits onCommand", async () => {
     const restoreFetch = mockSlackApi();
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
       const result = await adapter.handleCommandBody({
@@ -161,7 +244,7 @@ describe("CloudflareSlackAdapter", () => {
   it("handleCommandBody uses thread_ts for threaded slash commands", async () => {
     const restoreFetch = mockSlackApi();
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
       const result = await adapter.handleCommandBody({
@@ -194,6 +277,7 @@ describe("CloudflareSlackAdapter", () => {
 
   it("rejects slash commands without Slack's stable trigger identity", async () => {
     const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
       botUserId: "UBOT",
     });
@@ -212,7 +296,7 @@ describe("CloudflareSlackAdapter", () => {
   it("binds identical command identity and partition on Slack redelivery", async () => {
     const restoreFetch = mockSlackApi();
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
       const body = {
@@ -245,7 +329,7 @@ describe("CloudflareSlackAdapter", () => {
   it("handleInteractionPayload decodes block_actions", async () => {
     const restoreFetch = mockSlackApi();
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
       const result = await adapter.handleInteractionPayload({
@@ -275,8 +359,89 @@ describe("CloudflareSlackAdapter", () => {
     }
   });
 
+  it("fails closed without invoking the in-memory sink when durable HITL persistence fails", async () => {
+    const persistError = new Error("BOT_STATE unavailable");
+    const stateStore = {
+      kv: {
+        get: async () => undefined,
+        set: async () => { throw persistError; },
+        delete: async () => undefined,
+      },
+      hitl: {
+        persistChoiceUnlessCancelled: async () => { throw persistError; },
+        cancelChoice: async () => undefined,
+      },
+    } as unknown as LifecycleStateStore;
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+      stateStore,
+    });
+    const sink = makeSink();
+    await adapter.start(sink);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(adapter.handleInteractionPayload({
+        type: "block_actions",
+        trigger_id: "trig-failed-persist",
+        user: { id: "U1" },
+        channel: { id: "C1" },
+        message: { ts: "10.0", thread_ts: "9.0" },
+        actions: [{
+          action_id: "ck:remote-git",
+          value: JSON.stringify({ confirmed: true, choiceId: "remote-git-choice" }),
+          action_ts: "10.1",
+        }],
+      })).rejects.toThrow("BOT_STATE unavailable");
+      expect(sink.interactions).toHaveLength(0);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it.each(["persisted", "cancelled"] as const)(
+    "does not invoke an isolate-local waiter for a modern exact-id choice that is %s",
+    async (result) => {
+      const persistChoiceUnlessCancelled = vi.fn(async () => result);
+      const stateStore = {
+        kv: {
+          get: async () => undefined,
+          set: async () => undefined,
+          delete: async () => undefined,
+        },
+        hitl: {
+          persistChoiceUnlessCancelled,
+          cancelChoice: async () => undefined,
+        },
+      } as unknown as LifecycleStateStore;
+      const adapter = new CloudflareSlackAdapter({
+        botToken: "xoxb-test",
+        botUserId: "UBOT",
+        stateStore,
+      });
+      const sink = makeSink();
+      await adapter.start(sink);
+
+      await expect(adapter.handleInteractionPayload({
+        type: "block_actions",
+        trigger_id: `trig-${result}`,
+        user: { id: "U1" },
+        channel: { id: "C1" },
+        message: { ts: "10.0", thread_ts: "9.0" },
+        actions: [{
+          action_id: "ck:remote-git",
+          value: JSON.stringify({ confirmed: true, choiceId: "remote-git-choice" }),
+          action_ts: "10.1",
+        }],
+      })).resolves.toEqual({ handled: true });
+      expect(persistChoiceUnlessCancelled).toHaveBeenCalledOnce();
+      expect(sink.interactions).toHaveLength(0);
+    },
+  );
+
   it("thread_reply stores inbound ts so reactions can target it", async () => {
     const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
       botUserId: "UBOT",
     });
@@ -338,7 +503,7 @@ describe("CloudflareSlackAdapter", () => {
   });
 
   it("getSink throws before start", () => {
-    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+    const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
     expect(() => adapter.getSink()).toThrow(/sink not set/);
   });
 
@@ -351,7 +516,7 @@ describe("CloudflareSlackAdapter", () => {
       return Response.json({ ok: false });
     }) as typeof fetch;
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       const sink = makeSink();
       await adapter.start(sink);
       expect(adapter.getBotUserId()).toBe("UBOT123");
@@ -384,7 +549,7 @@ describe("CloudflareSlackAdapter", () => {
       return Response.json({ ok: false });
     }) as typeof fetch;
     try {
-      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test" });
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
       await adapter.start(makeSink());
       const msgs = await adapter.getMessages({
         channel: "C1",
@@ -401,6 +566,7 @@ describe("CloudflareSlackAdapter", () => {
 
   it("accepts channel thread replies without re-mention", async () => {
     const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
       botUserId: "UBOT",
     });

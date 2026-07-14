@@ -330,6 +330,24 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
     );
   }
 
+  async appendOutboxIfTaskActive(msg: OutboxMessage): Promise<boolean> {
+    const cursor = this.sql.exec(
+      `INSERT INTO outbox (id, session_id, target_actor, payload, status, created_at)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = ? AND status IN ('pending', 'running')
+       )`,
+      msg.id,
+      msg.sessionId,
+      msg.targetActor,
+      JSON.stringify(msg.payload),
+      msg.status,
+      msg.createdAt,
+      msg.sessionId,
+    );
+    return ((cursor as { rowsWritten?: number }).rowsWritten ?? 0) > 0;
+  }
+
   async getPendingOutbox(sessionId: string): Promise<OutboxMessage[]> {
     const cursor = this.sql.exec(
       "SELECT * FROM outbox WHERE session_id = ? AND status = 'pending'",
@@ -407,6 +425,21 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
     );
   }
 
+  async updateTaskStatusIfActive(
+    taskId: string,
+    status: TaskRecord["status"],
+    metadata?: Record<string, unknown>,
+  ): Promise<boolean> {
+    const cursor = this.sql.exec(
+      `UPDATE tasks SET status = ?, metadata = COALESCE(?, metadata)
+       WHERE task_id = ? AND status IN ('pending', 'running')`,
+      status,
+      metadata ? JSON.stringify(metadata) : null,
+      taskId,
+    );
+    return ((cursor as { rowsWritten?: number }).rowsWritten ?? 0) > 0;
+  }
+
   async getTasksByThread(threadKey: string): Promise<TaskRecord[]> {
     const cursor = this.sql.exec(
       "SELECT * FROM tasks WHERE thread_key = ? ORDER BY created_at DESC",
@@ -414,6 +447,75 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
     );
     const rows = (cursor as { toArray: () => TaskDbRow[] }).toArray?.() ?? [];
     return rows.map(mapTaskRow);
+  }
+
+  async cancelResearchTask(taskId: string, expectedThreadKey: string) {
+    this.sql.exec("BEGIN TRANSACTION");
+    try {
+      const task = this.getTaskSync(taskId);
+      if (!task) {
+        this.sql.exec("ROLLBACK");
+        return { status: "not_found" as const, taskId };
+      }
+      if (task.threadKey !== expectedThreadKey) {
+        this.sql.exec("ROLLBACK");
+        return { status: "thread_mismatch" as const, taskId };
+      }
+      const already = task.status === "cancelled";
+      this.sql.exec(
+        `UPDATE tasks SET status = 'cancelled',
+           metadata = json_patch(COALESCE(metadata, '{}'), json_object('cancelledAt', ?))
+         WHERE task_id = ?`,
+        new Date().toISOString(),
+        taskId,
+      );
+      const cursor = this.sql.exec(
+        "SELECT data FROM session_state WHERE id = ?",
+        taskId,
+      ) as { toArray?: () => Array<{ data: string }> };
+      const row = cursor.toArray?.()[0];
+      if (row) {
+        const data = JSON.parse(row.data) as SessionStateData;
+        this.sql.exec(
+          `UPDATE session_state SET data = ?, version_id = version_id + 1,
+             updated_at = ? WHERE id = ?`,
+          JSON.stringify({ ...data, status: "cancelled", externalJob: undefined }),
+          new Date().toISOString(),
+          taskId,
+        );
+      }
+      this.sql.exec(
+        "UPDATE outbox SET status = 'failed' WHERE session_id = ? AND status = 'pending'",
+        taskId,
+      );
+      this.sql.exec(
+        `UPDATE delivery_obligations SET status = 'failed'
+         WHERE status = 'pending' AND json_extract(payload, '$.taskId') = ?`,
+        taskId,
+      );
+      const inFlightCursor = this.sql.exec(
+        `SELECT COUNT(*) AS count FROM delivery_obligations
+         WHERE status = 'in_flight' AND json_extract(payload, '$.taskId') = ?`,
+        taskId,
+      ) as { toArray?: () => Array<{ count: number }> };
+      const quiescent = Number(inFlightCursor.toArray?.()[0]?.count ?? 0) === 0;
+      this.sql.exec("DELETE FROM alarm_queue WHERE session_id = ?", taskId);
+      this.sql.exec("COMMIT");
+      return {
+        status: already ? "already_cancelled" as const : "cancelled" as const,
+        taskId,
+        quiescent,
+      };
+    } catch (err) {
+      this.sql.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  private getTaskSync(taskId: string): TaskRecord | null {
+    const cursor = this.sql.exec("SELECT * FROM tasks WHERE task_id = ?", taskId);
+    const rows = (cursor as { toArray: () => TaskDbRow[] }).toArray?.() ?? [];
+    return rows[0] ? mapTaskRow(rows[0]) : null;
   }
 
   async appendDeliveryObligation(obligation: DeliveryObligation): Promise<void> {
@@ -424,6 +526,22 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
       JSON.stringify(obligation.payload),
       obligation.status,
     );
+  }
+
+  async appendDeliveryObligationIfTaskActive(obligation: DeliveryObligation): Promise<boolean> {
+    const cursor = this.sql.exec(
+      `INSERT INTO delivery_obligations (id, thread_key, payload, status)
+       SELECT ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = ? AND status IN ('pending', 'running')
+       )`,
+      obligation.id,
+      obligation.threadKey,
+      JSON.stringify(obligation.payload),
+      obligation.status,
+      obligation.payload.taskId,
+    );
+    return ((cursor as { rowsWritten?: number }).rowsWritten ?? 0) > 0;
   }
 
   async getPendingDeliveries(threadKey?: string): Promise<DeliveryObligation[]> {
@@ -437,8 +555,45 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
     return rows.map(mapDeliveryRow);
   }
 
+  async getDeliveriesToDrain(threadKey?: string): Promise<DeliveryObligation[]> {
+    const query = threadKey
+      ? "SELECT * FROM delivery_obligations WHERE status IN ('pending', 'in_flight') AND thread_key = ?"
+      : "SELECT * FROM delivery_obligations WHERE status IN ('pending', 'in_flight')";
+    const cursor = threadKey ? this.sql.exec(query, threadKey) : this.sql.exec(query);
+    const rows = (cursor as { toArray: () => DeliveryDbRow[] }).toArray?.() ?? [];
+    return rows.map(mapDeliveryRow);
+  }
+
+  async claimDelivery(id: string): Promise<DeliveryObligation | null> {
+    this.sql.exec(
+      `UPDATE delivery_obligations SET status = 'in_flight'
+       WHERE id = ? AND status = 'pending' AND EXISTS (
+         SELECT 1 FROM tasks
+         WHERE task_id = json_extract(delivery_obligations.payload, '$.taskId')
+           AND status IN ('pending', 'running')
+       )`,
+      id,
+    );
+    const cursor = this.sql.exec(
+      "SELECT * FROM delivery_obligations WHERE id = ? AND status = 'in_flight'",
+      id,
+    );
+    const row = (cursor as { toArray: () => DeliveryDbRow[] }).toArray?.()[0];
+    return row ? mapDeliveryRow(row) : null;
+  }
+
   async markDeliveryDelivered(id: string): Promise<void> {
-    this.sql.exec("UPDATE delivery_obligations SET status = 'delivered' WHERE id = ?", id);
+    this.sql.exec(
+      "UPDATE delivery_obligations SET status = 'delivered' WHERE id = ? AND status = 'in_flight'",
+      id,
+    );
+  }
+
+  async markDeliverySuppressed(id: string): Promise<void> {
+    this.sql.exec(
+      "UPDATE delivery_obligations SET status = 'failed' WHERE id = ? AND status = 'in_flight'",
+      id,
+    );
   }
 
   async enqueueAlarm(item: AlarmQueueItem): Promise<void> {
@@ -452,6 +607,25 @@ export class DurableObjectStorageAdapter implements StorageAdapter {
       item.payload ? JSON.stringify(item.payload) : null,
       item.priority ?? 0,
     );
+  }
+
+  async enqueueAlarmIfTaskActive(item: AlarmQueueItem): Promise<boolean> {
+    const cursor = this.sql.exec(
+      `INSERT INTO alarm_queue (id, session_id, kind, run_at_ms, payload, priority)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = ? AND status IN ('pending', 'running')
+       )
+       ON CONFLICT(id) DO UPDATE SET run_at_ms = excluded.run_at_ms`,
+      item.id,
+      item.sessionId,
+      item.kind,
+      item.runAtMs,
+      item.payload ? JSON.stringify(item.payload) : null,
+      item.priority ?? 0,
+      item.sessionId,
+    );
+    return ((cursor as { rowsWritten?: number }).rowsWritten ?? 0) > 0;
   }
 
   async getDueAlarms(nowMs: number, limit = 10): Promise<AlarmQueueItem[]> {

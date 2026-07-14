@@ -247,6 +247,18 @@ export class PostgresStorageAdapter implements StorageAdapter {
     );
   }
 
+  async appendOutboxIfTaskActive(msg: OutboxMessage): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `INSERT INTO outbox (id, session_id, target_actor, payload, status, created_at)
+       SELECT $1, $2, $3, $4, $5, $6
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = $2 AND status IN ('pending', 'running')
+       )`,
+      [msg.id, msg.sessionId, msg.targetActor, JSON.stringify(msg.payload), msg.status, msg.createdAt],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async getPendingOutbox(sessionId: string): Promise<OutboxMessage[]> {
     const { rows } = await this.pool.query<{
       id: string;
@@ -359,6 +371,19 @@ export class PostgresStorageAdapter implements StorageAdapter {
     );
   }
 
+  async updateTaskStatusIfActive(
+    taskId: string,
+    status: TaskRecord["status"],
+    metadata?: Record<string, unknown>,
+  ): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE tasks SET status = $1, metadata = COALESCE($2, metadata)
+       WHERE task_id = $3 AND status IN ('pending', 'running')`,
+      [status, metadata ? JSON.stringify(metadata) : null, taskId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async getTasksByThread(threadKey: string): Promise<TaskRecord[]> {
     const { rows } = await this.pool.query<{
       task_id: string;
@@ -384,12 +409,79 @@ export class PostgresStorageAdapter implements StorageAdapter {
     }));
   }
 
+  async cancelResearchTask(taskId: string, expectedThreadKey: string) {
+    return this.withTransaction(async () => {
+      const { rows } = await this.pool.query<{
+        thread_key: string;
+        status: TaskRecord["status"];
+      }>(`SELECT thread_key, status FROM tasks WHERE task_id = $1 FOR UPDATE`, [taskId]);
+      const task = rows[0];
+      if (!task) return { status: "not_found" as const, taskId };
+      if (task.thread_key !== expectedThreadKey) {
+        return { status: "thread_mismatch" as const, taskId };
+      }
+      const already = task.status === "cancelled";
+      await this.pool.query(
+        `UPDATE tasks SET status = 'cancelled',
+           metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('cancelledAt', $2)
+         WHERE task_id = $1`,
+        [taskId, new Date().toISOString()],
+      );
+      await this.pool.query(
+        `UPDATE session_state SET
+           data = (data - 'externalJob') || jsonb_build_object('status', 'cancelled'),
+           version_id = version_id + 1, updated_at = $2
+         WHERE id = $1`,
+        [taskId, new Date().toISOString()],
+      );
+      await this.pool.query(
+        `UPDATE outbox SET status = 'failed' WHERE session_id = $1 AND status = 'pending'`,
+        [taskId],
+      );
+      await this.pool.query(
+        `UPDATE delivery_obligations SET status = 'failed'
+         WHERE status = 'pending' AND payload->>'taskId' = $1`,
+        [taskId],
+      );
+      const inFlight = await this.pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM delivery_obligations
+         WHERE status = 'in_flight' AND payload->>'taskId' = $1`,
+        [taskId],
+      );
+      const quiescent = Number(inFlight.rows[0]?.count ?? 0) === 0;
+      await this.pool.query(`DELETE FROM alarm_queue WHERE session_id = $1`, [taskId]);
+      return {
+        status: already ? "already_cancelled" as const : "cancelled" as const,
+        taskId,
+        quiescent,
+      };
+    });
+  }
+
   async appendDeliveryObligation(obligation: DeliveryObligation): Promise<void> {
     await this.pool.query(
       `INSERT INTO delivery_obligations (id, thread_key, payload, status)
        VALUES ($1, $2, $3, $4)`,
       [obligation.id, obligation.threadKey, JSON.stringify(obligation.payload), obligation.status],
     );
+  }
+
+  async appendDeliveryObligationIfTaskActive(obligation: DeliveryObligation): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `INSERT INTO delivery_obligations (id, thread_key, payload, status)
+       SELECT $1, $2, $3, $4
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = $5 AND status IN ('pending', 'running')
+       )`,
+      [
+        obligation.id,
+        obligation.threadKey,
+        JSON.stringify(obligation.payload),
+        obligation.status,
+        obligation.payload.taskId,
+      ],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   async getPendingDeliveries(threadKey?: string): Promise<DeliveryObligation[]> {
@@ -411,8 +503,69 @@ export class PostgresStorageAdapter implements StorageAdapter {
     }));
   }
 
+  async getDeliveriesToDrain(threadKey?: string): Promise<DeliveryObligation[]> {
+    const query = threadKey
+      ? `SELECT * FROM delivery_obligations WHERE status IN ('pending', 'in_flight') AND thread_key = $1`
+      : `SELECT * FROM delivery_obligations WHERE status IN ('pending', 'in_flight')`;
+    const params = threadKey ? [threadKey] : [];
+    const { rows } = await this.pool.query<{
+      id: string;
+      thread_key: string;
+      payload: DeliveryObligation["payload"];
+      status: DeliveryObligation["status"];
+    }>(query, params);
+    return rows.map((row) => ({
+      id: row.id,
+      threadKey: row.thread_key,
+      payload: row.payload,
+      status: row.status,
+    }));
+  }
+
+  async claimDelivery(id: string): Promise<DeliveryObligation | null> {
+    return this.withTransaction(async () => {
+      const { rows } = await this.pool.query<{
+        id: string;
+        thread_key: string;
+        payload: DeliveryObligation["payload"];
+        status: DeliveryObligation["status"];
+      }>(`SELECT * FROM delivery_obligations WHERE id = $1 FOR UPDATE`, [id]);
+      const delivery = rows[0];
+      if (!delivery) return null;
+      if (delivery.status === "in_flight") {
+        return { id: delivery.id, threadKey: delivery.thread_key, payload: delivery.payload, status: delivery.status };
+      }
+      if (delivery.status !== "pending") return null;
+      const active = await this.pool.query(
+        `SELECT 1 FROM tasks WHERE task_id = $1 AND status IN ('pending', 'running')`,
+        [delivery.payload.taskId],
+      );
+      if ((active.rowCount ?? 0) === 0) return null;
+      await this.pool.query(
+        `UPDATE delivery_obligations SET status = 'in_flight' WHERE id = $1`,
+        [id],
+      );
+      return {
+        id: delivery.id,
+        threadKey: delivery.thread_key,
+        payload: delivery.payload,
+        status: "in_flight" as const,
+      };
+    });
+  }
+
   async markDeliveryDelivered(id: string): Promise<void> {
-    await this.pool.query(`UPDATE delivery_obligations SET status = 'delivered' WHERE id = $1`, [id]);
+    await this.pool.query(
+      `UPDATE delivery_obligations SET status = 'delivered' WHERE id = $1 AND status = 'in_flight'`,
+      [id],
+    );
+  }
+
+  async markDeliverySuppressed(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE delivery_obligations SET status = 'failed' WHERE id = $1 AND status = 'in_flight'`,
+      [id],
+    );
   }
 
   async enqueueAlarm(item: AlarmQueueItem): Promise<void> {
@@ -429,6 +582,26 @@ export class PostgresStorageAdapter implements StorageAdapter {
         item.priority ?? 0,
       ],
     );
+  }
+
+  async enqueueAlarmIfTaskActive(item: AlarmQueueItem): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `INSERT INTO alarm_queue (id, session_id, kind, run_at_ms, payload, priority)
+       SELECT $1, $2, $3, $4, $5, $6
+       WHERE EXISTS (
+         SELECT 1 FROM tasks WHERE task_id = $2 AND status IN ('pending', 'running')
+       )
+       ON CONFLICT (id) DO UPDATE SET run_at_ms = EXCLUDED.run_at_ms`,
+      [
+        item.id,
+        item.sessionId,
+        item.kind,
+        item.runAtMs,
+        item.payload ? JSON.stringify(item.payload) : null,
+        item.priority ?? 0,
+      ],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   async getDueAlarms(nowMs: number, limit = 10): Promise<AlarmQueueItem[]> {

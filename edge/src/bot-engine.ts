@@ -3,7 +3,7 @@
  */
 import { createBot, type Bot } from "@copilotkit/channels";
 import { HttpAgent } from "@ag-ui/client";
-import { startTask } from "./tasks/runtime.js";
+import { cancelTask, startTask } from "./tasks/runtime.js";
 import { memoryWrite } from "./memory/knowledge-do.js";
 import { createBotStoreAdapter } from "./create-bot-store.js";
 import { CloudflareSlackAdapter } from "./slack/cloudflare-slack-adapter.js";
@@ -30,6 +30,14 @@ import {
 import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
 import { runSlackTurnLifecycle } from "./slack/turn-lifecycle.js";
+import {
+  adoptSlackShortcut,
+  finishSilentShortcut,
+  postFinalShortcut,
+  runShortcutEffect,
+  shortcutStillPending,
+  type AdoptedShortcut,
+} from "./slack/shortcut-lifecycle.js";
 
 export type BotEngineKind = "createBot";
 
@@ -109,8 +117,12 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   });
 
   bot.onMention(async ({ thread, message }) => {
+    let adopted: AdoptedShortcut | undefined;
     try {
       const requestContext = copyRequestContext(message.user, thread);
+      // Every production mention, including lightweight shortcuts, adopts the
+      // ingress row before its first config/profile/task await.
+      adopted = await adoptSlackShortcut(env, adapter, thread);
       const teamId = requestContext.teamId;
       const channelId = (thread.conversationKey ?? "").split("::")[0] ?? "";
       // Snapshot react target for this turn before any concurrent ingress can
@@ -123,6 +135,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         teamId,
         channelId,
       );
+      if (!(await shortcutStillPending(adopted))) return;
       const allowed = new Set(
         resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
       );
@@ -140,7 +153,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
 
       if (isResearch) {
         if (!allowed.has("start_task")) {
-          await thread.post(
+          await postFinalShortcut(thread,
             "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
           );
           return;
@@ -151,29 +164,47 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           conversationKey,
           text,
         );
+        if (!(await shortcutStillPending(adopted))) return;
         const objective = cleanedText
           .replace(/<@[^>]+>/g, "")
           .replace(/^\s*research[:\s]+/i, "")
           .trim();
         const statusScope = conversationKey.split("::")[1];
         const threadTs = firstSlackTs(statusScope);
-        const result = await startTask(env, {
-          type: "research",
-          teamId,
-          threadKey: slackObligationThreadKey(channelId, threadTs),
-          channelId,
-          threadTs,
-          model: effectiveModel,
-          payload: { objective: objective || cleanedText },
-        });
+        const researchThreadKey = slackObligationThreadKey(channelId, threadTs);
+        const effect = await runShortcutEffect(adopted, "mention_research", () =>
+          startTask(env, {
+            type: "research",
+            teamId,
+            threadKey: researchThreadKey,
+            channelId,
+            threadTs,
+            model: effectiveModel,
+            payload: { objective: objective || cleanedText },
+          }), {
+            resource: (started) => started.status === "error" ? undefined : {
+              kind: "research_task",
+              teamId,
+              taskId: started.taskId,
+              threadKey: researchThreadKey,
+            },
+            cancelIfStopped: (resource) => cancelTask(env, {
+              teamId: resource.teamId,
+              taskId: resource.taskId,
+              threadKey: resource.threadKey,
+            }).then(() => undefined),
+          },
+        );
+        if (effect.status === "suppressed") return;
+        const result = effect.value;
         if (result.status === "error") {
-          await thread.post(
+          await postFinalShortcut(thread,
             `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
               `Hint: start \`npm run dev:research\` and match INTERNAL_SECRET.`,
           );
           return;
         }
-        await thread.post(
+        await postFinalShortcut(thread,
           `🔍 Research ${result.status}: \`${result.taskId}\`${result.detail ? ` — ${result.detail}` : ""}`,
         );
         return;
@@ -182,20 +213,23 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       const remember = text.match(/^\s*remember[:\s]+(.+)/i);
       if (remember) {
         if (!allowed.has("memory_write")) {
-          await thread.post(
+          await postFinalShortcut(thread,
             "⛔ `memory_write` is not allowed by this channel's access bundle or policies.",
           );
           return;
         }
-        await memoryWrite(env.KNOWLEDGE, {
-          id: crypto.randomUUID(),
-          teamId,
-          channelId,
-          title: `note-${new Date().toISOString().slice(0, 10)}`,
-          body: remember[1]!.trim(),
-          updatedAt: new Date().toISOString(),
-        });
-        await thread.post("💾 Saved to channel knowledge.");
+        const effect = await runShortcutEffect(adopted, "mention_memory_write", () =>
+          memoryWrite(env.KNOWLEDGE, {
+            id: crypto.randomUUID(),
+            teamId,
+            channelId,
+            title: `note-${new Date().toISOString().slice(0, 10)}`,
+            body: remember[1]!.trim(),
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+        if (effect.status === "suppressed") return;
+        await postFinalShortcut(thread, "💾 Saved to channel knowledge.");
         return;
       }
 
@@ -208,14 +242,16 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
             thread.conversationKey ?? "",
             trivial.emoji,
             reactTarget,
+            adopted.record,
+            true,
           );
           if (!reacted) {
-            await thread.post(
+            await postFinalShortcut(thread,
               trivial.emoji === "heart" ? "You're welcome." : "👍",
             );
           }
         } else {
-          await thread.post(trivial.text);
+          await postFinalShortcut(thread, trivial.text);
         }
         return;
       }
@@ -225,12 +261,15 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       if (intent) {
         if (intent.action === "skip") {
           // Silent — user asked for no reaction; avoid chat spam too.
+          await finishSilentShortcut(adopted);
           return;
         }
         const reacted = await adapter.react(
           thread.conversationKey ?? "",
           intent.emoji,
           reactTarget,
+          adopted.record,
+          true,
         );
         if (!reacted) {
           console.error(
@@ -238,7 +277,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
             thread.conversationKey,
             intent.emoji,
           );
-          await thread.post(
+          await postFinalShortcut(thread,
             "Couldn't add a reaction (missing message target or `reactions:write`).",
           );
         }
@@ -256,10 +295,15 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       );
       return;
     } catch (err) {
+      if (
+        err instanceof Error &&
+          ["active_turn_render_suppressed", "active_turn_tool_suppressed"].includes(err.message)
+      ) return;
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[bot] onMention failed", msg);
       try {
-        await thread.post(
+        if (!adopted || !(await shortcutStillPending(adopted))) return;
+        await postFinalShortcut(thread,
           `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
             `Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.`,
         );

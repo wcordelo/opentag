@@ -70,6 +70,40 @@ export function makeSqliteStateStore(): { store: StateStore; close: () => void }
       },
       delete: async (key: string) => engine.kvDelete(key),
     },
+    hitl: {
+      prepareChoice: async (args) => {
+        const result = engine.hitlPrepareChoice(
+          args.choiceKey,
+          args.cancelledKey,
+        );
+        return result.status === "ready"
+          ? result
+          : { status: result.status, record: JSON.parse(result.record) as unknown };
+      },
+      consumeChoice: async (args) => {
+        const result = engine.hitlConsumeChoice(
+          args.choiceKey,
+          args.cancelledKey,
+        );
+        return result.status === "pending"
+          ? result
+          : { status: result.status, record: JSON.parse(result.record) as unknown };
+      },
+      persistChoiceUnlessCancelled: async (args) =>
+        engine.hitlPersistChoiceUnlessCancelled(
+          args.choiceKey,
+          args.cancelledKey,
+          JSON.stringify(args.record),
+          args.ttlMs,
+        ),
+      cancelChoice: async (args) =>
+        engine.hitlCancelChoice(
+          args.choiceKey,
+          args.cancelledKey,
+          JSON.stringify(args.denial),
+          args.ttlMs,
+        ),
+    },
     list: {
       append: async <T>(
         key: string,

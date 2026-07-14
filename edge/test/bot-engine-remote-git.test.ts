@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Renderable } from "@copilotkit/channels-ui";
-import type { StateStore } from "../src/store/state-store-contract.js";
+import type { LifecycleStateStore, StateStore } from "../src/store/state-store-contract.js";
+import { persistHitlChoice } from "../src/hitl/durable-choice.js";
+import { withTestLifecycleStore } from "./helpers/lifecycle-state-store.js";
 
 let mentionHandler: ((args: { thread: unknown; message: unknown }) => Promise<void>) | undefined;
 
@@ -19,15 +21,46 @@ vi.mock("@copilotkit/channels", () => ({
 
 vi.mock("@ag-ui/client", () => ({ HttpAgent: class {} }));
 
-function makeStore(): StateStore & {
-  obligation: { set: ReturnType<typeof vi.fn>; clear: ReturnType<typeof vi.fn> };
+function makeStore(): LifecycleStateStore & {
+  obligation: {
+    set: ReturnType<typeof vi.fn>;
+    clear: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+  };
 } {
   const values = new Map<string, unknown>();
-  return {
+  return withTestLifecycleStore({
     kv: {
       async get<T>(key: string) { return values.get(key) as T | undefined; },
       async set<T>(key: string, value: T) { values.set(key, value); },
       async delete(key: string) { values.delete(key); },
+    },
+    hitl: {
+      async prepareChoice(args) {
+        if (values.has(args.cancelledKey)) {
+          return { status: "cancelled", record: values.get(args.choiceKey) };
+        }
+        values.delete(args.choiceKey);
+        return { status: "ready" };
+      },
+      async consumeChoice(args) {
+        if (!values.has(args.choiceKey)) return { status: "pending" };
+        const record = values.get(args.choiceKey);
+        if (!values.has(args.cancelledKey)) values.delete(args.choiceKey);
+        return {
+          status: values.has(args.cancelledKey) ? "cancelled" : "choice",
+          record,
+        };
+      },
+      async persistChoiceUnlessCancelled(args) {
+        if (values.has(args.cancelledKey)) return "cancelled";
+        values.set(args.choiceKey, args.record);
+        return "persisted";
+      },
+      async cancelChoice(args) {
+        values.set(args.choiceKey, args.denial);
+        values.set(args.cancelledKey, true);
+      },
     },
     list: {
       async append() { return 0; },
@@ -45,8 +78,18 @@ function makeStore(): StateStore & {
       async dequeue() { return undefined; },
       async depth() { return 0; },
     },
-    obligation: { set: vi.fn(async () => undefined), clear: vi.fn(async () => undefined) },
-  };
+    obligation: {
+      set: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined),
+      get: vi.fn(async () => undefined),
+    },
+  } as StateStore & {
+    obligation: {
+      set: ReturnType<typeof vi.fn>;
+      clear: ReturnType<typeof vi.fn>;
+      get: ReturnType<typeof vi.fn>;
+    };
+  });
 }
 
 let store = makeStore();
@@ -56,16 +99,55 @@ vi.mock("../src/create-bot-store.js", () => ({
 }));
 
 const setStatus = vi.fn(async () => undefined);
+const reactMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("../src/slack/cloudflare-slack-adapter.js", () => ({
+  markThreadNextRenderFinal: vi.fn((thread: { __testFinal?: boolean }) => {
+    thread.__testFinal = true;
+  }),
   CloudflareSlackAdapter: class {
     setStatus = setStatus;
-    async react() { return true; }
+    bindThreadExecutionFence() {}
+    async react(
+      _conversationKey: string,
+      _emoji: string,
+      _target: unknown,
+      fence?: { threadKey: string; executionId: string },
+      final = false,
+    ) {
+      const result = await reactMock();
+      if (result && final && fence) {
+        const claim = await store.activeTurn.beginRender(fence);
+        if (claim.status === "claimed") {
+          await store.activeTurn.confirmRender({
+            ...fence,
+            token: claim.token,
+            final: true,
+            output: true,
+          });
+        }
+      }
+      return result;
+    }
   },
+}));
+
+const memoryWriteMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("../src/memory/knowledge-do.js", () => ({
+  memoryWrite: (...args: unknown[]) =>
+    (memoryWriteMock as (...values: unknown[]) => Promise<undefined>)(...args),
+}));
+const startTaskMock = vi.hoisted(() => vi.fn(async () => ({
+  status: "accepted",
+  taskId: "research-1",
+})));
+vi.mock("../src/tasks/runtime.js", () => ({
+  startTask: (...args: unknown[]) =>
+    (startTaskMock as (...values: unknown[]) => Promise<{ status: string; taskId: string }>)(...args),
 }));
 
 vi.mock("../src/tools/index.js", () => ({
   ALL_EDGE_TOOLS: [],
-  ALL_EDGE_TOOL_NAMES: [],
+  ALL_EDGE_TOOL_NAMES: ["memory_write", "start_task", "research_progress"],
   bindToolEnv: vi.fn(),
 }));
 vi.mock("../src/commands/index.js", () => ({
@@ -73,7 +155,7 @@ vi.mock("../src/commands/index.js", () => ({
   bindCommandEnv: vi.fn(),
 }));
 vi.mock("../src/config/access-bundle.js", () => ({
-  resolveAllowedTools: () => [],
+  resolveAllowedTools: (names: string[]) => names,
 }));
 vi.mock("../src/config/workspace-config-do.js", () => ({
   loadTurnAccess: async () => ({
@@ -86,6 +168,31 @@ vi.mock("../src/request-context.js", () => ({
     teamId: "T1",
     requesterId: "U123",
     inbound: { channel: "C1", ts: "111.333", threadTs: "111.222" },
+    preAdmittedTurn: {
+      record: {
+        channelId: "C1",
+        threadKey: "slack:C1:111.222",
+        conversationKey: "C1::111.222",
+        executionId: "slack:C1:111.333",
+        threadTs: "111.222",
+        registeredAt: 1,
+      },
+    },
+  }),
+  requireRequestContext: () => ({
+    teamId: "T1",
+    requesterId: "U123",
+    inbound: { channel: "C1", ts: "111.333", threadTs: "111.222" },
+    preAdmittedTurn: {
+      record: {
+        channelId: "C1",
+        threadKey: "slack:C1:111.222",
+        conversationKey: "C1::111.222",
+        executionId: "slack:C1:111.333",
+        threadTs: "111.222",
+        registeredAt: 1,
+      },
+    },
   }),
   slackTurnIdentity: (context: { inbound: { ts: string } }, channel: string) => ({
     executionId: `slack:${channel}:${context.inbound.ts}`,
@@ -148,13 +255,31 @@ function makeThread(confirmed: boolean) {
   const awaitChoice = vi.fn(async <T>(ui: Renderable): Promise<T> => {
     const choiceId = findChoiceId(ui);
     if (!choiceId) throw new Error("approval card did not include choiceId");
-    return { confirmed, choiceId } as T;
+    const value = { confirmed, choiceId };
+    // Production Slack interactivity persists before invoking the local sink.
+    await persistHitlChoice(store, "C1::111.222", value);
+    return value as T;
   });
-  return {
+  const thread: {
+    conversationKey: string;
+    awaitChoice: typeof awaitChoice;
+    post: ReturnType<typeof vi.fn>;
+    __testFinal?: boolean;
+  } = {
     conversationKey: "C1::111.222",
     awaitChoice,
-    post: vi.fn(async (_ui?: unknown) => undefined),
+    post: vi.fn(async (_ui?: unknown) => {
+      if (!thread.__testFinal) return;
+      const active = await store.activeTurn.latest("C1");
+      if (active) {
+        await store.activeTurn.lifecycleComplete({
+          threadKey: active.record.threadKey,
+          executionId: active.record.executionId,
+        });
+      }
+    }),
   };
+  return thread;
 }
 
 async function emitMention(
@@ -163,6 +288,14 @@ async function emitMention(
   envOverrides: Record<string, unknown> = {},
 ) {
   const thread = makeThread(confirmed);
+  await store.activeTurn.register({
+    channelId: "C1",
+    threadKey: "slack:C1:111.222",
+    conversationKey: "C1::111.222",
+    executionId: "slack:C1:111.333",
+    threadTs: "111.222",
+    registeredAt: 1,
+  });
   await getOrCreateBot({
     SLACK_BOT_TOKEN: "xoxb-test",
     AGENT_URL: "https://agent.example.com",
@@ -189,8 +322,90 @@ describe("production Slack remote-git ingress", () => {
     mentionHandler = undefined;
     runBundledAgentTurn.mockClear();
     setStatus.mockClear();
+    reactMock.mockClear();
+    reactMock.mockResolvedValue(true);
+    memoryWriteMock.mockReset();
+    memoryWriteMock.mockResolvedValue(undefined);
+    startTaskMock.mockReset();
+    startTaskMock.mockResolvedValue({ status: "accepted", taskId: "research-1" });
     resetBotSingleton();
     runBundledAgentTurn.mockResolvedValue(undefined);
+  });
+
+  it("terminalizes trivial reaction and post shortcuts without launching an agent", async () => {
+    const reacted = await emitMention("thanks!");
+    expect(reactMock).toHaveBeenCalledOnce();
+    expect(reacted.post).not.toHaveBeenCalled();
+    expect(await store.activeTurn.latest("C1")).toBeUndefined();
+    expect(runBundledAgentTurn).not.toHaveBeenCalled();
+
+    store = makeStore();
+    resetBotSingleton();
+    mentionHandler = undefined;
+    reactMock.mockResolvedValueOnce(false);
+    const posted = await emitMention("ok great thank you");
+    expect(posted.post).toHaveBeenCalledOnce();
+    expect(await store.activeTurn.latest("C1")).toBeUndefined();
+    expect(runBundledAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it("fences mention memory/research mutations and atomically finalizes their replies", async () => {
+    const remembered = await emitMention("remember: production uses Durable Objects");
+    expect(memoryWriteMock).toHaveBeenCalledOnce();
+    expect(remembered.post).toHaveBeenCalledWith("💾 Saved to channel knowledge.");
+    expect(await store.activeTurn.latest("C1")).toBeUndefined();
+
+    store = makeStore();
+    resetBotSingleton();
+    mentionHandler = undefined;
+    const researched = await emitMention("research: durable cancellation semantics");
+    expect(startTaskMock).toHaveBeenCalledOnce();
+    expect(researched.post).toHaveBeenCalledWith(expect.stringContaining("Research accepted"));
+    expect(await store.activeTurn.latest("C1")).toBeUndefined();
+    expect(runBundledAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a shortcut reply when Stop lands during its claimed mutation", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    memoryWriteMock.mockImplementationOnce(async () => {
+      await blocked;
+      return undefined;
+    });
+    const thread = makeThread(true);
+    await store.activeTurn.register({
+      channelId: "C1",
+      threadKey: "slack:C1:111.222",
+      conversationKey: "C1::111.222",
+      executionId: "slack:C1:111.333",
+      threadTs: "111.222",
+      registeredAt: 1,
+    });
+    await getOrCreateBot({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      AGENT_URL: "https://agent.example.com",
+      BOT_STATE: {} as never,
+      WORKSPACE_CONFIG: {} as never,
+      KNOWLEDGE: {} as never,
+    } as never);
+    const pending = mentionHandler!({
+      thread,
+      message: { text: "remember: stop-safe", user: { id: "U123" } },
+    });
+    await vi.waitFor(() => expect(memoryWriteMock).toHaveBeenCalledOnce());
+    expect(await store.activeTurn.claimCancellation({
+      threadKey: "slack:C1:111.222",
+      executionId: "slack:C1:111.333",
+      stopEventId: "EvShortcutStop",
+    })).toBe("effect_in_flight");
+    release();
+    await pending;
+    expect(thread.post).not.toHaveBeenCalled();
+    expect(await store.activeTurn.latest("C1")).toMatchObject({
+      status: "cancelled",
+      stopEventId: "EvShortcutStop",
+    });
+    expect(runBundledAgentTurn).not.toHaveBeenCalled();
   });
 
   it("passes affirmative approval and stable Slack identities to the bundled turn", async () => {
@@ -277,6 +492,14 @@ describe("production Slack remote-git ingress", () => {
       return Response.json({ ok: true, ts: "222.333" });
     });
     try {
+      await store.activeTurn.register({
+        channelId: "C1",
+        threadKey: "slack:C1:111.222",
+        conversationKey: "C1::111.222",
+        executionId: "slack:C1:111.333",
+        threadTs: "111.222",
+        registeredAt: 1,
+      });
       await getOrCreateBot(env);
       const pending = mentionHandler!({
         thread,
@@ -310,8 +533,8 @@ describe("production Slack remote-git ingress", () => {
 
       expect(interruptExpected).toHaveBeenCalledWith("slack:C1:111.333");
       expect(interrupt).not.toHaveBeenCalled();
-      expect(execute).toHaveBeenCalledOnce();
-      expect(runBundledAgentTurn).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
+      expect(runBundledAgentTurn).not.toHaveBeenCalled();
       expect(slackCalls.filter((url) => url.includes("chat.postMessage"))).toHaveLength(1);
       expect(thread.post).not.toHaveBeenCalled();
       expect(store.obligation.clear).toHaveBeenCalled();
@@ -339,6 +562,10 @@ describe("production Slack remote-git ingress", () => {
     expect(logs.some((line) => line.includes('"metric":"turn_interrupted"'))).toBe(true);
     expect(logs.some((line) => line.includes('"metric":"turn_completed"'))).toBe(false);
     expect(thread.post).not.toHaveBeenCalled();
+    // A newly admitted exact redelivery can observe an existing SessionEvent
+    // cancellation tombstone only after the earlier visibly-confirmed Stop
+    // cleared its original active row. Do not leave that redelivery blocking
+    // the next unrelated execution.
     expect(store.obligation.clear).toHaveBeenCalledOnce();
     logSpy.mockRestore();
   });
@@ -353,7 +580,7 @@ describe("production Slack remote-git ingress", () => {
     expect(logs.some((line) => line.includes('"metric":"turn_duplicate"'))).toBe(true);
     expect(logs.some((line) => line.includes('"metric":"turn_completed"'))).toBe(false);
     expect(thread.post).not.toHaveBeenCalled();
-    expect(store.obligation.clear).toHaveBeenCalledOnce();
+    expect(store.obligation.clear).not.toHaveBeenCalled();
     logSpy.mockRestore();
   });
 
@@ -374,7 +601,9 @@ describe("production Slack remote-git ingress", () => {
       },
     });
     expect(appendEvent).not.toHaveBeenCalled();
-    expect(store.obligation.clear).toHaveBeenCalledOnce();
+    // This mock returns after the final renderer would already have committed;
+    // it intentionally does not fake a second lifecycle-clear RPC.
+    expect(store.obligation.clear).not.toHaveBeenCalled();
   });
 
   it("records a failed turn and delivers exactly one visible error", async () => {

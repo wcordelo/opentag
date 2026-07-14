@@ -6,7 +6,7 @@ import {
   repositoryForDisplay,
   requesterForApproval,
 } from "../src/hitl/remote-git-approval.js";
-import { persistHitlChoice } from "../src/hitl/durable-choice.js";
+import { cancelHitlChoice, persistHitlChoice } from "../src/hitl/durable-choice.js";
 import type { StateStore } from "../src/store/state-store-contract.js";
 
 function memoryStore(): StateStore {
@@ -21,6 +21,33 @@ function memoryStore(): StateStore {
       },
       async delete(key: string) {
         values.delete(key);
+      },
+    },
+    hitl: {
+      async prepareChoice(args) {
+        if (values.has(args.cancelledKey)) {
+          return { status: "cancelled", record: values.get(args.choiceKey) };
+        }
+        values.delete(args.choiceKey);
+        return { status: "ready" };
+      },
+      async consumeChoice(args) {
+        if (!values.has(args.choiceKey)) return { status: "pending" };
+        const record = values.get(args.choiceKey);
+        if (!values.has(args.cancelledKey)) values.delete(args.choiceKey);
+        return {
+          status: values.has(args.cancelledKey) ? "cancelled" : "choice",
+          record,
+        };
+      },
+      async persistChoiceUnlessCancelled(args) {
+        if (values.has(args.cancelledKey)) return "cancelled";
+        values.set(args.choiceKey, args.record);
+        return "persisted";
+      },
+      async cancelChoice(args) {
+        values.set(args.choiceKey, args.denial);
+        values.set(args.cancelledKey, true);
       },
     },
     list: {
@@ -93,6 +120,7 @@ describe("remote git approval", () => {
       choiceId: "git-choice-approve",
       timeoutMs: 1_000,
       pollMs: 5,
+      unsafeAllowMissingExecutionContextTestOnly: true,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 15));
@@ -130,6 +158,50 @@ describe("remote git approval", () => {
     });
   });
 
+  it("denies immediately without rendering when Stop precedes approval setup", async () => {
+    const store = memoryStore();
+    const choiceId = "git-choice-stopped-before-setup";
+    await cancelHitlChoice(store, { choiceId, conversationKey: "waiting-isolate" });
+    const thread = waitingThread("waiting-isolate");
+
+    const started = Date.now();
+    await expect(awaitRemoteGitApproval(thread, store, {
+      repository: "https://github.com/acme/widget.git",
+      requester: "@requester",
+      choiceId,
+      timeoutMs: 600_000,
+      pollMs: 5,
+    })).resolves.toEqual({
+      remoteGitApproved: false,
+      createPullRequest: false,
+    });
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(thread.awaitChoice).not.toHaveBeenCalled();
+  });
+
+  it("keeps both remote flags false when Stop races a later affirmative click", async () => {
+    const store = memoryStore();
+    const choiceId = "git-choice-stop-race";
+    const pending = awaitRemoteGitApproval(waitingThread("waiting-isolate"), store, {
+      repository: "https://github.com/acme/widget.git",
+      requester: "@requester",
+      choiceId,
+      timeoutMs: 1_000,
+      pollMs: 5,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await cancelHitlChoice(store, { choiceId, conversationKey: "waiting-isolate" });
+    await expect(persistHitlChoice(store, "click-isolate", {
+      confirmed: true,
+      choiceId,
+    })).resolves.toBe("cancelled");
+
+    await expect(pending).resolves.toEqual({
+      remoteGitApproved: false,
+      createPullRequest: false,
+    });
+  });
+
   it("fails closed on timeout and on a mismatched stable choice id", async () => {
     await expect(
       awaitRemoteGitApproval(waitingThread(), memoryStore(), {
@@ -151,7 +223,27 @@ describe("remote git approval", () => {
         repository: "https://github.com/acme/widget.git",
         requester: "@requester",
         choiceId: "current-choice",
+        timeoutMs: 20,
+        pollMs: 5,
       }),
     ).resolves.toEqual({ remoteGitApproved: false, createPullRequest: false });
+  });
+
+  it("does not grant remote git from an isolate-local affirmative without a durable receipt", async () => {
+    const memoryOnly = {
+      conversationKey: "C1::111.222",
+      awaitChoice: async <T>() =>
+        ({ confirmed: true, choiceId: "memory-only" }) as T,
+    };
+    await expect(awaitRemoteGitApproval(memoryOnly, memoryStore(), {
+      repository: "https://github.com/acme/widget.git",
+      requester: "@requester",
+      choiceId: "memory-only",
+      timeoutMs: 20,
+      pollMs: 5,
+    })).resolves.toEqual({
+      remoteGitApproved: false,
+      createPullRequest: false,
+    });
   });
 });

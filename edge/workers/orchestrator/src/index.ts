@@ -153,6 +153,27 @@ app.get("/internal/tasks/:taskId", requireInternalAuth(), async (c) => {
   return new Response(res.body, { status: res.status, headers: res.headers });
 });
 
+app.post("/internal/tasks/:taskId/cancel", requireInternalAuth(), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    teamId?: string;
+    threadKey?: string;
+  };
+  const taskId = c.req.param("taskId");
+  if (!body.teamId || !taskId) {
+    return c.json({ error: "teamId and taskId required" }, 400);
+  }
+  const id = c.env.ORCHESTRATOR.idFromName(body.teamId);
+  const stub = c.env.ORCHESTRATOR.get(id);
+  const res = await stub.fetch(
+    new Request(`https://do/tasks/${encodeURIComponent(taskId)}/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadKey: body.threadKey }),
+    }),
+  );
+  return new Response(res.body, { status: res.status, headers: res.headers });
+});
+
 /** Slack moved to the bot Worker — refuse so misconfigured Request URLs fail loudly. */
 app.all("/slack/*", (c) =>
   c.json(

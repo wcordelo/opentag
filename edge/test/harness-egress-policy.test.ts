@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  APPROVAL_TTL_MS,
+  BOUNDED_TURN_ENVELOPE_MS,
   EGRESS_SENTINEL,
   authorizeGithubWrite,
   buildApprovalScope,
@@ -28,15 +30,30 @@ function approved(now = 1_000) {
   }, allowlist, now)!;
 }
 
+function readOnly(now = 1_000) {
+  return buildApprovalScope({
+    sessionId: "session-1234567890",
+    executionId: "exec-read",
+    repo: { url: "https://github.com/acme/widget.git" },
+    remoteGitApproved: false,
+  }, allowlist, now)!;
+}
+
 describe("harness zero-trust egress policy", () => {
-  it("defaults to no approval and binds approval to repo, branch, and expiry", () => {
-    expect(buildApprovalScope({ remoteGitApproved: false }, allowlist, 1_000)).toBeUndefined();
+  it("installs an exact read scope without write approval and binds writes to repo, branch, and expiry", () => {
+    const unapproved = readOnly();
+    expect(unapproved.remoteGitApproved).toBe(false);
+    expect(authorizeGithubWrite({
+      host: "github.com", method: "GET", pathname: "/acme/widget.git/info/refs",
+      search: "?service=git-receive-pack", executionId: "exec-read",
+    }, unapproved, 2_000)).toBe(false);
     const scope = approved();
     expect(scope).toMatchObject({
       owner: "acme",
       repo: "widget",
       branch: "opentag/session-session-1234",
       requesterAttribution: "Prompted by: @will",
+      remoteGitApproved: true,
     });
     const packet = `003f0000000000000000000000000000000000000000 refs/heads/${scope.branch}\0 report-status`;
     expect(authorizeGithubWrite({
@@ -57,16 +74,28 @@ describe("harness zero-trust egress policy", () => {
     }, scope, scope.expiresAt)).toBe(false);
   });
 
-  it("allows only upload-pack reads for configured org repositories", () => {
+  it("allows upload-pack only for the exact scoped repo and execution", () => {
+    const scope = readOnly();
     expect(isAllowedGitCloneRequest({
       host: "github.com", method: "GET", pathname: "/acme/widget.git/info/refs", search: "?service=git-upload-pack",
-    }, allowlist)).toBe(true);
+      executionId: "exec-read",
+    }, scope, 2_000)).toBe(true);
     expect(isAllowedGitCloneRequest({
       host: "github.com", method: "GET", pathname: "/other/widget.git/info/refs", search: "?service=git-upload-pack",
-    }, allowlist)).toBe(false);
+      executionId: "exec-read",
+    }, scope, 2_000)).toBe(false);
+    expect(isAllowedGitCloneRequest({
+      host: "github.com", method: "GET", pathname: "/acme/other.git/info/refs", search: "?service=git-upload-pack",
+      executionId: "exec-read",
+    }, scope, 2_000)).toBe(false);
+    expect(isAllowedGitCloneRequest({
+      host: "github.com", method: "GET", pathname: "/acme/widget.git/info/refs", search: "?service=git-upload-pack",
+      executionId: "exec-other",
+    }, scope, 2_000)).toBe(false);
     expect(isAllowedGitCloneRequest({
       host: "github.com", method: "GET", pathname: "/acme/widget.git/info/refs", search: "?service=git-receive-pack",
-    }, allowlist)).toBe(false);
+      executionId: "exec-read",
+    }, scope, 2_000)).toBe(false);
   });
 
   it("permits only an attributed PR create on the approved repo and branch", () => {
@@ -114,7 +143,37 @@ describe("harness zero-trust egress policy", () => {
     expect(authorizeGithubWrite({ ...currentB, bodyText: packet.replace(scopeB.branch, "main") }, scopeB, 2_000)).toBe(false);
   });
 
+  it("keeps the exact scope alive through the full bounded turn and expires immediately after TTL", () => {
+    const startedAt = 50_000;
+    const scope = approved(startedAt);
+    expect(APPROVAL_TTL_MS).toBeGreaterThanOrEqual(2 * 60 * 60_000);
+    expect(APPROVAL_TTL_MS).toBeGreaterThanOrEqual(BOUNDED_TURN_ENVELOPE_MS);
+    const nearExpiry = scope.expiresAt - 1;
+    const packet = `003f0000000000000000000000000000000000000000 refs/heads/${scope.branch}\0 report-status`;
+    const clone = {
+      host: "github.com", method: "GET", pathname: "/acme/widget.git/info/refs",
+      search: "?service=git-upload-pack", executionId: "exec-1",
+    };
+    const push = {
+      host: "github.com", method: "POST", pathname: "/acme/widget.git/git-receive-pack",
+      search: "", executionId: "exec-1", bodyText: packet,
+    };
+    const read = {
+      host: "api.github.com", method: "GET", pathname: "/repos/acme/widget/pulls",
+      search: "", executionId: "exec-1",
+    };
+    expect(isAllowedGitCloneRequest(clone, scope, startedAt + BOUNDED_TURN_ENVELOPE_MS)).toBe(true);
+    expect(authorizeGithubWrite(push, scope, nearExpiry)).toBe(true);
+    expect(isAllowedGithubRead(read, scope, nearExpiry)).toBe(true);
+    expect(authorizeGithubWrite({ ...push, executionId: "exec-other" }, scope, nearExpiry)).toBe(false);
+    expect(authorizeGithubWrite({ ...push, pathname: "/acme/other.git/git-receive-pack" }, scope, nearExpiry)).toBe(false);
+    expect(isAllowedGitCloneRequest(clone, scope, scope.expiresAt)).toBe(false);
+    expect(authorizeGithubWrite(push, scope, scope.expiresAt)).toBe(false);
+    expect(isAllowedGithubRead(read, scope, scope.expiresAt)).toBe(false);
+  });
+
   it("denies GraphQL reads even when a comment spoofs an allowed org", () => {
+    const scope = readOnly();
     expect(isAllowedGithubRead({
       host: "api.github.com",
       method: "POST",
@@ -123,7 +182,24 @@ describe("harness zero-trust egress policy", () => {
       bodyText: JSON.stringify({
         query: 'query { repository(owner: "victim", name: "private") { id } } # "acme"',
       }),
-    }, allowlist)).toBe(false);
+      executionId: "exec-read",
+    }, scope, 2_000)).toBe(false);
+  });
+
+  it("restricts credentialed REST reads to the exact turn repository", () => {
+    const scope = readOnly();
+    expect(isAllowedGithubRead({
+      host: "api.github.com", method: "GET", pathname: "/repos/acme/widget/pulls",
+      search: "", executionId: "exec-read",
+    }, scope, 2_000)).toBe(true);
+    expect(isAllowedGithubRead({
+      host: "api.github.com", method: "GET", pathname: "/repos/acme/other/pulls",
+      search: "", executionId: "exec-read",
+    }, scope, 2_000)).toBe(false);
+    expect(isAllowedGithubRead({
+      host: "api.github.com", method: "GET", pathname: "/repos/acme/widget/pulls",
+      search: "", executionId: "exec-other",
+    }, scope, 2_000)).toBe(false);
   });
 
   it("extracts and strips the internal execution header before upstream", () => {

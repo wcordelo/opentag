@@ -148,6 +148,13 @@ class EventPersistenceError extends Error {
   }
 }
 
+class ControlCheckpointError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ControlCheckpointError";
+  }
+}
+
 function truncateTranscript(transcript: string | undefined): string | undefined {
   if (!transcript) return undefined;
   if (transcript.length <= TRANSCRIPT_MAX_CHARS) return transcript;
@@ -183,9 +190,9 @@ function harnessFetcher(
 export async function interruptHarnessTurn(
   env: Env,
   args: { sessionId: string; threadKey: string; executionId: string },
-): Promise<{ interrupted: boolean; approvalRevoked?: boolean }> {
+): Promise<{ accepted: boolean; interrupted: boolean; approvalRevoked?: boolean }> {
   if (!env.HARNESS_AUTH_TOKEN || (!env.HARNESS && !env.HARNESS_URL)) {
-    return { interrupted: false };
+    return { accepted: false, interrupted: false };
   }
   const url = env.HARNESS_URL
     ? new URL("/interrupt", env.HARNESS_URL).toString()
@@ -201,8 +208,31 @@ export async function interruptHarnessTurn(
   const response = env.HARNESS
     ? await env.HARNESS.fetch(url, init)
     : await fetch(url, init);
-  if (!response.ok) return { interrupted: false };
-  return response.json() as Promise<{ interrupted: boolean; approvalRevoked?: boolean }>;
+  if (!response.ok) return { accepted: false, interrupted: false };
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { accepted: false, interrupted: false };
+  }
+  if (
+    !body ||
+    typeof body !== "object" ||
+    typeof (body as { interrupted?: unknown }).interrupted !== "boolean"
+  ) {
+    return { accepted: false, interrupted: false };
+  }
+  const result = body as {
+    interrupted: boolean;
+    approvalRevoked?: unknown;
+  };
+  return {
+    accepted: true,
+    interrupted: result.interrupted,
+    ...(typeof result.approvalRevoked === "boolean"
+      ? { approvalRevoked: result.approvalRevoked }
+      : {}),
+  };
 }
 
 /** Append an event durably. Callers must not expose or process it on failure. */
@@ -263,6 +293,20 @@ async function interrupted(
   );
 }
 
+/** A control-plane read after execute() is authoritative, never best-effort. */
+async function interruptedStrict(
+  sessionDo: SessionEventsFullRpc,
+  executionId: string,
+): Promise<boolean> {
+  try {
+    return await interrupted(sessionDo, executionId);
+  } catch (err) {
+    throw new ControlCheckpointError(
+      `interrupt_checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 /**
  * Run one turn against the Claude Code harness container. Never throws:
  * every failure path (missing bindings, duplicate execution, fetch failure,
@@ -317,8 +361,15 @@ export async function runHarnessTurn(
   // Give a Stop that lands immediately after admission an exact durable
   // checkpoint before any container request (and therefore any repo work or
   // remote write) can begin.
-  if (await interrupted(sessionDo, executionId).catch(() => false)) {
-    return failed("interrupted", "interrupted");
+  try {
+    if (await interruptedStrict(sessionDo, executionId)) {
+      return failed("interrupted", "interrupted");
+    }
+  } catch (err) {
+    return failed(
+      "persistence",
+      `control_persistence_failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   const body: Record<string, unknown> = {
@@ -426,7 +477,7 @@ export async function runHarnessTurn(
       );
       const next = await Promise.race([read, poll]);
       if (next.type === "poll") {
-        if (await interrupted(sessionDo, executionId).catch(() => false)) {
+        if (await interruptedStrict(sessionDo, executionId)) {
           abortController.abort();
           await reader.cancel().catch(() => undefined);
           return failed("interrupted", "interrupted", accumulatedText);
@@ -460,8 +511,23 @@ export async function runHarnessTurn(
     // A persistence failure invalidates the stream just as surely as a
     // transport failure: stop consuming container output immediately.
     abortController.abort();
-    if (await interrupted(sessionDo, executionId).catch(() => false)) {
-      return failed("interrupted", "interrupted", accumulatedText);
+    if (err instanceof ControlCheckpointError) {
+      return failed(
+        "persistence",
+        `control_persistence_failed: ${err.message}`,
+        accumulatedText,
+      );
+    }
+    try {
+      if (await interruptedStrict(sessionDo, executionId)) {
+        return failed("interrupted", "interrupted", accumulatedText);
+      }
+    } catch (checkpointErr) {
+      return failed(
+        "persistence",
+        `control_persistence_failed: ${checkpointErr instanceof Error ? checkpointErr.message : String(checkpointErr)}`,
+        accumulatedText,
+      );
     }
     const persistenceFailure = err instanceof EventPersistenceError;
     const message = err instanceof Error ? err.message : String(err);

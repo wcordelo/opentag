@@ -226,8 +226,29 @@ export async function routeHarnessRequest(
       },
       body: JSON.stringify(validation.body),
     }));
-    const result = await upstream.json().catch(() => ({ interrupted: false })) as { interrupted?: boolean };
-    return Response.json({ interrupted: result.interrupted === true, approvalRevoked });
+    if (!upstream.ok) {
+      // A failed control-plane hop must never be converted into a successful
+      // Stop acknowledgement. The caller can retry the exact execution; its
+      // approval was already revoked above.
+      return jsonError("interrupt_upstream_failed", upstream.status);
+    }
+    let result: unknown;
+    try {
+      result = await upstream.json();
+    } catch {
+      return jsonError("invalid_interrupt_response", 502);
+    }
+    if (
+      !result ||
+      typeof result !== "object" ||
+      typeof (result as { interrupted?: unknown }).interrupted !== "boolean"
+    ) {
+      return jsonError("invalid_interrupt_response", 502);
+    }
+    return Response.json({
+      interrupted: (result as { interrupted: boolean }).interrupted,
+      approvalRevoked,
+    });
   }
   const validation = validateTurnRequest(body, repoPolicy);
   if (!validation.ok) {

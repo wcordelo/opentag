@@ -1,4 +1,8 @@
-import { makeWireTurnIdentity } from "./harness/wire-id.js";
+import {
+  makeWireTurnIdentity,
+  makeWireTurnIdentitySync,
+} from "./harness/wire-id.js";
+import type { ActiveTurnRecord } from "./store/active-turn-types.js";
 
 /** Immutable Slack ingress identity bound to concrete per-invocation objects. */
 export type InboundMessageTarget = {
@@ -14,6 +18,8 @@ export type RequestContext = Readonly<{
   teamId: string;
   requesterId: string;
   inbound?: Readonly<InboundMessageTarget>;
+  /** Durable ownership established at verified Worker ingress. */
+  preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
 }>;
 
 // Cloudflare Workers may overlap requests in one isolate. A module-level stack
@@ -29,6 +35,7 @@ export function bindRequestContext(
     teamId: string;
     requesterId: string;
     inbound?: InboundMessageTarget;
+    preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
   },
 ): RequestContext {
   const inbound = context.inbound
@@ -38,6 +45,9 @@ export function bindRequestContext(
     teamId: context.teamId || "unknown",
     requesterId: context.requesterId,
     ...(inbound ? { inbound } : {}),
+    ...(context.preAdmittedTurn
+      ? { preAdmittedTurn: Object.freeze({ record: Object.freeze({ ...context.preAdmittedTurn.record }) }) }
+      : {}),
   });
   contextByInvocation.set(invocation, immutable);
   return immutable;
@@ -74,6 +84,26 @@ export async function slackTurnIdentity(
     throw new Error("Slack turn context channel does not match its thread");
   }
   return makeWireTurnIdentity("slack-event", [
+    context.teamId,
+    channelId,
+    context.inbound.threadTs ?? "",
+    context.inbound.ts,
+    context.inbound.identity ?? context.inbound.ts,
+  ]);
+}
+
+/** Await-free equivalent used by ingress before its first durable RPC. */
+export function slackTurnIdentitySync(
+  context: RequestContext,
+  channelId: string,
+): { executionId: string; forwardedMessageId: string } {
+  if (!context.inbound?.ts || !channelId) {
+    throw new Error("Slack turn is missing its immutable inbound message identity");
+  }
+  if (context.inbound.channel !== channelId) {
+    throw new Error("Slack turn context channel does not match its thread");
+  }
+  return makeWireTurnIdentitySync("slack-event", [
     context.teamId,
     channelId,
     context.inbound.threadTs ?? "",

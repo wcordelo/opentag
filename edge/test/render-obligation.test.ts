@@ -166,6 +166,21 @@ describe("RenderObligationEngine", () => {
     engine.reinsertForRetry(row, 60_000);
     expect(engine.get("t1")?.executionId).toBe("exec-2");
   });
+
+  it("reinsertForDefer() preserves the finite rejection-attempt budget", () => {
+    let clock = 0;
+    const { engine } = makeEngine(() => clock);
+    engine.set({ threadKey: "t1", executionId: "exec-1", afterEventId: 3, channel: "C1" });
+    const original = engine.get("t1")!;
+
+    for (let n = 0; n < 5; n += 1) {
+      const due = engine.get("t1")!;
+      engine.delete(due.threadKey, due.executionId);
+      clock += 120_000;
+      engine.reinsertForDefer(due, 120_000);
+      expect(engine.get("t1")?.attempt).toBe(original.attempt);
+    }
+  });
 });
 
 describe("reconstructMarkdown", () => {
@@ -243,18 +258,39 @@ type ReplayEvent = {
 function makeFakeSessionEvents(opts: {
   eventsByThread?: Map<string, ReplayEvent[]>;
   interruptedThreads?: Set<string>;
+  interruptedByThread?: Map<string, string>;
+  executingByThread?: Map<string, string>;
+  sessionIdByThread?: Map<string, string>;
+  controlLog?: string[];
 }) {
   const eventsByThread = opts.eventsByThread ?? new Map<string, ReplayEvent[]>();
   const interruptedThreads = opts.interruptedThreads ?? new Set<string>();
+  const interruptedByThread = opts.interruptedByThread ?? new Map<string, string>();
+  const executingByThread = opts.executingByThread ?? new Map<string, string>();
+  const sessionIdByThread = opts.sessionIdByThread ?? new Map<string, string>();
   return {
     idFromName: (name: string) => ({ toString: () => name, name }),
     get: (id: { name: string }) => ({
       getState: async () => ({
+        ...(sessionIdByThread.has(id.name)
+          ? { sessionId: sessionIdByThread.get(id.name) }
+          : {}),
         interrupted: interruptedThreads.has(id.name),
+        ...(interruptedByThread.has(id.name)
+          ? { interruptedExecutionId: interruptedByThread.get(id.name) }
+          : {}),
+        ...(executingByThread.has(id.name)
+          ? { executing: { executionId: executingByThread.get(id.name)!, startedAt: 1 } }
+          : {}),
       }),
       replay: async (afterEventId?: number) => {
         const events = eventsByThread.get(id.name) ?? [];
         return events.filter((e) => e.id > (afterEventId ?? 0));
+      },
+      interruptExpected: async (executionId: string) => {
+        opts.controlLog?.push(`session:${executionId}`);
+        interruptedByThread.set(id.name, executionId);
+        return { interrupted: true, cancelled: true as const };
       },
     }),
   };
@@ -270,14 +306,23 @@ function makeDo(env: Record<string, unknown>) {
 
 describe("ConversationStateDO render obligations", () => {
   const origFetch = globalThis.fetch;
-  let fetchCalls: Array<{ url: string; body: unknown }>;
+  let fetchCalls: Array<{ url: string; body: unknown; rawBody?: string; contentType?: string }>;
 
   beforeEach(() => {
     fetchCalls = [];
     globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const rawBody = init?.body ? String(init.body) : undefined;
+      const contentType = new Headers(init?.headers).get("Content-Type") ?? undefined;
+      const body = rawBody
+        ? contentType?.startsWith("application/x-www-form-urlencoded")
+          ? Object.fromEntries(new URLSearchParams(rawBody))
+          : JSON.parse(rawBody)
+        : undefined;
       fetchCalls.push({
         url: String(url),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        body,
+        rawBody,
+        contentType,
       });
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     }) as typeof fetch;
@@ -309,6 +354,181 @@ describe("ConversationStateDO render obligations", () => {
       expect(
         await doInstance.obligationGet({ threadKey: "slack:C1:1.0" }),
       ).toBeUndefined();
+    } finally {
+      close();
+    }
+  });
+
+  it("durably resumes Stop through exact session+harness quiescence before form-encoded Slack ack", async () => {
+    const controlLog: string[] = [];
+    const threadKey = "slack:CSTOP:10.0";
+    let slackAttempts = 0;
+    const clientMessageIds: string[] = [];
+    const sessionEvents = makeFakeSessionEvents({
+      sessionIdByThread: new Map([[threadKey, "session-exact"]]),
+      controlLog,
+    });
+    const harness = {
+      fetch: async (_url: string, init?: RequestInit) => {
+        controlLog.push(`harness:${JSON.parse(String(init?.body)).executionId}`);
+        return new Response(JSON.stringify({ interrupted: true }), { status: 200 });
+      },
+    };
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      slackAttempts += 1;
+      expect(new Headers(init?.headers).get("Content-Type"))
+        .toBe("application/x-www-form-urlencoded;charset=UTF-8");
+      const form = new URLSearchParams(String(init?.body));
+      clientMessageIds.push(form.get("client_msg_id") ?? "");
+      expect(form.get("thread_ts")).toBe("10.0");
+      controlLog.push(`slack:${form.get("channel")}`);
+      if (slackAttempts === 1) throw new Error("ambiguous transport");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: sessionEvents,
+      HARNESS: harness,
+      HARNESS_AUTH_TOKEN: "harness-secret",
+    });
+    try {
+      const record = {
+        channelId: "CSTOP",
+        threadKey,
+        conversationKey: "CSTOP::10.0",
+        executionId: "exec-stop",
+        threadTs: "10.0",
+        registeredAt: 1,
+      };
+      expect(await doInstance.activeTurnRegister(record)).toMatchObject({ accepted: true });
+      expect(await doInstance.activeTurnClaimCancellation({
+        threadKey,
+        executionId: record.executionId,
+        stopEventId: "EvDurableStop",
+      })).toBe("claimed");
+
+      await doInstance.alarm();
+      expect(controlLog).toEqual([
+        "session:exec-stop",
+        "harness:exec-stop",
+        "slack:CSTOP",
+      ]);
+      expect((await doInstance.activeTurnGet({ threadKey }))?.status)
+        .toBe("cancel_ack_in_flight");
+
+      await doInstance.alarm();
+      expect(controlLog).toEqual([
+        "session:exec-stop",
+        "harness:exec-stop",
+        "slack:CSTOP",
+        "slack:CSTOP",
+      ]);
+      expect(await doInstance.activeTurnGet({ threadKey })).toBeUndefined();
+      expect(clientMessageIds[0]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(clientMessageIds[1]).toBe(clientMessageIds[0]);
+    } finally {
+      close();
+    }
+  });
+
+  it("keeps a session-backed Stop retryable when harness control is unconfigured", async () => {
+    const threadKey = "slack:CSTOP:missing-harness";
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: makeFakeSessionEvents({
+        sessionIdByThread: new Map([[threadKey, "session-needs-harness"]]),
+      }),
+    });
+    try {
+      const record = {
+        channelId: "CSTOP",
+        threadKey,
+        conversationKey: "CSTOP::missing-harness",
+        executionId: "exec-needs-harness",
+        registeredAt: 1,
+      };
+      await doInstance.activeTurnRegister(record);
+      await doInstance.activeTurnClaimCancellation({
+        threadKey,
+        executionId: record.executionId,
+        stopEventId: "EvNeedsHarness",
+      });
+      await doInstance.alarm();
+      expect(fetchCalls).toHaveLength(0);
+      expect(await doInstance.activeTurnGet({ threadKey })).toMatchObject({
+        status: "cancelled",
+        stopEventId: "EvNeedsHarness",
+      });
+    } finally {
+      close();
+    }
+  });
+
+  it("cancels a persisted exact research resource to quiescence before Stop ack", async () => {
+    const threadKey = "slack:CSTOP:research";
+    const order: string[] = [];
+    const sessionEvents = makeFakeSessionEvents({ controlLog: order });
+    const research = {
+      fetch: async (url: string, init?: RequestInit) => {
+        order.push("research");
+        expect(url).toContain("/internal/tasks/task-exact/cancel");
+        expect(new Headers(init?.headers).get("Authorization"))
+          .toBe("Bearer internal-secret");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          teamId: "team-exact",
+          threadKey,
+        });
+        return Response.json({
+          cancelled: true,
+          quiescent: true,
+          taskId: "task-exact",
+        });
+      },
+    };
+    globalThis.fetch = (async () => {
+      order.push("slack");
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: sessionEvents,
+      RESEARCH_TASKS: research,
+      INTERNAL_SECRET: "internal-secret",
+    });
+    try {
+      const record = {
+        channelId: "CSTOP",
+        threadKey,
+        conversationKey: "CSTOP::research",
+        executionId: "exec-research",
+        registeredAt: 1,
+      };
+      await doInstance.activeTurnRegister(record);
+      const effect = await doInstance.activeTurnBeginEffect({
+        threadKey,
+        executionId: record.executionId,
+        effectName: "start_task",
+      });
+      if (effect.status !== "claimed") throw new Error("effect not claimed");
+      await doInstance.activeTurnConfirmEffect({
+        threadKey,
+        executionId: record.executionId,
+        token: effect.token,
+        resource: {
+          kind: "research_task",
+          teamId: "team-exact",
+          taskId: "task-exact",
+          threadKey,
+        },
+      });
+      await doInstance.activeTurnClaimCancellation({
+        threadKey,
+        executionId: record.executionId,
+        stopEventId: "EvResearchStop",
+      });
+      await doInstance.alarm();
+      expect(order).toEqual(["session:exec-research", "research", "slack"]);
+      expect(await doInstance.activeTurnGet({ threadKey })).toBeUndefined();
     } finally {
       close();
     }
@@ -347,6 +567,9 @@ describe("ConversationStateDO render obligations", () => {
       expect(body.thread_ts).toBe("1.0");
       expect(body.text).toContain("final answer");
       expect(body.text).toContain("Recovered after an interrupted turn");
+      expect(fetchCalls[0]!.contentType)
+        .toBe("application/x-www-form-urlencoded;charset=UTF-8");
+      expect(fetchCalls[0]!.rawBody).toContain("thread_ts=1.0");
 
       expect(
         await doInstance.obligationGet({ threadKey: "slack:C1:1.0" }),
@@ -385,7 +608,10 @@ describe("ConversationStateDO render obligations", () => {
     const { doInstance, close } = makeDo({
       SLACK_BOT_TOKEN: "xoxb-test",
       SESSION_EVENTS: makeFakeSessionEvents({
-        interruptedThreads: new Set(["slack:C3:3.0"]),
+        interruptedByThread: new Map([["slack:C3:3.0", "exec-3"]]),
+        // A later turn may already be running in the same session DO. The
+        // exact old tombstone remains authoritative for this old obligation.
+        executingByThread: new Map([["slack:C3:3.0", "exec-new"]]),
       }),
     });
     try {
@@ -434,6 +660,127 @@ describe("ConversationStateDO render obligations", () => {
     }
   });
 
+  it("rearms an ambiguous render beyond three alarms, then reconciles idempotently exactly once", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00Z"));
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: makeFakeSessionEvents({}),
+    });
+    const ambiguousCalls: Array<Record<string, unknown>> = [];
+    let call = 0;
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      ambiguousCalls.push(Object.fromEntries(
+        new URLSearchParams(String(init?.body ?? "")),
+      ));
+      call += 1;
+      if (call === 1) throw new TypeError("connection reset after dispatch");
+      // Slack confirms the first client_msg_id was already applied.
+      return Response.json({ ok: false, error: "duplicate_client_msg_id" });
+    }) as typeof fetch;
+    try {
+      const active = {
+        channelId: "C-ambiguous",
+        threadKey: "slack:C-ambiguous:1.0",
+        conversationKey: "C-ambiguous::1.0",
+        executionId: "exec-ambiguous",
+        threadTs: "1.0",
+        registeredAt: Date.now(),
+      };
+      await doInstance.activeTurnRegister(active);
+      await doInstance.obligationSet({
+        threadKey: active.threadKey,
+        executionId: active.executionId,
+        afterEventId: 0,
+        channel: active.channelId,
+        threadTs: active.threadTs,
+        timeoutMs: -1,
+      });
+
+      await doInstance.alarm();
+      expect(ambiguousCalls).toHaveLength(1);
+      let row = await doInstance.obligationGet({ threadKey: active.threadKey });
+      expect(row?.attempt).toBe(0);
+      const snapshot = await doInstance.activeTurnGet({ threadKey: active.threadKey });
+      expect(snapshot?.renderToken).toBeDefined();
+
+      // The retained render token fences four subsequent alarms. These are
+      // deferrals, not definitive Slack failures, so attempt remains zero.
+      for (let n = 0; n < 4; n += 1) {
+        vi.advanceTimersByTime(2 * 60_000 + 1);
+        await doInstance.alarm();
+        row = await doInstance.obligationGet({ threadKey: active.threadKey });
+        expect(row?.attempt).toBe(0);
+      }
+      expect(ambiguousCalls).toHaveLength(1);
+
+      await doInstance.activeTurnFailRender({
+        threadKey: active.threadKey,
+        executionId: active.executionId,
+        token: snapshot!.renderToken!,
+      });
+      vi.advanceTimersByTime(2 * 60_000 + 1);
+      await doInstance.alarm();
+
+      expect(ambiguousCalls).toHaveLength(2);
+      expect(ambiguousCalls[0]!.client_msg_id).toBe(ambiguousCalls[1]!.client_msg_id);
+      expect(ambiguousCalls[0]!.client_msg_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(await doInstance.obligationGet({ threadKey: active.threadKey }))
+        .toBeUndefined();
+      await doInstance.alarm();
+      expect(ambiguousCalls).toHaveLength(2);
+    } finally {
+      close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("defers a live execution beyond three alarms and later replays its successful terminal output", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T14:00:00Z"));
+    const threadKey = "slack:C-live:1.0";
+    const executionId = "exec-live";
+    const executingByThread = new Map([[threadKey, executionId]]);
+    const eventsByThread = new Map<string, ReplayEvent[]>([[threadKey, [
+      { id: 1, executionId, kind: "output", payload: "finished answer", createdAt: 1 },
+      { id: 2, executionId, kind: "done", payload: { ok: true }, createdAt: 2 },
+    ]]]);
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: makeFakeSessionEvents({ eventsByThread, executingByThread }),
+    });
+    try {
+      await doInstance.obligationSet({
+        threadKey,
+        executionId,
+        afterEventId: 0,
+        channel: "C-live",
+        threadTs: "1.0",
+        timeoutMs: -1,
+      });
+      for (let n = 0; n < 4; n += 1) {
+        await doInstance.alarm();
+        expect((await doInstance.obligationGet({ threadKey }))?.attempt).toBe(0);
+        vi.advanceTimersByTime(2 * 60_000 + 1);
+      }
+      expect(fetchCalls).toHaveLength(0);
+
+      executingByThread.delete(threadKey);
+      await doInstance.alarm();
+      expect(fetchCalls).toHaveLength(1);
+      expect((fetchCalls[0]!.body as { text: string }).text)
+        .toContain("Recovered completed turn");
+      expect((fetchCalls[0]!.body as { text: string }).text)
+        .toContain("finished answer");
+      expect(await doInstance.obligationGet({ threadKey })).toBeUndefined();
+    } finally {
+      close();
+      vi.useRealTimers();
+    }
+  });
+
   it("alarm reschedules for the next sweep after serving all due obligations", async () => {
     const { doInstance, ctx, close } = makeDo({
       SLACK_BOT_TOKEN: "xoxb-test",
@@ -464,23 +811,75 @@ describe("ConversationStateDO render obligations", () => {
     }
   });
 
-  it("missing SLACK_BOT_TOKEN logs and drops (never throws)", async () => {
+  it("defers transient state/replay/token failures beyond the retry budget and recovers once", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T16:00:00Z"));
+    const threadKey = "slack:C-transient:7.0";
+    const executionId = "exec-transient";
+    let stateFailures = 4;
+    let replayFailures = 4;
+    let token: string | undefined;
+    let sessionBinding: Record<string, unknown> | undefined;
+    const sessionEvents = {
+      idFromName: (name: string) => ({ name }),
+      get: (_id: { name: string }) => ({
+        getState: async () => {
+          if (stateFailures-- > 0) throw new Error("transient getState");
+          return { interrupted: false };
+        },
+        replay: async () => {
+          if (replayFailures-- > 0) throw new Error("transient replay");
+          return [
+            { id: 1, executionId, kind: "output", payload: "eventual answer", createdAt: 1 },
+            { id: 2, executionId, kind: "done", payload: { ok: true }, createdAt: 2 },
+          ];
+        },
+      }),
+    };
     const { doInstance, close } = makeDo({
-      SESSION_EVENTS: makeFakeSessionEvents({}),
+      get SESSION_EVENTS() { return sessionBinding; },
+      get SLACK_BOT_TOKEN() { return token; },
     });
     try {
       await doInstance.obligationSet({
-        threadKey: "slack:C6:6.0",
-        executionId: "exec-6",
+        threadKey,
+        executionId,
         afterEventId: 0,
-        channel: "C6",
-        timeoutMs: -1000,
+        channel: "C-transient",
+        timeoutMs: -1,
       });
 
-      await expect(doInstance.alarm()).resolves.toBeUndefined();
+      const expectDeferred = async () => {
+        await expect(doInstance.alarm()).resolves.toBeUndefined();
+        expect((await doInstance.obligationGet({ threadKey }))?.attempt).toBe(0);
+        vi.advanceTimersByTime(2 * 60_000 + 1);
+      };
+
+      // Missing binding/config, then transient state and replay RPC failures
+      // all remain unknown across more alarms than the rejection retry cap.
+      for (let n = 0; n < 4; n += 1) await expectDeferred();
+      sessionBinding = sessionEvents;
+      for (let n = 0; n < 4; n += 1) await expectDeferred();
+      for (let n = 0; n < 4; n += 1) await expectDeferred();
       expect(fetchCalls).toHaveLength(0);
+
+      // Durable state and replay now recover, but missing Slack config is also
+      // unknown and must preserve the same zero-attempt obligation beyond the
+      // normal definitive-rejection retry budget.
+      for (let n = 0; n < 4; n += 1) {
+        await expectDeferred();
+      }
+      expect(fetchCalls).toHaveLength(0);
+      token = "xoxb-restored";
+      await doInstance.alarm();
+      expect(fetchCalls).toHaveLength(1);
+      expect((fetchCalls[0]!.body as { text: string }).text).toContain("eventual answer");
+      expect(await doInstance.obligationGet({ threadKey })).toBeUndefined();
+      await doInstance.alarm();
+      expect(fetchCalls).toHaveLength(1);
     } finally {
       close();
+      vi.useRealTimers();
     }
   });
 });

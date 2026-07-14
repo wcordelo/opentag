@@ -45,6 +45,8 @@ export interface StorageAdapter {
 
   // Outbox
   appendOutbox(msg: OutboxMessage): Promise<void>;
+  /** Atomically append only while the owning task is still pending/running. */
+  appendOutboxIfTaskActive(msg: OutboxMessage): Promise<boolean>;
   getPendingOutbox(sessionId: string): Promise<OutboxMessage[]>;
   markOutboxSent(id: string): Promise<void>;
 
@@ -58,15 +60,40 @@ export interface StorageAdapter {
   createTask(task: TaskRecord): Promise<void>;
   getTask(taskId: string): Promise<TaskRecord | null>;
   updateTaskStatus(taskId: string, status: TaskRecord["status"], metadata?: Record<string, unknown>): Promise<void>;
+  updateTaskStatusIfActive(
+    taskId: string,
+    status: TaskRecord["status"],
+    metadata?: Record<string, unknown>,
+  ): Promise<boolean>;
   getTasksByThread(threadKey: string): Promise<TaskRecord[]>;
+  /**
+   * Exact, idempotent cancellation. Implementations must also cancel the
+   * session and suppress queued outbox, delivery, and alarm work atomically.
+   */
+  cancelResearchTask(
+    taskId: string,
+    expectedThreadKey: string,
+  ): Promise<import("../types.js").CancelResearchTaskResult>;
 
   // Delivery obligations
   appendDeliveryObligation(obligation: DeliveryObligation): Promise<void>;
+  /** Atomically append only while payload.taskId is pending/running. */
+  appendDeliveryObligationIfTaskActive(obligation: DeliveryObligation): Promise<boolean>;
+  /** Pending active-task deliveries plus already-started effects needing recovery. */
+  getDeliveriesToDrain(threadKey?: string): Promise<DeliveryObligation[]>;
+  /**
+   * Atomically transition pending -> in_flight only while its task is active,
+   * or recover the same already-in_flight effect after restart/cancellation.
+   */
+  claimDelivery(id: string): Promise<DeliveryObligation | null>;
   getPendingDeliveries(threadKey?: string): Promise<DeliveryObligation[]>;
   markDeliveryDelivered(id: string): Promise<void>;
+  markDeliverySuppressed(id: string): Promise<void>;
 
   // Alarm queue
   enqueueAlarm(item: AlarmQueueItem): Promise<void>;
+  /** Atomically enqueue only while item.sessionId is pending/running. */
+  enqueueAlarmIfTaskActive(item: AlarmQueueItem): Promise<boolean>;
   getDueAlarms(nowMs: number, limit?: number): Promise<AlarmQueueItem[]>;
   deleteAlarm(id: string): Promise<void>;
 

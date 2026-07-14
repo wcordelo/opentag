@@ -16,17 +16,35 @@ import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import { resolveThreadOverrides } from "../store/thread-overrides.js";
 import { isRepositoryCodingIntent } from "../coding-intent.js";
 import {
-  clearActiveTurn,
+  ACTIVE_TURN_TTL_MS,
+  discardInterruptedActiveTurnRedelivery,
+  refreshActiveTurn,
   registerActiveTurn,
   type ActiveTurnRecord,
 } from "./active-turn-registry.js";
 import type { CloudflareSlackAdapter } from "./cloudflare-slack-adapter.js";
+import { markThreadNextRenderFinal } from "./cloudflare-slack-adapter.js";
 import { firstSlackTs, slackObligationThreadKey } from "./obligation-thread-key.js";
+import { bindTurnExecutionContext } from "./turn-execution-context.js";
 
-const RENDER_OBLIGATION_TIMEOUT_MS = 20 * 60_000;
+const RENDER_OBLIGATION_TIMEOUT_MS = ACTIVE_TURN_TTL_MS;
 
 function logMetric(metric: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ metric, ...fields }));
+}
+
+async function isExactTurnPending(
+  store: ReturnType<typeof createBotStoreAdapter>,
+  record: Pick<ActiveTurnRecord, "threadKey" | "executionId">,
+): Promise<boolean> {
+  const snapshot = await store.activeTurn.get(record.threadKey);
+  return Boolean(
+    snapshot &&
+      snapshot.record.executionId === record.executionId &&
+      snapshot.status === "pending" &&
+      !snapshot.renderToken &&
+      !snapshot.effectToken,
+  );
 }
 
 async function writeRenderObligation(
@@ -39,38 +57,22 @@ async function writeRenderObligation(
     threadTs?: string;
   },
 ): Promise<void> {
-  try {
-    let afterEventId = 0;
-    if (env.SESSION_EVENTS) {
-      const sessionDo = env.SESSION_EVENTS.get(
-        env.SESSION_EVENTS.idFromName(args.threadKey),
-      ) as unknown as SessionEventsRpc;
-      const events = await sessionDo.replay();
-      afterEventId = events.length > 0 ? events[events.length - 1]!.id : 0;
-    }
-    await stateStore.obligation.set({
-      threadKey: args.threadKey,
-      executionId: args.executionId,
-      afterEventId,
-      channel: args.channel,
-      threadTs: args.threadTs,
-      timeoutMs: RENDER_OBLIGATION_TIMEOUT_MS,
-    });
-  } catch (err) {
-    console.error("[bot] render obligation write failed", err);
+  let afterEventId = 0;
+  if (env.SESSION_EVENTS) {
+    const sessionDo = env.SESSION_EVENTS.get(
+      env.SESSION_EVENTS.idFromName(args.threadKey),
+    ) as unknown as SessionEventsRpc;
+    const events = await sessionDo.replay();
+    afterEventId = events.length > 0 ? events[events.length - 1]!.id : 0;
   }
-}
-
-async function clearRenderObligation(
-  stateStore: ReturnType<typeof createBotStoreAdapter>,
-  threadKey: string,
-  executionId: string,
-): Promise<void> {
-  try {
-    await stateStore.obligation.clear({ threadKey, executionId });
-  } catch (err) {
-    console.error("[bot] render obligation clear failed", err);
-  }
+  await stateStore.obligation.set({
+    threadKey: args.threadKey,
+    executionId: args.executionId,
+    afterEventId,
+    channel: args.channel,
+    threadTs: args.threadTs,
+    timeoutMs: RENDER_OBLIGATION_TIMEOUT_MS,
+  });
 }
 
 /**
@@ -103,7 +105,7 @@ export async function runSlackTurnLifecycle(
     channelId,
   );
   const approvalChoiceId = newHitlChoiceId();
-  const activeTurn: ActiveTurnRecord = {
+  const computedActiveTurn: ActiveTurnRecord = {
     channelId,
     threadKey: obligationThreadKey,
     conversationKey,
@@ -112,16 +114,50 @@ export async function runSlackTurnLifecycle(
     choiceId: approvalChoiceId,
     registeredAt: Date.now(),
   };
-  const registration = await registerActiveTurn(stateStore, activeTurn);
-  if (!registration.accepted) {
-    logMetric(
-      registration.duplicate ? "turn_duplicate" : "turn_concurrent_rejected",
-      { threadKey: obligationThreadKey, executionId },
-    );
-    return;
+  const preAdmitted = requestContext.preAdmittedTurn?.record;
+  if (
+    preAdmitted &&
+    (preAdmitted.threadKey !== computedActiveTurn.threadKey ||
+      preAdmitted.executionId !== computedActiveTurn.executionId ||
+      preAdmitted.channelId !== computedActiveTurn.channelId ||
+      preAdmitted.conversationKey !== computedActiveTurn.conversationKey)
+  ) {
+    throw new Error("pre_admitted_turn_identity_mismatch");
   }
+  const activeTurn: ActiveTurnRecord = preAdmitted ?? computedActiveTurn;
+  if (preAdmitted) {
+    const refreshed = await refreshActiveTurn(stateStore, activeTurn);
+    const snapshot = refreshed
+      ? await stateStore.activeTurn.get(activeTurn.threadKey)
+      : undefined;
+    if (
+      !snapshot ||
+      snapshot.record.executionId !== activeTurn.executionId ||
+      snapshot.status !== "pending" ||
+      snapshot.renderToken
+    ) {
+      logMetric("turn_interrupted_pre_admission", {
+        threadKey: obligationThreadKey,
+        executionId,
+      });
+      return;
+    }
+  } else {
+    const registration = await registerActiveTurn(stateStore, activeTurn);
+    if (!registration.accepted) {
+      logMetric(
+        registration.duplicate ? "turn_duplicate" : "turn_concurrent_rejected",
+        { threadKey: obligationThreadKey, executionId },
+      );
+      return;
+    }
+  }
+  // Carry exact execution identity on this request's opaque reply target so
+  // every adapter post/update (including AG-UI incremental rendering) crosses
+  // the durable render-step fence.
+  adapter.bindThreadExecutionFence(thread, activeTurn);
+  bindTurnExecutionContext(thread, activeTurn);
 
-  let obligationWritten = false;
   try {
     const approvalText = Array.isArray(prompt)
       ? prompt
@@ -137,6 +173,13 @@ export async function runSlackTurnLifecycle(
       conversationKey,
       approvalText,
     );
+    if (!(await isExactTurnPending(stateStore, activeTurn))) {
+      logMetric("turn_interrupted_pre_execution", {
+        threadKey: obligationThreadKey,
+        executionId,
+      });
+      return;
+    }
     const needsRemoteGitApproval = Boolean(
       env.HARNESS_REPO_URL &&
         (env.HARNESS || env.HARNESS_URL) &&
@@ -144,23 +187,36 @@ export async function runSlackTurnLifecycle(
         isRepositoryCodingIntent(approvalOverrides.cleanedText),
     );
 
-    if (statusThreadTs) {
-      void adapter
-        .setStatus({
-          channel: channelId,
-          threadTs: statusThreadTs,
-          status: "Thinking…",
-        })
-        .catch(() => undefined);
-    }
     logMetric("turn_started", { threadKey: obligationThreadKey, executionId });
-    await writeRenderObligation(env, stateStore, {
-      threadKey: obligationThreadKey,
-      executionId,
-      channel: channelId,
-      threadTs: statusThreadTs,
-    });
-    obligationWritten = true;
+    const existingObligation = await stateStore.obligation.get(obligationThreadKey);
+    if (existingObligation?.executionId !== executionId) {
+      await writeRenderObligation(env, stateStore, {
+        threadKey: obligationThreadKey,
+        executionId,
+        channel: channelId,
+        threadTs: statusThreadTs,
+      });
+    }
+    await refreshActiveTurn(stateStore, activeTurn);
+    if (!(await isExactTurnPending(stateStore, activeTurn))) {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
+      logMetric("turn_interrupted_pre_execution", {
+        threadKey: obligationThreadKey,
+        executionId,
+      });
+      return;
+    }
+    if (statusThreadTs) {
+      await adapter.setStatus({
+        channel: channelId,
+        threadTs: statusThreadTs,
+        status: "Thinking…",
+        fence: activeTurn,
+      });
+    }
 
     const remoteGit = needsRemoteGitApproval
       ? await awaitRemoteGitApproval(
@@ -173,6 +229,14 @@ export async function runSlackTurnLifecycle(
           },
         )
       : { remoteGitApproved: false, createPullRequest: false };
+    await refreshActiveTurn(stateStore, activeTurn);
+    if (!(await isExactTurnPending(stateStore, activeTurn))) {
+      logMetric("turn_interrupted_pre_execution", {
+        threadKey: obligationThreadKey,
+        executionId,
+      });
+      return;
+    }
     const outcome = await runBundledAgentTurn(env, thread, prompt, requester, {
       executionId,
       forwardedMessageId,
@@ -194,34 +258,45 @@ export async function runSlackTurnLifecycle(
     } else {
       logMetric("turn_completed", { threadKey: obligationThreadKey, executionId });
     }
-    await clearRenderObligation(stateStore, obligationThreadKey, executionId);
-    obligationWritten = false;
+    // Every completed path terminalizes on its actual final Slack request:
+    // harness/direct posts mark that request final and the AG-UI renderer
+    // performs an idempotent final update (or a tool-only fallback post).
+    // Never clear the row here after visible output; that would recreate an
+    // answer-then-Stop gap. Interrupted/rejected turns retain the obligation
+    // until exact cancellation is visibly confirmed or recovery renders.
+    if (outcome.status === "interrupted") {
+      // This invocation registered only after the earlier Stop lifecycle had
+      // already cleared its confirmed active row. SessionEventDO's exact
+      // tombstone is therefore proof of a prior confirmed cancellation. The
+      // atomic CAS refuses to clear if a new Stop claimed this fresh row.
+      await discardInterruptedActiveTurnRedelivery(stateStore, activeTurn);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
     console.error("[bot] Slack turn failed", msg);
     try {
+      markThreadNextRenderFinal(thread);
       await thread.post(
         `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
           "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.",
       );
-      if (obligationWritten) {
-        await clearRenderObligation(stateStore, obligationThreadKey, executionId);
-        obligationWritten = false;
-      }
     } catch {
       // Leave an outstanding obligation for alarm recovery when no error card landed.
     }
   } finally {
     if (statusThreadTs) {
-      void adapter
-        .setStatus({ channel: channelId, threadTs: statusThreadTs, status: "" })
-        .catch(() => undefined);
-    }
-    try {
-      await clearActiveTurn(stateStore, activeTurn);
-    } catch {
-      // Compare-delete cleanup is best-effort; TTL bounds stale records.
+      try {
+        await adapter.setStatus({
+          channel: channelId,
+          threadTs: statusThreadTs,
+          status: "",
+          fence: activeTurn,
+        });
+      } catch {
+        // A final render or Stop may already have atomically removed the row.
+        // Never launch a delayed status mutation after lifecycle exit.
+      }
     }
   }
 }

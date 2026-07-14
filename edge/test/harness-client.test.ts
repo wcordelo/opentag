@@ -243,6 +243,36 @@ describe("runHarnessTurn", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("fails closed without /turn fetch when the post-execute control checkpoint errors", async () => {
+    const { namespace, appended } = makeFakeSessionEvents({
+      getState: () => {
+        throw new Error("BOT_STATE unavailable");
+      },
+    });
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await runHarnessTurn({
+      HARNESS_URL: "https://harness.example.com",
+      HARNESS_AUTH_TOKEN: "test-token",
+      SESSION_EVENTS: namespace,
+    } as unknown as Env, {
+      threadKey: "slack:C1:checkpoint-error",
+      conversationKey: "C1::checkpoint-error",
+      executionId: "exec-checkpoint-error",
+      forwardedMessageId: "message-checkpoint-error",
+      prompt: "implement it",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureKind: "persistence",
+      error: expect.stringContaining("control_persistence_failed"),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(appended).toEqual([]);
+  });
+
   it("appends events in order, accumulates text, and calls onText for deltas (split mid-line)", async () => {
     const line1 = JSON.stringify({ kind: "output", payload: { text: "Hello " } });
     const line2 = JSON.stringify({ kind: "output", payload: { text: "world" } });

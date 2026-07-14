@@ -2,12 +2,13 @@ import type {
   DurableObjectNamespace,
   DurableObjectStub,
 } from "@cloudflare/workers-types";
-import type { StateStore } from "./state-store-contract.js";
+import type { LifecycleStateStore, StateStore } from "./state-store-contract.js";
 import type {
   ConversationStateDO,
   RenderObligationRow,
 } from "./conversation-state-do.js";
 import { singleGlobal, type Partitioner } from "./partition.js";
+import type { ActiveTurnEffectResource, ActiveTurnRecord } from "./active-turn-types.js";
 
 export interface DurableObjectStoreOptions {
   /** The Durable Object namespace binding (from `env`). */
@@ -20,6 +21,7 @@ export interface DurableObjectStoreOptions {
 }
 
 type Stub = DurableObjectStub<ConversationStateDO>;
+const LIFECYCLE_DO_NAME = "opentag-global-lifecycle-v1";
 
 /**
  * A `StateStore` implemented on Cloudflare Durable Objects + embedded SQLite.
@@ -33,7 +35,7 @@ type Stub = DurableObjectStub<ConversationStateDO>;
  * is co-located edge SQLite instead of a separate Redis hop — the "Centaur-less"
  * edge-native target.
  */
-export class DurableObjectStateStore implements StateStore {
+export class DurableObjectStateStore implements LifecycleStateStore {
   private readonly ns: DurableObjectNamespace<ConversationStateDO>;
   private readonly route: Partitioner;
 
@@ -58,6 +60,19 @@ export class DurableObjectStateStore implements StateStore {
     return ns.get(ns.idFromName(name));
   }
 
+  /**
+   * Active-turn routing, channel-latest lookup, and render obligations are one
+   * correctness domain. Keep them in a dedicated global DO even when callers
+   * select a sharded partitioner for ordinary StateStore keys.
+   */
+  private lifecycleStub(): Stub {
+    const ns = this.ns as DurableObjectNamespace<ConversationStateDO> & {
+      getByName?: (n: string) => Stub;
+    };
+    if (typeof ns.getByName === "function") return ns.getByName(LIFECYCLE_DO_NAME);
+    return ns.get(ns.idFromName(LIFECYCLE_DO_NAME));
+  }
+
   kv: StateStore["kv"] = {
     get: async <T>(key: string): Promise<T | undefined> =>
       (await this.stub(key).kvGet(key)) as T | undefined,
@@ -66,6 +81,18 @@ export class DurableObjectStateStore implements StateStore {
     },
     delete: async (key: string): Promise<void> => {
       await this.stub(key).kvDelete(key);
+    },
+  };
+
+  hitl: NonNullable<StateStore["hitl"]> = {
+    prepareChoice: async (args) =>
+      this.lifecycleStub().hitlPrepareChoice(args),
+    consumeChoice: async (args) =>
+      this.lifecycleStub().hitlConsumeChoice(args),
+    persistChoiceUnlessCancelled: async (args) =>
+      this.lifecycleStub().hitlPersistChoiceUnlessCancelled(args),
+    cancelChoice: async (args): Promise<void> => {
+      await this.lifecycleStub().hitlCancelChoice(args);
     },
   };
 
@@ -116,8 +143,8 @@ export class DurableObjectStateStore implements StateStore {
    * Render-obligation client (SPEC.md §3.1 / §4.2), not part of the base
    * `StateStore` contract. Routes through the same {@link Partitioner} as
    * every other namespace here (`stub(threadKey)`), so `bot-engine.ts`
-   * writing an obligation and `ConversationStateDO`'s alarm serving it always
-   * land on the identical Durable Object instance.
+   * writing an obligation and every active-turn/channel index always land on
+   * the dedicated lifecycle Durable Object, independent of the KV partitioner.
    */
   obligation = {
     set: async (args: {
@@ -128,16 +155,85 @@ export class DurableObjectStateStore implements StateStore {
       threadTs?: string;
       timeoutMs?: number;
     }): Promise<void> => {
-      await this.stub(args.threadKey).obligationSet(args);
+      await this.lifecycleStub().obligationSet(args);
     },
     clear: async (args: {
       threadKey: string;
       executionId?: string;
     }): Promise<void> => {
-      await this.stub(args.threadKey).obligationClear(args);
+      await this.lifecycleStub().obligationClear(args);
     },
     get: async (threadKey: string): Promise<RenderObligationRow | undefined> =>
-      this.stub(threadKey).obligationGet({ threadKey }),
+      this.lifecycleStub().obligationGet({ threadKey }),
+  };
+
+  /** Transactional exact-turn state machine; each method is one DO RPC. */
+  readonly activeTurn = {
+    register: async (record: ActiveTurnRecord) =>
+      this.lifecycleStub().activeTurnRegister(record),
+    registerWithObligation: async (args: {
+      record: ActiveTurnRecord;
+      obligation: {
+        afterEventId: number;
+        channel: string;
+        threadTs?: string;
+        timeoutMs: number;
+      };
+    }) => this.lifecycleStub().activeTurnRegisterWithObligation(args),
+    refresh: async (record: ActiveTurnRecord) =>
+      this.lifecycleStub().activeTurnRefresh(record),
+    get: async (threadKey: string) =>
+      this.lifecycleStub().activeTurnGet({ threadKey }),
+    latest: async (channelId: string) =>
+      this.lifecycleStub().activeTurnLatest({ channelId }),
+    registerChoice: async (args: {
+      threadKey: string; executionId: string; choiceId: string;
+    }) => this.lifecycleStub().activeTurnRegisterChoice(args),
+    unregisterChoice: async (args: {
+      threadKey: string; executionId: string; choiceId: string;
+    }) => this.lifecycleStub().activeTurnUnregisterChoice(args),
+    cancelRegisteredChoices: async (args: {
+      threadKey: string; executionId: string;
+    }) => this.lifecycleStub().activeTurnCancelRegisteredChoices(args),
+    claimCancellation: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => this.lifecycleStub().activeTurnClaimCancellation(args),
+    markCancelControlled: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => this.lifecycleStub().activeTurnMarkCancelControlled(args),
+    beginCancelAck: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => this.lifecycleStub().activeTurnBeginCancelAck(args),
+    failCancelAck: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => this.lifecycleStub().activeTurnFailCancelAck(args),
+    confirmCancellationAndClear: async (args: {
+      threadKey: string; executionId: string; stopEventId: string;
+    }) => this.lifecycleStub().activeTurnConfirmCancellationAndClear(args),
+    beginRender: async (args: { threadKey: string; executionId: string }) =>
+      this.lifecycleStub().activeTurnBeginRender(args),
+    confirmRender: async (args: {
+      threadKey: string; executionId: string; token: string; final: boolean; output: boolean;
+    }) => this.lifecycleStub().activeTurnConfirmRender(args),
+    failRender: async (args: {
+      threadKey: string; executionId: string; token: string;
+    }) => this.lifecycleStub().activeTurnFailRender(args),
+    beginEffect: async (args: {
+      threadKey: string; executionId: string; effectName: string;
+    }) => this.lifecycleStub().activeTurnBeginEffect(args),
+    confirmEffect: async (args: {
+      threadKey: string; executionId: string; token: string; resource?: ActiveTurnEffectResource;
+    }) => this.lifecycleStub().activeTurnConfirmEffect(args),
+    failEffect: async (args: {
+      threadKey: string; executionId: string; token: string;
+    }) => this.lifecycleStub().activeTurnFailEffect(args),
+    lifecycleComplete: async (args: { threadKey: string; executionId: string }) =>
+      this.lifecycleStub().activeTurnLifecycleComplete(args),
+    abandonPristine: async (args: { threadKey: string; executionId: string }) =>
+      this.lifecycleStub().activeTurnAbandonPristine(args),
+    discardInterruptedRedelivery: async (args: {
+      threadKey: string; executionId: string;
+    }) => this.lifecycleStub().activeTurnDiscardInterruptedRedelivery(args),
   };
 }
 

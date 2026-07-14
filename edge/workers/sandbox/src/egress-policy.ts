@@ -1,7 +1,26 @@
 import { EXECUTION_BINDING_HEADER, requesterAttribution } from "../turn-contract.js";
 
 export const EGRESS_SENTINEL = "opentag-egress-injected-not-a-secret";
-export const APPROVAL_TTL_MS = 12 * 60_000;
+// The scope is installed before container cold-start and clone. Its lifetime
+// must cover every bounded phase, not just Claude's 10-minute child timeout:
+// four setup git commands (clone, checkout, two baseline reads), five outcome
+// commands (branch/head/tree/merge-base/PR verification), plus cold-start and
+// scheduling/network margin. Keep the two-hour operational floor explicit so
+// a slow-but-supported turn cannot lose credentials between clone and its
+// final postcondition. Terminalization still revokes the exact scope early.
+export const GIT_OPERATION_BUDGET_MS = 2 * 60_000;
+export const MAX_SETUP_GIT_OPERATIONS = 4;
+export const MAX_OUTCOME_GIT_OPERATIONS = 5;
+export const CLAUDE_TURN_BUDGET_MS = 10 * 60_000;
+export const CONTAINER_COLD_START_BUDGET_MS = 5 * 60_000;
+export const EGRESS_SCHEDULING_MARGIN_MS = 10 * 60_000;
+export const BOUNDED_TURN_ENVELOPE_MS =
+  CONTAINER_COLD_START_BUDGET_MS +
+  (MAX_SETUP_GIT_OPERATIONS * GIT_OPERATION_BUDGET_MS) +
+  CLAUDE_TURN_BUDGET_MS +
+  (MAX_OUTCOME_GIT_OPERATIONS * GIT_OPERATION_BUDGET_MS) +
+  EGRESS_SCHEDULING_MARGIN_MS;
+export const APPROVAL_TTL_MS = Math.max(2 * 60 * 60_000, BOUNDED_TURN_ENVELOPE_MS);
 export { EXECUTION_BINDING_HEADER };
 
 export interface RepositoryIdentity {
@@ -14,6 +33,7 @@ export interface GithubApprovalScope extends RepositoryIdentity {
   executionId: string;
   branch: string;
   expiresAt: number;
+  remoteGitApproved: boolean;
   createPullRequest: boolean;
   requesterAttribution?: string;
 }
@@ -117,7 +137,7 @@ export function buildApprovalScope(
   allowlist: RepositoryAllowlist,
   now = Date.now(),
 ): GithubApprovalScope | undefined {
-  if (body.remoteGitApproved !== true || typeof body.executionId !== "string") return undefined;
+  if (typeof body.executionId !== "string") return undefined;
   if (typeof body.sessionId !== "string") return undefined;
   const repoSpec = body.repo;
   const repoUrl = repoSpec && typeof repoSpec === "object"
@@ -133,7 +153,8 @@ export function buildApprovalScope(
     executionId: body.executionId,
     branch: temporaryBranch(body.sessionId),
     expiresAt: now + APPROVAL_TTL_MS,
-    createPullRequest: body.createPullRequest === true,
+    remoteGitApproved: body.remoteGitApproved === true,
+    createPullRequest: body.remoteGitApproved === true && body.createPullRequest === true,
     ...(attribution ? { requesterAttribution: attribution } : {}),
   };
 }
@@ -150,11 +171,13 @@ function matchesRepository(left: RepositoryIdentity, right: RepositoryIdentity):
 
 export function isAllowedGitCloneRequest(
   attempt: GithubOutboundAttempt,
-  allowlist: RepositoryAllowlist,
+  scope: GithubApprovalScope | undefined,
+  now = Date.now(),
 ): boolean {
+  if (!scope || scope.expiresAt <= now || attempt.executionId !== scope.executionId) return false;
   if (attempt.host !== "github.com") return false;
   const repo = repositoryFromGitPath(attempt.pathname);
-  if (!repo || !allowlist.hosts.has(repo.host) || !allowlist.orgs.has(repo.owner)) return false;
+  if (!repo || !matchesRepository(repo, scope)) return false;
   if (attempt.method === "GET" && attempt.pathname.endsWith("/info/refs")) {
     return new URLSearchParams(attempt.search).get("service") === "git-upload-pack";
   }
@@ -190,7 +213,7 @@ export function authorizeGithubWrite(
   scope: GithubApprovalScope | undefined,
   now = Date.now(),
 ): boolean {
-  if (!scope || scope.expiresAt <= now) return false;
+  if (!scope || !scope.remoteGitApproved || scope.expiresAt <= now) return false;
   // The binding is not a secret. It ties a mutation to the exact child
   // process whose turn installed this Worker-side repo/branch approval.
   if (attempt.executionId !== scope.executionId) return false;
@@ -226,13 +249,16 @@ export function authorizeGithubWrite(
 
 export function isAllowedGithubRead(
   attempt: GithubOutboundAttempt,
-  allowlist: RepositoryAllowlist,
+  scope: GithubApprovalScope | undefined,
+  now = Date.now(),
 ): boolean {
   // GraphQL operations can span multiple repositories and comments/aliases
   // make substring authorization a confused-deputy risk. Current clone/PR
   // flows use git smart HTTP plus repository-scoped REST, so fail closed.
   if (attempt.pathname === "/graphql") return false;
+  if (!scope || scope.expiresAt <= now || attempt.executionId !== scope.executionId) return false;
+  if (attempt.host !== "api.github.com") return false;
   if (!new Set(["GET", "HEAD"]).has(attempt.method)) return false;
   const repo = exactRestRepository(attempt.pathname);
-  return !!repo && allowlist.orgs.has(repo.owner);
+  return !!repo && matchesRepository(repo, scope);
 }

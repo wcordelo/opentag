@@ -19,6 +19,12 @@ import { bindRequestContext } from "../request-context.js";
 import { createSlackWebClient } from "./web-api.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
+import {
+  abandonPreAdmittedTurn,
+  isPreAdmittedTurnPending,
+  preAdmitSlackTurn,
+  type PreAdmissionIdentity,
+} from "./pre-admit-turn.js";
 
 export interface QuickAction {
   kind: QuickActionKind;
@@ -169,64 +175,96 @@ export async function handleQuickAction(
   const isDm = channel.startsWith("D");
   const scope = isDm ? DM_SCOPE : (threadTs ?? channel);
   const conversationKey = conversationKeyOf({ channelId: channel, scope });
-
-  const { adapter } = await getOrCreateBot(env);
-  const resolvedProfile = await resolveClickingUser(env, userId);
-  const resolved = { ...resolvedProfile, id: resolvedProfile?.id ?? userId };
   const quickEventId = quickActionEventId(body);
   if (!quickEventId) {
     console.warn("[quick-actions] rejecting click without message.ts/action_ts");
     return { handled: false };
   }
 
-  const turn: IncomingTurn = {
-    conversationKey,
-    // messageTs is the CLICKED message (reactions target it); threadTs is the
-    // thread root — mirrors handleEventsBody's replyTarget field semantics.
-    replyTarget: isDm
-      ? {
-          channel,
-          statusTs: threadTs,
-          messageTs: messageTs ?? threadTs,
-          recipientUserId: userId,
-        }
-      : {
-          channel,
-          threadTs,
-          messageTs: messageTs ?? threadTs,
-          recipientUserId: userId,
-        },
-    userText: buildQuickActionPrompt(quick),
-    user: resolved,
-    // Deterministic per click: Slack redelivers interactions; the pipeline's
-    // event dedup keys on this (house rule 3).
-    eventId: quickEventId,
-    platform: "slack",
-  };
-
-  bindRequestContext(resolved, {
+  const preAdmissionIdentity: PreAdmissionIdentity = {
     teamId,
-    requesterId: resolved.id,
-    ...((messageTs ?? threadTs)
-      ? {
-          inbound: {
-            channel,
-            ts: (messageTs ?? threadTs)!,
-            threadTs,
-            identity: quickEventId,
-          },
-        }
-      : {}),
-  });
-  await adapter.getSink().onTurn(turn);
-  console.log(
-    JSON.stringify({
-      metric: "quick_action_turn",
-      kind: quick.kind,
+    channelId: channel,
+    conversationKey,
+    ...(threadTs ? { threadTs } : {}),
+    requesterId: userId,
+    inboundTs: messageTs ?? threadTs ?? quickEventId,
+    eventId: quickEventId,
+  };
+  const preAdmittedTurn = await preAdmitSlackTurn(env, preAdmissionIdentity);
+  if (!preAdmittedTurn) {
+    console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: quickEventId }));
+    return { handled: true };
+  }
+  let handedOff = false;
+  try {
+    const { adapter } = await getOrCreateBot(env);
+    if (!(await isPreAdmittedTurnPending(env, preAdmittedTurn))) {
+      return { handled: true };
+    }
+    const resolvedProfile = await resolveClickingUser(env, userId);
+    if (!(await isPreAdmittedTurnPending(env, preAdmittedTurn))) {
+      return { handled: true };
+    }
+    const resolved = { ...resolvedProfile, id: resolvedProfile?.id ?? userId };
+
+    const turn: IncomingTurn = {
       conversationKey,
-    }),
-  );
-  return { handled: true };
+      // messageTs is the CLICKED message (reactions target it); threadTs is the
+      // thread root — mirrors handleEventsBody's replyTarget field semantics.
+      replyTarget: isDm
+        ? {
+            channel,
+            statusTs: threadTs,
+            messageTs: messageTs ?? threadTs,
+            recipientUserId: userId,
+          }
+        : {
+            channel,
+            threadTs,
+            messageTs: messageTs ?? threadTs,
+            recipientUserId: userId,
+          },
+      userText: buildQuickActionPrompt(quick),
+      user: resolved,
+      // Deterministic per click: Slack redelivers interactions; the pipeline's
+      // event dedup keys on this (house rule 3).
+      eventId: quickEventId,
+      platform: "slack",
+    };
+
+    adapter.bindExecutionFence(turn.replyTarget, preAdmittedTurn.record);
+
+    bindRequestContext(resolved, {
+      teamId,
+      requesterId: resolved.id,
+      preAdmittedTurn,
+      ...((messageTs ?? threadTs)
+        ? {
+            inbound: {
+              channel,
+              ts: (messageTs ?? threadTs)!,
+              threadTs,
+              identity: quickEventId,
+            },
+          }
+        : {}),
+    });
+    if (!(await isPreAdmittedTurnPending(env, preAdmittedTurn))) {
+      return { handled: true };
+    }
+    handedOff = true;
+    await adapter.getSink().onTurn(turn);
+    console.log(
+      JSON.stringify({
+        metric: "quick_action_turn",
+        kind: quick.kind,
+        conversationKey,
+      }),
+    );
+    return { handled: true };
+  } finally {
+    if (!handedOff) await abandonPreAdmittedTurn(env, preAdmittedTurn);
+  }
 }
 
 /**

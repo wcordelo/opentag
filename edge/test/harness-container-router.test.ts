@@ -99,7 +99,7 @@ describe("harness Container frontend", () => {
     expect(approvedBodies[0]).toMatchObject(identity);
     expect(await interruptHarnessTurn(env, {
       sessionId: "sess-1", threadKey, executionId: identity.executionId,
-    })).toEqual({ interrupted: true, approvalRevoked: true });
+    })).toEqual({ accepted: true, interrupted: true, approvalRevoked: true });
     const interruptBody = await (containerFetch.mock.calls.at(-1)![0] as Request).json();
     expect(interruptBody).toMatchObject({ executionId: identity.executionId });
 
@@ -175,6 +175,62 @@ describe("harness Container frontend", () => {
     expect(await response.json()).toEqual({ interrupted: true, approvalRevoked: true });
     expect(getByName).toHaveBeenCalledWith("sess-1");
     expect(order).toEqual([`revoke:${EXEC_A}`, "fetch:/interrupt"]);
+  });
+
+  it.each([
+    ["upstream 500", new Response("failed", { status: 500 }), 500, "interrupt_upstream_failed"],
+    ["invalid JSON", new Response("not-json", { status: 200 }), 502, "invalid_interrupt_response"],
+    ["missing boolean", Response.json({ interrupted: "yes" }), 502, "invalid_interrupt_response"],
+  ])("does not acknowledge an interrupt with %s", async (_label, upstream, status, error) => {
+    const fake = fakeNamespace(upstream);
+    const response = await routeHarnessRequest(new Request("https://harness/interrupt", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ sessionId: "sess-1", executionId: EXEC_A, threadKey: "slack:C1:1.2" }),
+    }), fake.namespace, authToken);
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error });
+    expect(fake.clearTurnApproval).toHaveBeenCalledWith(EXEC_A);
+  });
+
+  it("acknowledges a validated 200 false as an exact no-live-process no-op", async () => {
+    const fake = fakeNamespace(Response.json({ interrupted: false }));
+    const response = await routeHarnessRequest(new Request("https://harness/interrupt", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ sessionId: "sess-1", executionId: EXEC_A, threadKey: "slack:C1:1.2" }),
+    }), fake.namespace, authToken);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ interrupted: false, approvalRevoked: true });
+  });
+
+  it("only marks the edge interrupt accepted for a validated 2xx boolean body", async () => {
+    const responses = [
+      new Response("failed", { status: 500 }),
+      new Response("not-json", { status: 200 }),
+      Response.json({ approvalRevoked: true }),
+      Response.json({ interrupted: false, approvalRevoked: false }),
+    ];
+    const env = {
+      HARNESS_AUTH_TOKEN: authToken,
+      HARNESS: { fetch: async () => responses.shift()! },
+    } as unknown as Env;
+    const args = {
+      sessionId: "sess-1",
+      threadKey: "slack:C1:1.2",
+      executionId: EXEC_A,
+    };
+
+    await expect(interruptHarnessTurn(env, args)).resolves.toEqual({ accepted: false, interrupted: false });
+    await expect(interruptHarnessTurn(env, args)).resolves.toEqual({ accepted: false, interrupted: false });
+    await expect(interruptHarnessTurn(env, args)).resolves.toEqual({ accepted: false, interrupted: false });
+    await expect(interruptHarnessTurn(env, args)).resolves.toEqual({
+      accepted: true,
+      interrupted: false,
+      approvalRevoked: false,
+    });
   });
 
   it("rejects an unauthenticated interrupt before container allocation", async () => {

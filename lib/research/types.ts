@@ -153,8 +153,21 @@ export interface DeliveryObligation {
     text: string;
     taskId: string;
   };
-  status: "pending" | "delivered" | "failed";
+  /**
+   * `in_flight` is a durable effect fence. Once set, cancellation may suppress
+   * every still-pending delivery but cannot claim the task is quiescent until
+   * this exact Slack request has been resolved or replayed idempotently.
+   */
+  status: "pending" | "in_flight" | "delivered" | "failed";
 }
+
+export type CancelResearchTaskResult =
+  | {
+      status: "cancelled" | "already_cancelled";
+      taskId: string;
+      quiescent: boolean;
+    }
+  | { status: "not_found" | "thread_mismatch"; taskId: string };
 
 export interface VerificationResult {
   verdict: Verdict;

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # containers/harness/Dockerfile — the Claude Code harness container
 # (GOAL.md Phase A5 / SPEC.md §4.4). Wired up behind edge/workers/sandbox/
@@ -13,7 +13,7 @@
 # ─────────────────────────────────────────────────────────────────────────
 # Stage: build — compile harness-server.ts + tool-host.ts to .js
 # ─────────────────────────────────────────────────────────────────────────
-FROM node:20-slim AS build
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
 
 WORKDIR /build
 
@@ -40,31 +40,60 @@ RUN ./node_modules/.bin/tsc \
       --outDir dist \
       harness-server.ts tool-host.ts turn-contract.ts
 
+# Install Claude Code from the same integrity-locked npm graph, without the
+# compiler-only dependencies used by the build stage.
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS claude-cli
+WORKDIR /opt/claude
+COPY containers/harness/package.json containers/harness/package-lock.json ./
+RUN npm ci --omit=dev \
+    && test "$(./node_modules/.bin/claude --version)" = "2.1.154 (Claude Code)"
+
 # ─────────────────────────────────────────────────────────────────────────
 # Stage: harness — Ubuntu 22.04 runtime
 # ─────────────────────────────────────────────────────────────────────────
-FROM ubuntu:22.04 AS harness
+FROM ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982 AS harness
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── Base system packages ───────────────────────────────────────────────
-# curl/ca-certificates: needed by the Node/uv installers below and by any
+# curl/ca-certificates: needed by release-asset installs below and by any
 #   HTTPS access the agent makes.
 # git: per-session `git clone --depth=1` (SPEC §3.6) + work-branch checkout.
 # ripgrep, jq, fd-find: SYSTEM_PROMPT.md's [Environment] promises these.
 #   Ubuntu packages the `fd-find` binary as `fdfind`; symlink it to `fd` so
 #   the prompt's guidance ("prefer `fd`") is actually true.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl \
-      ca-certificates \
-      git \
-      ripgrep \
-      jq \
-      fd-find \
-      gnupg \
-      util-linux \
+# The timestamped Ubuntu archive freezes both package indexes and transitive
+# dependencies. The base image has no CA bundle, so bootstrap TLS from exact
+# Ubuntu package URLs whose bytes BuildKit verifies before dpkg sees them.
+ARG UBUNTU_SNAPSHOT=20260701T000000Z
+ADD --checksum=sha256:08e75ff19d4fab73a1e2f92140a9e12b7cab36b4dc8efb764ec9963b57dbb455 \
+  http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.25_amd64.deb /tmp/openssl.deb
+ADD --checksum=sha256:6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245 \
+  http://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb /tmp/ca-certificates.deb
+RUN dpkg -i /tmp/openssl.deb /tmp/ca-certificates.deb \
+    && rm /tmp/openssl.deb /tmp/ca-certificates.deb \
+    && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy main universe" \
+      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy-updates main universe" \
+      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy-security main universe" \
+      > /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/* \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates=20260601~22.04.1 \
+      curl=7.81.0-1ubuntu1.25 \
+      git=1:2.34.1-1ubuntu1.17 \
+      ripgrep=13.0.0-2ubuntu0.1 \
+      jq=1.6-2.1ubuntu3.2 \
+      fd-find=8.3.1-1ubuntu0.1 \
+      python3=3.10.6-1~22.04.1 \
+      util-linux=2.37.2-4ubuntu3.5 \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy the exact Node/npm distribution from the digest-pinned build image;
+# this replaces the moving NodeSource setup channel entirely.
+COPY --from=build /usr/local/ /usr/local/
 
 # GitHub CLI is installed from an immutable release asset and checksum rather
 # than a moving apt channel. This is the authorized PR creation surface.
@@ -128,27 +157,40 @@ SH
 chmod 0755 /usr/local/bin/git /usr/local/bin/gh
 EOF
 
-# ── Node.js 20 (NodeSource — reproducible, pinned major) ───────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# ── uv — exact release archive, checksum verified before extraction ────
+ARG UV_VERSION=0.6.14
+ARG UV_AMD64_SHA256=0aaf451c391d3913823bfb8ed354b446dcfd0553a32ed8266611e4181c61fd51
+RUN curl -fsSLo /tmp/uv.tar.gz \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
+    && echo "${UV_AMD64_SHA256}  /tmp/uv.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin \
+      uv-x86_64-unknown-linux-gnu/uv uv-x86_64-unknown-linux-gnu/uvx \
+    && rm /tmp/uv.tar.gz \
+    && test "$(uv --version)" = "uv ${UV_VERSION}"
 
-# ── uv (astral installer) — Python policy in SYSTEM_PROMPT.md is uv-only ─
-# Installed for root here; symlinked into a PATH directory so the non-root
-# `harness` user (created below) can run it without per-user reinstall.
-RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+# ── Claude Code CLI — exact npm lockfile graph from claude-cli stage ───
+COPY --from=claude-cli /opt/claude /opt/claude
+RUN ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude \
+    && test "$(claude --version)" = "2.1.154 (Claude Code)"
 
-# ── Claude Code CLI, pinned to an exact version ────────────────────────
-# Pin matches the version centaur's own sandbox Dockerfile has already
-# proven stable (services/sandbox/Dockerfile ARG CLAUDE_CODE_VERSION).
-# Bump deliberately, not via `@latest`, so a harness rebuild is
-# reproducible and doesn't silently pick up CLI behavior changes.
-ARG CLAUDE_CODE_VERSION=2.1.154
-RUN npm install -g --force "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    && claude --version | grep -F "${CLAUDE_CODE_VERSION}"
+# Fail the build if the immutable sources ever stop producing the promised
+# harness toolchain.
+RUN test "$(node --version)" = "v20.20.2" \
+    && test "$(npm --version)" = "10.8.2" \
+    && git --version | grep -Fx "git version 2.34.1" \
+    && rg --version | grep -Fx "ripgrep 13.0.0" \
+    && jq --version | grep -Fx "jq-1.6" \
+    && fd --version | grep -Fx "fd 8.3.1" \
+    && python3 --version | grep -Fx "Python 3.10.12" \
+    && curl --version | grep -F "curl 7.81.0"
 
 # ── Non-root user ───────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash -u 1001 harness
+# /home/harness is deliberately not a writable persistence surface. Each
+# request receives a fresh /work/<executionId>/home from harness-server.ts;
+# its Claude/XDG config is quarantined and removed at the end of the turn.
+RUN useradd -m -s /bin/bash -u 1001 harness \
+    && chown root:root /home/harness \
+    && chmod 0555 /home/harness
 
 # ── Harness server + tool host (compiled JS from the build stage) ──────
 # "type": "module" makes Node treat the compiled .js as ESM, matching the
@@ -175,8 +217,38 @@ cat >> /opt/harness/SYSTEM_PROMPT.md <<'PROMPT'
 PROMPT
 EOF
 
-# Per-session workdirs (see harness-server.ts's WORK_ROOT) live here.
-RUN mkdir -p /work && chown -R harness:harness /work /opt/harness
+# Per-session workdirs (see harness-server.ts's WORK_ROOT) live here. Packaged
+# harness code and the authoritative system prompt stay root-owned and
+# read-only: Claude and repository code run as UID 1001, so neither can alter
+# the server that executes the next request or weaken the appended prompt.
+# Only the per-session work root is writable by the harness identity.
+RUN mkdir -p /work \
+    && chown harness:harness /work \
+    && chmod 0755 /work \
+    && chown -R root:root /opt/harness \
+    && find /opt/harness -type f -exec chmod 0444 {} + \
+    && chmod 0555 /opt/harness \
+    && test "$(stat -c '%u:%g:%a' /opt/harness)" = "0:0:555" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/harness-server.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/tool-host.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/turn-contract.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/package.json)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/SYSTEM_PROMPT.md)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /home/harness)" = "0:0:555" \
+    && ! setpriv --reuid=1001 --regid=1001 --init-groups \
+      sh -c 'printf tamper >> /opt/harness/SYSTEM_PROMPT.md' \
+    && ! setpriv --reuid=1001 --regid=1001 --init-groups \
+      sh -c 'printf tamper >> /opt/harness/harness-server.js' \
+    && ! setpriv --reuid=1001 --regid=1001 --init-groups \
+      sh -c 'rm /opt/harness/SYSTEM_PROMPT.md' \
+    && ! setpriv --reuid=1001 --regid=1001 --init-groups \
+      sh -c 'mkdir /home/harness/.claude' \
+    && setpriv --reuid=1001 --regid=1001 --init-groups \
+      sh -c 'mkdir -m 700 /work/ot1e_build-home-check && mkdir -m 700 /work/ot1e_build-home-check/home && HOME=/work/ot1e_build-home-check/home sh -c "mkdir \"\$HOME/.claude\" && printf ok > \"\$HOME/.claude/state\""' \
+    && test "$(stat -c '%u:%g:%a' /work/ot1e_build-home-check)" = "1001:1001:700" \
+    && test "$(stat -c '%u:%g:%a' /work/ot1e_build-home-check/home)" = "1001:1001:700" \
+    && test "$(cat /work/ot1e_build-home-check/home/.claude/state)" = "ok" \
+    && rm -rf /work/ot1e_build-home-check
 
 WORKDIR /opt/harness
 
@@ -186,6 +258,7 @@ WORKDIR /opt/harness
 # isolated /work session, repository/egress allowlists, guarded git/gh
 # wrappers, and server-side credential stripping enforce that boundary.
 ENV PORT=8080 \
+    HOME=/home/harness \
     SYSTEM_PROMPT_PATH=/opt/harness/SYSTEM_PROMPT.md \
     WORK_ROOT=/work \
     CLAUDE_BIN=claude \

@@ -17,9 +17,29 @@ import { IssueList } from "../src/components/cards.js";
 const onTurn = vi.fn(async (_turn: unknown) => {});
 vi.mock("../src/bot-engine.js", () => ({
   getOrCreateBot: vi.fn(async () => ({
-    adapter: { getSink: () => ({ onTurn }) },
+    adapter: { getSink: () => ({ onTurn }), bindExecutionFence: vi.fn() },
   })),
 }));
+vi.mock("../src/slack/pre-admit-turn.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/slack/pre-admit-turn.js")>();
+  return {
+    ...actual,
+    preAdmitSlackTurn: vi.fn(async (_env, identity) => identity
+      ? {
+          record: {
+            channelId: identity.channelId,
+            threadKey: `slack:${identity.channelId}:${identity.threadTs ?? identity.channelId}`,
+            conversationKey: identity.conversationKey,
+            executionId: "test-quick-execution",
+            threadTs: identity.threadTs,
+            registeredAt: 1,
+          },
+        }
+      : undefined),
+    isPreAdmittedTurnPending: vi.fn(async () => true),
+    abandonPreAdmittedTurn: vi.fn(async () => undefined),
+  };
+});
 
 const {
   parseQuickAction,

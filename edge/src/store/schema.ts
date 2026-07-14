@@ -6,7 +6,7 @@ import type { SqlExecutor } from "./sql.js";
  * the `_meta` table so a Durable Object that was created on an older schema can
  * upgrade in place on its next constructor run.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 7;
 
 /**
  * One table per {@link import("./sql.js")} StateStore namespace. Everything the
@@ -83,6 +83,44 @@ const DDL = [
      attempt        INTEGER NOT NULL DEFAULT 0
    )`,
   `CREATE INDEX IF NOT EXISTS render_obligations_deadline ON render_obligations (deadline)`,
+
+  // Exact active-turn ownership and Slack render fencing. Every transition is
+  // one ConversationStateDO SQLite transaction; no correctness depends on a
+  // Worker-side lease surviving an RPC stall.
+  `CREATE TABLE IF NOT EXISTS active_turns (
+     thread_key       TEXT PRIMARY KEY,
+     channel_id       TEXT NOT NULL,
+     conversation_key TEXT NOT NULL,
+     execution_id     TEXT NOT NULL,
+     thread_ts        TEXT,
+     choice_id        TEXT,
+     registered_at    INTEGER NOT NULL,
+     delivery_status  TEXT NOT NULL,
+     render_token     TEXT,
+     effect_token     TEXT,
+     effect_name      TEXT,
+     effect_resource  TEXT,
+     confirmed_output INTEGER NOT NULL DEFAULT 0,
+     stop_event_id    TEXT,
+     updated_at       INTEGER NOT NULL,
+     expires_at       INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS active_turns_channel ON active_turns (channel_id, registered_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS active_turns_expiry ON active_turns (expires_at)`,
+
+  // Every modern HITL picker belongs to one exact active execution. Keeping
+  // this registry beside active_turns and the exact-id HITL receipts lets Stop
+  // install denial receipts for every outstanding picker in one SQLite
+  // transaction. Dynamic tools must register here before rendering a card.
+  `CREATE TABLE IF NOT EXISTS active_turn_choices (
+     thread_key   TEXT NOT NULL,
+     execution_id TEXT NOT NULL,
+     choice_id    TEXT NOT NULL,
+     registered_at INTEGER NOT NULL,
+     PRIMARY KEY (thread_key, execution_id, choice_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS active_turn_choices_execution
+     ON active_turn_choices (thread_key, execution_id)`,
 ];
 
 /**
@@ -98,7 +136,40 @@ export function migrate(sql: SqlExecutor): void {
     .toArray()[0];
   const current = row ? Number(row.v) : 0;
 
-  // Future migrations: `if (current < 2) { ...; }` etc. v0 → v1 is just the DDL.
+  if (current > 0 && current < 4) {
+    const columns = sql
+      .exec<{ name: string }>(`PRAGMA table_info(active_turns)`)
+      .toArray();
+    if (!columns.some((column) => column.name === "confirmed_output")) {
+      sql.exec(
+        `ALTER TABLE active_turns ADD COLUMN confirmed_output INTEGER NOT NULL DEFAULT 0`,
+      );
+    }
+  }
+
+  if (current > 0 && current < 6) {
+    const columns = sql
+      .exec<{ name: string }>(`PRAGMA table_info(active_turns)`)
+      .toArray();
+    if (!columns.some((column) => column.name === "effect_token")) {
+      sql.exec(`ALTER TABLE active_turns ADD COLUMN effect_token TEXT`);
+    }
+    if (!columns.some((column) => column.name === "effect_name")) {
+      sql.exec(`ALTER TABLE active_turns ADD COLUMN effect_name TEXT`);
+    }
+  }
+
+  if (current > 0 && current < 7) {
+    const columns = sql
+      .exec<{ name: string }>(`PRAGMA table_info(active_turns)`)
+      .toArray();
+    if (!columns.some((column) => column.name === "effect_resource")) {
+      sql.exec(`ALTER TABLE active_turns ADD COLUMN effect_resource TEXT`);
+    }
+  }
+
+  // Future migrations: v0 creates the current DDL directly; older durable
+  // objects take the explicit branches above before the version is advanced.
   if (current < SCHEMA_VERSION) {
     sql.exec(
       `INSERT INTO _meta (k, v) VALUES ('schema_version', ?)

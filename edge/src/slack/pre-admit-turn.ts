@@ -66,7 +66,10 @@ export function preAdmissionIdentityForEvent(
   const eventId = envelopeId || (channelId && inboundTs ? `${channelId}:${inboundTs}` : "");
   if (!eventId || !channelId || !requesterId || !inboundTs) return undefined;
   const threadTs = rawThreadTs || inboundTs;
-  const scope = isDmMessage ? DM_SCOPE : (rawThreadTs || channelId);
+  // threadTs falls back to the message's own ts for top-level mentions —
+  // that message roots the bot's reply thread, so the mention and its
+  // thread share one conversation (see handleEventsBody for the rationale).
+  const scope = isDmMessage ? DM_SCOPE : threadTs;
   return {
     teamId,
     channelId,

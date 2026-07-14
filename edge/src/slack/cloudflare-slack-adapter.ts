@@ -345,12 +345,17 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     }
 
     const isDm = normalized.source === "direct_message";
-    const rawThreadTs =
-      typeof (body as { event?: { thread_ts?: unknown } }).event?.thread_ts ===
-        "string"
-        ? (body as { event: { thread_ts: string } }).event.thread_ts.trim()
-        : "";
-    const scope = isDm ? DM_SCOPE : (rawThreadTs || normalized.channel);
+    // Top-level channel mentions scope on their OWN message ts, not the
+    // channel: that ts becomes the root of the reply thread the bot creates,
+    // so the mention and every follow-up inside its thread share one
+    // conversation by construction. Channel-wide scoping would (a) sever
+    // that mention→thread continuity and (b) make all unrelated top-level
+    // asks in a channel share one turn lock, memory, and sticky overrides.
+    // Slash commands have no message ts, hence their channel-scope fallback —
+    // an accepted asymmetry, not a bug.
+    const scope = isDm
+      ? DM_SCOPE
+      : (normalized.threadTs ?? normalized.ts ?? normalized.channel);
     const conversationKey = conversationKeyOf({
       channelId: normalized.channel,
       scope,

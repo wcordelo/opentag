@@ -1,99 +1,118 @@
-/**
- * Request-scoped context for commands/tools.
- * Stack-based (no node:async_hooks) so the Worker bundle stays free of
- * createRequire(import.meta.url) shims that crash workerd.
- *
- * Handles both sync and async `fn` — the frame stays until a returned
- * Promise settles.
- */
-export type InboundMessageTarget = { channel: string; ts: string };
+import {
+  makeWireTurnIdentity,
+  makeWireTurnIdentitySync,
+} from "./harness/wire-id.js";
+import type { ActiveTurnRecord } from "./store/active-turn-types.js";
 
-type Store = {
-  teamId: string;
-  inbound?: InboundMessageTarget;
+/** Immutable Slack ingress identity bound to concrete per-invocation objects. */
+export type InboundMessageTarget = {
+  channel: string;
+  ts: string;
+  /** Thread root ts (assistant status/title APIs need this, not the message ts). */
+  threadTs?: string;
+  /** Stable ingress/action/command identity; distinct from the reaction target. */
+  identity?: string;
 };
 
-const stack: Store[] = [];
-let fallbackTeamId = "default";
-let fallbackInbound: InboundMessageTarget | undefined;
+export type RequestContext = Readonly<{
+  teamId: string;
+  requesterId: string;
+  inbound?: Readonly<InboundMessageTarget>;
+  /** Durable ownership established at verified Worker ingress. */
+  preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
+}>;
 
-export function setCurrentTeamId(teamId: string): void {
-  const id = teamId || "default";
-  const store = stack[stack.length - 1];
-  if (store) {
-    store.teamId = id;
-  } else {
-    fallbackTeamId = id;
+// Cloudflare Workers may overlap requests in one isolate. A module-level stack
+// cannot follow async continuations: after an await, another request can be its
+// top frame. The framework preserves the PlatformUser object from IncomingTurn
+// to IncomingMessage, and bot/command handlers then bind the same immutable
+// context to their concrete Thread object. Weak keys prevent stale identities.
+let contextByInvocation = new WeakMap<object, RequestContext>();
+
+export function bindRequestContext(
+  invocation: object,
+  context: {
+    teamId: string;
+    requesterId: string;
+    inbound?: InboundMessageTarget;
+    preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
+  },
+): RequestContext {
+  const inbound = context.inbound
+    ? Object.freeze({ ...context.inbound })
+    : undefined;
+  const immutable = Object.freeze({
+    teamId: context.teamId || "unknown",
+    requesterId: context.requesterId,
+    ...(inbound ? { inbound } : {}),
+    ...(context.preAdmittedTurn
+      ? { preAdmittedTurn: Object.freeze({ record: Object.freeze({ ...context.preAdmittedTurn.record }) }) }
+      : {}),
+  });
+  contextByInvocation.set(invocation, immutable);
+  return immutable;
+}
+
+export function copyRequestContext(from: object, to: object): RequestContext {
+  const context = requireRequestContext(from);
+  contextByInvocation.set(to, context);
+  return context;
+}
+
+export function getRequestContext(
+  invocation: object | undefined,
+): RequestContext | undefined {
+  return invocation ? contextByInvocation.get(invocation) : undefined;
+}
+
+export function requireRequestContext(invocation: object): RequestContext {
+  const context = contextByInvocation.get(invocation);
+  if (!context) {
+    throw new Error("Slack request context was not bound to this invocation");
   }
+  return context;
 }
 
-export function getCurrentTeamId(): string {
-  return stack[stack.length - 1]?.teamId ?? fallbackTeamId;
-}
-
-/** Stash the Slack message this turn should react to (channel + ts). */
-export function setCurrentInboundMessage(
-  channel: string,
-  ts: string,
-): void {
-  if (!channel || !ts) return;
-  const target = { channel, ts };
-  const store = stack[stack.length - 1];
-  if (store) {
-    store.inbound = target;
-  } else {
-    fallbackInbound = target;
+export async function slackTurnIdentity(
+  context: RequestContext,
+  channelId: string,
+): Promise<{ executionId: string; forwardedMessageId: string }> {
+  if (!context.inbound?.ts || !channelId) {
+    throw new Error("Slack turn is missing its immutable inbound message identity");
   }
-}
-
-export function getCurrentInboundMessage():
-  | InboundMessageTarget
-  | undefined {
-  return stack[stack.length - 1]?.inbound ?? fallbackInbound;
-}
-
-function isThenable(v: unknown): v is PromiseLike<unknown> {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    "then" in v &&
-    typeof (v as { then: unknown }).then === "function"
-  );
-}
-
-/** Run `fn` with an isolated team id for the call tree (incl. awaited work). */
-export function runWithTeamId<T>(teamId: string, fn: () => T): T {
-  const frame: Store = { teamId: teamId || "default" };
-  stack.push(frame);
-  const cleanup = () => {
-    const i = stack.indexOf(frame);
-    if (i !== -1) stack.splice(i, 1);
-  };
-  try {
-    const result = fn();
-    if (isThenable(result)) {
-      return result.then(
-        (v) => {
-          cleanup();
-          return v;
-        },
-        (err) => {
-          cleanup();
-          throw err;
-        },
-      ) as T;
-    }
-    cleanup();
-    return result;
-  } catch (err) {
-    cleanup();
-    throw err;
+  if (context.inbound.channel !== channelId) {
+    throw new Error("Slack turn context channel does not match its thread");
   }
+  return makeWireTurnIdentity("slack-event", [
+    context.teamId,
+    channelId,
+    context.inbound.threadTs ?? "",
+    context.inbound.ts,
+    context.inbound.identity ?? context.inbound.ts,
+  ]);
 }
 
-/** Reset fallback (tests). */
+/** Await-free equivalent used by ingress before its first durable RPC. */
+export function slackTurnIdentitySync(
+  context: RequestContext,
+  channelId: string,
+): { executionId: string; forwardedMessageId: string } {
+  if (!context.inbound?.ts || !channelId) {
+    throw new Error("Slack turn is missing its immutable inbound message identity");
+  }
+  if (context.inbound.channel !== channelId) {
+    throw new Error("Slack turn context channel does not match its thread");
+  }
+  return makeWireTurnIdentitySync("slack-event", [
+    context.teamId,
+    channelId,
+    context.inbound.threadTs ?? "",
+    context.inbound.ts,
+    context.inbound.identity ?? context.inbound.ts,
+  ]);
+}
+
+/** Reset weak bindings (tests only). */
 export function resetRequestContext(): void {
-  fallbackTeamId = "default";
-  fallbackInbound = undefined;
-  stack.length = 0;
+  contextByInvocation = new WeakMap<object, RequestContext>();
 }

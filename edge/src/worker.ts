@@ -10,7 +10,6 @@ import { requireAdminAuth } from "./admin-auth.js";
 import {
   getOrCreateBot,
   resolveBotEngineKind,
-  runWithTeamId,
 } from "./bot-engine.js";
 import {
   DEFAULT_BUNDLE,
@@ -19,10 +18,27 @@ import {
   type WorkspaceChannelConfig,
 } from "./config/workspace-config-do.js";
 import { startTask } from "./tasks/runtime.js";
+import {
+  extractStopCommandEvent,
+  handleStopCommand,
+  type SlackEventCallbackPayload,
+} from "./slack/stop-routing.js";
+import {
+  isQuickInteraction,
+  handleQuickAction,
+  quickActionEventId,
+} from "./slack/quick-actions.js";
+import {
+  abandonPreAdmittedTurn,
+  preAdmissionIdentityForCommand,
+  preAdmissionIdentityForEvent,
+  preAdmitSlackTurn,
+} from "./slack/pre-admit-turn.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 export { KnowledgeDO } from "./memory/knowledge-do.js";
+export { SessionEventDO } from "./store/session-event-do.js";
 
 const app = new Hono<AppEnv>();
 
@@ -132,21 +148,53 @@ app.post("/slack/events", slackVerify(), async (c) => {
     type?: string;
     challenge?: string;
     team_id?: string;
-  };
+  } & SlackEventCallbackPayload;
 
   if (payload?.type === "url_verification" && payload.challenge) {
     return c.json({ challenge: payload.challenge });
   }
 
   const teamId = payload.team_id ?? "unknown";
-
-  const run = () =>
-    runWithTeamId(teamId, async () => {
-      const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleEventsBody(payload, { teamId: payload.team_id });
-    });
-
   const exec = c.executionCtx;
+
+  // Stop-command routing (GOAL.md Phase A2 Task 1): a matching stop phrase
+  // never reaches the bot engine — it interrupts the session + clears
+  // status/obligation instead. Anything that isn't a stop command (including
+  // a message that merely fails the stop-phrase check) falls through to the
+  // normal routing below, unchanged.
+  const stopEvent = extractStopCommandEvent(payload);
+  if (stopEvent) {
+    const runStop = () => handleStopCommand(c.env, stopEvent, payload.event_id);
+    if (exec?.waitUntil) {
+      exec.waitUntil(
+        runStop().catch((err) => console.error("[slack/events:stop]", err)),
+      );
+    } else {
+      await runStop();
+    }
+    return c.json({ ok: true });
+  }
+
+  const run = async () => {
+    const identity = preAdmissionIdentityForEvent(payload);
+    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
+    if (identity && !preAdmittedTurn) {
+      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+      return;
+    }
+    let handedOff = false;
+    try {
+      const { adapter } = await getOrCreateBot(c.env);
+      await adapter.handleEventsBody(payload, {
+        teamId,
+        preAdmittedTurn,
+        onTurnHandoff: () => { handedOff = true; },
+      });
+    } finally {
+      if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
+    }
+  };
+
   if (exec?.waitUntil) {
     exec.waitUntil(
       run().catch(async (err) => {
@@ -175,12 +223,32 @@ app.post("/slack/commands", slackVerify(), async (c) => {
 
   const teamId = body.team_id ?? "unknown";
 
+  if (!body.trigger_id) {
+    return c.json({ error: "missing_stable_command_identity" }, 400);
+  }
+
+  const identity = preAdmissionIdentityForCommand(body);
+  const preAdmittedTurn = identity
+    ? await preAdmitSlackTurn(c.env, identity)
+    : undefined;
+
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
-  const run = () =>
-    runWithTeamId(teamId, async () => {
+  const run = async () => {
+    if (identity && !preAdmittedTurn) {
+      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+      return;
+    }
+    let handedOff = false;
+    try {
       const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleCommandBody(body);
-    });
+      await adapter.handleCommandBody(body, {
+        preAdmittedTurn,
+        onTurnHandoff: () => { handedOff = true; },
+      });
+    } finally {
+      if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
+    }
+  };
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
@@ -189,22 +257,16 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     await run();
   }
 
-  const command = body.command ?? "";
-  if (command === "/research") {
-    return c.json({
-      response_type: "in_channel",
-      text: "🔍 Research started…",
-    });
-  }
-  if (command === "/config") {
+  if (identity && !preAdmittedTurn) {
     return c.json({
       response_type: "ephemeral",
-      text: "Updating channel config…",
+      text: "Already handling that command.",
     });
   }
+
   return c.json({
-    response_type: "in_channel",
-    text: "🤖 On it…",
+    response_type: "ephemeral",
+    text: "Working on it…",
   });
 });
 
@@ -226,11 +288,33 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
       ? (payload as { team: { id: string } }).team.id
       : "unknown";
 
-  const run = () =>
-    runWithTeamId(teamId, async () => {
-      const { adapter } = await getOrCreateBot(c.env);
-      await adapter.handleInteractionPayload(payload);
-    });
+  // quick_* buttons become synthetic agent turns (SPEC §3.4) — routed INSTEAD
+  // of the generic interaction path so a click is never double-handled.
+  const isQuick = isQuickInteraction(payload);
+  if (isQuick && !quickActionEventId(payload)) {
+    return c.json({ error: "missing_stable_click_identity" }, 400);
+  }
+  const run = async () => {
+    if (isQuick) {
+      await handleQuickAction(c.env, payload, teamId);
+      return;
+    }
+    const { adapter } = await getOrCreateBot(c.env);
+    await adapter.handleInteractionPayload(payload);
+  };
+
+  // HITL buttons must not be acknowledged until BOT_STATE has durably
+  // received the choice. A 503 is observable and retryable by Slack; returning
+  // 200 from waitUntil after a failed write would silently lose the decision.
+  if (!isQuick) {
+    try {
+      await run();
+    } catch (err) {
+      console.error("[slack/interactions] durable handling failed", err);
+      return c.json({ error: "interaction_persistence_failed" }, 503);
+    }
+    return c.json({ ok: true });
+  }
 
   const exec = c.executionCtx;
   if (exec?.waitUntil) {

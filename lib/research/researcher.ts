@@ -88,11 +88,17 @@ export class Researcher {
     if (!session) return fiberDone("Session not found");
 
     let data = session.data;
-    if (data.status === "cancelled" || data.status === "superseded") {
+    const taskAtStart = await this.deps.storage.getTask(taskId);
+    if (
+      data.status === "cancelled" ||
+      data.status === "superseded" ||
+      taskAtStart?.status === "cancelled" ||
+      taskAtStart?.status === "superseded"
+    ) {
       return fiberDone(`Task ${data.status}`);
     }
 
-    const task = await this.deps.storage.getTask(taskId);
+    const task = taskAtStart;
     if (task && isDeadlinePassed(task.deadlineAt)) {
       await this.completeWithPartial(taskId, data, "Task deadline exceeded.");
       return fiberDone("deadline");
@@ -171,6 +177,10 @@ export class Researcher {
         // non-fatal
       }
     }
+
+    // Search/scrape can be in flight while cancellation commits. Do not let
+    // their late result advance the fiber or produce any downstream message.
+    if (!(await this.isTaskActive(taskId))) return fiberDone("cancelled");
 
     for (const r of results) {
       const hash = hashFact(r.snippet, r.url);
@@ -263,9 +273,9 @@ export class Researcher {
     });
 
     const now = new Date().toISOString();
-    await this.deps.storage.updateSession(taskId, data, versionId, now);
+    const updated = await this.deps.storage.updateSession(taskId, data, versionId, now);
+    if (!updated) return fiberDone("stale_or_cancelled");
     await this.notifyOrchestrator(taskId, "complete", undefined, llmResponse.content, citations);
-    await this.deps.storage.updateTaskStatus(taskId, "running");
 
     return fiberDone();
   }
@@ -282,7 +292,8 @@ export class Researcher {
       data.alarmCount = (data.alarmCount ?? 0) + 1;
       const delay = computeNextAlarmDelay(data.alarmCount);
       const now = new Date().toISOString();
-      await this.deps.storage.updateSession(taskId, data, versionId, now);
+      const updated = await this.deps.storage.updateSession(taskId, data, versionId, now);
+      if (!updated) return fiberDone("stale_or_cancelled");
       await this.scheduleExternalPoll(taskId, delay);
       return fiberStepComplete({ nextAlarmMs: delay });
     }
@@ -296,7 +307,8 @@ export class Researcher {
     data.status = "complete";
     data.externalJob = undefined;
     const now = new Date().toISOString();
-    await this.deps.storage.updateSession(taskId, data, versionId, now);
+    const updated = await this.deps.storage.updateSession(taskId, data, versionId, now);
+    if (!updated) return fiberDone("stale_or_cancelled");
     await this.notifyOrchestrator(taskId, "complete", undefined, data.summary, data.citations ?? []);
     return fiberDone();
   }
@@ -304,7 +316,7 @@ export class Researcher {
   async startDeepResearchJob(taskId: string, objective: string): Promise<void> {
     const handle = await startDeepResearch(objective, this.deps.parallelApiKey);
     const session = await this.deps.storage.getSession(taskId);
-    if (!session) return;
+    if (!session || !(await this.isTaskActive(taskId))) return;
 
     const data: SessionStateData = {
       ...session.data,
@@ -314,13 +326,13 @@ export class Researcher {
         pollIntervalMs: 5000,
       },
     };
-    await this.deps.storage.updateSession(
+    const updated = await this.deps.storage.updateSession(
       taskId,
       data,
       session.versionId,
       new Date().toISOString(),
     );
-    await this.scheduleExternalPoll(taskId, 5000);
+    if (updated) await this.scheduleExternalPoll(taskId, 5000);
   }
 
   private async compactContext(
@@ -351,15 +363,16 @@ export class Researcher {
     data.summary = data.summary ?? `Partial result: ${reason}`;
     const session = await this.deps.storage.getSession(taskId);
     if (session) {
-      await this.deps.storage.updateSession(
+      const updated = await this.deps.storage.updateSession(
         taskId,
         data,
         session.versionId,
         new Date().toISOString(),
       );
+      if (!updated) return;
     }
     await this.notifyOrchestrator(taskId, "complete", reason, data.summary, data.citations ?? []);
-    await this.deps.storage.updateTaskStatus(taskId, "complete");
+    await this.deps.storage.updateTaskStatusIfActive(taskId, "complete");
   }
 
   private async notifyOrchestrator(
@@ -373,7 +386,7 @@ export class Researcher {
     if (!task) return;
 
     const now = new Date().toISOString();
-    await this.deps.storage.appendOutbox({
+    await this.deps.storage.appendOutboxIfTaskActive({
       id: `outbox_${generateRequestId()}`,
       sessionId: taskId,
       targetActor: "orchestrator",
@@ -404,7 +417,7 @@ export class Researcher {
 
   private async scheduleNextStep(taskId: string, delayMs: number): Promise<void> {
     const id = `alarm_${taskId}_${Date.now()}`;
-    await this.deps.storage.enqueueAlarm({
+    await this.deps.storage.enqueueAlarmIfTaskActive({
       id,
       sessionId: taskId,
       kind: nextAlarmKind({} as SessionStateData),
@@ -414,12 +427,25 @@ export class Researcher {
   }
 
   private async scheduleExternalPoll(taskId: string, delayMs: number): Promise<void> {
-    await this.deps.storage.enqueueAlarm({
+    await this.deps.storage.enqueueAlarmIfTaskActive({
       id: `alarm_ext_${taskId}_${Date.now()}`,
       sessionId: taskId,
       kind: "external_poll",
       runAtMs: Date.now() + delayMs,
       priority: 10,
     });
+  }
+
+  private async isTaskActive(taskId: string): Promise<boolean> {
+    const [task, session] = await Promise.all([
+      this.deps.storage.getTask(taskId),
+      this.deps.storage.getSession(taskId),
+    ]);
+    return Boolean(
+      task &&
+      (task.status === "pending" || task.status === "running") &&
+      session &&
+      session.data.status === "running",
+    );
   }
 }

@@ -1,0 +1,12 @@
+{
+  "name": "opentag-harness-build",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.154"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.30",
+    "typescript": "5.6.3"
+  }
+}

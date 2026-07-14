@@ -2,6 +2,9 @@
 
 Intent classifier compiled to WASM for the `opentag-wasm-dispatch` Worker.
 
+This is an optional research dispatch component. It is not Slack ingress, not
+required by `edge-ci`, and not part of the normal `opentag-bot` deploy.
+
 ## Contract
 
 `POST /dispatch` body `{ text, userId?, channelId? }` →

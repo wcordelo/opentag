@@ -2,7 +2,7 @@
  * Edge bot tools — Workers-safe triage + memory + research + Slack builtins.
  */
 import { z } from "zod";
-import { defineBotTool } from "@copilotkit/channels";
+import { defineBotTool, type BotTool } from "@copilotkit/channels";
 import { jsx, jsxs } from "@copilotkit/channels-ui/jsx-runtime";
 import {
   Message,
@@ -15,12 +15,11 @@ import {
   Field,
 } from "@copilotkit/channels-ui";
 import { memorySearch, memoryWrite } from "../memory/knowledge-do.js";
-import { startTask } from "../tasks/runtime.js";
-import { createSlackWebClient } from "../slack/web-api.js";
+import { cancelTask, startTask } from "../tasks/runtime.js";
 import { getInboundMessage } from "../slack/inbound-target.js";
 import { normalizeEmojiToken } from "../react-intent.js";
 import type { Env } from "../env.js";
-import { getCurrentTeamId } from "../request-context.js";
+import { requireRequestContext } from "../request-context.js";
 import {
   IssueCard,
   IssueList,
@@ -39,6 +38,8 @@ import { guardToolsByBundle } from "./guard.js";
 import { createDurableObjectStore } from "../store/index.js";
 import { awaitChoiceDurable, newHitlChoiceId } from "../hitl/durable-choice.js";
 import { coerceTicketFields } from "../slack/thread-memory.js";
+import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
+import type { ActiveTurnEffectResource } from "../store/active-turn-types.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -56,6 +57,96 @@ function requireEnv(): Env {
 
 function requireStateStore() {
   return createDurableObjectStore(requireEnv().BOT_STATE);
+}
+
+async function assertExactTurnActive(thread: object): Promise<void> {
+  const exact = getTurnExecutionContext(thread);
+  if (!exact) throw new Error("active_turn_context_required");
+  const snapshot = await requireStateStore().activeTurn.get(exact.threadKey);
+  if (
+    !snapshot ||
+    snapshot.record.executionId !== exact.executionId ||
+    snapshot.status !== "pending" ||
+    snapshot.stopEventId !== undefined
+  ) {
+    throw new Error("active_turn_tool_suppressed");
+  }
+}
+
+function exactExecutionGuarded<T extends BotTool>(tool: T): T {
+  return {
+    ...tool,
+    async handler(args, ctx) {
+      await assertExactTurnActive(ctx.thread);
+      return tool.handler(args, ctx);
+    },
+  } as T;
+}
+
+/**
+ * Fence direct non-Slack mutations in the lifecycle DO. A thrown transport
+ * error is deliberately ambiguous: retain the token so Stop cannot promise
+ * completion while the remote mutation may still apply. Successful returns
+ * are definitive and release the token before another tool may start.
+ */
+async function runExactTurnEffect<T>(
+  thread: object,
+  effectName: string,
+  action: () => Promise<T>,
+  options?: {
+    resource?: (value: T) => ActiveTurnEffectResource | undefined;
+    cancelIfStopped?: (resource: ActiveTurnEffectResource) => Promise<void>;
+  },
+): Promise<T> {
+  const exact = getTurnExecutionContext(thread);
+  if (!exact) throw new Error("active_turn_context_required");
+  const activeTurn = requireStateStore().activeTurn;
+  const claim = await activeTurn.beginEffect({
+    threadKey: exact.threadKey,
+    executionId: exact.executionId,
+    effectName,
+  });
+  if (claim.status !== "claimed") {
+    throw new Error(
+      claim.status === "cancelled" || claim.status === "missing"
+        ? "active_turn_tool_suppressed"
+        : "active_turn_effect_unavailable",
+    );
+  }
+  let value: T;
+  try {
+    value = await action();
+  } catch (err) {
+    // Unknown RPC outcome: never clear. This is the irreversible fence that
+    // prevents a false visible Stop ahead of a late mutation.
+    throw err;
+  }
+  const resource = options?.resource?.(value);
+  if (resource) {
+    const snapshot = await activeTurn.get(exact.threadKey);
+    if (
+      !snapshot ||
+      snapshot.record.executionId !== exact.executionId ||
+      snapshot.effectToken !== claim.token
+    ) {
+      throw new Error("active_turn_effect_confirmation_failed");
+    }
+    if (snapshot.stopEventId) {
+      // A Stop already recorded during the launch must quiesce the exact
+      // returned task before the effect token can be released visibly.
+      await options?.cancelIfStopped?.(resource);
+    }
+  }
+  if (!await activeTurn.confirmEffect({
+    threadKey: exact.threadKey,
+    executionId: exact.executionId,
+    token: claim.token,
+    resource,
+  })) {
+    throw new Error("active_turn_effect_confirmation_failed");
+  }
+  await assertExactTurnActive(thread);
+  return value;
 }
 
 function conversationKeyOf(thread: unknown): string {
@@ -205,6 +296,9 @@ export const confirmWriteTool = defineBotTool({
     if (!choice?.confirmed) {
       return "The user DECLINED — do not write; acknowledge and stop.";
     }
+    // A click may have durably won immediately before Stop. Re-check the exact
+    // execution after the waiter and before granting the next write tool.
+    await assertExactTurnActive(thread);
     // Immediate Slack feedback while the agent calls save_issue (LLM + MCP).
     try {
       await thread.post("⏳ Creating Linear issue…");
@@ -214,6 +308,10 @@ export const confirmWriteTool = defineBotTool({
         err instanceof Error ? err.message : err,
       );
     }
+    // The acknowledgement is fenced, but its historical best-effort catch
+    // must not turn a Stop suppression into an approval result. Re-check after
+    // that await and fail the handler before the run loop can issue save_issue.
+    await assertExactTurnActive(thread);
     const parts = [
       "The user APPROVED the write — proceed IMMEDIATELY.",
       "In this same turn: call save_issue NOW with the fields below (do not ask anything, do not call list_teams first unless save_issue fails).",
@@ -291,6 +389,7 @@ export const issueCardTool = defineBotTool({
     "right after creating one (set justCreated: true).",
   parameters: issueCardSchema,
   async handler(props, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(IssueCard(props));
     return "Displayed the issue card to the user.";
   },
@@ -303,6 +402,7 @@ export const issueListTool = defineBotTool({
     "multiple issues instead of prose. For a single issue, use issue_card.",
   parameters: issueListSchema,
   async handler(props, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(IssueList(props));
     return "Displayed the issue list to the user.";
   },
@@ -314,6 +414,7 @@ export const pageListTool = defineBotTool({
     "Render a list of Notion pages as a card instead of writing them as prose.",
   parameters: pageListSchema,
   async handler(props, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(PageList(props));
     return "Displayed the Notion pages to the user.";
   },
@@ -325,6 +426,7 @@ export const showStatusTool = defineBotTool({
     "Render a status card: heading plus a grid of label/value fields.",
   parameters: statusSchema,
   async handler(props, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(StatusCard(props));
     return "Posted the status card to the user.";
   },
@@ -335,6 +437,7 @@ export const showLinksTool = defineBotTool({
   description: "Render a card of links (runbooks, dashboards, related pages).",
   parameters: linksSchema,
   async handler(props, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(LinksCard(props));
     return "Posted the links to the user.";
   },
@@ -355,6 +458,7 @@ export const showIncidentTool = defineBotTool({
       choiceId,
       conversationKey: conversationKeyOf(thread),
     });
+    await assertExactTurnActive(thread);
     if (choice?.action === "ack") {
       const who = user?.name ?? user?.handle ?? user?.id ?? "someone";
       await thread.post(`✅ Acknowledged *${props.title}* — ack'd by ${who}`);
@@ -377,6 +481,7 @@ export const researchProgressTool = defineBotTool({
     message: z.string().describe("Progress message to post."),
   }),
   async handler({ message }, { thread }) {
+    await assertExactTurnActive(thread);
     await thread.post(`🔬 ${message}`);
     return "Posted progress update.";
   },
@@ -390,7 +495,7 @@ export const memorySearchTool = defineBotTool({
   }),
   async handler({ query }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
     const hits = await memorySearch(env.KNOWLEDGE, teamId, channelId, query, 5);
     return hits.map((h) => ({ title: h.title, body: h.body.slice(0, 400) }));
@@ -406,15 +511,18 @@ export const memoryWriteTool = defineBotTool({
   }),
   async handler({ title, body }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
-    await memoryWrite(env.KNOWLEDGE, {
-      id: crypto.randomUUID(),
-      teamId,
-      channelId,
-      title,
-      body,
-      updatedAt: new Date().toISOString(),
+    await assertExactTurnActive(thread);
+    await runExactTurnEffect(thread, "memory_write", async () => {
+      await memoryWrite(env.KNOWLEDGE, {
+        id: crypto.randomUUID(),
+        teamId,
+        channelId,
+        title,
+        body,
+        updatedAt: new Date().toISOString(),
+      });
     });
     return "Saved to channel knowledge.";
   },
@@ -428,18 +536,33 @@ export const startTaskTool = defineBotTool({
   }),
   async handler({ objective }, { thread }) {
     const env = requireEnv();
-    const teamId = getCurrentTeamId();
+    const teamId = requireRequestContext(thread).teamId;
     const channelId = channelFromThread(thread);
     const threadTs = threadTsFromThread(thread);
     const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;
-    const result = await startTask(env, {
-      type: "research",
-      teamId,
-      threadKey,
-      channelId,
-      threadTs,
-      payload: { objective },
-    });
+    await assertExactTurnActive(thread);
+    const result = await runExactTurnEffect(thread, "start_task", () =>
+      startTask(env, {
+        type: "research",
+        teamId,
+        threadKey,
+        channelId,
+        threadTs,
+        payload: { objective },
+      }), {
+        resource: (started) => started.status === "error" ? undefined : {
+          kind: "research_task",
+          teamId,
+          taskId: started.taskId,
+          threadKey,
+        },
+        cancelIfStopped: (resource) => cancelTask(env, {
+          teamId: resource.teamId,
+          taskId: resource.taskId,
+          threadKey: resource.threadKey,
+        }).then(() => undefined),
+      },
+    );
     if (result.status === "error") {
       await thread.post(
         `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
@@ -474,10 +597,6 @@ export const reactMessageTool = defineBotTool({
       ),
   }),
   async handler({ emoji, messageTs }, { thread }) {
-    const env = requireEnv();
-    if (!env.SLACK_BOT_TOKEN) {
-      return { ok: false, error: "SLACK_BOT_TOKEN missing" };
-    }
     const conversationKey = conversationKeyOf(thread);
     const inbound = getInboundMessage(conversationKey, thread);
     const channel = channelFromThread(thread) || inbound?.channel || "";
@@ -516,15 +635,14 @@ export const reactMessageTool = defineBotTool({
       };
     }
 
-    let name = normalizeEmojiToken(emoji);
+    const name = normalizeEmojiToken(emoji);
     if (!name) return { ok: false, error: "empty_emoji" };
 
-    const client = createSlackWebClient(env.SLACK_BOT_TOKEN);
-    const r = await client.addReaction({
-      channel,
-      timestamp: ts,
-      name,
-    });
+    // Thread.react carries the exact reply target into the adapter's durable
+    // render fence. A stalled reactions.add therefore commits before Stop, or
+    // is suppressed after Stop; it cannot land behind a confirmed Stop ack.
+    await assertExactTurnActive(thread);
+    const r = await thread.react({ id: ts }, name);
     if (!r.ok && r.error !== "already_reacted") {
       console.error("[react_message] reactions.add failed", r.error, {
         channel,
@@ -544,7 +662,7 @@ export const reactMessageTool = defineBotTool({
   },
 });
 
-export const ALL_EDGE_TOOLS = [
+const RAW_EDGE_TOOLS = [
   lookupSlackUserTool,
   readThreadTool,
   confirmWriteTool,
@@ -560,5 +678,10 @@ export const ALL_EDGE_TOOLS = [
   startTaskTool,
   reactMessageTool,
 ] as const;
+
+// The upstream run loop does not consult an AbortSignal between tool calls.
+// Guard every production tool entry so a stale waiter cannot authorize a
+// subsequent client-side handler after exact cancellation.
+export const ALL_EDGE_TOOLS = RAW_EDGE_TOOLS.map(exactExecutionGuarded);
 
 export const ALL_EDGE_TOOL_NAMES = ALL_EDGE_TOOLS.map((t) => t.name);

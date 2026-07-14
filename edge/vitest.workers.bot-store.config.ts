@@ -10,6 +10,9 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.bot-store.toml" },
+      // Never let lifecycle-alarm tests inherit a developer's real Slack
+      // secret from .dev.vars.
+      miniflare: { bindings: { SLACK_BOT_TOKEN: "" } },
     }),
   ],
   test: {

@@ -71,6 +71,95 @@ export class SqlStateEngine {
     this.sql.exec(`DELETE FROM kv WHERE key = ?`, key);
   }
 
+  // ── durable HITL ─────────────────────────────────────────────────────────
+
+  /**
+   * Start one exact-id wait. A pre-existing receipt is stale and is removed,
+   * but a Stop tombstone (and its denial receipt) is authoritative. Keeping
+   * this predicate and cleanup in one transaction prevents setup from erasing
+   * a denial committed concurrently.
+   */
+  hitlPrepareChoice(
+    choiceKey: string,
+    cancelledKey: string,
+  ):
+    | { status: "ready" }
+    | { status: "cancelled"; record: string } {
+    return this.tx(() => {
+      if (this.kvGet(cancelledKey) !== undefined) {
+        const denial = this.kvGet(choiceKey);
+        if (denial === undefined) {
+          throw new Error("hitl_cancelled_without_denial");
+        }
+        return { status: "cancelled", record: denial };
+      }
+      this.kvDelete(choiceKey);
+      return { status: "ready" };
+    });
+  }
+
+  /**
+   * Atomically consume the receipt selected by the current tombstone state.
+   * If Stop linearizes first, its denial is returned and retained beside the
+   * tombstone so retries/restarts stay denied. If an
+   * affirmative linearizes and is consumed first, returning it is valid and a
+   * later Stop is a strictly later operation.
+   */
+  hitlConsumeChoice(
+    choiceKey: string,
+    cancelledKey: string,
+  ):
+    | { status: "pending" }
+    | { status: "choice" | "cancelled"; record: string } {
+    return this.tx(() => {
+      const cancelled = this.kvGet(cancelledKey) !== undefined;
+      const record = this.kvGet(choiceKey);
+      if (record === undefined) {
+        if (cancelled) throw new Error("hitl_cancelled_without_denial");
+        return { status: "pending" };
+      }
+      if (!cancelled) this.kvDelete(choiceKey);
+      return {
+        status: cancelled ? "cancelled" : "choice",
+        record,
+      };
+    });
+  }
+
+  /**
+   * Commit an exact-id choice only when Stop has not installed its tombstone.
+   * Both the predicate and write run in one SQLite transaction.
+   */
+  hitlPersistChoiceUnlessCancelled(
+    choiceKey: string,
+    cancelledKey: string,
+    record: string,
+    ttlMs: number,
+  ): "persisted" | "cancelled" {
+    return this.tx(() => {
+      if (this.kvGet(cancelledKey) !== undefined) return "cancelled";
+      this.kvSet(choiceKey, record, ttlMs);
+      return "persisted";
+    });
+  }
+
+  /**
+   * Stop wins atomically: publish the exact denial receipt and its tombstone
+   * together. A prior affirmative is overwritten; a later affirmative sees
+   * the tombstone in `hitlPersistChoiceUnlessCancelled` and is rejected.
+   */
+  hitlCancelChoice(
+    choiceKey: string,
+    cancelledKey: string,
+    denial: string,
+    ttlMs: number,
+  ): void {
+    this.tx(() => {
+      this.kvSet(choiceKey, denial, ttlMs);
+      this.kvSet(cancelledKey, "true", ttlMs);
+    });
+  }
+
   // ── list ────────────────────────────────────────────────────────────────
 
   listAppend(

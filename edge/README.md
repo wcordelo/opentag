@@ -1,92 +1,145 @@
-# OpenTag Edge — Claude Tag on Cloudflare
+# OpenTag edge
 
-**Product:** OpenTag as an open Claude-in-Slack alternative on Cloudflare.
-Authoritative: [`../PRODUCT.md`](../PRODUCT.md).
+The `edge/` workspace is the testable Cloudflare target: the Slack bot,
+Durable Object state, optional research Worker, production AG-UI Container,
+and optional Claude Code harness.
 
-| Config | Role |
-| --- | --- |
-| **`wrangler.bot.toml`** | **Production** — `opentag-bot` Claude Tag spine |
-| `wrangler.toml` | Local/dev bot Worker (`opentag-edge`) |
-| **`workers/agent-runtime/`** | **Production** AG-UI triage Container (`opentag-agent`) |
-| `wrangler.research.toml` | Research **task** Worker (internal `/research` only) |
-| `wrangler.bot-store.toml` | StateStore e2e alias |
-| `workers/egress-proxy/` | Shared egress for **sandbox** containers |
+Current architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
-## Prerequisite — `@copilotkit/channels*`
+Operations: [docs/operations.md](../docs/operations.md)
 
-CI and local installs use npm + a Workers-safe vendored tarball:
+Extension rules: [docs/extending.md](../docs/extending.md)
 
-- `@copilotkit/channels` → `edge/vendor/copilotkit-channels-0.1.1.tgz` (no `createRequire`)
-- `@copilotkit/channels-ui` / `@copilotkit/channels-slack` → npm registry
+## Deployment units
+
+| Config or package | Role | Status |
+| --- | --- | --- |
+| `wrangler.bot.toml` | `opentag-bot`, production Slack surface | Active target |
+| `wrangler.toml` | `opentag-edge`, local/development bot | Active target |
+| `workers/agent-runtime/` | `opentag-agent`, AG-UI triage Container | Production runtime |
+| `workers/sandbox/` | `opentag-harness`, Claude Code Container | Code-complete, opt-in |
+| `wrangler.research.toml` | `opentag-orchestrator`, internal research | Optional task plane |
+| `wrangler.bot-store.toml` | StateStore workerd alias | Test-only |
+| `workers/wasm-dispatch/` | Intent dispatcher | Optional research build path |
+
+## Install and test
 
 ```bash
 cd edge
-npm ci   # or npm install
-npm test                 # bot-spine unit tests
-npm run test:e2e         # StateStore workerd
+npm ci
 npm run typecheck
-npm run deploy:bot       # production Worker (opentag-bot)
-npm run deploy:agent     # production AG-UI Container (opentag-agent)
-npm run dev              # local bot spine (Slack Events API)
-npm run dev:research     # optional research task Worker
+npm test
+npm run test:e2e
 ```
 
-Optional sibling CopilotKit checkout is only needed when refreshing the vendor
-tarball (see [`vendor/README.md`](./vendor/README.md)).
+GitHub Actions runs these under Node 22. `edge/tsconfig.json` includes
+`workers/**/*.ts`, so compile-time packages used by the sandbox Worker must
+also be declared in `edge/package.json`.
 
-## Production agent
+Harness package check:
 
 ```bash
-cd workers/agent-runtime
-npm ci && npm run deploy
-# Then set bot AGENT_URL to:
-#   https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
+cd workers/sandbox
+npm ci
+npm run typecheck
 ```
 
-See [`workers/agent-runtime/README.md`](./workers/agent-runtime/README.md). Requires Workers Paid.
+## Bot request flow
 
-## Local E2E
+```mermaid
+flowchart LR
+    Slack["Slack"] --> Verify["worker.ts<br/>verify + ack"]
+    Verify --> Pre["stable identity + pre-admission"]
+    Pre --> Adapter["CloudflareSlackAdapter"]
+    Adapter --> Fast["shortcut / command / quick action"]
+    Adapter --> Life["runSlackTurnLifecycle"]
+    Fast <--> State["BOT_STATE"]
+    Life <--> State
+    Life <--> Events["SESSION_EVENTS"]
+    Life --> Agent["AGENT_RUNTIME"]
+    Life -. opt-in .-> Harness["HARNESS"]
+    Fast -. optional .-> Research["RESEARCH_TASKS"]
+```
+
+`runSlackTurnLifecycle()` is the only production model-turn entry point. It:
+
+1. adopts or refreshes the pre-admitted active turn;
+2. resolves override flags and verifies the exact turn remains pending;
+3. writes the initial render obligation;
+4. admits the exact execution in SessionEventDO;
+5. exits silently for a duplicate redelivery, or emits one durable-deduped
+   busy note for a genuinely concurrent ask;
+6. refreshes the obligation cursor after accepted admission;
+7. requests remote-git HITL for qualifying coding turns;
+8. routes to AG-UI or the authoritative Claude Code harness;
+9. fences every turn render and non-Slack side effect;
+10. leaves final cleanup to confirmed terminal visibility or exact Stop.
+
+AG-UI incremental Markdown is mirrored best-effort into SessionEventDO before
+Slack updates so alarm recovery can replay it. Harness NDJSON uses the same
+exact execution log. Session input is override-stripped and recovery filters
+events by execution ID.
+
+## Durable Objects
+
+| Binding | Class | Responsibilities |
+| --- | --- | --- |
+| `BOT_STATE` | `ConversationStateDO` | generic StateStore, active/effect/render fences, obligations, Stop continuation, HITL, memory |
+| `SESSION_EVENTS` | `SessionEventDO` | execute/forward dedup, append events, replay, exact interrupts |
+| `WORKSPACE_CONFIG` | `WorkspaceConfigDO` | prompts, bundles, channel policy |
+| `KNOWLEDGE` | `KnowledgeDO` | channel knowledge |
+
+Production and development configs have separate migration histories. Do not
+rename Durable Object classes or delete migration tags after deployment.
+
+## Slack renderer and identity
+
+- streaming uses one placeholder, conflation, and bounded updates;
+- Markdown blocks are capped at Slack limits and terminal `done` remains last;
+- all Slack Web API bodies use form encoding;
+- DMs use `DM_SCOPE`;
+- a channel mention uses its own/root message timestamp;
+- a top-level slash command uses channel scope because Slack provides no ts;
+- a DM slash command may look up a recent DM timestamp solely for assistant
+  status while retaining `DM_SCOPE` as its conversation identity;
+- stable wire IDs are `ot1e_…` for executions and `ot1m_…` for forwarded messages.
+
+## Stop and recovery
+
+Stop is detected before bot dispatch. It claims the exact turn, cancels HITL,
+interrupts SessionEventDO, controls AG-UI/harness/research, posts a fenced
+acknowledgement, and clears only after visibility. Partial work continues by
+the ConversationStateDO alarm.
+
+Render obligations replay only the obligated execution. A live session is
+deferred only while its exact active-turn row still exists; an orphaned
+`executing` marker is treated as a crash so recovery cannot defer forever.
+
+## Runtime selection
+
+The default is `AGENT_RUNTIME` plus the `AGENT_URL` path. Same-zone
+`workers.dev` fetches can fail with Cloudflare 1042, so use the service binding.
+The harness is selected only when the sticky override is `claudecode` and its
+binding/URL is configured. Qualifying coding work does not fall back to AG-UI.
+
+## Deploy
+
+Deployment is always an explicit operator action:
 
 ```bash
-cp .dev.vars.example .dev.vars   # fill Slack + AGENT_URL + secrets
-./scripts/e2e-local.sh           # readiness checks + checklist
-# Dev-only local brain (or point AGENT_URL at deployed opentag-agent):
-pnpm runtime                     # terminal A (repo root)
-npm run dev                      # terminal B
-./scripts/e2e-smoke-local.sh     # signed Events API → real Slack reply (no tunnel)
-# For live Slack inbound: tunnel :8787 and point Request URLs at the bot Worker;
-# re-install ../slack-app-manifest.yaml (includes message.channels)
-# optional research: merge .dev.vars.research.example, then npm run dev:research
+npm run deploy:agent
+npm run deploy:bot
+npm run deploy:research   # optional
 ```
 
-**Smoke:** @mention → reply; thread follow-up without @; Linear `issue_list`;
-`confirm_write` Create/Cancel across isolates (new card after deploy);
-create Linear ticket with Slack profile email (no email prompt);
-typo’d `descripton` still splits title/description; `/research` delivery; `remember:`.
+The harness has separate secrets, allowlists, and deployment steps in
+[docs/operations.md](../docs/operations.md). Do not deploy it merely because
+its package typechecks.
 
-**Workers note:** sibling `@copilotkit/channels` must not use `createRequire(import.meta.url)`
-(crashes workerd). Patch `create-bot.ts` to a static package version if rebuilding.
+## Workers-safe CopilotKit Channels
 
-**Slack API note:** bot Web API calls use form-urlencoded (`web-api.ts`). JSON
-`users.info` does not return profile email — see DECISIONS §8.
-
-## Spine
-
-1. Slack → `src/worker.ts` → `CloudflareSlackAdapter` → `createBot` (`@copilotkit/channels`)
-2. StateStore `BOT_STATE` — HITL (`hitl-id:`), thread memory (`threadmem:`), locks, transcripts, dedup
-3. `WORKSPACE_CONFIG` — prompts + access bundles
-4. `KNOWLEDGE` — longer-term memory
-5. `RESEARCH_TASKS` → orchestrator `POST /research`
-6. `AGENT_RUNTIME` service binding + `AGENT_URL` path → `opentag-agent` Container (`HttpAgent`)
-
-## Layout
-
-```
-edge/
-├── wrangler.toml
-├── wrangler.research.toml
-├── src/                  # bot spine + CloudflareSlackAdapter
-├── workers/agent-runtime/ # production AG-UI Container
-├── workers/orchestrator/ # research tasks
-└── workers/egress-proxy/
-```
+Normal installs use `@copilotkit/channels` from
+`vendor/copilotkit-channels-0.1.1.tgz`; UI and Slack packages come from npm.
+The tarball removes `createRequire(import.meta.url)`, which crashes workerd.
+A sibling CopilotKit checkout is needed only to refresh the tarball; see
+[vendor/README.md](./vendor/README.md).

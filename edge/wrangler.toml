@@ -21,6 +21,12 @@ class_name = "WorkspaceConfigDO"
 name = "KNOWLEDGE"
 class_name = "KnowledgeDO"
 
+# Per-thread session event log (SPEC.md §3.2/§4.1) — replay source for the
+# render-obligation alarm fallback in ConversationStateDO.
+[[durable_objects.bindings]]
+name = "SESSION_EVENTS"
+class_name = "SessionEventDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -28,6 +34,10 @@ new_sqlite_classes = ["ConversationStateDO"]
 [[migrations]]
 tag = "v2-claude-tag"
 new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
+
+[[migrations]]
+tag = "v3-session-events"
+new_sqlite_classes = ["SessionEventDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"
@@ -37,6 +47,16 @@ bucket_name = "opentag-research-blobs"
 [[services]]
 binding = "RESEARCH_TASKS"
 service = "opentag-orchestrator"
+
+# Claude Code harness container (GOAL.md Phase A5, SPEC.md §3.6/§4.4). The
+# container Worker + image ship separately (edge/workers/sandbox/ +
+# containers/harness/, owned by a different build track) and deploy is
+# gated (GOAL.md house rule 6) — uncomment once that Worker is deployed.
+# Mirrors edge/workers/sandbox/wrangler.toml's commented [[containers]] block.
+#
+# [[services]]
+# binding = "HARNESS"
+# service = "opentag-harness"
 
 [vars]
 ENVIRONMENT = "development"
@@ -48,6 +68,12 @@ ENVIRONMENT = "development"
 # SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL, AGENT_AUTH_HEADER
 # ADMIN_SECRET — protects /admin/* /debug/* /tasks/start
 # INTERNAL_SECRET — forwarded to RESEARCH_TASKS /research
+#
+# Harness container (Phase A5, gated — see the commented [[services]] block
+# above). Set only once the container Worker is deployed:
+# HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
+# HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
+# HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN`
 
 [env.production]
 vars = { ENVIRONMENT = "production" }

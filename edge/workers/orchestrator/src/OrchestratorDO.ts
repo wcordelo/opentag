@@ -131,6 +131,40 @@ export class OrchestratorDO implements DurableObject {
         return Response.json(task);
       }
 
+      if (
+        path.startsWith("/tasks/") &&
+        path.endsWith("/cancel") &&
+        request.method === "POST"
+      ) {
+        const taskId = decodeURIComponent(
+          path.slice("/tasks/".length, -"/cancel".length),
+        );
+        const body = (await request.json().catch(() => ({}))) as {
+          threadKey?: string;
+        };
+        const storage = this.getStorage();
+        const task = await storage.getTask(taskId);
+        if (!task) {
+          return Response.json({ error: "not_found", taskId }, { status: 404 });
+        }
+        const threadKey = body.threadKey ?? task.threadKey;
+        const result = await this.getCore().cancelTask(taskId, threadKey);
+        if (result.status === "thread_mismatch") {
+          return Response.json(
+            { error: "thread_mismatch", taskId },
+            { status: 409 },
+          );
+        }
+        if (result.status === "not_found") {
+          return Response.json({ error: "not_found", taskId }, { status: 404 });
+        }
+        return Response.json({
+          cancelled: true,
+          quiescent: "quiescent" in result && result.quiescent,
+          taskId,
+        });
+      }
+
       if (path === "/import-task" && request.method === "POST") {
         const task = (await request.json()) as {
           taskId: string;
@@ -213,7 +247,7 @@ export class OrchestratorDO implements DurableObject {
         await this.drainDeliveries(storage, core);
 
         if (!result.done && result.nextAlarmMs) {
-          await storage.enqueueAlarm({
+          await storage.enqueueAlarmIfTaskActive({
             id: `alarm_${item.sessionId}_${Date.now()}`,
             sessionId: item.sessionId,
             kind: item.kind,
@@ -235,7 +269,7 @@ export class OrchestratorDO implements DurableObject {
     }
 
     // Keep retrying undelivered Slack posts (e.g. transient Slack errors).
-    const stillPending = await storage.getPendingDeliveries();
+    const stillPending = await storage.getDeliveriesToDrain();
     if (stillPending.length > 0) {
       await this.ctx.storage.setAlarm(Date.now() + 5_000);
     }
@@ -245,35 +279,49 @@ export class OrchestratorDO implements DurableObject {
     storage: DurableObjectStorageAdapter,
     core: OrchestratorCore,
   ): Promise<void> {
-    const pending = await storage.getPendingDeliveries();
-    for (const obligation of pending) {
+    const drainable = await storage.getDeliveriesToDrain();
+    for (const candidate of drainable) {
+      const obligation = await storage.claimDelivery(candidate.id);
+      // A pending delivery whose task was cancelled between enumeration and
+      // claim is never allowed to start. Already-in-flight effects remain
+      // claimable so restart/alarm recovery can resolve their ambiguity.
+      if (!obligation) continue;
       const payload = obligation.payload as {
         type?: string;
         text?: string;
         taskId?: string;
       };
-      let delivered = false;
-      if (payload.text && this.env.SLACK_BOT_TOKEN) {
-        delivered = await postToSlackThread(
-          obligation.threadKey,
-          payload.text,
-          this.env.SLACK_BOT_TOKEN,
-        );
-        if (!delivered) {
-          console.error(
-            "[orchestrator] Slack delivery failed",
-            obligation.id,
-            obligation.threadKey,
-          );
-        }
-      } else if (payload.text && !this.env.SLACK_BOT_TOKEN) {
+      if (!payload.text || !this.env.SLACK_BOT_TOKEN) {
         console.error(
-          "[orchestrator] SLACK_BOT_TOKEN missing; cannot deliver",
+          "[orchestrator] delivery configuration missing",
           obligation.id,
         );
+        await storage.markDeliverySuppressed(obligation.id);
+        continue;
       }
-      if (delivered) {
+      const outcome = await postToSlackThread(
+          obligation.threadKey,
+          payload.text,
+          obligation.id,
+          this.env.SLACK_BOT_TOKEN,
+        );
+      if (outcome.status === "delivered") {
         await storage.markDeliveryDelivered(obligation.id);
+      } else if (outcome.status === "definitive_failure") {
+        await storage.markDeliverySuppressed(obligation.id);
+        console.error(
+          "[orchestrator] Slack delivery rejected",
+          obligation.id,
+          outcome.error,
+        );
+      } else {
+        // Ambiguous transport/parse outcomes retain the durable in-flight
+        // effect. The alarm below replays the same client_msg_id.
+          console.error(
+            "[orchestrator] Slack delivery ambiguous",
+            obligation.id,
+            outcome.error,
+          );
       }
       if (payload.taskId) {
         await core.processOutbox(payload.taskId);

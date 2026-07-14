@@ -9,7 +9,15 @@
  *   partition.ts                 — key → DO instance routing
  *   durable-object-state-store.ts— the StateStore the bot consumes (RPC forwarder)
  */
-export { ConversationStateDO } from "./conversation-state-do.js";
+export {
+  ConversationStateDO,
+  RenderObligationEngine,
+  reconstructMarkdown,
+} from "./conversation-state-do.js";
+export type {
+  RenderObligationRow,
+  SessionEventsRpc,
+} from "./conversation-state-do.js";
 export {
   DurableObjectStateStore,
   createDurableObjectStore,

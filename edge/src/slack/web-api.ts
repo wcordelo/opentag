@@ -11,7 +11,8 @@ export type SlackWebClient = {
     text: string;
     blocks?: unknown[];
     attachments?: unknown[];
-  }): Promise<{ ok: boolean; ts?: string; error?: string }>;
+    client_msg_id?: string;
+  }): Promise<{ ok: boolean; ts?: string; error?: string; duplicate?: boolean }>;
   updateMessage(args: {
     channel: string;
     ts: string;
@@ -23,6 +24,11 @@ export type SlackWebClient = {
     thread_ts: string;
     status: string;
     loading_messages?: string[];
+  }): Promise<void>;
+  setTitle(args: {
+    channel_id: string;
+    thread_ts: string;
+    title: string;
   }): Promise<void>;
   addReaction(args: {
     channel: string;
@@ -63,6 +69,84 @@ export type SlackWebClient = {
   >;
 };
 
+/** A parsed Slack `ok:false` is a definitive rejection, unlike a thrown
+ * transport error where the request may already have been applied. */
+export class SlackApiError extends Error {
+  readonly definitive = true;
+  constructor(readonly method: string, readonly slackError: string) {
+    super(`${method} failed: ${slackError}`);
+    this.name = "SlackApiError";
+  }
+}
+
+export function isDefinitiveSlackFailure(error: unknown): boolean {
+  return error instanceof SlackApiError;
+}
+
+/**
+ * Best-effort GitHub handle extraction (GOAL.md Phase A5 / SPEC.md §5-A5
+ * item 5). No dedicated Slack scope for this — `users.profile.get` is a
+ * separate OAuth scope we don't request. Only explicitly named `github` /
+ * `github_url` profile fields are trusted; arbitrary status/profile text must
+ * never establish attribution. Named fields accept URL, @handle, and plain
+ * handle forms.
+ */
+const GITHUB_HANDLE_RE = /github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/|$)/i;
+const PLAIN_GITHUB_HANDLE_RE = /^@?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))$/;
+const GITHUB_PROFILE_FIELD_NAMES = new Set(["github", "github_url"]);
+
+function githubHandleFromFieldValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return (
+      trimmed.match(GITHUB_HANDLE_RE)?.[1] ??
+      trimmed.match(PLAIN_GITHUB_HANDLE_RE)?.[1]
+    );
+  }
+  if (value && typeof value === "object" && "value" in value) {
+    return githubHandleFromFieldValue((value as { value?: unknown }).value);
+  }
+  return undefined;
+}
+
+function githubHandleFromNamedProfileField(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (GITHUB_PROFILE_FIELD_NAMES.has(key.toLowerCase())) {
+      const handle = githubHandleFromFieldValue(fieldValue);
+      if (handle) return handle;
+    }
+
+    if (fieldValue && typeof fieldValue === "object") {
+      const field = fieldValue as Record<string, unknown>;
+      const fieldName = field.name ?? field.label;
+      if (
+        typeof fieldName === "string" &&
+        GITHUB_PROFILE_FIELD_NAMES.has(fieldName.toLowerCase())
+      ) {
+        const handle = githubHandleFromFieldValue(field.value);
+        if (handle) return handle;
+      }
+    }
+
+    const nested = githubHandleFromNamedProfileField(fieldValue);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function extractGithubHandle(profile: unknown): string | undefined {
+  return githubHandleFromNamedProfileField(profile);
+}
+
+function preferredSlackName(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 export function createSlackWebClient(botToken: string): SlackWebClient {
   // Slack Web API: prefer form-urlencoded. JSON bodies break several methods
   // (notably users.info → user_not_found / no profile.email).
@@ -93,10 +177,13 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     method: string,
     body?: Record<string, unknown>,
   ): Promise<T & { ok: boolean; error?: string }> {
+    // Never pass an empty-string body: undici hangs indefinitely on POST with
+    // body "" (e.g. auth.test with no args).
+    const encoded = body ? encodeForm(body) : "";
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers,
-      body: body ? encodeForm(body) : undefined,
+      body: encoded || undefined,
     });
     return (await res.json()) as T & { ok: boolean; error?: string };
   }
@@ -110,14 +197,31 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     },
     async postMessage(args) {
       const r = await api<{ ts?: string }>("chat.postMessage", args);
+      // A replay of the same client_msg_id can be reported as an explicit
+      // duplicate instead of returning the original timestamp. The original
+      // idempotent write is already visible, so this is a committed success.
+      if (!r.ok && (r.error === "duplicate_message" || r.error === "duplicate_client_msg_id")) {
+        return { ok: true, ts: r.ts, error: r.error, duplicate: true };
+      }
+      if (!r.ok) throw new SlackApiError("chat.postMessage", r.error ?? "unknown");
       return { ok: r.ok, ts: r.ts, error: r.error };
     },
     async updateMessage(args) {
       const r = await api("chat.update", args);
+      if (!r.ok) throw new SlackApiError("chat.update", r.error ?? "unknown");
       return { ok: r.ok, error: r.error };
     },
     async setStatus(args) {
-      await api("assistant.threads.setStatus", args).catch(() => undefined);
+      const r = await api("assistant.threads.setStatus", args);
+      if (!r.ok) {
+        throw new SlackApiError("assistant.threads.setStatus", r.error ?? "unknown");
+      }
+    },
+    async setTitle(args) {
+      const r = await api("assistant.threads.setTitle", args);
+      if (!r.ok) {
+        throw new SlackApiError("assistant.threads.setTitle", r.error ?? "unknown");
+      }
     },
     async addReaction(args) {
       const r = await api("reactions.add", {
@@ -140,8 +244,11 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
       // Prefer a cache hit that already has email. Incomplete entries (id-only)
       // are refreshed so a transient users.info miss does not stick forever.
       if (cached?.email) return cached;
-      // `timezone` is an OpenTag extension (not on PlatformUser); agent-turn reads it.
-      let user: PlatformUser & { timezone?: string } = { id: userId };
+      // `timezone`/`githubHandle` are OpenTag extensions (not on PlatformUser);
+      // agent-turn reads both.
+      let user: PlatformUser & { timezone?: string; githubHandle?: string } = {
+        id: userId,
+      };
       try {
         const r = await api<{
           user?: {
@@ -151,23 +258,32 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             tz?: string;
             profile?: {
               real_name?: string;
+              real_name_normalized?: string;
               display_name?: string;
+              display_name_normalized?: string;
               email?: string;
+              fields?: unknown;
+              status_text?: string;
             };
           };
         }>("users.info", { user: userId });
         const u = r.user;
         if (r.ok && u?.id) {
+          const githubHandle = extractGithubHandle(u.profile);
           user = {
             id: u.id,
-            name:
-              u.real_name ??
-              u.profile?.real_name ??
-              u.profile?.display_name ??
+            name: preferredSlackName(
+              u.profile?.display_name,
+              u.profile?.display_name_normalized,
+              u.profile?.real_name,
+              u.profile?.real_name_normalized,
+              u.real_name,
               u.name,
+            ),
             handle: u.name,
             email: u.profile?.email,
             ...(u.tz ? { timezone: u.tz } : {}),
+            ...(githubHandle ? { githubHandle } : {}),
           };
           if (!user.email) {
             console.warn(

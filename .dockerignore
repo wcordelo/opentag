@@ -17,6 +17,11 @@ edge/vendor
 edge/wasm-core
 edge/workers/orchestrator
 edge/workers/sandbox
+!edge/workers/sandbox/
+edge/workers/sandbox/*
+!edge/workers/sandbox/harness-server.ts
+!edge/workers/sandbox/tool-host.ts
+!edge/workers/sandbox/turn-contract.ts
 edge/workers/egress-proxy
 edge/workers/wasm-dispatch
 edge/test

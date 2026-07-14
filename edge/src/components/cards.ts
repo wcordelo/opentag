@@ -23,6 +23,7 @@ import {
   stateGlyph,
   ACCENT,
 } from "./_status.js";
+import { quickActionHandle, type QuickRef } from "../slack/quick-card.js";
 
 export const issueCardSchema = z.object({
   identifier: z.string().describe("Issue identifier, e.g. 'BER-1234'."),
@@ -144,12 +145,26 @@ export function IssueList({ heading, issues }: IssueListProps): BotNode {
       ? `Showing ${MAX} of ${issues.length} issues`
       : `${issues.length} issue${issues.length === 1 ? "" : "s"}`;
 
+  // Quick action (SPEC §3.4): clicking re-runs the search as a synthetic turn
+  // authored by the clicking user (see slack/quick-actions.ts).
+  const retryRef: QuickRef = {
+    type: "issue_list",
+    ...(heading ? { heading: heading.slice(0, 150) } : {}),
+  };
+
   return jsxs(Message, {
     accent: accentForIssues(issues),
     children: [
       jsx(Header, { children: `📋  ${heading ?? "Linear issues"}` }),
       jsx(Section, { children: lines.join("\n") }),
       jsx(Context, { children: footer }),
+      jsx(Actions, {
+        children: jsx(Button, {
+          onClick: quickActionHandle("retry"),
+          value: retryRef,
+          children: "🔁 Retry search",
+        }),
+      }),
     ],
   });
 }
@@ -282,6 +297,45 @@ export function IncidentCard({
             value: { action: "escalate", id, choiceId },
             style: "danger",
             children: "Escalate",
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+export function RemoteGitApprovalCard({
+  repository,
+  requester,
+  choiceId,
+}: {
+  repository: string;
+  requester: string;
+  choiceId: string;
+}): BotNode {
+  return jsxs(Message, {
+    accent: "#F2994A",
+    children: [
+      jsx(Header, { children: "GitHub push + pull request approval" }),
+      jsx(Section, {
+        children:
+          `This coding task may push its dedicated temporary branch to **${repository}** ` +
+          `and open a GitHub pull request for that repository, attributed to **${requester}**.`,
+      }),
+      jsx(Context, {
+        children:
+          "Approve only if you want these remote GitHub writes. Cancel keeps all remote-git actions disabled.",
+      }),
+      jsxs(Actions, {
+        children: [
+          jsx(Button, {
+            value: { confirmed: true, choiceId },
+            style: "primary",
+            children: "Approve push + PR",
+          }),
+          jsx(Button, {
+            value: { confirmed: false, choiceId },
+            children: "Cancel",
           }),
         ],
       }),

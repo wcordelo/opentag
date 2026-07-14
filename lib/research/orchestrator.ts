@@ -107,7 +107,7 @@ export class Orchestrator {
       eventId: req.eventId,
     });
 
-    await this.deps.storage.appendDeliveryObligation({
+    await this.deps.storage.appendDeliveryObligationIfTaskActive({
       id: `del_${generateRequestId()}`,
       threadKey: req.threadKey,
       payload: {
@@ -148,6 +148,11 @@ export class Orchestrator {
   async processOutbox(sessionId: string): Promise<void> {
     const messages = await this.deps.storage.getPendingOutbox(sessionId);
     for (const msg of messages) {
+      const task = await this.deps.storage.getTask(msg.payload.taskId);
+      if (!task || (task.status !== "pending" && task.status !== "running")) {
+        await this.deps.storage.markOutboxSent(msg.id);
+        continue;
+      }
       await this.handleOutboxMessage(msg.payload);
       await this.deps.storage.markOutboxSent(msg.id);
     }
@@ -155,7 +160,7 @@ export class Orchestrator {
 
   private async handleOutboxMessage(payload: OutboxPayload): Promise<void> {
     if (payload.type === "progress") {
-      await this.deps.storage.appendDeliveryObligation({
+      await this.deps.storage.appendDeliveryObligationIfTaskActive({
         id: `del_${generateRequestId()}`,
         threadKey: payload.threadKey,
         payload: {
@@ -169,7 +174,7 @@ export class Orchestrator {
     }
 
     if (payload.type === "failed") {
-      await this.deps.storage.appendDeliveryObligation({
+      const appended = await this.deps.storage.appendDeliveryObligationIfTaskActive({
         id: `del_${generateRequestId()}`,
         threadKey: payload.threadKey,
         payload: {
@@ -179,7 +184,9 @@ export class Orchestrator {
         },
         status: "pending",
       });
-      await this.deps.storage.updateTaskStatus(payload.taskId, "failed");
+      if (appended) {
+        await this.deps.storage.updateTaskStatusIfActive(payload.taskId, "failed");
+      }
       return;
     }
 
@@ -207,16 +214,18 @@ export class Orchestrator {
         }
       }
 
-      await this.deps.storage.appendDeliveryObligation({
+      const appended = await this.deps.storage.appendDeliveryObligationIfTaskActive({
         id: `del_${generateRequestId()}`,
         threadKey: payload.threadKey,
         payload: { type: "final", text: finalText, taskId: payload.taskId },
         status: "pending",
       });
-      await this.deps.storage.updateTaskStatus(payload.taskId, "complete", {
-        verdict: verifyResult.verdict,
-        issues: verifyResult.issues,
-      });
+      if (appended) {
+        await this.deps.storage.updateTaskStatusIfActive(payload.taskId, "complete", {
+          verdict: verifyResult.verdict,
+          issues: verifyResult.issues,
+        });
+      }
     }
   }
 
@@ -284,6 +293,10 @@ export class Orchestrator {
 
   async markDeliveryDelivered(id: string) {
     return this.deps.storage.markDeliveryDelivered(id);
+  }
+
+  async cancelTask(taskId: string, threadKey: string) {
+    return this.deps.storage.cancelResearchTask(taskId, threadKey);
   }
 
   getResearcher(): Researcher {

@@ -10,6 +10,13 @@ export type StartTaskRequest = {
   channelId: string;
   threadTs?: string;
   payload: Record<string, unknown>;
+  /**
+   * Effective thread model override (GOAL.md Phase A3 / SPEC §5 Phase A3).
+   * The orchestrator Worker may ignore this today — real model passthrough
+   * targets the Phase A5 container. This field is the contract A5 builds on;
+   * callers that don't pass it are unchanged.
+   */
+  model?: string;
 };
 
 export type StartTaskResult = {
@@ -17,6 +24,18 @@ export type StartTaskResult = {
   type: TaskType;
   status: "accepted" | "forwarded" | "error";
   detail?: string;
+};
+
+export type CancelTaskRequest = {
+  teamId: string;
+  taskId: string;
+  threadKey?: string;
+};
+
+export type CancelTaskResult = {
+  cancelled: true;
+  quiescent: true;
+  taskId: string;
 };
 
 /**
@@ -66,6 +85,7 @@ export async function startTask(
       channelId: req.channelId,
       eventId: taskId,
       eventTs: req.threadTs,
+      model: req.model,
     }),
   });
 
@@ -97,4 +117,42 @@ export async function startTask(
     type: req.type,
     status: "forwarded",
   };
+}
+
+/**
+ * Definitively cancel one exact research task. Any transport, status, or body
+ * ambiguity throws so the active-turn effect fence remains held and Stop
+ * cannot claim success ahead of a possibly-live task.
+ */
+export async function cancelTask(
+  env: {
+    RESEARCH_TASKS?: Fetcher;
+    INTERNAL_SECRET?: string;
+  },
+  req: CancelTaskRequest,
+): Promise<CancelTaskResult> {
+  if (!env.RESEARCH_TASKS) throw new Error("RESEARCH_TASKS binding missing");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (env.INTERNAL_SECRET) headers.Authorization = `Bearer ${env.INTERNAL_SECRET}`;
+  const res = await env.RESEARCH_TASKS.fetch(
+    `https://research/internal/tasks/${encodeURIComponent(req.taskId)}/cancel`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ teamId: req.teamId, threadKey: req.threadKey }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`research cancellation unconfirmed: ${res.status} ${detail.slice(0, 120)}`);
+  }
+  const body = (await res.json().catch(() => null)) as Partial<CancelTaskResult> | null;
+  if (
+    body?.cancelled !== true ||
+    body.quiescent !== true ||
+    body.taskId !== req.taskId
+  ) {
+    throw new Error("research cancellation unconfirmed: malformed response");
+  }
+  return body as CancelTaskResult;
 }

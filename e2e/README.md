@@ -4,9 +4,14 @@ Helpers for live Slack and research-loop checks against a real workspace or
 mock research adapters. Day-to-day bot coverage is **`cd edge && npm test`** and
 **`npm run test:e2e`** (StateStore on workerd).
 
+The automated suite covers pre-admission, concurrent threads, render/effect
+fences, obligation replay, exact Stop across AG-UI/harness/research, remote-git
+approval, egress policy, and coding postconditions. These helpers remain for
+real Slack behavior that unit/workerd tests cannot prove.
+
 ## Layout
 
-```
+```text
 e2e/
 ├── README.md           this
 ├── research-loop.ts    research actor loop (pnpm e2e:research)

@@ -9,26 +9,49 @@ import {
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
 import { ALL_EDGE_TOOL_NAMES } from "../tools/index.js";
+import { createBotStoreAdapter } from "../create-bot-store.js";
 import { loadTurnAccess } from "../config/workspace-config-do.js";
-import { startTask } from "../tasks/runtime.js";
-import { getCurrentTeamId } from "../request-context.js";
-import { runBundledAgentTurn } from "../agent-turn.js";
+import {
+  cancelTask,
+  startTask,
+} from "../tasks/runtime.js";
+import {
+  copyRequestContext,
+  requireRequestContext,
+} from "../request-context.js";
 import { trivialAck } from "../trivial-ack.js";
 import {
   bindInboundToThread,
   getInboundMessage,
 } from "../slack/inbound-target.js";
 import type { Env } from "../env.js";
+import type { CloudflareSlackAdapter } from "../slack/cloudflare-slack-adapter.js";
+import { slackObligationThreadKey } from "../slack/obligation-thread-key.js";
+import { runSlackTurnLifecycle } from "../slack/turn-lifecycle.js";
+import { resolveThreadOverrides } from "../store/thread-overrides.js";
+import {
+  adoptSlackShortcut,
+  postFinalShortcut,
+  runShortcutEffect,
+  shortcutStillPending,
+} from "../slack/shortcut-lifecycle.js";
 
 let boundEnv: Env | null = null;
+let boundAdapter: CloudflareSlackAdapter | null = null;
 
-export function bindCommandEnv(env: Env): void {
+export function bindCommandEnv(env: Env, adapter?: CloudflareSlackAdapter): void {
   boundEnv = env;
+  if (adapter) boundAdapter = adapter;
 }
 
 function requireEnv(): Env {
   if (!boundEnv) throw new Error("command env not bound");
   return boundEnv;
+}
+
+function requireAdapter(): CloudflareSlackAdapter {
+  if (!boundAdapter) throw new Error("command adapter not bound");
+  return boundAdapter;
 }
 
 function conversationKeyOf(thread: { conversationKey?: string }): string {
@@ -49,91 +72,153 @@ export const edgeCommands = [
   defineBotCommand({
     name: "config",
     description: "Set the channel system prompt (preserves bundle + policies).",
-    async handler({ thread, text }) {
+    async handler({ thread, text, user }) {
       const env = requireEnv();
-      const key = conversationKeyOf(thread as { conversationKey?: string });
-      const channelId = channelFromKey(key);
-      const teamId = getCurrentTeamId();
-      const { config: existing } = await loadTurnAccess(
-        env.WORKSPACE_CONFIG,
-        teamId,
-        channelId,
-      );
-      const stub = env.WORKSPACE_CONFIG.get(
-        env.WORKSPACE_CONFIG.idFromName(teamId),
-      );
-      const next: WorkspaceChannelConfig = {
-        teamId,
-        channelId,
-        systemPrompt: text?.trim() || DEFAULT_SYSTEM_PROMPT,
-        // Preserve access setup — only the prompt changes via /config.
-        policies: existing.policies ?? {
-          allowMemoryWrite: true,
-          allowTasks: true,
-        },
-        accessBundleId: existing.accessBundleId || DEFAULT_BUNDLE.id,
-        updatedAt: new Date().toISOString(),
-      };
-      await stub.fetch("https://do/putConfig", {
-        method: "POST",
-        body: JSON.stringify(next),
-      });
-      await thread.post(
-        `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
-      );
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
+      const adopted = await adoptSlackShortcut(env, requireAdapter(), thread);
+      try {
+        const key = conversationKeyOf(thread as { conversationKey?: string });
+        const channelId = channelFromKey(key);
+        const teamId = requireRequestContext(thread).teamId;
+        const { config: existing } = await loadTurnAccess(
+          env.WORKSPACE_CONFIG,
+          teamId,
+          channelId,
+        );
+        if (!(await shortcutStillPending(adopted))) return;
+        const next: WorkspaceChannelConfig = {
+          teamId,
+          channelId,
+          systemPrompt: text?.trim() || DEFAULT_SYSTEM_PROMPT,
+          policies: existing.policies ?? {
+            allowMemoryWrite: true,
+            allowTasks: true,
+          },
+          accessBundleId: existing.accessBundleId || DEFAULT_BUNDLE.id,
+          updatedAt: new Date().toISOString(),
+        };
+        const effect = await runShortcutEffect(adopted, "command_config", async () => {
+          const stub = env.WORKSPACE_CONFIG.get(
+            env.WORKSPACE_CONFIG.idFromName(teamId),
+          );
+          const response = await stub.fetch("https://do/putConfig", {
+            method: "POST",
+            body: JSON.stringify(next),
+          });
+          return { ok: response.ok, status: response.status };
+        });
+        if (effect.status === "suppressed") return;
+        if (!effect.value.ok) {
+          await postFinalShortcut(
+            thread,
+            `⚠️ Config update failed: HTTP ${effect.value.status}`,
+          );
+          return;
+        }
+        await postFinalShortcut(
+          thread,
+          `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
+        );
+      } catch (err) {
+        if (err instanceof Error && err.message === "active_turn_render_suppressed") return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (await shortcutStillPending(adopted)) {
+          await postFinalShortcut(thread, `⚠️ Config update failed: ${msg.slice(0, 200)}`);
+        }
+      }
     },
   }),
 
   defineBotCommand({
     name: "research",
     description: "Run deep research on a topic.",
-    async handler({ thread, text }) {
+    async handler({ thread, text, user }) {
       const env = requireEnv();
-      if (!text?.trim()) {
-        await thread.post("Usage: `/research <topic>`");
-        return;
-      }
-      const key = conversationKeyOf(thread as { conversationKey?: string });
-      const channelId = channelFromKey(key);
-      const threadTs = threadTsFromKey(key);
-      const teamId = getCurrentTeamId();
-      const { config, bundle } = await loadTurnAccess(
-        env.WORKSPACE_CONFIG,
-        teamId,
-        channelId,
-      );
-      const allowed = new Set(
-        resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
-      );
-      if (config.policies.allowTasks === false) {
-        allowed.delete("start_task");
-        allowed.delete("research_progress");
-      }
-      if (!allowed.has("start_task")) {
-        await thread.post(
-          "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
+      const adopted = await adoptSlackShortcut(env, requireAdapter(), thread);
+      try {
+        if (!text?.trim()) {
+          await postFinalShortcut(thread, "Usage: `/research <topic>`");
+          return;
+        }
+        const key = conversationKeyOf(thread as { conversationKey?: string });
+        const channelId = channelFromKey(key);
+        const threadTs = threadTsFromKey(key);
+        const teamId = requireRequestContext(thread).teamId;
+        const { config, bundle } = await loadTurnAccess(
+          env.WORKSPACE_CONFIG,
+          teamId,
+          channelId,
         );
-        return;
-      }
-      const threadKey = `slack:${channelId}:${threadTs ?? channelId}`;
-      const result = await startTask(env, {
-        type: "research",
-        teamId,
-        threadKey,
-        channelId,
-        threadTs,
-        payload: { objective: text.trim() },
-      });
-      if (result.status === "error") {
-        await thread.post(
-          `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
-            `Hint: run \`npm run dev:research\` locally (or deploy opentag-orchestrator) and ensure INTERNAL_SECRET matches.`,
+        if (!(await shortcutStillPending(adopted))) return;
+        const allowed = new Set(
+          resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
         );
-        return;
+        if (config.policies.allowTasks === false) {
+          allowed.delete("start_task");
+          allowed.delete("research_progress");
+        }
+        if (!allowed.has("start_task")) {
+          await postFinalShortcut(
+            thread,
+            "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
+          );
+          return;
+        }
+        const stateStore = createBotStoreAdapter(env.BOT_STATE);
+        const { cleanedText, effectiveModel } = await resolveThreadOverrides(
+          stateStore,
+          key,
+          text,
+        );
+        if (!(await shortcutStillPending(adopted))) return;
+        const threadKey = slackObligationThreadKey(channelId, threadTs);
+        const effect = await runShortcutEffect(adopted, "command_research", () =>
+          startTask(env, {
+            type: "research",
+            teamId,
+            threadKey,
+            channelId,
+            threadTs,
+            model: effectiveModel,
+            payload: { objective: cleanedText.trim() },
+          }), {
+            resource: (started) => started.status === "error" ? undefined : {
+              kind: "research_task",
+              teamId,
+              taskId: started.taskId,
+              threadKey,
+            },
+            cancelIfStopped: (resource) => cancelTask(env, {
+              teamId: resource.teamId,
+              taskId: resource.taskId,
+              threadKey: resource.threadKey,
+            }).then(() => undefined),
+          },
+        );
+        if (effect.status === "suppressed") return;
+        const result = effect.value;
+        if (result.status === "error") {
+          await postFinalShortcut(
+            thread,
+            `⚠️ Research failed: ${result.detail ?? "unknown"}\n` +
+              `Hint: run \`npm run dev:research\` locally (or deploy opentag-orchestrator) and ensure INTERNAL_SECRET matches.`,
+          );
+          return;
+        }
+        await postFinalShortcut(
+          thread,
+          `🔍 Research accepted: \`${result.taskId}\` — I'll post the summary here when it's ready.`,
+        );
+      } catch (err) {
+        if (err instanceof Error && err.message === "active_turn_render_suppressed") return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (await shortcutStillPending(adopted)) {
+          await postFinalShortcut(thread, `⚠️ Research failed: ${msg.slice(0, 200)}`);
+        }
       }
-      await thread.post(
-        `🔍 Research accepted: \`${result.taskId}\` — I'll post the summary here when it's ready.`,
-      );
     },
   }),
 
@@ -142,18 +227,24 @@ export const edgeCommands = [
     description: "Talk to the agent without an @-mention.",
     async handler({ thread, text, user }) {
       const env = requireEnv();
-      if (!text?.trim()) {
-        await thread.post("Usage: `/agent <message>`");
-        return;
-      }
-      const key = conversationKeyOf(thread as { conversationKey?: string });
-      bindInboundToThread(thread, getInboundMessage(key));
+      if (!user) throw new Error("Slack command requester is missing");
+      copyRequestContext(user, thread);
+      const adopted = await adoptSlackShortcut(env, requireAdapter(), thread);
       try {
+        if (!text?.trim()) {
+          await postFinalShortcut(thread, "Usage: `/agent <message>`");
+          return;
+        }
+        const key = conversationKeyOf(thread as { conversationKey?: string });
+        bindInboundToThread(
+          thread,
+          requireRequestContext(thread).inbound ?? getInboundMessage(key),
+        );
         const trivial = trivialAck(text);
         if (trivial) {
           // Slash commands have no inbound channel message to react on —
           // fall back to a short post.
-          await thread.post(
+          await postFinalShortcut(thread,
             trivial.mode === "react"
               ? trivial.emoji === "heart"
                 ? "You're welcome."
@@ -162,15 +253,21 @@ export const edgeCommands = [
           );
           return;
         }
-        await runBundledAgentTurn(
+        await runSlackTurnLifecycle(
           env,
-          thread as Parameters<typeof runBundledAgentTurn>[1],
+          requireAdapter(),
+          thread as Parameters<typeof runSlackTurnLifecycle>[2],
           text.trim(),
           user,
         );
       } catch (err) {
+        if (
+          err instanceof Error && err.message === "active_turn_render_suppressed"
+        ) return;
         const msg = err instanceof Error ? err.message : String(err);
-        await thread.post(`⚠️ Something went wrong: ${msg.slice(0, 200)}`);
+        if (await shortcutStillPending(adopted)) {
+          await postFinalShortcut(thread, `⚠️ Something went wrong: ${msg.slice(0, 200)}`);
+        }
       }
     },
   }),

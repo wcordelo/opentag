@@ -53,12 +53,16 @@ async function main() {
 }
 
 async function deliverPending(ctx: Awaited<ReturnType<typeof createResearchContext>>) {
-  const deliveries = await ctx.orchestrator.getPendingDeliveries();
-  for (const d of deliveries) {
-    const posted = await postToSlackThread(d.threadKey, d.payload.text);
-    if (posted) {
+  const deliveries = await ctx.storage.getDeliveriesToDrain();
+  for (const candidate of deliveries) {
+    const d = await ctx.storage.claimDelivery(candidate.id);
+    if (!d) continue;
+    const outcome = await postToSlackThread(d.threadKey, d.payload.text, d.id);
+    if (outcome.status === "delivered") {
       await ctx.orchestrator.markDeliveryDelivered(d.id);
       console.log(`[research-worker] delivered ${d.payload.type} to ${d.threadKey}`);
+    } else if (outcome.status === "definitive_failure") {
+      await ctx.storage.markDeliverySuppressed(d.id);
     }
   }
 }

@@ -752,6 +752,17 @@ describe("ConversationStateDO render obligations", () => {
       SESSION_EVENTS: makeFakeSessionEvents({ eventsByThread, executingByThread }),
     });
     try {
+      // A genuinely live execution keeps its active-turn row registered —
+      // the live-defer branch requires it (an executing slot with NO active
+      // row is a crash orphan and recovers instead; see the sibling test).
+      await doInstance.activeTurnRegister({
+        channelId: "C-live",
+        threadKey,
+        conversationKey: "C-live::1.0",
+        executionId,
+        threadTs: "1.0",
+        registeredAt: Date.now(),
+      });
       await doInstance.obligationSet({
         threadKey,
         executionId,
@@ -778,6 +789,42 @@ describe("ConversationStateDO render obligations", () => {
     } finally {
       close();
       vi.useRealTimers();
+    }
+  });
+
+  it("recovers (never defers forever) when an executing slot outlives its active-turn row", async () => {
+    // Isolate crash: the lifecycle claimed session:executing but died before
+    // terminalizing it, and the active-turn row expired (or was never
+    // written). The alarm must treat the orphaned executing slot as a crash
+    // and post recovery — unbounded live-deferral here would be permanent
+    // silence, the exact failure the never-silent contract forbids.
+    const threadKey = "slack:C-orphan:1.0";
+    const executionId = "exec-orphan";
+    const executingByThread = new Map([[threadKey, executionId]]);
+    const eventsByThread = new Map<string, ReplayEvent[]>([[threadKey, [
+      { id: 1, executionId, kind: "output", payload: "partial answer", createdAt: 1 },
+    ]]]);
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: makeFakeSessionEvents({ eventsByThread, executingByThread }),
+    });
+    try {
+      // No activeTurnRegister call — the row is gone, only executing remains.
+      await doInstance.obligationSet({
+        threadKey,
+        executionId,
+        afterEventId: 0,
+        channel: "C-orphan",
+        threadTs: "1.0",
+        timeoutMs: -1,
+      });
+      await doInstance.alarm();
+      expect(fetchCalls).toHaveLength(1);
+      expect((fetchCalls[0]!.body as { text: string }).text)
+        .toContain("partial answer");
+      expect(await doInstance.obligationGet({ threadKey })).toBeUndefined();
+    } finally {
+      close();
     }
   });
 

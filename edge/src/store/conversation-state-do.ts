@@ -1054,12 +1054,27 @@ export class ConversationStateDO extends DurableObject {
 
     // Execution still live (long HITL wait / slow harness, not a crash):
     // posting now would double-post next to the turn's own eventual answer.
-    // Re-arm without spending the finite definitive-failure budget. The
-    // active-turn TTL bounds a genuinely abandoned render fence.
+    // Re-arm without spending the finite definitive-failure budget — but ONLY
+    // while the active-turn row (which live turns refresh and a crashed
+    // isolate cannot) still names this execution. An `executing` slot that
+    // outlived its active-turn TTL is a crash orphan its dead owner can never
+    // terminalize; deferring on it forever would be permanent silence, so
+    // fall through to recovery instead (the render fence still serializes
+    // any residual writer).
     if (state.executing && state.executing.executionId === ob.executionId) {
-      throw new ObligationDeferredError(
-        OBLIGATION_LIVE_DEFER_MS,
-        "live_execution",
+      const active = this.activeTurns.get(ob.threadKey);
+      if (active?.record.executionId === ob.executionId) {
+        throw new ObligationDeferredError(
+          OBLIGATION_LIVE_DEFER_MS,
+          "live_execution",
+        );
+      }
+      console.log(
+        JSON.stringify({
+          metric: "obligation_stale_execution",
+          threadKey: ob.threadKey,
+          executionId: ob.executionId,
+        }),
       );
     }
 

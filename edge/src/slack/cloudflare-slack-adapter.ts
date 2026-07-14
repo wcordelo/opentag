@@ -574,7 +574,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     }
 
     const threadTs = body.thread_ts?.trim() || undefined;
-    const scope = threadTs ?? normalized.channel;
+    // MUST match preAdmissionIdentityForCommand's derivation exactly — the
+    // turn lifecycle rejects a pre-admitted turn whose conversationKey
+    // diverges (pre_admitted_turn_identity_mismatch). DMs are one
+    // conversation (DM_SCOPE), same as the Events API path.
+    const isDmCommand = normalized.channel.startsWith("D");
+    const scope = isDmCommand
+      ? DM_SCOPE
+      : (threadTs ?? normalized.channel);
     const conversationKey = conversationKeyOf({
       channelId: normalized.channel,
       scope,

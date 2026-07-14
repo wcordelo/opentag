@@ -275,6 +275,43 @@ describe("CloudflareSlackAdapter", () => {
     }
   });
 
+  it("handleCommandBody DM slash commands use the DM scope (matches pre-admission)", async () => {
+    // preAdmissionIdentityForCommand derives D…::dm; the adapter MUST agree
+    // or the turn lifecycle throws pre_admitted_turn_identity_mismatch and
+    // every DM slash command fails.
+    const restoreFetch = mockSlackApi();
+    try {
+      const adapter = new CloudflareSlackAdapter({ botToken: "xoxb-test", unsafeAllowUnfencedTestOnly: true });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const result = await adapter.handleCommandBody({
+        command: "/agent",
+        text: "hello",
+        channel_id: "D9",
+        user_id: "U9",
+        trigger_id: "trigDm",
+        team_id: "T9",
+      });
+      expect(result.handled).toBe(true);
+      const cmd = sink.commands[0] as { conversationKey: string };
+      expect(cmd.conversationKey).toBe("D9::dm");
+      const { preAdmissionIdentityForCommand } = await import(
+        "../src/slack/pre-admit-turn.js"
+      );
+      expect(
+        preAdmissionIdentityForCommand({
+          command: "/agent",
+          channel_id: "D9",
+          user_id: "U9",
+          trigger_id: "trigDm",
+          team_id: "T9",
+        })?.conversationKey,
+      ).toBe(cmd.conversationKey);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("rejects slash commands without Slack's stable trigger identity", async () => {
     const adapter = new CloudflareSlackAdapter({
       unsafeAllowUnfencedTestOnly: true,

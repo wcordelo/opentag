@@ -1,16 +1,19 @@
 # OpenTag — setup & configuration
 
-> **Start here for product overview:** [README.md](./README.md) · [PRODUCT.md](./PRODUCT.md) · [edge/README.md](./edge/README.md).  
-> Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.  
+> **Start here:** [README.md](./README.md) · [PRODUCT.md](./PRODUCT.md) ·
+> [ARCHITECTURE.md](./ARCHITECTURE.md) · [docs/operations.md](./docs/operations.md).
+> Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.
 > Locked decisions: [DECISIONS.md](./DECISIONS.md).
 
 ## How it fits together
 
-```
-Slack Events API ──▶  edge/ bot Worker (createBot + DO StateStore)
-                              │
-                              ├── AGENT_RUNTIME service binding ──▶  opentag-agent (CF Container)
-                              └── RESEARCH_TASKS ──▶  research Worker (optional)
+```mermaid
+flowchart LR
+    Slack["Slack Events API"] --> Bot["opentag-bot<br/>verify, pre-admit, lifecycle"]
+    Bot <--> State["BOT_STATE + SESSION_EVENTS"]
+    Bot --> Agent["AGENT_RUNTIME<br/>opentag-agent"]
+    Bot -. opt-in .-> Harness["HARNESS<br/>opentag-harness"]
+    Bot -. optional .-> Research["RESEARCH_TASKS"]
 ```
 
 The bot must call the agent via the **`AGENT_RUNTIME` service binding** (same-zone
@@ -105,6 +108,11 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `Berendo`) |
 | `NOTION_*` | agent secrets / root `.env` | Optional Notion MCP sidecar |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |
+| `HARNESS` | `wrangler.bot.toml` service binding | Optional Claude Code Worker |
+| `HARNESS_AUTH_TOKEN` | bot + harness secrets | Exact service authentication |
+| `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | harness secrets | Claude Code provider credential, injected at egress |
+| `GITHUB_TOKEN` | harness secret | Repo read and approved write operations, injected at egress |
+| `HARNESS_ALLOWED_REPO_HOSTS` / `HARNESS_ALLOWED_REPO_ORGS` | harness vars | Canonical repository allowlists |
 
 See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 
@@ -143,15 +151,18 @@ See [docs/research-actors.md](./docs/research-actors.md).
 
 ```bash
 cd edge && npm test && npm run test:e2e && npm run typecheck
-pnpm test   # root lib/research unit tests
+cd .. && pnpm check-types && pnpm test
+cd edge/workers/sandbox && npm run typecheck
 ```
 
-HITL / ticket-field units: `edge/test/durable-choice.test.ts`,
-`edge/test/thread-memory.test.ts`.
+The edge suite covers durable choice, active turns, render obligations, exact
+Stop, identity parity, concurrent/duplicate admission, harness routing/server/
+egress, remote-git approval, coding postconditions, and research cancellation.
 
 ## Doc index
 
 See [docs/README.md](./docs/README.md).
+
 ## Claude harness zero-trust egress
 
 The optional `edge/workers/sandbox` Claude Code harness uses Cloudflare
@@ -168,3 +179,26 @@ per-turn HITL scope for the exact repository and `opentag/session-*` branch.
 Package/source mirrors are GET/HEAD-only. The runtime entrypoint installs
 Cloudflare's ephemeral `/etc/cloudflare/certs/cloudflare-containers-ca.crt`
 into Ubuntu's trust store and exposes it to Node via `NODE_EXTRA_CA_CERTS`.
+
+Build for the deployment architecture (important on Apple Silicon):
+
+```bash
+docker build --platform linux/amd64 \
+  -f containers/harness/Dockerfile \
+  -t opentag-harness:local .
+```
+
+Enable remote git only after all of the following are configured:
+
+1. Set a non-empty organization allowlist in
+   `edge/workers/sandbox/wrangler.toml` or deployment configuration.
+2. Put `HARNESS_AUTH_TOKEN`, the Anthropic credential, and `GITHUB_TOKEN` on
+   the harness Worker.
+3. Deploy from `edge/workers/sandbox` with `npm run deploy`.
+4. Add the `HARNESS` service binding to `edge/wrangler.bot.toml` and the
+   matching `HARNESS_AUTH_TOKEN` to the bot.
+5. Deploy the bot explicitly and test read-only, Stop, commit-only, and a
+   separately approved push/PR turn.
+
+Do not treat a successful package typecheck or image build as authorization to
+deploy. The harness remains opt-in until the binding and policies are reviewed.

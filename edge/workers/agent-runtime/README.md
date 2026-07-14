@@ -10,6 +10,11 @@ Requires **Workers Paid** (Cloudflare Containers).
 The bot reaches this Worker via the **`AGENT_RUNTIME` service binding** (not
 same-zone `workers.dev` fetch — that returns Cloudflare 1042).
 
+This is the default conversational runtime. Repository coding is a separate,
+opt-in `opentag-harness` package documented in
+[docs/operations.md](../../../docs/operations.md); coding intent does not
+silently fall back here when that harness is selected.
+
 ## Deploy
 
 ```bash

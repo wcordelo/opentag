@@ -1,5 +1,26 @@
 # Implementation Notes
 
+## Current consolidated status (2026-07-13)
+
+Phases A1–A5 are implemented. The optional harness is code-complete and
+test-covered; deployment and the production bot binding remain explicitly
+gated. The chronological entries below are point-in-time records, so early
+“known gaps” may be superseded by later exact-execution work.
+
+The current lifecycle includes stable `ot1e_`/`ot1m_` wire IDs, pre-admission,
+per-thread active/effect/render fences, SessionEventDO admission and replay,
+never-silent obligations, durable Stop continuation, exact research quiescence,
+Worker-enforced harness egress, remote-git HITL, process-group interruption,
+and commit/PR postconditions. DMs use `DM_SCOPE`; channel mentions use their
+root timestamp; top-level slash commands use channel scope. Duplicate
+redeliveries stay silent, while distinct concurrent asks receive one durable-
+deduped busy note.
+
+Current references: [ARCHITECTURE.md](./ARCHITECTURE.md) ·
+[docs/centaur-port.md](./docs/centaur-port.md) ·
+[docs/extending.md](./docs/extending.md) ·
+[docs/operations.md](./docs/operations.md)
+
 ## Phase A5 — Claude Code harness container, container-side (2026-07-12)
 
 ### Status

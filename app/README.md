@@ -8,4 +8,7 @@ cd edge && npm run dev
 pnpm runtime
 ```
 
-See [README.md](../README.md) and [PRODUCT.md](../PRODUCT.md).
+This directory is not Slack ingress and does not own lifecycle state.
+
+See [README.md](../README.md), [PRODUCT.md](../PRODUCT.md), and
+[ARCHITECTURE.md](../ARCHITECTURE.md).

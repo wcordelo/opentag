@@ -1,5 +1,11 @@
 # OpenTag 2.0 — Centaur UX Port: SPEC
 
+> **Historical implementation specification.** A1–A5 are implemented and later
+> reliability/security review strengthened several designs. Current truth is
+> [ARCHITECTURE.md](./ARCHITECTURE.md), locked choices are
+> [DECISIONS.md](./DECISIONS.md), and the realized Centaur comparison is
+> [docs/centaur-port.md](./docs/centaur-port.md).
+
 **Date:** 2026-07-12  
 **Decision:** Port centaur's chatbot UX into opentag (Option A). Do not move centaur off K8s (Option B).  
 **Goal:** Transform opentag's rudimentary single-buffered bot into a polished, resilient Slack AI assistant by pulling the mature UX patterns out of centaur's `slackbotv2/` service and `packages/rendering/` and adapting them to run on Cloudflare Workers + Durable Objects.  

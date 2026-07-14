@@ -1,8 +1,10 @@
 # Agent Instructions
 
 <!--
-  Adapted from centaur/services/sandbox/SYSTEM_PROMPT.md per SPEC.md §2.7 and
-  GOAL.md Phase A5. Sections marked "(verbatim)" are copied exactly from the
+  Adapted from centaur/services/sandbox/SYSTEM_PROMPT.md. Current enforcement
+  is documented in ARCHITECTURE.md and docs/centaur-port.md; this prompt is
+  guidance, never the credential/egress boundary. Sections marked "(verbatim)"
+  are copied exactly from the
   centaur source. Sections marked "(adapted)" have opentag-specific rewrites
   (K8s refs -> CF Container refs, "centaur" -> "OpenTag", tool CLI examples
   removed since opentag has no tool CLIs wired up yet). Everything else in

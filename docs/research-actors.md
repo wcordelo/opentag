@@ -6,6 +6,11 @@ Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 > Product north star: [`PRODUCT.md`](../PRODUCT.md). Slack ingress lives on the
 > bot Worker (`edge/src/worker.ts`); this Worker exposes internal `/research`.
 
+Current architecture and Stop sequencing: [ARCHITECTURE.md](../ARCHITECTURE.md).
+An exact cancel is complete only when the task reports both `cancelled: true`
+and `quiescent: true`; queued actor, outbox, delivery, and alarm work must then
+remain suppressed.
+
 ## Overview
 
 - **Shared core** (`lib/research/`) — actor logic, fibers, OCC, outbox, delivery

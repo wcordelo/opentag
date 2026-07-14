@@ -1,5 +1,11 @@
 # Architecture Analysis: Centaur UX → OpenTag, or Centaur Infra → Cloudflare?
 
+> **Historical decision record (2026-07-12).** Option A was selected and A1–A5
+> are implemented. Current topology and state flows are in
+> [ARCHITECTURE.md](./ARCHITECTURE.md); the final port map is
+> [docs/centaur-port.md](./docs/centaur-port.md). Gap statements below describe
+> the pre-implementation baseline, not current OpenTag status.
+
 **Question:** (A) recreate centaur's chatbot UX/harness capabilities inside opentag using Cloudflare-native primitives, or (B) rebuild centaur's Kubernetes infrastructure on Cloudflare?
 
 **Date:** 2026-07-12. Based on reading both repos at their current state (opentag `edge/` + `lib/`, centaur `services/`, `crates/`, `contrib/chart/`, `harness/`).

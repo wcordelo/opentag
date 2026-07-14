@@ -25,6 +25,7 @@ import {
 } from "./active-turn-registry.js";
 import type { CloudflareSlackAdapter } from "./cloudflare-slack-adapter.js";
 import { markThreadNextRenderFinal } from "./cloudflare-slack-adapter.js";
+import { createSlackWebClient } from "./web-api.js";
 import { firstSlackTs, slackObligationThreadKey } from "./obligation-thread-key.js";
 import { bindTurnExecutionContext } from "./turn-execution-context.js";
 
@@ -57,19 +58,47 @@ function cleanedSessionInputLine(
   return sessionInputLine(cleanedParts);
 }
 
+/**
+ * Best-effort "still busy" note for a GENUINE concurrent second ask (a
+ * distinct user message while a turn runs) — never-silent applies to
+ * rejections too. Duplicates stay silent: a Slack redelivery is a message
+ * the user only sent once, and acknowledging it would be noise.
+ *
+ * Posts via the raw web client, NOT thread.post: the rejection sites run
+ * either before any execution fence is bound (adapter.post throws
+ * exact_execution_fence_required) or under a fence the LIVE turn owns
+ * (render suppressed) — the fence machinery cannot deliver feedback for a
+ * turn it rejected. Deduped per thread so rapid-fire messages get at most
+ * one note a minute.
+ */
 async function postTurnRejectedFeedback(
-  thread: AgentThread,
-  reason: "duplicate" | "concurrent",
+  env: Env,
+  stateStore: ReturnType<typeof createBotStoreAdapter>,
+  args: {
+    reason: "duplicate" | "concurrent";
+    channelId: string;
+    threadTs?: string;
+    threadKey: string;
+  },
 ): Promise<void> {
+  if (args.reason !== "concurrent") return;
+  if (!env.SLACK_BOT_TOKEN) return;
   try {
-    markThreadNextRenderFinal(thread);
-    await thread.post(
-      reason === "duplicate"
-        ? "_This request was already received and is being handled._"
-        : "⚠️ Another turn is already running in this thread. Send *Stop* to cancel it, then retry.",
+    const seen = await stateStore.dedup.seen(
+      `busy-note:${args.threadKey}`,
+      60_000,
     );
-  } catch {
-    // Leave an outstanding obligation for alarm recovery when no card landed.
+    if (seen) return;
+    await createSlackWebClient(env.SLACK_BOT_TOKEN).postMessage({
+      channel: args.channelId,
+      ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
+      text: "⚠️ Another turn is already running in this thread. Send *Stop* to cancel it, then retry.",
+    });
+  } catch (err) {
+    console.warn(
+      "[turn] rejection feedback failed",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 
@@ -229,10 +258,12 @@ export async function runSlackTurnLifecycle(
   } else {
     const registration = await registerActiveTurn(stateStore, activeTurn);
     if (!registration.accepted) {
-      await postTurnRejectedFeedback(
-        thread,
-        registration.duplicate ? "duplicate" : "concurrent",
-      );
+      await postTurnRejectedFeedback(env, stateStore, {
+        reason: registration.duplicate ? "duplicate" : "concurrent",
+        channelId,
+        threadTs: statusThreadTs,
+        threadKey: obligationThreadKey,
+      });
       logMetric(
         registration.duplicate ? "turn_duplicate" : "turn_concurrent_rejected",
         { threadKey: obligationThreadKey, executionId },
@@ -315,7 +346,12 @@ export async function runSlackTurnLifecycle(
       if (sessionAdmission === "cancelled") {
         await discardInterruptedActiveTurnRedelivery(stateStore, activeTurn);
       } else {
-        await postTurnRejectedFeedback(thread, "concurrent");
+        await postTurnRejectedFeedback(env, stateStore, {
+          reason: "concurrent",
+          channelId,
+          threadTs: statusThreadTs,
+          threadKey: obligationThreadKey,
+        });
       }
       logMetric(
         sessionAdmission === "cancelled"
@@ -330,7 +366,8 @@ export async function runSlackTurnLifecycle(
         threadKey: activeTurn.threadKey,
         executionId: activeTurn.executionId,
       });
-      await postTurnRejectedFeedback(thread, "duplicate");
+      // Duplicate admission = redelivery of the original message; deliberate
+      // silence (postTurnRejectedFeedback no-ops on "duplicate").
       logMetric("turn_duplicate", { threadKey: obligationThreadKey, executionId });
       return;
     }
@@ -388,7 +425,12 @@ export async function runSlackTurnLifecycle(
         threadKey: activeTurn.threadKey,
         executionId: activeTurn.executionId,
       });
-      await postTurnRejectedFeedback(thread, outcome.reason);
+      await postTurnRejectedFeedback(env, stateStore, {
+        reason: outcome.reason === "duplicate" ? "duplicate" : "concurrent",
+        channelId,
+        threadTs: statusThreadTs,
+        threadKey: obligationThreadKey,
+      });
       logMetric(
         outcome.reason === "duplicate"
           ? "turn_duplicate"

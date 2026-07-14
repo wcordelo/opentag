@@ -385,13 +385,14 @@ export function hasSuccessfulTerminal(
   return false;
 }
 
-/** `kind === 'output'` events, concatenated in order, from a `SessionEventDO.replay()` result. */
+/** `kind === 'output'` events for one execution, concatenated in order. */
 export function reconstructMarkdown(
-  events: Array<{ kind: string; payload: unknown }>,
+  events: Array<{ executionId: string; kind: string; payload: unknown }>,
+  executionId: string,
 ): string {
   const parts: string[] = [];
   for (const e of events) {
-    if (e.kind !== "output") continue;
+    if (e.executionId !== executionId || e.kind !== "output") continue;
     const p = e.payload;
     if (typeof p === "string") {
       parts.push(p);
@@ -1088,7 +1089,7 @@ export class ConversationStateDO extends DurableObject {
       );
     }
     const successfulTerminal = hasSuccessfulTerminal(events, ob.executionId);
-    const content = reconstructMarkdown(events);
+    const content = reconstructMarkdown(events, ob.executionId);
     if (content) {
       await this.postFallback(
         ob,

@@ -13,6 +13,7 @@ import {
 } from "../hitl/remote-git-approval.js";
 import { copyRequestContext, slackTurnIdentity } from "../request-context.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
+import { extractMessageOverrides } from "./overrides.js";
 import { resolveThreadOverrides } from "../store/thread-overrides.js";
 import { isRepositoryCodingIntent } from "../coding-intent.js";
 import {
@@ -41,6 +42,35 @@ function sessionInputLine(prompt: string | AgentContentPart[]): string {
     .join(" ")
     .trim();
   return text || "[non-text prompt]";
+}
+
+function cleanedSessionInputLine(
+  prompt: string | AgentContentPart[],
+  cleanedText: string,
+): string {
+  if (typeof prompt === "string") return cleanedText || "[non-text prompt]";
+  const cleanedParts = prompt.map((part) =>
+    part.type === "text"
+      ? { ...part, text: extractMessageOverrides(part.text).cleanedText }
+      : part,
+  );
+  return sessionInputLine(cleanedParts);
+}
+
+async function postTurnRejectedFeedback(
+  thread: AgentThread,
+  reason: "duplicate" | "concurrent",
+): Promise<void> {
+  try {
+    markThreadNextRenderFinal(thread);
+    await thread.post(
+      reason === "duplicate"
+        ? "_This request was already received and is being handled._"
+        : "⚠️ Another turn is already running in this thread. Send *Stop* to cancel it, then retry.",
+    );
+  } catch {
+    // Leave an outstanding obligation for alarm recovery when no card landed.
+  }
 }
 
 async function admitSessionExecution(
@@ -186,6 +216,10 @@ export async function runSlackTurnLifecycle(
       snapshot.status !== "pending" ||
       snapshot.renderToken
     ) {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
       logMetric("turn_interrupted_pre_admission", {
         threadKey: obligationThreadKey,
         executionId,
@@ -195,6 +229,10 @@ export async function runSlackTurnLifecycle(
   } else {
     const registration = await registerActiveTurn(stateStore, activeTurn);
     if (!registration.accepted) {
+      await postTurnRejectedFeedback(
+        thread,
+        registration.duplicate ? "duplicate" : "concurrent",
+      );
       logMetric(
         registration.duplicate ? "turn_duplicate" : "turn_concurrent_rejected",
         { threadKey: obligationThreadKey, executionId },
@@ -224,6 +262,10 @@ export async function runSlackTurnLifecycle(
       approvalText,
     );
     if (!(await isExactTurnPending(stateStore, activeTurn))) {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
       logMetric("turn_interrupted_pre_execution", {
         threadKey: obligationThreadKey,
         executionId,
@@ -263,7 +305,7 @@ export async function runSlackTurnLifecycle(
       threadKey: obligationThreadKey,
       executionId,
       forwardedMessageId,
-      inputLine: sessionInputLine(prompt),
+      inputLine: cleanedSessionInputLine(prompt, approvalOverrides.cleanedText),
     });
     if (sessionAdmission === "cancelled" || sessionAdmission === "rejected") {
       await stateStore.obligation.clear({
@@ -272,6 +314,8 @@ export async function runSlackTurnLifecycle(
       });
       if (sessionAdmission === "cancelled") {
         await discardInterruptedActiveTurnRedelivery(stateStore, activeTurn);
+      } else {
+        await postTurnRejectedFeedback(thread, "concurrent");
       }
       logMetric(
         sessionAdmission === "cancelled"
@@ -286,6 +330,7 @@ export async function runSlackTurnLifecycle(
         threadKey: activeTurn.threadKey,
         executionId: activeTurn.executionId,
       });
+      await postTurnRejectedFeedback(thread, "duplicate");
       logMetric("turn_duplicate", { threadKey: obligationThreadKey, executionId });
       return;
     }
@@ -317,6 +362,10 @@ export async function runSlackTurnLifecycle(
       : { remoteGitApproved: false, createPullRequest: false };
     await refreshActiveTurn(stateStore, activeTurn);
     if (!(await isExactTurnPending(stateStore, activeTurn))) {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
       logMetric("turn_interrupted_pre_execution", {
         threadKey: obligationThreadKey,
         executionId,
@@ -335,6 +384,11 @@ export async function runSlackTurnLifecycle(
         executionId,
       });
     } else if (outcome.status === "rejected") {
+      await stateStore.obligation.clear({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
+      await postTurnRejectedFeedback(thread, outcome.reason);
       logMetric(
         outcome.reason === "duplicate"
           ? "turn_duplicate"

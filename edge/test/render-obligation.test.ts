@@ -185,19 +185,35 @@ describe("RenderObligationEngine", () => {
 
 describe("reconstructMarkdown", () => {
   it("concatenates 'output' events with string or {text} payloads, ignoring other kinds", () => {
-    const text = reconstructMarkdown([
-      { kind: "input", payload: "ignored" },
-      { kind: "output", payload: "Hello " },
-      { kind: "output", payload: { text: "world" } },
-      { kind: "error", payload: { text: "ignored too" } },
-      { kind: "output", payload: { markdown: "!" } },
-    ]);
+    const text = reconstructMarkdown(
+      [
+        { executionId: "exec-1", kind: "input", payload: "ignored" },
+        { executionId: "exec-1", kind: "output", payload: "Hello " },
+        { executionId: "exec-1", kind: "output", payload: { text: "world" } },
+        { executionId: "exec-1", kind: "error", payload: { text: "ignored too" } },
+        { executionId: "exec-1", kind: "output", payload: { markdown: "!" } },
+      ],
+      "exec-1",
+    );
     expect(text).toBe("Hello world!");
   });
 
+  it("ignores output events from other executions", () => {
+    const text = reconstructMarkdown(
+      [
+        { executionId: "exec-old", kind: "output", payload: "stale " },
+        { executionId: "exec-new", kind: "output", payload: "fresh" },
+      ],
+      "exec-new",
+    );
+    expect(text).toBe("fresh");
+  });
+
   it("returns an empty string when there is nothing to reconstruct", () => {
-    expect(reconstructMarkdown([])).toBe("");
-    expect(reconstructMarkdown([{ kind: "input", payload: "x" }])).toBe("");
+    expect(reconstructMarkdown([], "exec-1")).toBe("");
+    expect(
+      reconstructMarkdown([{ executionId: "exec-1", kind: "input", payload: "x" }], "exec-1"),
+    ).toBe("");
   });
 });
 

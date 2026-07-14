@@ -579,8 +579,9 @@ describe("production Slack remote-git ingress", () => {
 
     expect(logs.some((line) => line.includes('"metric":"turn_duplicate"'))).toBe(true);
     expect(logs.some((line) => line.includes('"metric":"turn_completed"'))).toBe(false);
-    expect(thread.post).not.toHaveBeenCalled();
-    expect(store.obligation.clear).not.toHaveBeenCalled();
+    expect(thread.post).toHaveBeenCalledOnce();
+    expect(String(thread.post.mock.calls[0]![0])).toContain("already received");
+    expect(store.obligation.clear).toHaveBeenCalled();
     logSpy.mockRestore();
   });
 

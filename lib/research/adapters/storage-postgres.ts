@@ -169,7 +169,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       id: string;
       session_id: string;
       step_index: number;
-      status: string;
+      status: ResearchLogEntry["status"];
       tool_name: string | null;
       request: unknown;
       response: unknown;

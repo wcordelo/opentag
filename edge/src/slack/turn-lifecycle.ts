@@ -281,6 +281,20 @@ export async function runSlackTurnLifecycle(
       );
       return;
     }
+    if (sessionAdmission === "duplicate") {
+      await stateStore.activeTurn.abandonPristine({
+        threadKey: activeTurn.threadKey,
+        executionId: activeTurn.executionId,
+      });
+      logMetric("turn_duplicate", { threadKey: obligationThreadKey, executionId });
+      return;
+    }
+    await writeRenderObligation(env, stateStore, {
+      threadKey: obligationThreadKey,
+      executionId,
+      channel: channelId,
+      threadTs: statusThreadTs,
+    });
     if (statusThreadTs) {
       await adapter.setStatus({
         channel: channelId,

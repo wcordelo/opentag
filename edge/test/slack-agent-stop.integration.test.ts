@@ -782,7 +782,9 @@ describe("real /agent ingress and Stop lifecycle", () => {
       ...(threadTs ? { threadTs } : {}),
       attempt: 0,
     });
-    expect(botState.obligationSetCalls).toHaveLength(1);
+    expect(botState.obligationSetCalls).toHaveLength(2);
+    expect(botState.obligationSetCalls[0]!.afterEventId).toBe(0);
+    expect(botState.obligationSetCalls[1]!.afterEventId).toBeGreaterThan(0);
 
     const stopBody = JSON.stringify({
       type: "event_callback",

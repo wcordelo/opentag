@@ -345,9 +345,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     }
 
     const isDm = normalized.source === "direct_message";
-    const scope = isDm
-      ? DM_SCOPE
-      : (normalized.threadTs ?? normalized.ts ?? normalized.channel);
+    const rawThreadTs =
+      typeof (body as { event?: { thread_ts?: unknown } }).event?.thread_ts ===
+        "string"
+        ? (body as { event: { thread_ts: string } }).event.thread_ts.trim()
+        : "";
+    const scope = isDm ? DM_SCOPE : (rawThreadTs || normalized.channel);
     const conversationKey = conversationKeyOf({
       channelId: normalized.channel,
       scope,

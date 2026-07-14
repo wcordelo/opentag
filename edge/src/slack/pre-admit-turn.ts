@@ -66,7 +66,7 @@ export function preAdmissionIdentityForEvent(
   const eventId = envelopeId || (channelId && inboundTs ? `${channelId}:${inboundTs}` : "");
   if (!eventId || !channelId || !requesterId || !inboundTs) return undefined;
   const threadTs = rawThreadTs || inboundTs;
-  const scope = isDmMessage ? DM_SCOPE : threadTs;
+  const scope = isDmMessage ? DM_SCOPE : (rawThreadTs || channelId);
   return {
     teamId,
     channelId,

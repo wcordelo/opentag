@@ -582,6 +582,10 @@ export async function runSlackTurnLifecycle(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const recovery =
+      err instanceof Error && err.name === "AuthoritativeHarnessError"
+        ? "Check HARNESS / the Claude Code harness Worker — retry in a few seconds."
+        : "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.";
     logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
     console.error("[bot] Slack turn failed", msg);
     if (
@@ -597,7 +601,7 @@ export async function runSlackTurnLifecycle(
       markThreadNextRenderFinal(thread);
       await thread.post(
         `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
-          "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.",
+          recovery,
       );
     } catch {
       // Leave an outstanding obligation for alarm recovery when no error card landed.

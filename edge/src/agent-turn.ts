@@ -150,6 +150,21 @@ function timezoneOf(requester?: Requester): string | undefined {
   return ext.timezone?.trim() || undefined;
 }
 
+function attachmentDedupeKeys(attachment: {
+  id?: string;
+  kind?: string;
+  stageKey?: string;
+  sha256?: string;
+}): string[] {
+  const keys: string[] = [];
+  if (attachment.id) keys.push(`id:${attachment.id}`);
+  if (attachment.kind === "staged" && attachment.stageKey) {
+    keys.push(`stage:${attachment.stageKey}`);
+  }
+  if (attachment.sha256) keys.push(`sha256:${attachment.sha256}`);
+  return keys;
+}
+
 type ThreadMessageLite = {
   text?: string;
   ts?: string;
@@ -847,6 +862,12 @@ export async function runBundledAgentTurn(
     .filter((message) => message.ts !== requestContext.inbound?.ts)
     .flatMap((message) => message.attachments ?? [])
     .slice(-5);
+  const seenAttachmentKeys = new Set<string>();
+  for (const file of priorAttachments) {
+    for (const key of attachmentDedupeKeys({ id: file.id })) {
+      seenAttachmentKeys.add(key);
+    }
+  }
   if (priorAttachments.length > 0 && env.SLACK_BOT_TOKEN) {
     const restored = await buildFileContentParts(
       priorAttachments,
@@ -900,6 +921,10 @@ export async function runBundledAgentTurn(
   // empty; structured tool results remain in `sessionHistory` text below.
   const canonicalAttachments = sessionHistory
     .flatMap((message) => message.attachments ?? [])
+    .filter((attachment) => {
+      const keys = attachmentDedupeKeys(attachment);
+      return keys.length === 0 || !keys.some((key) => seenAttachmentKeys.has(key));
+    })
     .slice(-5);
   if (canonicalAttachments.length > 0) {
     const restored = contentPartsFromCanonicalAttachments(canonicalAttachments);

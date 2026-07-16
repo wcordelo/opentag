@@ -125,6 +125,21 @@ export class WorkspaceConfigDO extends DurableObject {
           .toArray();
       }
       const row = rows[0];
+      let runtimeDefaults: WorkspaceChannelConfig["runtimeDefaults"];
+      if (row) {
+        try {
+          runtimeDefaults = normalizeChannelRuntimeDefaults({
+            harnessType: row.default_harness_type ?? undefined,
+            model: row.default_model ?? undefined,
+          });
+        } catch (error) {
+          console.warn(
+            "[workspace-config] ignoring invalid stored runtime defaults",
+            error instanceof Error ? error.message : error,
+          );
+          runtimeDefaults = undefined;
+        }
+      }
       const config: WorkspaceChannelConfig = row
         ? {
             teamId: row.team_id,
@@ -132,10 +147,7 @@ export class WorkspaceConfigDO extends DurableObject {
             systemPrompt: row.system_prompt,
             policies: JSON.parse(row.policies_json) as WorkspaceChannelConfig["policies"],
             accessBundleId: row.access_bundle_id,
-            runtimeDefaults: normalizeChannelRuntimeDefaults({
-              harnessType: row.default_harness_type ?? undefined,
-              model: row.default_model ?? undefined,
-            }),
+            runtimeDefaults,
             updatedAt: row.updated_at,
           }
         : {

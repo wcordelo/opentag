@@ -27,6 +27,7 @@ import {
   firstSlackTs,
   slackObligationThreadKey,
 } from "./slack/obligation-thread-key.js";
+import { extractMessageOverrides } from "./slack/overrides.js";
 import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
 import { runSlackTurnLifecycle } from "./slack/turn-lifecycle.js";
@@ -242,6 +243,14 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         if (!allowed.has("start_task")) {
           await postFinalShortcut(thread,
             "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
+          );
+          return;
+        }
+        const requestedOverrides = extractMessageOverrides(text);
+        if (requestedOverrides.errors.length > 0) {
+          await postFinalShortcut(
+            thread,
+            `⚠️ ${requestedOverrides.errors.join("; ")}. No preference was saved.`,
           );
           return;
         }

@@ -343,9 +343,10 @@ export async function handleStopCommand(
           : durableInterrupt.interrupted
             ? (() => { throw new Error("session_state_unavailable"); })()
             : {};
-        // A session id proves a container turn was created. In that case the
-        // authenticated exact /interrupt request must be accepted (a 200 no-op
-        // is valid for an already-terminal/no-live-process execution).
+        // sessionId persists after a prior harness turn; it does not prove the
+        // active execution is harness-only. Try the container interrupt when a
+        // session exists, then fall back to AG-UI when that path is a no-op.
+        let needsAguiInterrupt = !state.sessionId;
         if (state.sessionId) {
           const harnessInterrupt = await interruptHarnessTurn(env, {
             sessionId: state.sessionId,
@@ -355,7 +356,9 @@ export async function handleStopCommand(
           if (!harnessInterrupt.accepted) {
             throw new Error("harness_interrupt_not_accepted");
           }
-        } else if (env.AGENT_RUNTIME || env.AGENT_URL) {
+          needsAguiInterrupt = !harnessInterrupt.interrupted;
+        }
+        if (needsAguiInterrupt && (env.AGENT_RUNTIME || env.AGENT_URL)) {
           await interruptAguiTurn(env, activeTurn.executionId);
         }
       }

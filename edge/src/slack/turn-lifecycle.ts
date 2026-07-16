@@ -101,7 +101,7 @@ function cleanedSessionInputLine(
  * turn it rejected. Deduped per thread so rapid-fire messages get at most
  * one note a minute.
  */
-async function postTurnRejectedFeedback(
+export async function postTurnRejectedFeedback(
   env: Env,
   stateStore: ReturnType<typeof createBotStoreAdapter>,
   args: {
@@ -431,6 +431,7 @@ export async function runSlackTurnLifecycle(
         executionId,
         channel: channelId,
         threadTs: statusThreadTs,
+        liveClientMessageId: activeTurn.liveClientMessageId,
       });
     }
     await refreshActiveTurn(stateStore, activeTurn);
@@ -489,6 +490,7 @@ export async function runSlackTurnLifecycle(
       executionId,
       channel: channelId,
       threadTs: statusThreadTs,
+      liveClientMessageId: activeTurn.liveClientMessageId,
     });
     if (statusThreadTs) {
       try {

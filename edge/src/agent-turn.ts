@@ -277,40 +277,53 @@ function emailsFromTranscript(messages: ThreadMessageLite[]): string[] {
   return found;
 }
 
+function historySortKey(ts?: string, at?: number): number {
+  if (ts) {
+    const n = Number(ts);
+    if (Number.isFinite(n)) return n;
+  }
+  if (typeof at === "number") return at / 1000;
+  return 0;
+}
+
 function mergeHistory(
   slack: ThreadMessageLite[],
   memory: Array<{
     role: "user" | "bot";
     text: string;
     name?: string;
+    at?: number;
     attachments?: ThreadMessageLite["attachments"];
   }>,
 ): ThreadMessageLite[] {
-  if (slack.length === 0) {
-    return memory.map((m) => ({
-      text: m.text,
-      isBot: m.role === "bot",
-      user: m.name ? { name: m.name } : undefined,
-      attachments: m.attachments,
-    }));
-  }
-  // Prefer Slack when present; append any DO-only user lines not already seen.
+  type Row = ThreadMessageLite & { _sort: number };
+  const rows: Row[] = slack.map((m) => ({
+    text: m.text,
+    isBot: m.isBot,
+    ts: m.ts,
+    user: m.user,
+    attachments: m.attachments,
+    _sort: historySortKey(m.ts),
+  }));
   const seen = new Set(
-    slack.map((m) => (m.text ?? "").replace(/\s+/g, " ").trim().toLowerCase()),
+    slack
+      .map((m) => (m.text ?? "").replace(/\s+/g, " ").trim().toLowerCase())
+      .filter(Boolean),
   );
-  const out = [...slack];
   for (const m of memory) {
     const key = m.text.replace(/\s+/g, " ").trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    out.push({
+    rows.push({
       text: m.text,
       isBot: m.role === "bot",
       user: m.name ? { name: m.name } : undefined,
       attachments: m.attachments,
+      _sort: historySortKey(undefined, m.at),
     });
   }
-  return out;
+  rows.sort((a, b) => a._sort - b._sort);
+  return rows.map(({ _sort, ...rest }) => rest);
 }
 
 function embedTranscriptInPrompt(
@@ -842,7 +855,7 @@ export async function runBundledAgentTurn(
     );
     if (restored.parts.length > 0 || restored.notes.length > 0) {
       prompt = mergePromptParts(
-        typeof prompt === "string" ? prompt : promptText,
+        prompt,
         restored.parts,
         restored.notes.map((note) => `prior-thread ${note}`),
       );
@@ -892,7 +905,7 @@ export async function runBundledAgentTurn(
     const restored = contentPartsFromCanonicalAttachments(canonicalAttachments);
     if (restored.parts.length > 0 || restored.notes.length > 0) {
       prompt = mergePromptParts(
-        typeof prompt === "string" ? prompt : promptText,
+        prompt,
         restored.parts,
         restored.notes.map((note) => `canonical-session ${note}`),
       );

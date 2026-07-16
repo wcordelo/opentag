@@ -33,9 +33,10 @@ import {
   abandonPreAdmittedTurn,
   preAdmissionIdentityForCommand,
   preAdmissionIdentityForEvent,
-  preAdmitSlackTurn,
   preAdmitSlackTurnResult,
 } from "./slack/pre-admit-turn.js";
+import { postTurnRejectedFeedback } from "./slack/turn-lifecycle.js";
+import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
 import {
@@ -313,18 +314,29 @@ app.get("/debug/store", requireAdminAuth(), async (c) => {
 
 app.post("/admin/config", requireAdminAuth(), async (c) => {
   const body = (await c.req.json()) as WorkspaceChannelConfig;
-  let runtimeDefaults;
-  try {
-    runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : "invalid runtime defaults" },
-      400,
-    );
-  }
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
+  let runtimeDefaults;
+  if ("runtimeDefaults" in body) {
+    try {
+      runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
+    } catch (error) {
+      return c.json(
+        { error: error instanceof Error ? error.message : "invalid runtime defaults" },
+        400,
+      );
+    }
+  } else {
+    const existingResponse = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId: body.teamId, channelId: body.channelId }),
+    });
+    if (existingResponse.ok) {
+      const existing = await existingResponse.json() as WorkspaceChannelConfig;
+      runtimeDefaults = existing.runtimeDefaults;
+    }
+  }
   const response = await stub.fetch("https://do/putConfig", {
     method: "POST",
     body: JSON.stringify({
@@ -610,17 +622,31 @@ app.post("/slack/events", slackVerify(), async (c) => {
 
   const run = async () => {
     const identity = preAdmissionIdentityForEvent(payload, trustedConfig);
-    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
-    if (identity && !preAdmittedTurn) {
-      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
-      if (identity.actor.kind === "slack_automation") {
-        console.log(JSON.stringify({
-          metric: "trusted_rich_mention_ignored",
-          reason: "duplicate",
-        }));
+    const admission = await preAdmitSlackTurnResult(c.env, identity);
+    if (identity && admission.status !== "accepted") {
+      if (admission.status === "duplicate") {
+        console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+        if (identity.actor.kind === "slack_automation") {
+          console.log(JSON.stringify({
+            metric: "trusted_rich_mention_ignored",
+            reason: "duplicate",
+          }));
+        }
+        return;
+      }
+      if (admission.status === "concurrent") {
+        const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
+        await postTurnRejectedFeedback(c.env, stateStore, {
+          reason: "concurrent",
+          channelId: identity.channelId,
+          threadTs: identity.threadTs,
+          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+        });
+        return;
       }
       return;
     }
+    const preAdmittedTurn = admission.status === "accepted" ? admission.turn : undefined;
     if (identity?.actor.kind === "slack_automation") {
       console.log(JSON.stringify({
         metric: "trusted_rich_mention_admitted",
@@ -704,16 +730,30 @@ app.post("/slack/commands", slackVerify(), async (c) => {
   }
 
   const identity = preAdmissionIdentityForCommand(body);
-  const preAdmittedTurn = identity
-    ? await preAdmitSlackTurn(c.env, identity)
+  const admission = identity
+    ? await preAdmitSlackTurnResult(c.env, identity)
     : undefined;
 
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
   const run = async () => {
-    if (identity && !preAdmittedTurn) {
-      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+    if (identity && admission && admission.status !== "accepted") {
+      if (admission.status === "duplicate") {
+        console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+        return;
+      }
+      if (admission.status === "concurrent") {
+        const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
+        await postTurnRejectedFeedback(c.env, stateStore, {
+          reason: "concurrent",
+          channelId: identity.channelId,
+          threadTs: identity.threadTs,
+          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+        });
+        return;
+      }
       return;
     }
+    const preAdmittedTurn = admission?.status === "accepted" ? admission.turn : undefined;
     let handedOff = false;
     try {
       const { adapter } = await getOrCreateBot(c.env);
@@ -733,7 +773,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     await run();
   }
 
-  if (identity && !preAdmittedTurn) {
+  if (identity && admission && admission.status === "duplicate") {
     return c.json({
       response_type: "ephemeral",
       text: "Already handling that command.",

@@ -157,7 +157,8 @@ describe("harness Container frontend", () => {
         const paths = await materializeTurnAttachments(home, forwarded.attachments);
         const filePath = paths[0]!.replace(/ \([^)]*\)$/, "");
         const visible = new Uint8Array(await readFile(filePath));
-        expect(visible).toEqual(bytes);
+        expect(visible.byteLength).toBe(bytes.byteLength);
+        expect(Buffer.from(visible).equals(Buffer.from(bytes))).toBe(true);
         return new Response('{"kind":"done","payload":{"ok":true,"summary":"saw attachment"}}\n');
       });
       const namespace: HarnessContainerNamespace = {

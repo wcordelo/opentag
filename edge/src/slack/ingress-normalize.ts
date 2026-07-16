@@ -8,6 +8,11 @@
 // thread-ownership reads (store.has), assistant-pane state, and building the
 // reply target / egress route. Each side wraps these pure helpers with its own
 // policy + transport.
+import type { RequestActor } from "../request-context.js";
+import {
+  classifyTrustedRichTrigger,
+  type TrustedTriggerConfig,
+} from "./trusted-trigger.js";
 
 // Matches both the plain `<@U123>` form and Slack's labeled `<@U123|handle>`
 // form, so neither leaves a `|handle>` fragment behind after stripping.
@@ -80,7 +85,11 @@ export type SlackNeutralEvent =
   | {
       kind: "turn";
       /** Which Slack trigger produced this turn. */
-      source: "app_mention" | "direct_message" | "thread_reply";
+      source:
+        | "app_mention"
+        | "direct_message"
+        | "thread_reply"
+        | "trusted_rich_mention";
       channel: string;
       /** Thread anchor: present for mentions and thread replies. */
       threadTs?: string;
@@ -88,6 +97,7 @@ export type SlackNeutralEvent =
       ts?: string;
       userText: string;
       senderUserId?: string;
+      actor: RequestActor;
       eventId?: string;
       hasFiles: boolean;
       /** Raw Slack file objects when hasFiles — adapter downloads to contentParts. */
@@ -127,6 +137,7 @@ const hasFilesOn = (o: unknown): boolean =>
 export function normalizeSlackEvent(
   body: RawSlackEventBody,
   botUserId?: string,
+  trustedConfig?: TrustedTriggerConfig,
 ): SlackNeutralEvent | undefined {
   // Slash command: a flat form body, no Events API `event`.
   if (body.command) {
@@ -147,6 +158,33 @@ export function normalizeSlackEvent(
   const event = body.event;
   if (!event) return undefined;
 
+  const trusted = classifyTrustedRichTrigger(event, trustedConfig ?? {
+    actors: new Set(),
+    valid: true,
+  });
+  if (trusted) {
+    const channel = String(event.channel ?? "");
+    const ts = event.ts as string | undefined;
+    if (!channel || !ts) return undefined;
+    const hasFiles = hasFilesOn(event);
+    return {
+      kind: "turn",
+      source: "trusted_rich_mention",
+      channel,
+      threadTs: (event.thread_ts as string | undefined) ?? ts,
+      ts,
+      userText: trusted.displayText,
+      actor: trusted.actor,
+      eventId: deriveEventId(
+        body,
+        event as { client_msg_id?: string; ts?: string },
+        channel,
+      ),
+      hasFiles,
+      files: hasFiles ? (event.files as unknown[]) : undefined,
+    };
+  }
+
   if (event.type === "app_mention") {
     const channel = String(event.channel ?? "");
     const userText = stripMentions(String(event.text ?? ""));
@@ -160,6 +198,10 @@ export function normalizeSlackEvent(
       ts: event.ts as string | undefined,
       userText,
       senderUserId: event.user as string | undefined,
+      actor: {
+        kind: "slack_user",
+        userId: String(event.user ?? ""),
+      },
       eventId: deriveEventId(
         body,
         event as { client_msg_id?: string; ts?: string },
@@ -188,6 +230,7 @@ export function normalizeSlackEvent(
         // that @-mentions the bot shouldn't leak the raw `<@U…>` into userText.
         userText: stripMentions(text),
         senderUserId: event.user,
+        actor: { kind: "slack_user", userId: event.user ?? "" },
         eventId,
         hasFiles,
         files: hasFiles ? event.files : undefined,
@@ -213,6 +256,7 @@ export function normalizeSlackEvent(
       ts: event.ts,
       userText: stripMentions(text),
       senderUserId: event.user,
+      actor: { kind: "slack_user", userId: event.user ?? "" },
       eventId,
       hasFiles,
       files: hasFiles ? event.files : undefined,

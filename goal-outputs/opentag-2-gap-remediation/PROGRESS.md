@@ -2,9 +2,9 @@
 
 **Goal:** Resolve every actionable finding in `goal-outputs/opentag-2-gap-audit/gap-audit.md` at source level, with regression tests and truthful documentation, while preserving locked decisions and performing no deployment or live external mutation.
 **Started:** 2026-07-14T00:40:00-07:00
-**Last updated:** 2026-07-15T23:27:30-07:00
-**Status:** blocked
-**Subagent calls used:** 11/30
+**Last updated:** 2026-07-16T01:27:00-07:00
+**Status:** in_progress
+**Subagent calls used:** 24/30
 **Fable advisor calls used:** 0/2
 
 ## Completed tasks
@@ -16,12 +16,14 @@
 - [x] Correct H3/M5/L2 report blockers — authenticated R2 staged resolution with >8 MiB exact-byte regression, final research Retry/Dig deeper/Export cards with durable ingress tests, and truthful docs; evidence file now 11,105 bytes
 - [x] Write remediation report — output: goal-outputs/opentag-2-gap-remediation/remediation-report.md (27,807 bytes); exactly 23 finding rows and required validation/activation sections
 - [x] Correct H7 root research overflow — output: goal-outputs/opentag-2-gap-remediation/research-overflow-evidence.md (2,043 bytes); lossless 200k paging, stable per-page IDs, final action cards, root typecheck and 34/34 tests pass
+- [x] Correct C2/H3/H4/H8/M3/L2 shared-edge blockers through attempt 3 — output: goal-outputs/opentag-2-gap-remediation/shared-edge-corrective-evidence.md (6,497 bytes); focused 127/127 plus adjacent 65/65, edge and sandbox typechecks, research binding dry-run, and diff-check passed
+- [x] Revise remediation report after final corrections — output: goal-outputs/opentag-2-gap-remediation/remediation-report.md (30,948 bytes); 23 unique rows, current validation, and gated activation facts
 
 ## In progress
-- [ ] Correct six Tier 2 blockers: C2, H3, H4, H8, M3, L2
+- [ ] Attempt-5 correction for C4/H7 exact-byte paging and H3 concurrent deferred admission
 
 ## Blocked
-- Current orchestrator session is spend-frozen after the resume health probe found an unreconciled 12-vs-10 call ledger. The ledger is now reconciled to 11/30; a fresh session can resume the six shared-edge corrections.
+(none)
 
 ## Queued
 - [ ] Add deterministic audit-to-test/source coverage validation
@@ -103,6 +105,31 @@ BUDGET: approximately 16 subagent calls total (hard cap: 30). The original 10-ca
 | — | validate.py H7 hardening | (script) | ✅ | added root research paging/call-site anchors and a forbidden truncation marker; source-only mode passes, but the six remaining semantic blockers still require explicit checks after correction |
 | — | Post-reconciliation health probe | (bash) | ✅ | counter 11 matches eleven numbered rows; research evidence/report/integration files exist at 2,043/27,807/11,105 bytes; mismatch is resolved by the 2026-07-15 Handoff |
 | — | Resume budget preflight | (bash) | ✅ | 19 calls remain; 18 are available for non-validator work while the Tier 2 reserve is armed; one corrective + report revision + fresh review + one full corrective/re-review headroom cycle fit |
+| 12 | Correct C2/H3/H4/H8/M3/L2 shared-edge blockers | sonnet | ✅ | shared-edge-corrective-evidence.md 6,067 bytes; durable deferred ingress, cross-isolate rate reservations, reserved live-message reconciliation, canonical attachment replay, truthful docs; focused 130/130, edge/sandbox typechecks, diff-check pass |
+| — | Concurrent-ledger guard | (bash) | ⚠️ | another active continuation advanced the authoritative counter to 13 before logging its result; further subagent spending frozen until that row is checkpointed |
+| 13 | Validator hardening audit | sonnet | ⚠️ | interrupted without output because a separate active goal was editing overlapping source/tests; no product edits attributed to this call |
+| 14 | Concurrent shared-edge corrective audit | sonnet | ⚠️ | separate overlapping worker inspected the same source/evidence and was intentionally interrupted without a distinct output; session log proves the worker ran |
+| — | Concurrent-ledger reconciliation | (bash) | ✅ | counter corrected to 14 for this session's call 12 plus both interrupted overlapping workers 13-14; shared-edge evidence/report/research evidence files exist; spend freeze cleared |
+| — | validate.py six-blocker hardening | (script) | ✅ | added runtime-regression anchors and forbids for C2/H3/H4/H8/M3/L2; source-only mode passes all 23 findings |
+| — | Tier 1 initial rerun | (script) | ⚠️ | root 34/34 and edge typecheck passed; edge suite exposed 14 stale request-context test fixtures after concurrent actor-contract changes |
+| — | Tier 1 compatibility corrections | (script) | ✅ | added explicit quick-action/test actors plus two mechanical concurrent config typing/export fixes; focused remote-git 17/17 passes |
+| — | Full Tier 1 command cascade | (script) | ✅ | root 34/34; edge 627/627; workerd 24/24; root/edge/sandbox typechecks; hardened 23-finding validator; git diff-check pass |
+| 15 | Revise remediation report after final corrections | sonnet | ✅ | remediation-report.md 30,948 bytes; C2/H3/H4/H8/M3/L2, validation counts, activation checklist, and limitations synchronized; 23 rows / five H2s; validate.py --skip-commands passes |
+| — | Pre-review health probe | (bash) | ✅ | counter 15 matches fifteen numbered rows; remediation report/shared-edge/research evidence exist at 30,948/6,067/2,043 bytes |
+| 16 | Fresh final adversarial source/report review | sonnet | BLOCKING | 17 resolved / 6 blocking: C2 continuation IDs diverge from alarm recovery; H3/H8 prepare does not re-arm after put-before-alarm crash; H4 research egress bypasses durable scheduler/429 retry; M3 staging/event append failure loses canonical replay; L2 stale selected-harness fallback claim |
+| — | Second-failure health probe | (bash) | ✅ | counter 16 matches sixteen numbered rows; report/shared-edge/research evidence files exist; six blocker traces re-sourced from the fresh review and advisor escalation is required before attempt 3 |
+| 17 | Six-blocker diagnosis advisor | sonnet advisor substitute | ✅ | runtime exposes no selectable Fable tier; fresh diagnosis prescribed shared page identities, alarm re-arm repair, per-attempt shared research rate ownership, fail-closed staging/event persistence, and docs forbids before attempt 3 |
+| 18 | Correct six second-order Tier 2 blockers (attempt 3) | sonnet | ✅ | canonical continuation identity/body, missing-alarm repair and durable file turns, shared bot/research per-attempt rate ownership with retryable 429, fail-closed staging/session mirroring, and truthful Claude selection docs; focused 127/127 plus adjacent 65/65, typechecks, research binding dry-run, and diff-check pass |
+| — | Attempt-3 validator hardening and route regressions | script | ✅ | validator now requires applied-response-loss identity/body recovery, put-before-alarm repair plus Slack 503→200 retry boundaries, shared research 429 ownership, fail-closed staging/session mirroring, and selected-Claude no-fallback truth; focused 111/111 and source anchors 23/23 pass |
+| — | Full Tier 1 after attempt 3 | script | ✅ | root 34/34; edge 668/668 across 53 files; workerd 25/25; root/edge/sandbox typechecks; hardened 23-finding validator; git diff-check pass |
+| 19 | Revise final remediation report after attempt 3 | sonnet | ✅ | remediation-report.md 32,571 bytes / 32,539 chars; exactly 23 unique rows and five required H2s; current 34/34, 53 files 668/668, workerd 25/25, all typechecks, 23/23 anchors, diff-check, and research binding dry-run recorded; skip-command validator passes |
+| 20 | Fresh final Tier 2 review after attempt 3 | sonnet | BLOCKING | 19 resolved / 4 blocking: C2 decorated AG-UI continuation body diverges from alarm recovery; H3 large staging fails open and late-file singleton correlation collides; M3 canonical replay failure continues execution; L2 canonical docs still claim best-effort mirroring |
+| 21 | Correct C2/H3/M3/L2 fresh-review blockers (attempt 4) | sonnet | ✅ | decoration-free canonical AG-UI/recovery pages plus separate stable decoration effect; fail-closed staging at all sizes; append-only exact-thread/ambiguity-safe late-file correlation with consumed markers; fail-closed replay; strict docs; focused 115/115, edge/sandbox typechecks, diff-check pass; evidence 10,535 bytes |
+| — | Attempt-4 validator hardening | script | ✅ | requires decorated AG-UI/recovery body equality, all-size staging retry, multi-pending collision/ambiguity regressions, fail-closed replay in core and production lifecycle, and forbids stale best-effort mirroring docs; source anchors 23/23 pass |
+| — | Full Tier 1 after attempt 4 | script | ✅ | root 34/34; edge 672/672 across 53 files; workerd 25/25; root/edge/sandbox typechecks; hardened 23-finding validator; git diff-check pass |
+| 22 | Revise remediation report after attempt 4 | sonnet | ✅ | remediation-report.md 32,875 bytes / 32,843 chars; 23 unique rows and five required H2s; attempt-4 C2/H3/M3/L2 semantics, focused 115/115, edge 672/672, strict docs, and gated activation synchronized; skip-command validator and diff-check pass |
+| 23 | Fresh independent Tier 2 closure review after attempt 4 | sonnet | BLOCKING | 20 resolved / 3 blocking: C4/H7 splitIntoSegments deletes newline bytes and fallback joining is not exact; H3 deferred file/late-file work collapses exact duplicate and distinct concurrency, allowing permanent drop/consume |
+| — | Attempt-5 corrective spawn | sonnet | — | counter advanced before dispatch; preserve exact bytes across block/page splits and expose duplicate-vs-concurrent pre-admission so only duplicates complete deferred work |
 
 ## Handoff — 2026-07-14T01:25:00-07:00
 **Why:** Milestone health probe ran before the just-returned delivery result was logged and found 2 numeric rows versus counter 3; further subagent spending is frozen for this session under the Goal protocol.

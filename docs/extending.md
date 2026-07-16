@@ -202,8 +202,9 @@ Parsing lives in `edge/src/slack/overrides.ts`; persistence lives in
 
 - Add aliases only for runtimes that actually exist.
 - Strip flags before titles, memory, transcript construction, and model input.
-- Keep reasoning per-turn unless there is an explicit product decision to make
-  it sticky.
+- Do not advertise reasoning selection until a deployed runtime accepts and
+  enforces it. Today every `-rsn` value is stripped, visibly rejected, and
+  never persisted.
 - A harness change may require a session restart and transcript re-feed.
 - A recorded preference must not be presented as active when the target
   runtime cannot honor it.
@@ -213,6 +214,42 @@ Parsing lives in `edge/src/slack/overrides.ts`; persistence lives in
 To add a second real harness, introduce a typed runtime adapter rather than
 branching throughout `agent-turn.ts`. Each adapter must implement exact
 execute/interrupt/event-terminal semantics.
+
+Channel defaults are stored in `WorkspaceConfigDO` as `runtimeDefaults` and
+resolved independently per field:
+
+1. explicit message flag;
+2. sticky thread choice;
+3. channel default;
+4. deployment/runtime default.
+
+Using a channel default must never write `thread:overrides:*`. Configuration
+uses `/config runtime show`, `/config runtime set --harness claude-code
+[--model <id-or-alias>]`, and `/config runtime clear`. Only exact
+`runtime show|set|clear` prefixes enter this parser; all other `/config` text
+continues to mean a system prompt.
+
+## Add permission-aware behavior
+
+`PermissionSnapshotV1` is a bounded, redacted explanation of the exact turn,
+not an authorization input. Authorization remains in access-bundle resolution,
+active-turn/effect fences, the automation ceiling, harness approval, and egress
+policy. `show_permissions` is a reserved read-only meta tool, authenticated
+operators can inspect `GET /admin/permissions?teamId=...&channelId=...`, and a
+Claude harness turn can run `opentag permissions`.
+
+Never add secret values, raw environment values, request headers, URL
+credentials/query/fragment, or raw Slack payloads to the snapshot. New tools
+are denied to automation until explicitly added to `AUTOMATION_SAFE_TOOLS`.
+
+## Add a trusted automation trigger
+
+Trusted rich-payload Slack triggers are a narrow fallback for approved bot/app
+alerts whose exact OpenTag mention exists only in Block Kit or attachments.
+They use a `slack_automation` actor, never a human compatibility identity.
+Automation cannot Stop, write memory, start research, react, approve remote git,
+create a PR, or emit `Prompted by:` attribution. Preserve pure classification
+before durable pre-admission and never add a Slack lookup ahead of it.
 
 ## Add a harness event
 

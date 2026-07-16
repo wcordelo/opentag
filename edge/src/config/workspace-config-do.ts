@@ -7,6 +7,7 @@ import type { SqlExecutor } from "../store/sql.js";
 import {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
+  normalizeChannelRuntimeDefaults,
   type AccessBundle,
   type WorkspaceChannelConfig,
 } from "./access-bundle.js";
@@ -14,6 +15,7 @@ import {
 export {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
+  normalizeChannelRuntimeDefaults,
   resolveAllowedTools,
   type AccessBundle,
   type WorkspaceChannelConfig,
@@ -48,6 +50,18 @@ export class WorkspaceConfigDO extends DurableObject {
     if (this.migrated) return;
     const sql = this.sql();
     for (const stmt of DDL) sql.exec(stmt);
+    const columns = new Set(
+      sql
+        .exec<{ name: string }>("PRAGMA table_info(channel_config)")
+        .toArray()
+        .map((row) => row.name),
+    );
+    if (!columns.has("default_harness_type")) {
+      sql.exec("ALTER TABLE channel_config ADD COLUMN default_harness_type TEXT");
+    }
+    if (!columns.has("default_model")) {
+      sql.exec("ALTER TABLE channel_config ADD COLUMN default_model TEXT");
+    }
     const existing = sql
       .exec<{ id: string }>(
         "SELECT id FROM access_bundles WHERE id = ?",
@@ -84,6 +98,8 @@ export class WorkspaceConfigDO extends DurableObject {
           system_prompt: string;
           policies_json: string;
           access_bundle_id: string;
+          default_harness_type: string | null;
+          default_model: string | null;
           updated_at: string;
         }>(
           `SELECT * FROM channel_config WHERE team_id = ? AND channel_id = ?`,
@@ -98,8 +114,10 @@ export class WorkspaceConfigDO extends DurableObject {
             channel_id: string;
             system_prompt: string;
             policies_json: string;
-            access_bundle_id: string;
-            updated_at: string;
+              access_bundle_id: string;
+              default_harness_type: string | null;
+              default_model: string | null;
+              updated_at: string;
           }>(
             `SELECT * FROM channel_config WHERE team_id = ? AND channel_id = ''`,
             body.teamId,
@@ -114,6 +132,10 @@ export class WorkspaceConfigDO extends DurableObject {
             systemPrompt: row.system_prompt,
             policies: JSON.parse(row.policies_json) as WorkspaceChannelConfig["policies"],
             accessBundleId: row.access_bundle_id,
+            runtimeDefaults: normalizeChannelRuntimeDefaults({
+              harnessType: row.default_harness_type ?? undefined,
+              model: row.default_model ?? undefined,
+            }),
             updatedAt: row.updated_at,
           }
         : {
@@ -129,20 +151,36 @@ export class WorkspaceConfigDO extends DurableObject {
 
     if (url.pathname === "/putConfig" && request.method === "POST") {
       const cfg = (await request.json()) as WorkspaceChannelConfig;
+      let runtimeDefaults;
+      try {
+        runtimeDefaults = normalizeChannelRuntimeDefaults(cfg.runtimeDefaults);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid runtime defaults" },
+          { status: 400 },
+        );
+      }
       const channelKey = cfg.channelId ?? "";
       sql.exec(
-        `INSERT INTO channel_config (team_id, channel_id, system_prompt, policies_json, access_bundle_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO channel_config (
+           team_id, channel_id, system_prompt, policies_json, access_bundle_id,
+           default_harness_type, default_model, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(team_id, channel_id) DO UPDATE SET
            system_prompt = excluded.system_prompt,
            policies_json = excluded.policies_json,
            access_bundle_id = excluded.access_bundle_id,
+           default_harness_type = excluded.default_harness_type,
+           default_model = excluded.default_model,
            updated_at = excluded.updated_at`,
         cfg.teamId,
         channelKey,
         cfg.systemPrompt,
         JSON.stringify(cfg.policies ?? {}),
         cfg.accessBundleId,
+        runtimeDefaults?.harnessType ?? null,
+        runtimeDefaults?.model ?? null,
         cfg.updatedAt || new Date().toISOString(),
       );
       return Response.json({ ok: true });

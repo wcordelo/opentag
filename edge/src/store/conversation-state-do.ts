@@ -14,6 +14,10 @@ import { interruptHarnessTurn } from "../harness/client.js";
 import type { Env } from "../env.js";
 import { buildSlackMessagePages } from "../slack/stream-render.js";
 import {
+  stableSlackDiagnosticPageClientMessageId,
+  stableSlackPageClientMessageId,
+} from "../slack/client-message-id.js";
+import {
   SessionHandoffEngine,
   type SessionHandoffRow,
 } from "./session-handoff-engine.js";
@@ -51,20 +55,6 @@ class ObligationDeferredError extends Error {
 
 function isSlackDuplicateMessage(error: unknown): boolean {
   return error === "duplicate_message" || error === "duplicate_client_msg_id";
-}
-
-async function stableObligationClientMessageId(ob: {
-  threadKey: string;
-  executionId: string;
-}): Promise<string> {
-  const input = `obligation:${ob.threadKey}:${ob.executionId}`;
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)),
-  ).slice(0, 16);
-  digest[6] = (digest[6]! & 0x0f) | 0x50;
-  digest[8] = (digest[8]! & 0x3f) | 0x80;
-  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function stableStopClientMessageId(stopEventId: string): Promise<string> {
@@ -484,7 +474,7 @@ export function reconstructMarkdown(
       if (typeof text === "string") parts.push(text);
     }
   }
-  return parts.join("").trim();
+  return parts.join("");
 }
 
 /**
@@ -1395,19 +1385,14 @@ export class ConversationStateDO extends DurableObject {
     const successfulTerminal = hasSuccessfulTerminal(events, ob.executionId);
     const content = reconstructMarkdown(events, ob.executionId);
     if (content) {
-      if (ob.liveMessageState === "reserved") {
-        throw new ObligationDeferredError(
-          OBLIGATION_AMBIGUOUS_DEFER_MS,
-          "live_message_identity_unreconciled",
-        );
-      }
       await this.postFallback(
         ob,
         env,
         successfulTerminal
-          ? `_Recovered completed turn:_\n${content}`
+          ? content
           : `_Recovered after an interrupted turn:_\n${content}`,
         "fallback_sent",
+        successfulTerminal ? "output" : "diagnostic",
       );
       return;
     }
@@ -1417,6 +1402,7 @@ export class ConversationStateDO extends DurableObject {
       env,
       "⚠️ This turn was interrupted before an answer could be delivered. Please retry.",
       "error_visible",
+      "diagnostic",
     );
   }
 
@@ -1426,6 +1412,7 @@ export class ConversationStateDO extends DurableObject {
     env: ConversationStateDoEnv,
     text: string,
     outcome: "fallback_sent" | "error_visible",
+    pageNamespace: "output" | "diagnostic" = "output",
   ): Promise<void> {
     if (!env.SLACK_BOT_TOKEN) {
       console.error(
@@ -1454,20 +1441,48 @@ export class ConversationStateDO extends DurableObject {
     const token = render.status === "claimed" ? render.token : undefined;
 
     const pages = buildSlackMessagePages(text);
+    let reconciledLiveTs = ob.liveMessageTs;
+    if (
+      ob.liveMessageState === "reserved" &&
+      ob.liveClientMessageId
+    ) {
+      reconciledLiveTs = await this.findSlackMessageByClientId(ob, env);
+      if (reconciledLiveTs) {
+        this.activeTurns.confirmLiveMessage(
+          ob.threadKey,
+          ob.executionId,
+          ob.liveClientMessageId,
+          reconciledLiveTs,
+        );
+      }
+    }
     for (const page of pages) {
-      const updateExisting = page.index === 0 && ob.liveMessageState === "posted" && ob.liveMessageTs;
+      let updateExisting = page.index === 0 && Boolean(
+        reconciledLiveTs ??
+        (ob.liveMessageState === "posted" ? ob.liveMessageTs : undefined),
+      );
+      let targetTs = reconciledLiveTs ?? ob.liveMessageTs;
       const body = new URLSearchParams({
         channel: ob.channel,
         text: page.text,
         blocks: JSON.stringify(page.blocks),
       });
       if (updateExisting) {
-        body.set("ts", ob.liveMessageTs!);
+        body.set("ts", targetTs!);
       } else {
-        body.set("client_msg_id", await stableObligationClientMessageId({
-          threadKey: ob.threadKey,
-          executionId: `${ob.executionId}:page:${page.index}`,
-        }));
+        const clientMessageId =
+          page.index === 0 && ob.liveMessageState === "reserved"
+            ? ob.liveClientMessageId
+            : pageNamespace === "output"
+              ? stableSlackPageClientMessageId(ob.executionId, page.index)
+              : stableSlackDiagnosticPageClientMessageId(
+                  ob.executionId,
+                  page.index,
+                );
+        if (!clientMessageId) {
+          throw new Error("reserved_live_message_missing_client_id");
+        }
+        body.set("client_msg_id", clientMessageId);
         if (ob.threadTs) body.set("thread_ts", ob.threadTs);
       }
 
@@ -1485,28 +1500,96 @@ export class ConversationStateDO extends DurableObject {
           },
         );
       } catch {
+        if (token) {
+          this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+        }
         throw new ObligationDeferredError(
           OBLIGATION_AMBIGUOUS_DEFER_MS,
           "render_transport_ambiguous",
         );
       }
-      let json: { ok?: boolean; error?: string };
+      let json: { ok?: boolean; error?: string; ts?: string };
       try {
-        json = await res.json() as { ok?: boolean; error?: string };
+        json = await res.json() as { ok?: boolean; error?: string; ts?: string };
       } catch {
+        if (token) {
+          this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+        }
         throw new ObligationDeferredError(
           OBLIGATION_AMBIGUOUS_DEFER_MS,
           "render_response_ambiguous",
         );
       }
       const duplicate = !updateExisting && isSlackDuplicateMessage(json.error);
+      if (
+        page.index === 0 &&
+        ob.liveMessageState === "reserved" &&
+        ob.liveClientMessageId
+      ) {
+        if (json.ok === true && json.ts) {
+          reconciledLiveTs = json.ts;
+          this.activeTurns.confirmLiveMessage(
+            ob.threadKey,
+            ob.executionId,
+            ob.liveClientMessageId,
+            json.ts,
+          );
+        } else if (duplicate) {
+          const found = await this.findSlackMessageByClientId(ob, env);
+          if (!found) {
+            throw new ObligationDeferredError(
+              OBLIGATION_AMBIGUOUS_DEFER_MS,
+              "live_message_identity_unreconciled",
+            );
+          }
+          reconciledLiveTs = found;
+          this.activeTurns.confirmLiveMessage(
+            ob.threadKey,
+            ob.executionId,
+            ob.liveClientMessageId,
+            found,
+          );
+          // The duplicate only proves the original create. Apply the recovered
+          // final content to that exact message before releasing ownership.
+          body.delete("client_msg_id");
+          body.delete("thread_ts");
+          body.set("ts", found);
+          updateExisting = true;
+          targetTs = found;
+          const update = await fetch("https://slack.com/api/chat.update", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+            },
+            body: body.toString(),
+          });
+          const updated = await update.json() as { ok?: boolean; error?: string };
+          if (!update.ok || updated.ok !== true) {
+            throw new ObligationDeferredError(
+              OBLIGATION_AMBIGUOUS_DEFER_MS,
+              `live_message_update_${updated.error ?? update.status}`,
+            );
+          }
+        }
+      }
       if (!duplicate && (!res.ok || json.ok !== true)) {
-        if (json.ok !== false || res.status === 429) {
+        if (res.status === 429) {
+          if (token) {
+            this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          }
           throw new ObligationDeferredError(
-            res.status === 429
-              ? Math.max(1_000, Number(res.headers.get("Retry-After") ?? 1) * 1_000)
-              : OBLIGATION_AMBIGUOUS_DEFER_MS,
-            res.status === 429 ? "slack_rate_limited" : "render_response_ambiguous",
+            Math.max(1_000, Number(res.headers.get("Retry-After") ?? 1) * 1_000),
+            "slack_rate_limited",
+          );
+        }
+        if (json.ok !== false) {
+          if (token) {
+            this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          }
+          throw new ObligationDeferredError(
+            OBLIGATION_AMBIGUOUS_DEFER_MS,
+            "render_response_ambiguous",
           );
         }
         if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
@@ -1529,6 +1612,40 @@ export class ConversationStateDO extends DurableObject {
       executionId: ob.executionId,
       channel: ob.channel,
     });
+  }
+
+  private async findSlackMessageByClientId(
+    ob: RenderObligationRow,
+    env: ConversationStateDoEnv,
+  ): Promise<string | undefined> {
+    if (!env.SLACK_BOT_TOKEN || !ob.liveClientMessageId) return undefined;
+    const body = new URLSearchParams({
+      channel: ob.channel,
+      limit: "100",
+      inclusive: "true",
+    });
+    const method = ob.threadTs ? "conversations.replies" : "conversations.history";
+    if (ob.threadTs) body.set("ts", ob.threadTs);
+    try {
+      const response = await fetch(`https://slack.com/api/${method}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        },
+        body: body.toString(),
+      });
+      const json = await response.json() as {
+        ok?: boolean;
+        messages?: Array<{ ts?: string; client_msg_id?: string }>;
+      };
+      if (!response.ok || json.ok !== true) return undefined;
+      return json.messages?.find(
+        (message) => message.client_msg_id === ob.liveClientMessageId,
+      )?.ts;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── RPC surface (mirrors StateStore, async at the boundary) ─────────────────

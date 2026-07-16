@@ -71,6 +71,62 @@ describe("resolveThreadOverrides", () => {
     expect(threadOverridesKey("C1::1.0")).toBe("thread:overrides:C1::1.0");
   });
 
+  it("resolves explicit > sticky > channel > deployment per field without persisting channel defaults", async () => {
+    const store = memoryStore();
+    const key = "C1::1.0";
+    const channelDefaults = {
+      harnessType: "claudecode" as const,
+      model: "claude-channel",
+    };
+    const channel = await resolveThreadOverrides(
+      store,
+      key,
+      "hello",
+      channelDefaults,
+    );
+    expect(channel).toMatchObject({
+      effectiveHarnessType: "claudecode",
+      effectiveModel: "claude-channel",
+      harnessSource: "channel",
+      modelSource: "channel",
+    });
+    expect(await store.kv.get(threadOverridesKey(key))).toBeUndefined();
+
+    const explicit = await resolveThreadOverrides(
+      store,
+      key,
+      "--opus hello",
+      channelDefaults,
+    );
+    expect(explicit).toMatchObject({
+      effectiveModel: "claude-opus-4-8",
+      modelSource: "explicit",
+      harnessSource: "explicit",
+    });
+
+    const sticky = await resolveThreadOverrides(
+      store,
+      key,
+      "follow up",
+      { harnessType: "claudecode", model: "claude-new-channel" },
+    );
+    expect(sticky).toMatchObject({
+      effectiveModel: "claude-opus-4-8",
+      modelSource: "sticky",
+      harnessSource: "sticky",
+    });
+
+    const deployment = await resolveThreadOverrides(
+      store,
+      "C2::2.0",
+      "hello",
+    );
+    expect(deployment).toMatchObject({
+      harnessSource: "deployment",
+      modelSource: "deployment",
+    });
+  });
+
   it("a flag on turn 1 persists to turn 2 with no flag", async () => {
     const store = memoryStore();
     const key = "C1::1.0";

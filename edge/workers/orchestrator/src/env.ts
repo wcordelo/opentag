@@ -6,6 +6,8 @@ export interface CloudflareEnv {
   ORCHESTRATOR: DurableObjectNamespace;
   RESEARCHER: DurableObjectNamespace;
   VERIFIER: DurableObjectNamespace;
+  /** Cross-script binding to opentag-bot's per-channel SlackRateLimitDO. */
+  SLACK_RATE_LIMIT: DurableObjectNamespace;
   BLOBS: R2Bucket;
   AGENT_STATE: KVNamespace;
   WASM_DISPATCH: Fetcher;

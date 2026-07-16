@@ -40,6 +40,7 @@ import { awaitChoiceDurable, newHitlChoiceId } from "../hitl/durable-choice.js";
 import { coerceTicketFields } from "../slack/thread-memory.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
 import type { ActiveTurnEffectResource } from "../store/active-turn-types.js";
+import { requirePermissionSnapshot } from "../permissions/context.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -474,6 +475,17 @@ export const showIncidentTool = defineBotTool({
   },
 });
 
+export const showPermissionsTool = defineBotTool({
+  name: "show_permissions",
+  description:
+    "Show the bounded, redacted permissions and runtime selection effective for this exact turn. This is informational and never grants access.",
+  parameters: z.object({}),
+  async handler(_props, { thread }) {
+    await assertExactTurnActive(thread);
+    return requirePermissionSnapshot(thread);
+  },
+});
+
 export const researchProgressTool = defineBotTool({
   name: "research_progress",
   description: "Post an interim progress update during deep research.",
@@ -672,6 +684,7 @@ const RAW_EDGE_TOOLS = [
   showStatusTool,
   showLinksTool,
   showIncidentTool,
+  showPermissionsTool,
   researchProgressTool,
   memorySearchTool,
   memoryWriteTool,

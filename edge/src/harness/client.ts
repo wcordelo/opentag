@@ -26,6 +26,7 @@
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import type { PreparedAttachment } from "../slack/download-files.js";
+import type { PermissionSnapshotV1 } from "../permissions/contract.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -53,6 +54,8 @@ export interface RunHarnessTurnArgs {
   remoteGitApproved?: boolean;
   /** Approved turn must push/open and verify a requester-attributed PR. */
   createPullRequest?: boolean;
+  /** Redacted informational snapshot; the sandbox Worker enriches its own section. */
+  permissionSnapshot?: PermissionSnapshotV1;
   /** Called once per `output` event carrying a text delta (best-effort live rendering hook — unused in v1's single-final-post path, kept for a later incremental-render phase). */
   onText?: (delta: string) => void;
 }
@@ -407,6 +410,7 @@ export async function runHarnessTurn(
   if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
   if (args.codingTask) body.codingTask = true;
   if (args.createPullRequest) body.createPullRequest = true;
+  if (args.permissionSnapshot) body.permissionSnapshot = args.permissionSnapshot;
 
   let accumulatedText = "";
   let sawDone = false;

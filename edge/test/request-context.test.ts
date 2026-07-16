@@ -59,6 +59,7 @@ describe("request-context", () => {
     const [a, b] = await Promise.all([runA, runB]);
     expect(a).toMatchObject({
       teamId: "T-A",
+      actor: { kind: "slack_user", userId: "U-A" },
       requesterId: "U-A",
       inbound: { channel: "C-SAME", ts: "100.001", threadTs: "100.000" },
     });
@@ -86,6 +87,27 @@ describe("request-context", () => {
     expect(copyRequestContext(user, thread)).toBe(bound);
     expect(Object.isFrozen(requireRequestContext(thread))).toBe(true);
     expect(Object.isFrozen(requireRequestContext(thread).inbound)).toBe(true);
+    expect(Object.isFrozen(requireRequestContext(thread).actor)).toBe(true);
+  });
+
+  it("uses bounded non-human compatibility labels without changing wire identity inputs", async () => {
+    const context = bindRequestContext({}, {
+      teamId: "T1",
+      actor: {
+        kind: "slack_automation",
+        botId: "B1",
+        appId: "A1",
+        displayName: "Alert bot",
+      },
+      inbound: { channel: "C1", ts: "1.2", identity: "Ev1" },
+    });
+    expect(context).toMatchObject({
+      actor: { kind: "slack_automation", botId: "B1", appId: "A1" },
+      requesterId: "app:A1",
+    });
+    await expect(slackTurnIdentity(context, "C1")).resolves.toMatchObject({
+      executionId: expect.stringMatching(/^ot1e_/),
+    });
   });
 
   it("rejects a context bound to a foreign channel", async () => {

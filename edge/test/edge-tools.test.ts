@@ -18,6 +18,7 @@ const EXPECTED_EDGE_TOOLS = [
   "show_status",
   "show_links",
   "show_incident",
+  "show_permissions",
   "research_progress",
   "memory_search",
   "memory_write",

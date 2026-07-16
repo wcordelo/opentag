@@ -119,6 +119,11 @@ function makeThreadSpies(conversationKey: string) {
 }
 
 let store: StateStore;
+const runtimeDefaultsMock = vi.hoisted(() => ({
+  value: undefined as
+    | { harnessType: "claudecode"; model?: string }
+    | undefined,
+}));
 const setTitleSpy = vi.fn(
   async (_args: { channel_id: string; thread_ts: string; title: string }) =>
     undefined,
@@ -144,6 +149,9 @@ vi.mock("../src/config/workspace-config-do.js", async (importOriginal) => {
         systemPrompt: "sys",
         policies: {},
         accessBundleId: "default",
+        ...(runtimeDefaultsMock.value
+          ? { runtimeDefaults: runtimeDefaultsMock.value }
+          : {}),
         updatedAt: "now",
       },
       bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
@@ -177,6 +185,23 @@ describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
   beforeEach(() => {
     store = withTestLifecycleStore(makeMemoryStore());
     setTitleSpy.mockClear();
+    runtimeDefaultsMock.value = undefined;
+  });
+
+  it("uses a channel Claude default and fails visibly without AG-UI fallback when disconnected", async () => {
+    runtimeDefaultsMock.value = {
+      harnessType: "claudecode",
+      model: "claude-sonnet-5",
+    };
+    const { thread, post, runAgent } = makeThreadSpies(
+      "C1::1234567890.000050",
+    );
+    await runBundledAgentTurn(makeEnv(), thread as never, "Inspect this alert");
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
+    expect(await store.kv.get(
+      "thread:overrides:C1::1234567890.000050",
+    )).toBeUndefined();
   });
 
   it("does not save or confirm a selection when the harness is disconnected", async () => {

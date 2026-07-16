@@ -14,8 +14,22 @@ export type InboundMessageTarget = {
   identity?: string;
 };
 
+export type RequestActor =
+  | Readonly<{
+      kind: "slack_user";
+      userId: string;
+    }>
+  | Readonly<{
+      kind: "slack_automation";
+      botId?: string;
+      appId?: string;
+      displayName?: string;
+    }>;
+
 export type RequestContext = Readonly<{
   teamId: string;
+  actor: RequestActor;
+  /** Compatibility identifier. Authorization must use `actor`, not this label. */
   requesterId: string;
   inbound?: Readonly<InboundMessageTarget>;
   /** Durable ownership established at verified Worker ingress. */
@@ -33,17 +47,26 @@ export function bindRequestContext(
   invocation: object,
   context: {
     teamId: string;
-    requesterId: string;
+    actor?: RequestActor;
+    requesterId?: string;
     inbound?: InboundMessageTarget;
     preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
   },
 ): RequestContext {
+  const actor = normalizeRequestActor(
+    context.actor ??
+      Object.freeze({
+        kind: "slack_user" as const,
+        userId: context.requesterId ?? "",
+      }),
+  );
   const inbound = context.inbound
     ? Object.freeze({ ...context.inbound })
     : undefined;
   const immutable = Object.freeze({
     teamId: context.teamId || "unknown",
-    requesterId: context.requesterId,
+    actor,
+    requesterId: requesterIdForActor(actor),
     ...(inbound ? { inbound } : {}),
     ...(context.preAdmittedTurn
       ? { preAdmittedTurn: Object.freeze({ record: Object.freeze({ ...context.preAdmittedTurn.record }) }) }
@@ -51,6 +74,36 @@ export function bindRequestContext(
   });
   contextByInvocation.set(invocation, immutable);
   return immutable;
+}
+
+function boundedIdentity(value: string | undefined): string | undefined {
+  const normalized = value?.trim().slice(0, 256);
+  return normalized || undefined;
+}
+
+export function normalizeRequestActor(actor: RequestActor): RequestActor {
+  if (actor.kind === "slack_user") {
+    const userId = boundedIdentity(actor.userId);
+    if (!userId) throw new Error("slack_user actor requires userId");
+    return Object.freeze({ kind: "slack_user", userId });
+  }
+  const botId = boundedIdentity(actor.botId);
+  const appId = boundedIdentity(actor.appId);
+  if (!botId && !appId) {
+    throw new Error("slack_automation actor requires botId or appId");
+  }
+  const displayName = boundedIdentity(actor.displayName);
+  return Object.freeze({
+    kind: "slack_automation",
+    ...(botId ? { botId } : {}),
+    ...(appId ? { appId } : {}),
+    ...(displayName ? { displayName } : {}),
+  });
+}
+
+export function requesterIdForActor(actor: RequestActor): string {
+  if (actor.kind === "slack_user") return actor.userId;
+  return actor.appId ? `app:${actor.appId}` : `bot:${actor.botId}`;
 }
 
 export function copyRequestContext(from: object, to: object): RequestContext {

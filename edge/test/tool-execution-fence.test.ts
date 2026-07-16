@@ -119,6 +119,13 @@ const { bindTurnExecutionContext, resetTurnExecutionContext } = await import(
 const { bindRequestContext, resetRequestContext } = await import(
   "../src/request-context.js"
 );
+const {
+  bindPermissionSnapshot,
+  resetPermissionSnapshots,
+} = await import("../src/permissions/context.js");
+const { buildPermissionSnapshot } = await import(
+  "../src/permissions/snapshot.js"
+);
 
 function tool(name: string): BotTool {
   const found = ALL_EDGE_TOOLS.find((candidate) => candidate.name === name);
@@ -165,6 +172,28 @@ function choiceThread() {
     requesterId: "U1",
     inbound: { channel: "C1", ts: "1.1", threadTs: "1.0" },
   });
+  bindPermissionSnapshot(thread, buildPermissionSnapshot({
+    teamId: "T1",
+    channelId: "C1",
+    actor: { kind: "slack_user", userId: "U1" },
+    config: {
+      teamId: "T1",
+      channelId: "C1",
+      systemPrompt: "sys",
+      policies: {},
+      accessBundleId: "default",
+      updatedAt: "now",
+    },
+    bundle: {
+      id: "default",
+      tools: ["show_permissions"],
+      mcpEndpoints: [],
+      secretRefs: [],
+    },
+    allToolNames: ["show_permissions"],
+    allowedTools: ["show_permissions"],
+    runtime: { harnessConnected: false },
+  }));
   return { thread, post, react };
 }
 
@@ -185,7 +214,24 @@ describe("exact execution tool guards", () => {
     state.effectConfirmationEntered = undefined;
     resetTurnExecutionContext();
     resetRequestContext();
+    resetPermissionSnapshots();
     bindToolEnv({ BOT_STATE: {} } as never);
+  });
+
+  it("shows only the bound exact-turn snapshot and is suppressed after Stop", async () => {
+    const { thread } = choiceThread();
+    await expect(tool("show_permissions").handler(
+      {},
+      { thread, platform: "slack" } as never,
+    )).resolves.toMatchObject({
+      version: 1,
+      scope: { channelId: "C1", actorKind: "slack_user" },
+    });
+    state.status = "cancelled";
+    await expect(tool("show_permissions").handler(
+      {},
+      { thread, platform: "slack" } as never,
+    )).rejects.toThrow("active_turn_tool_suppressed");
   });
 
   it("does not return approval when Stop suppresses the post-click acknowledgement", async () => {

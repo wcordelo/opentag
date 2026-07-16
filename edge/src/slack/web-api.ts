@@ -2,6 +2,8 @@
  * Minimal Slack Web API helpers (fetch-based, no @slack/web-api / Bolt).
  */
 import type { PlatformUser } from "@copilotkit/channels-ui";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { SlackRateLimitDO } from "./slack-rate-limit-do.js";
 
 export type SlackWebClient = {
   authTest(): Promise<{ ok: boolean; userId?: string; error?: string }>;
@@ -151,8 +153,48 @@ export class SlackChannelRateScheduler implements SlackRateScheduler {
 
 const sharedSchedulers = new Map<string, SlackChannelRateScheduler>();
 
-/** One scheduler per runtime environment, shared by every request-time client. */
-export function sharedSlackRateScheduler(environment?: string): SlackRateScheduler {
+class DurableSlackRateScheduler implements SlackRateScheduler {
+  constructor(
+    private readonly namespace: DurableObjectNamespace<SlackRateLimitDO>,
+    private readonly minIntervalMs: number,
+    private readonly sleep: (ms: number) => Promise<void> =
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  ) {}
+
+  async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+    const stub = this.namespace.get(this.namespace.idFromName(channel)) as unknown as {
+      reserve(args: { minIntervalMs: number }): Promise<{ delayMs: number }>;
+    };
+    const { delayMs } = await stub.reserve({ minIntervalMs: this.minIntervalMs });
+    if (delayMs > 0) await this.sleep(delayMs);
+    return operation();
+  }
+}
+
+const durableSchedulers = new WeakMap<object, SlackRateScheduler>();
+
+/**
+ * Production uses a Durable Object reservation per channel, shared across
+ * Worker isolates. The module singleton remains only a local/test fallback.
+ */
+export function sharedSlackRateScheduler(
+  environment?: string,
+  namespace?: DurableObjectNamespace<SlackRateLimitDO>,
+): SlackRateScheduler {
+  if (namespace) {
+    let scheduler = durableSchedulers.get(namespace as object);
+    if (!scheduler) {
+      scheduler = new DurableSlackRateScheduler(
+        namespace,
+        environment === "production" ? 1_000 : 0,
+      );
+      durableSchedulers.set(namespace as object, scheduler);
+    }
+    return scheduler;
+  }
+  if (environment === "production") {
+    throw new Error("SLACK_RATE_LIMIT is required for production Slack egress");
+  }
   const key = environment === "production" ? "production" : "non-production";
   let scheduler = sharedSchedulers.get(key);
   if (!scheduler) {
@@ -279,26 +321,28 @@ export function createSlackWebClient(
       : typeof body?.channel_id === "string"
         ? body.channel_id
         : undefined;
-    const dispatch = async (): Promise<T & { ok: boolean; error?: string }> => {
-      const maxRetries = options.maxRateLimitRetries ?? 2;
-      for (let attempt = 0; ; attempt += 1) {
-        const res = await fetch(`https://slack.com/api/${method}`, {
+    const maxRetries = options.maxRateLimitRetries ?? 2;
+    for (let attempt = 0; ; attempt += 1) {
+      const dispatch = async (): Promise<Response> =>
+        fetch(`https://slack.com/api/${method}`, {
           method: "POST",
           headers,
           body: encoded || undefined,
         });
-        if (res.status === 429 && attempt < maxRetries) {
-          await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(
-            retryAfterMs(res),
-          );
-          continue;
-        }
-        return (await res.json()) as T & { ok: boolean; error?: string };
+      // Each HTTP attempt, including Retry-After replays, owns a fresh durable
+      // channel slot. Reserving only once around the whole retry loop lets a
+      // bot retry race a research write in another script.
+      const res = channel && options.scheduler
+        ? await options.scheduler.run(channel, dispatch)
+        : await dispatch();
+      if (res.status === 429 && attempt < maxRetries) {
+        await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(
+          retryAfterMs(res),
+        );
+        continue;
       }
-    };
-    return channel && options.scheduler
-      ? options.scheduler.run(channel, dispatch)
-      : dispatch();
+      return (await res.json()) as T & { ok: boolean; error?: string };
+    }
   }
 
   const userCache = new Map<string, PlatformUser>();

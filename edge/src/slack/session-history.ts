@@ -90,7 +90,6 @@ export function reconstructSessionHistory(
 ): Array<{
   role: "user" | "bot";
   text: string;
-  at?: number;
   attachments?: Array<{
     kind: "inline" | "staged";
     id: string;
@@ -99,7 +98,6 @@ export function reconstructSessionHistory(
     size: number;
     stageKey?: string;
     sha256?: string;
-    dataBase64?: string;
   }>;
 }> {
   type Attachment = NonNullable<ReturnType<typeof reconstructSessionHistory>[number]["attachments"]>[number];
@@ -107,8 +105,6 @@ export function reconstructSessionHistory(
     inputs: string[];
     outputs: string[];
     attachments: Attachment[];
-    inputAt?: number;
-    outputAt?: number;
   }>();
   for (const event of events) {
     if (event.executionId === excludeExecutionId) continue;
@@ -118,7 +114,6 @@ export function reconstructSessionHistory(
       attachments: [],
     };
     if (event.kind === "input" && typeof event.payload === "string") {
-      turn.inputAt ??= event.createdAt;
       let decoded = false;
       try {
         const payload = JSON.parse(event.payload) as {
@@ -138,22 +133,7 @@ export function reconstructSessionHistory(
                 typeof attachment.name === "string" &&
                 typeof attachment.mimeType === "string" &&
                 typeof attachment.size === "number"
-              ) {
-                turn.attachments.push(
-                  attachment.kind === "inline" && typeof attachment.dataBase64 === "string"
-                    ? { ...attachment, kind: "inline" as const, dataBase64: attachment.dataBase64 }
-                    : attachment.kind === "staged" && typeof attachment.stageKey === "string"
-                      ? {
-                          ...attachment,
-                          kind: "staged" as const,
-                          stageKey: attachment.stageKey,
-                          ...(typeof attachment.sha256 === "string"
-                            ? { sha256: attachment.sha256 }
-                            : {}),
-                        }
-                      : attachment,
-                );
-              }
+              ) turn.attachments.push(attachment);
             }
           }
           decoded = true;
@@ -162,7 +142,6 @@ export function reconstructSessionHistory(
       if (!decoded) turn.inputs.push(event.payload);
     }
     if (event.kind === "output" && event.payload && typeof event.payload === "object") {
-      turn.outputAt = event.createdAt;
       const payload = event.payload as { text?: unknown; tool?: unknown; summary?: unknown };
       if (typeof payload.text === "string") turn.outputs.push(payload.text);
       else if (typeof payload.tool === "string") {
@@ -171,25 +150,16 @@ export function reconstructSessionHistory(
     }
     executions.set(event.executionId, turn);
   }
-  const history: Array<{ role: "user" | "bot"; text: string; at?: number }> = [];
+  const history: Array<{ role: "user" | "bot"; text: string }> = [];
   for (const turn of executions.values()) {
     const input = turn.inputs.join("\n").trim();
     const output = turn.outputs.join("").trim();
     if (input) history.push({
       role: "user",
       text: input,
-      ...(turn.inputAt !== undefined ? { at: turn.inputAt } : {}),
       ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
     });
-    if (output) history.push({
-      role: "bot",
-      text: output,
-      ...(turn.outputAt !== undefined
-        ? { at: turn.outputAt }
-        : turn.inputAt !== undefined
-          ? { at: turn.inputAt }
-          : {}),
-    });
+    if (output) history.push({ role: "bot", text: output });
   }
   return history;
 }

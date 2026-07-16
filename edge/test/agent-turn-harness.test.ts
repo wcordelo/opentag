@@ -160,7 +160,10 @@ vi.mock("../src/harness/client.js", () => ({
   runHarnessTurn: (...args: unknown[]) => runHarnessTurnMock(...args),
 }));
 
-const { runBundledAgentTurn } = await import("../src/agent-turn.js");
+const {
+  buildRequesterContextBlock,
+  runBundledAgentTurn,
+} = await import("../src/agent-turn.js");
 
 function makeEnv(overrides: Record<string, unknown> = {}) {
   return {
@@ -191,6 +194,195 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     });
     setTitleMock.mockReset();
     setTitleMock.mockResolvedValue(undefined);
+  });
+
+  it("renders automation context without human attribution", () => {
+    const block = buildRequesterContextBlock(
+      { id: "bot:BALERT", name: "Alert bot" },
+      {
+        kind: "slack_automation",
+        botId: "BALERT",
+        appId: "AALERT",
+        displayName: "Alert bot",
+      },
+    );
+    expect(block).toContain("Actor: Slack automation");
+    expect(block).toContain("Bot ID: BALERT");
+    expect(block).not.toContain("Prompted by:");
+  });
+
+  it("never enriches or grants coding/remote-git authority to automation", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Read-only result." });
+    const { thread } = makeThreadSpies("C1::1111111111.000099");
+    bindRequestContext(thread, {
+      teamId: "T1",
+      actor: {
+        kind: "slack_automation",
+        botId: "BALERT",
+        displayName: "Alert bot",
+      },
+    });
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+      }),
+      thread as never,
+      "--claude fix the repository and create a pull request",
+      { id: "bot:BALERT", name: "Alert bot" },
+    );
+    expect(resolveUserMock).not.toHaveBeenCalled();
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      codingTask: false,
+      remoteGitApproved: false,
+      createPullRequest: false,
+      requesterContext: expect.not.stringContaining("Prompted by:"),
+      permissionSnapshot: {
+        scope: { actorKind: "slack_automation" },
+        channelAccess: { metadataVisibility: "restricted" },
+      },
+    });
+  });
+
+  it("reports explicit runtime provenance and full human tool access", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Read-only result." });
+    const { thread } = makeThreadSpies("C1::1111111111.000071");
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+      }),
+      thread as never,
+      "--opus explain the repository",
+      { id: "U1", name: "Human requester" },
+    );
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      model: "claude-opus-4-8",
+      permissionSnapshot: {
+        scope: { actorKind: "slack_user" },
+        channelAccess: {
+          metadataVisibility: "full_names",
+          allowedTools: expect.arrayContaining([
+            "show_permissions",
+            "memory_write",
+            "start_task",
+          ]),
+        },
+        runtime: {
+          harnessType: "claudecode",
+          model: "claude-opus-4-8",
+          harnessSource: "explicit",
+          modelSource: "explicit",
+          harnessConnected: true,
+        },
+      },
+    });
+  });
+
+  it("uses a channel harness default for automation but keeps the safe-tool ceiling", async () => {
+    loadTurnAccessMock.mockResolvedValueOnce({
+      config: {
+        teamId: "T1",
+        channelId: "C1",
+        systemPrompt: "sys",
+        policies: {},
+        accessBundleId: "default",
+        runtimeDefaults: {
+          harnessType: "claudecode",
+          model: "claude-sonnet-5",
+        },
+        updatedAt: "now",
+      },
+      bundle: {
+        id: "default",
+        tools: [],
+        mcpEndpoints: ["https://mcp.example.test/path"],
+        secretRefs: ["EXAMPLE_TOKEN"],
+      },
+    } as never);
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Alert inspected." });
+    const { thread } = makeThreadSpies("C1::1111111111.000072");
+    bindRequestContext(thread, {
+      teamId: "T1",
+      actor: {
+        kind: "slack_automation",
+        botId: "BALERT",
+        displayName: "Alert bot",
+      },
+    });
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+      }),
+      thread as never,
+      "inspect elevated checkout errors",
+      { id: "bot:BALERT", name: "Alert bot" },
+    );
+    expect(resolveUserMock).not.toHaveBeenCalled();
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      model: "claude-sonnet-5",
+      codingTask: false,
+      remoteGitApproved: false,
+      createPullRequest: false,
+      requesterContext: expect.not.stringContaining("Prompted by:"),
+      permissionSnapshot: {
+        scope: { actorKind: "slack_automation" },
+        channelAccess: {
+          metadataVisibility: "restricted",
+          allowedTools: expect.arrayContaining([
+            "show_permissions",
+            "show_status",
+          ]),
+          mcpEndpoints: [],
+          secretRefs: [],
+        },
+        runtime: {
+          harnessType: "claudecode",
+          model: "claude-sonnet-5",
+          harnessSource: "channel",
+          modelSource: "channel",
+          harnessConnected: true,
+        },
+      },
+    });
+    const snapshot = runHarnessTurnMock.mock.calls[0]![1].permissionSnapshot as {
+      channelAccess: { allowedTools: string[] };
+    };
+    expect(snapshot.channelAccess.allowedTools).not.toEqual(
+      expect.arrayContaining([
+        "memory_write",
+        "start_task",
+        "react_message",
+        "confirm_write",
+      ]),
+    );
+  });
+
+  it("fails visibly when a channel-selected harness is disconnected", async () => {
+    loadTurnAccessMock.mockResolvedValueOnce({
+      config: {
+        teamId: "T1",
+        channelId: "C1",
+        systemPrompt: "sys",
+        policies: {},
+        accessBundleId: "default",
+        runtimeDefaults: { harnessType: "claudecode" },
+        updatedAt: "now",
+      },
+      bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
+    } as never);
+    const { thread, post, runAgent } =
+      makeThreadSpies("C1::1111111111.000073");
+    await runBundledAgentTurn(
+      makeEnv(),
+      thread as never,
+      "inspect the current state",
+      { id: "U1", name: "Human requester" },
+    );
+    expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
   });
 
   it.each(["profile", "access", "title", "history"] as const)(
@@ -285,6 +477,100 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(runAgent).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0]![0]).toBe("Done via Claude Code.");
+  });
+
+  it("restores SessionEvent-only attachments and tool results into the real harness turn", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Compared." });
+    const replay = vi.fn(async () => [
+      {
+        id: 1,
+        executionId: "old-execution",
+        kind: "input",
+        payload: JSON.stringify({
+          type: "opentag_input_v1",
+          text: "Use the prior plan",
+          attachments: [{
+            kind: "inline",
+            id: "F-prior",
+            name: "plan.pdf",
+            mimeType: "application/pdf",
+            size: 42,
+            stageKey: "slack-attachments/hash/plan.pdf",
+            sha256: "c".repeat(64),
+          }],
+        }),
+        createdAt: 1,
+      },
+      {
+        id: 2,
+        executionId: "old-execution",
+        kind: "output",
+        payload: {
+          tool: "read_thread",
+          summary: "The approved budget is 42",
+        },
+        createdAt: 2,
+      },
+    ]);
+    const sessionNamespace = {
+      idFromName: (name: string) => ({ name }),
+      get: () => ({ replay }),
+    };
+    const { thread } = makeThreadSpies("C1::1111111111.000125");
+
+    await runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+        SESSION_EVENTS: sessionNamespace,
+      }),
+      thread as never,
+      "--claude Compare the prior plan",
+    );
+
+    const args = runHarnessTurnMock.mock.calls[0]![1] as {
+      attachments: Array<Record<string, unknown>>;
+      transcript: string;
+      prompt: string;
+    };
+    expect(args.attachments).toEqual([
+      expect.objectContaining({
+        kind: "staged",
+        id: "F-prior",
+        stageKey: "slack-attachments/hash/plan.pdf",
+      }),
+    ]);
+    expect(args.transcript).toContain("The approved budget is 42");
+    expect(args.prompt).toContain("Restored canonical attachment: plan.pdf");
+  });
+
+  it("fails closed before either runtime when canonical SessionEvent replay rejects", async () => {
+    const replay = vi.fn(async () => {
+      throw new Error("session_do_unavailable");
+    });
+    const sessionNamespace = {
+      idFromName: (name: string) => ({ name }),
+      get: () => ({ replay }),
+    };
+    const { thread, post, runAgent } =
+      makeThreadSpies("C1::1111111111.000126");
+
+    await expect(runBundledAgentTurn(
+      makeEnv({
+        HARNESS_URL: "https://harness.example.com",
+        HARNESS_REPO_URL: "https://github.com/acme/repo",
+        SESSION_EVENTS: sessionNamespace,
+      }),
+      thread as never,
+      "--claude Compare the prior plan",
+    )).rejects.toThrow(
+      "session_event_replay_failed:session_do_unavailable",
+    );
+
+    expect(replay).toHaveBeenCalledOnce();
+    expect(runHarnessTurnMock).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("suppresses success when exact Stop lands after durable done but before the visible post", async () => {

@@ -214,6 +214,24 @@ after actors suppress queued outbox/delivery/alarm work for that task. Slack
 Stop acknowledgement waits for this contract so cancelled research cannot
 post a late answer.
 
+## 17. Non-human actors, permission views, and runtime defaults
+
+Slack automation is an explicit `slack_automation` actor, never a synthetic
+human. It cannot Stop, mutate, start research, approve remote git, create a PR,
+or provide `Prompted by:` attribution. Trusted rich-payload triggering is
+disabled by default and requires both an exact `bot:B...`/`app:A...` allowlist
+match and an exact nested mention of the configured bot user.
+
+`PermissionSnapshotV1`, `show_permissions`, the admin permissions endpoint, and
+the harness permissions file are informational views only. Authorization stays
+in access-bundle resolution, exact-turn/effect fences, sandbox egress policy,
+and durable HITL. Snapshots are bounded and redacted.
+
+Runtime precedence is resolved independently per field: explicit message flag,
+sticky thread choice, channel default, then deployment default. Merely using a
+channel default never writes sticky state, and an unavailable selected harness
+fails visibly without AG-UI fallback.
+
 ---
 
 ## Sign-off
@@ -235,3 +253,4 @@ post a late answer.
 15. **Remote-git HITL (§14):** APPROVED
 16. **Coding postconditions (§15):** APPROVED
 17. **Research cancellation (§16):** APPROVED
+18. **Non-human actors, permission views, and runtime defaults (§17):** APPROVED

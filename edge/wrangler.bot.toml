@@ -29,6 +29,14 @@ class_name = "KnowledgeDO"
 name = "SESSION_EVENTS"
 class_name = "SessionEventDO"
 
+[[durable_objects.bindings]]
+name = "DEFERRED_INGRESS"
+class_name = "DeferredIngressDO"
+
+[[durable_objects.bindings]]
+name = "SLACK_RATE_LIMIT"
+class_name = "SlackRateLimitDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO", "WorkspaceConfigDO", "KnowledgeDO"]
@@ -37,6 +45,10 @@ new_sqlite_classes = ["ConversationStateDO", "WorkspaceConfigDO", "KnowledgeDO"]
 tag = "v2-session-events"
 new_sqlite_classes = ["SessionEventDO"]
 
+[[migrations]]
+tag = "v3-durable-ingress-rate-limit"
+new_classes = ["DeferredIngressDO", "SlackRateLimitDO"]
+
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"
@@ -44,6 +56,10 @@ bucket_name = "opentag-research-blobs"
 [[services]]
 binding = "RESEARCH_TASKS"
 service = "opentag-orchestrator"
+
+[[services]]
+binding = "BOT_SELF"
+service = "opentag-bot"
 
 # Worker→Worker must use a service binding — public workers.dev fetch returns 1042
 # on the same zone. HttpAgent still needs AGENT_URL for the Request path/URL.
@@ -63,6 +79,9 @@ service = "opentag-agent"
 
 [vars]
 ENVIRONMENT = "production"
+# Trusted rich-payload triggers are disabled until both values are configured.
+# SLACK_BOT_USER_ID = "U0123456789"
+# SLACK_TRUSTED_TRIGGER_ACTORS = "bot:B0123456789,app:A0123456789"
 # AGENT_URL: https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
 # (path used by HttpAgent; traffic goes through AGENT_RUNTIME service binding)
 

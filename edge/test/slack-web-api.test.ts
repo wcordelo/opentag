@@ -81,6 +81,40 @@ describe("Slack idempotent message responses", () => {
     expect(calls[1]).toBe(calls[0]);
   });
 
+  it("reserves a shared channel slot for every bot HTTP retry attempt", async () => {
+    const schedulerRun = vi.fn(
+      async (_channel: string, operation: () => Promise<unknown>) =>
+        operation(),
+    );
+    const scheduler = {
+      run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+        return schedulerRun(channel, operation) as Promise<T>;
+      },
+    };
+    const sleep = vi.fn(async () => undefined);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(Response.json(
+        { ok: false, error: "ratelimited" },
+        { status: 429, headers: { "Retry-After": "0" } },
+      ))
+      .mockResolvedValueOnce(Response.json({ ok: true, ts: "1.0" })));
+    await createSlackWebClient("xoxb-test", { scheduler, sleep }).postMessage({
+      channel: "C-shared",
+      text: "hello",
+    });
+    expect(schedulerRun).toHaveBeenCalledTimes(2);
+    expect(schedulerRun).toHaveBeenNthCalledWith(
+      1,
+      "C-shared",
+      expect.any(Function),
+    );
+    expect(schedulerRun).toHaveBeenNthCalledWith(
+      2,
+      "C-shared",
+      expect.any(Function),
+    );
+  });
+
   it("serializes and spaces writes sharing a channel while allowing other channels", async () => {
     let now = 0;
     const waits: number[] = [];

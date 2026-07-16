@@ -167,6 +167,20 @@ export async function materializeTurnAttachments(
   return paths;
 }
 
+export async function materializePermissionSnapshot(
+  executionHome: string,
+  snapshot: TurnRequestBody["permissionSnapshot"],
+): Promise<string | undefined> {
+  if (!snapshot) return undefined;
+  const target = path.join(executionHome, "opentag-permissions.json");
+  await fs.promises.writeFile(target, `${JSON.stringify(snapshot, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  return target;
+}
+
 
 /** Runtime instructions mirror the credential gate; the prompt alone is never the gate. */
 export function gitPolicyPrompt(body: TurnRequestBody): string {
@@ -1128,6 +1142,7 @@ export function buildClaudeEnv(
   sessionId?: string,
   executionId?: string,
   executionHome?: string,
+  permissionsFile?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
   // Repository-controlled code receives only obvious sentinels. Real Anthropic,
@@ -1170,6 +1185,8 @@ export function buildClaudeEnv(
     env.GIT_CONFIG_VALUE_0 = `${EXECUTION_BINDING_HEADER}: ${executionId}`;
   }
   if (model) env.CLAUDE_MODEL = model;
+  if (permissionsFile) env.OPENTAG_PERMISSIONS_FILE = permissionsFile;
+  else delete env.OPENTAG_PERMISSIONS_FILE;
   return env;
 }
 
@@ -1460,8 +1477,13 @@ export async function runTurnStreaming(
   }
 
   let attachmentPaths: string[];
+  let permissionsFile: string | undefined;
   try {
     attachmentPaths = await materializeTurnAttachments(executionHome, body.attachments);
+    permissionsFile = await materializePermissionSnapshot(
+      executionHome,
+      body.permissionSnapshot,
+    );
   } catch (err) {
     try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* next setup reports */ }
     emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
@@ -1485,6 +1507,7 @@ export async function runTurnStreaming(
     body.sessionId,
     body.executionId,
     executionHome,
+    permissionsFile,
   );
   let claudeResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 

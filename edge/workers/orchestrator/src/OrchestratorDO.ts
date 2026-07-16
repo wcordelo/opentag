@@ -9,6 +9,9 @@ import { Orchestrator as OrchestratorCore } from "../../../../lib/research/orche
 import { DurableObjectStorageAdapter } from "../../../../lib/research/adapters/storage-do.js";
 import { DirectLlmAdapter } from "../../../../lib/research/adapters/llm.js";
 import { postToSlackThread } from "../../../../lib/research/delivery/slack.js";
+import type {
+  ResearchSlackRateScheduler,
+} from "../../../../lib/research/delivery/slack.js";
 import { runMigrations } from "./schema";
 
 export interface OrchestratorDOEnv {
@@ -19,7 +22,9 @@ export interface OrchestratorDOEnv {
   SLACK_ALLOWED_CHANNEL_IDS?: string;
   RESEARCHER: DurableObjectNamespace;
   VERIFIER: DurableObjectNamespace;
+  SLACK_RATE_LIMIT: DurableObjectNamespace;
   BLOBS: R2Bucket;
+  ENVIRONMENT?: string;
 }
 
 function parseAllowedChannels(raw?: string): string[] | undefined {
@@ -39,18 +44,42 @@ export async function deliverResearchSlackObligation(
   },
   botToken: string,
   deliver = postToSlackThread,
+  scheduler?: ResearchSlackRateScheduler,
 ) {
   const { payload } = obligation;
   if (!payload.text) return { status: "definitive_failure" as const, error: "missing_delivery_text" };
+  const finalPayload =
+    payload.type === "final" && payload.taskId
+      ? { type: "final" as const, text: payload.text, taskId: payload.taskId }
+      : undefined;
   return deliver(
     obligation.threadKey,
     payload.text,
     obligation.id,
     botToken,
-    payload.type === "final" && payload.taskId
-      ? { type: "final", text: payload.text, taskId: payload.taskId }
-      : undefined,
+    finalPayload,
+    { scheduler },
   );
+}
+
+export function researchSlackRateScheduler(
+  namespace: DurableObjectNamespace,
+  environment?: string,
+  sleep: (ms: number) => Promise<void> =
+    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): ResearchSlackRateScheduler {
+  return {
+    async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+      const stub = namespace.get(namespace.idFromName(channel)) as unknown as {
+        reserve(args: { minIntervalMs: number }): Promise<{ delayMs: number }>;
+      };
+      const { delayMs } = await stub.reserve({
+        minIntervalMs: environment === "production" ? 1_000 : 0,
+      });
+      if (delayMs > 0) await sleep(delayMs);
+      return operation();
+    },
+  };
 }
 
 interface ExecutionLogBody {
@@ -324,6 +353,11 @@ export class OrchestratorDO implements DurableObject {
       const outcome = await deliverResearchSlackObligation(
         { id: obligation.id, threadKey: obligation.threadKey, payload },
         this.env.SLACK_BOT_TOKEN,
+        postToSlackThread,
+        researchSlackRateScheduler(
+          this.env.SLACK_RATE_LIMIT,
+          (this.env as OrchestratorDOEnv & { ENVIRONMENT?: string }).ENVIRONMENT,
+        ),
       );
       if (outcome.status === "delivered") {
         await storage.markDeliveryDelivered(obligation.id);

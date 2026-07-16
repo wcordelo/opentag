@@ -27,6 +27,9 @@ export function stringsToMarkdownChunks(
 
 /** Split text into <= maxChars segments, preferring newline boundaries. */
 export function splitIntoSegments(text: string, maxChars: number): string[] {
+  if (!Number.isInteger(maxChars) || maxChars <= 0) {
+    throw new RangeError("maxChars must be a positive integer");
+  }
   const segments: string[] = [];
   let rest = text;
   while (rest.length > 0) {
@@ -34,10 +37,13 @@ export function splitIntoSegments(text: string, maxChars: number): string[] {
       segments.push(rest);
       break;
     }
-    let cut = rest.lastIndexOf("\n", maxChars);
-    if (cut <= 0) cut = maxChars;
+    // Include the preferred boundary newline in the preceding segment. This
+    // keeps segmentation byte-for-byte lossless while guaranteeing that even
+    // a newline at index zero makes progress.
+    const newline = rest.lastIndexOf("\n", maxChars - 1);
+    const cut = newline >= 0 ? newline + 1 : maxChars;
     segments.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n/, "");
+    rest = rest.slice(cut);
   }
   return segments;
 }
@@ -86,7 +92,7 @@ export function buildSlackMessagePages(text: string): SlackMessagePage[] {
     const pageSegments = segments.slice(offset, offset + MAX_BLOCKS_PER_MESSAGE);
     pages.push({
       index: pages.length,
-      text: truncateFallbackText(pageSegments.join("\n")),
+      text: truncateFallbackText(pageSegments.join("")),
       blocks: pageSegments.map((segment) => ({
         type: "section",
         text: { type: "mrkdwn", text: segment },

@@ -62,7 +62,10 @@ operating model.
 | Message/execution idempotency | `wire-id.ts`, pre-admission, SessionEventDO | Adapted and strengthened | Stable SHA-256 purpose-tagged IDs |
 | Stop command | `stop-command.ts` | Near-verbatim parser port | Integrated with exact cancellation lifecycle |
 | Runtime interrupt | `stop-routing.ts`, harness `/interrupt`, research cancel | New Cloudflare control path | Implemented with quiescence confirmation |
-| Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky model/harness; per-turn reasoning |
+| Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky Claude model/harness; reasoning flags rejected |
+| Per-channel model/harness defaults | `WorkspaceConfigDO`, `thread-overrides.ts`, `/config runtime` | Adapted to Durable Objects | Implemented with explicit > sticky > channel > deployment provenance |
+| Redacted permission inspection | `permissions/*`, `show_permissions`, admin endpoint, harness CLI | Adapted without Rails/iron-proxy | Implemented as informational snapshots; authorization remains elsewhere |
+| Rich-payload bot mentions | `trusted-trigger.ts`, `rich-display-text.ts`, pre-admission | Stricter authorization adaptation | Disabled by default; exact actor + exact nested mention; non-human safe-tool ceiling |
 | Harness restart transcript re-feed | `agent-turn.ts`, harness client | Adapted | Last 24k characters passed to harness |
 | Quick cards | `quick-card.ts`, research Slack delivery | Generalized from Quick-site cards | Artifact actions plus final-research Retry/Dig deeper/Export |
 | Buttons become user-authored turns | `quick-actions.ts` | Adapted to OpenTag ingress | Implemented; inherits dedup and policy |
@@ -102,8 +105,9 @@ Key behavioral decisions retained:
 - Every `-rsn` reasoning value is visibly rejected because OpenTag has no
   Codex runtime. Disconnected Claude/model choices also fail visibly and are
   not saved as sticky preferences.
-- A flags-only message saves the preference and returns a confirmation without
-  invoking a model.
+- A flags-only Claude model/harness message saves the preference and returns a
+  confirmation without invoking a model. A reasoning/provider flag returns a
+  visible rejection and saves nothing.
 
 ### Stop phrase recognition
 

@@ -52,6 +52,73 @@ describe("harness Container frontend", () => {
     inputLines: ["hello"],
   };
 
+  it("enriches the redacted permission snapshot from authoritative sandbox policy", async () => {
+    const container = fakeNamespace(
+      new Response('{"kind":"done","payload":{"ok":true}}\n'),
+    );
+    const request = new Request("https://harness/turn", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...validTurn,
+        permissionSnapshot: {
+          version: 1,
+          scope: {
+            teamId: "T1",
+            channelId: "C1",
+            actorKind: "slack_automation",
+          },
+          channelAccess: {
+            bundleId: "default",
+            metadataVisibility: "restricted",
+            allowedTools: ["show_permissions"],
+            deniedTools: ["memory_write"],
+            policies: { allowMemoryWrite: false, allowTasks: false },
+            mcpEndpoints: [],
+            secretRefs: [],
+          },
+          runtime: {
+            harnessSource: "channel",
+            modelSource: "channel",
+            harnessConnected: true,
+          },
+          generatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    });
+    await routeHarnessRequest(
+      request,
+      container.namespace,
+      authToken,
+      {
+        allowedHosts: new Set(["github.com"]),
+        allowedOrgs: new Set(["example"]),
+      },
+    );
+    const forwarded = container.fetch.mock.calls[0]![0] as Request;
+    const body = await forwarded.json() as {
+      permissionSnapshot: {
+        sandbox: {
+          allowedRepoHosts: string[];
+          allowedRepoOrgs: string[];
+          remoteGitApproved: boolean;
+          createPullRequest: boolean;
+        };
+      };
+    };
+    expect(body.permissionSnapshot.sandbox).toEqual({
+      network: "denied_by_default",
+      credentialExposure: "sentinel_only",
+      allowedRepoHosts: ["github.com"],
+      allowedRepoOrgs: ["example"],
+      remoteGitApproved: false,
+      createPullRequest: false,
+    });
+  });
+
   it("stages a greater-than-inline Slack file and resolves exact bytes through the real harness path", async () => {
     const bytes = new Uint8Array(8 * 1024 * 1024 + 1);
     bytes[0] = 19;

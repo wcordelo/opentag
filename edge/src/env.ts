@@ -7,6 +7,8 @@ import type { ConversationStateDO } from "./store/conversation-state-do.js";
 import type { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 import type { KnowledgeDO } from "./memory/knowledge-do.js";
 import type { SessionEventDO } from "./store/session-event-do.js";
+import type { DeferredIngressDO } from "./deferred-ingress-do.js";
+import type { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 
 /**
  * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
@@ -17,12 +19,18 @@ export interface Env {
   KNOWLEDGE: DurableObjectNamespace<KnowledgeDO>;
   /** Required per-thread durable session log and exact execute/forward dedup. */
   SESSION_EVENTS: DurableObjectNamespace<SessionEventDO>;
+  /** Stable click/late-file jobs; alarm retries survive request-isolate loss. */
+  DEFERRED_INGRESS?: DurableObjectNamespace<DeferredIngressDO>;
+  /** Per-channel cross-isolate Slack dispatch reservations. */
+  SLACK_RATE_LIMIT?: DurableObjectNamespace<SlackRateLimitDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
   DELIVERY_METRICS: AnalyticsEngineDataset;
   BLOBS?: R2Bucket;
 
   /** Service binding to research task Worker (opentag-orchestrator). */
   RESEARCH_TASKS?: Fetcher;
+  /** Self service binding used only by DeferredIngressDO's authenticated alarm. */
+  BOT_SELF?: Fetcher;
 
   /**
    * Service binding to AG-UI triage Worker (opentag-agent). Required in prod —
@@ -50,6 +58,10 @@ export interface Env {
 
   SLACK_BOT_TOKEN?: string;
   SLACK_SIGNING_SECRET?: string;
+  /** Installed OpenTag bot user id, required for trusted rich-payload mentions. */
+  SLACK_BOT_USER_ID?: string;
+  /** Exact comma/whitespace-separated `bot:B...` / `app:A...` trigger actors. */
+  SLACK_TRUSTED_TRIGGER_ACTORS?: string;
 
   /**
    * Fetcher service binding to the Claude Code harness container (GOAL.md

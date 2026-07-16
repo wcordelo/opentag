@@ -157,6 +157,29 @@ SH
 chmod 0755 /usr/local/bin/git /usr/local/bin/gh
 EOF
 
+# Read-only local introspection for the exact current execution. The file is
+# generated inside the disposable execution HOME and is never an authorization
+# source; the outer Worker remains authoritative for egress and credentials.
+RUN <<'EOF'
+cat > /usr/local/bin/opentag <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  permissions)
+    if [ -z "${OPENTAG_PERMISSIONS_FILE:-}" ] || [ ! -r "${OPENTAG_PERMISSIONS_FILE}" ]; then
+      echo "OpenTag permission snapshot is unavailable for this execution." >&2
+      exit 2
+    fi
+    exec /bin/cat "${OPENTAG_PERMISSIONS_FILE}"
+    ;;
+  *)
+    echo "Usage: opentag permissions" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod 0755 /usr/local/bin/opentag
+EOF
+
 # ── uv — exact release archive, checksum verified before extraction ────
 ARG UV_VERSION=0.6.14
 ARG UV_AMD64_SHA256=0aaf451c391d3913823bfb8ed354b446dcfd0553a32ed8266611e4181c61fd51

@@ -54,6 +54,7 @@ export async function resolveThreadOverrides(
   store: StateStore,
   conversationKey: string,
   rawText: string,
+  options?: { persist?: boolean },
 ): Promise<ResolvedThreadOverrides> {
   const messageOverride = extractMessageOverrides(rawText);
   const hasMessageFlags = Boolean(
@@ -76,7 +77,7 @@ export async function resolveThreadOverrides(
     }
   }
 
-  if (hasMessageFlags && conversationKey) {
+  if (hasMessageFlags && conversationKey && options?.persist !== false) {
     const merged: StickyThreadOverrides = {
       model: messageOverride.model ?? sticky?.model,
       harnessType: messageOverride.harnessType ?? sticky?.harnessType,

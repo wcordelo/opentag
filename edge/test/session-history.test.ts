@@ -28,8 +28,8 @@ describe("canonical session history", () => {
       { id: 3, executionId: "current", kind: "input", payload: "latest", createdAt: 3 },
     ];
     expect(reconstructSessionHistory(events, "current")).toEqual([
-      { role: "user", text: "question" },
-      { role: "bot", text: "answer" },
+      { role: "user", text: "question", at: 1 },
+      { role: "bot", text: "answer", at: 2 },
     ]);
   });
 
@@ -66,6 +66,7 @@ describe("canonical session history", () => {
       {
         role: "user",
         text: "compare the plan",
+        at: 1,
         attachments: [{
           kind: "staged",
           id: "F1",
@@ -76,7 +77,7 @@ describe("canonical session history", () => {
           sha256: "abc",
         }],
       },
-      { role: "bot", text: "[Tool read_thread: Found the prior decision]" },
+      { role: "bot", text: "[Tool read_thread: Found the prior decision]", at: 2 },
     ]);
   });
 });

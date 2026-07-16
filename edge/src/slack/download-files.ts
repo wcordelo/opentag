@@ -275,6 +275,111 @@ export async function buildFileContentParts(
   return { parts, notes };
 }
 
+/** Rehydrate canonical session attachment refs (staged R2 keys or inline bytes). */
+export async function buildPreparedAttachmentContentParts(
+  attachments: PreparedAttachment[],
+  bucket: R2Bucket,
+  config: Pick<FileDeliveryConfig, "maxFiles" | "maxTextBytes" | "maxInlineBytes"> = {},
+): Promise<{ parts: AgentContentPart[]; notes: string[] }> {
+  const maxFiles = config.maxFiles ?? DEFAULTS.maxFiles;
+  const maxText = config.maxTextBytes ?? DEFAULTS.maxTextBytes;
+  const maxInlineBytes = config.maxInlineBytes ?? DEFAULTS.maxBytesPerFile;
+
+  const parts: AgentContentPart[] = [];
+  const notes: string[] = [];
+  const considered = attachments.slice(0, maxFiles);
+  if (attachments.length > maxFiles) {
+    notes.push(
+      `(only the first ${maxFiles} of ${attachments.length} files processed)`,
+    );
+  }
+
+  for (const attachment of considered) {
+    const label = attachment.name ?? attachment.id ?? "file";
+    const mime = (attachment.mimeType ?? "").toLowerCase();
+    const media = mediaPartType(mime);
+
+    let bytes: Uint8Array;
+    let prepared: PreparedAttachment;
+
+    if (attachment.kind === "inline") {
+      if (!attachment.dataBase64) {
+        notes.push(`skipped "${label}": inline attachment has no stored bytes`);
+        continue;
+      }
+      try {
+        const binary = atob(attachment.dataBase64);
+        bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+      } catch (err) {
+        notes.push(`skipped "${label}": ${(err as Error).message}`);
+        continue;
+      }
+      prepared = attachment;
+    } else {
+      const object = await bucket.get(attachment.stageKey);
+      if (!object) {
+        notes.push(`skipped "${label}": staged attachment not found in storage`);
+        continue;
+      }
+      bytes = new Uint8Array(await object.arrayBuffer());
+      if (typeof attachment.size === "number" && bytes.byteLength !== attachment.size) {
+        notes.push(`skipped "${label}": staged attachment size mismatch`);
+        continue;
+      }
+      if (attachment.sha256) {
+        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+        const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+        if (sha256 !== attachment.sha256) {
+          notes.push(`skipped "${label}": staged attachment digest mismatch`);
+          continue;
+        }
+      }
+      prepared = attachment;
+    }
+
+    if (!media && !isText(mime)) {
+      notes.push(
+        `skipped "${label}" (${mime || "unknown"}): unsupported type`,
+      );
+      continue;
+    }
+
+    if (media && prepared.kind === "inline") {
+      parts.push(withAttachment({
+        type: media,
+        source: {
+          type: "data",
+          value: toBase64(bytes),
+          mimeType: mime,
+        },
+      }, prepared));
+    } else if (prepared.kind === "inline") {
+      let buf = bytes;
+      let truncated = false;
+      if (buf.byteLength > maxText) {
+        buf = buf.subarray(0, maxText);
+        truncated = true;
+      }
+      parts.push(withAttachment({
+        type: "text",
+        text:
+          `Attached file "${label}" (${mime}${truncated ? ", truncated" : ""}):\n` +
+          utf8Decode(buf),
+      }, prepared));
+    } else {
+      parts.push(withAttachment({
+        type: "text",
+        text: `[Staged attachment: ${label} (${mime}, ${bytes.byteLength} bytes)]`,
+      }, prepared));
+    }
+  }
+
+  return { parts, notes };
+}
+
 /** Combine user text + downloaded file parts for runAgent prompt. */
 export function mergePromptParts(
   userText: string,

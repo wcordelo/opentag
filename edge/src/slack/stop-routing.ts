@@ -335,9 +335,10 @@ export async function handleStopCommand(
           : durableInterrupt.interrupted
             ? (() => { throw new Error("session_state_unavailable"); })()
             : {};
-        // A session id proves a container turn was created. In that case the
-        // authenticated exact /interrupt request must be accepted (a 200 no-op
-        // is valid for an already-terminal/no-live-process execution).
+        // sessionId persists after the first harness create() for the thread.
+        // Only treat harness as authoritative when it reports an active
+        // interrupt; otherwise fall through to the AG-UI control path.
+        let harnessInterrupted = false;
         if (state.sessionId) {
           const harnessInterrupt = await interruptHarnessTurn(env, {
             sessionId: state.sessionId,
@@ -347,7 +348,12 @@ export async function handleStopCommand(
           if (!harnessInterrupt.accepted) {
             throw new Error("harness_interrupt_not_accepted");
           }
-        } else if (env.AGENT_RUNTIME || env.AGENT_URL) {
+          harnessInterrupted = harnessInterrupt.interrupted;
+        }
+        if (
+          !harnessInterrupted &&
+          (env.AGENT_RUNTIME || env.AGENT_URL)
+        ) {
           await interruptAguiTurn(env, activeTurn.executionId);
         }
       }

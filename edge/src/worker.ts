@@ -205,6 +205,23 @@ app.post("/slack/events", slackVerify(), async (c) => {
   } | undefined;
   const store = createDurableObjectStore(c.env.BOT_STATE);
 
+  const preAdmissionIdentity = preAdmissionIdentityForEvent(payload);
+  if (
+    preAdmissionIdentity && event?.type === "app_mention" &&
+    (!Array.isArray(event.files) || event.files.length === 0)
+  ) {
+    const pending: PendingFilelessMention = {
+      teamId,
+      channelId: preAdmissionIdentity.channelId,
+      userId: preAdmissionIdentity.requesterId,
+      mentionTs: preAdmissionIdentity.inboundTs,
+      threadTs: preAdmissionIdentity.threadTs ?? preAdmissionIdentity.inboundTs,
+      eventId: preAdmissionIdentity.eventId,
+      expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
+    };
+    await store.kv.set(pendingLateFileKey(pending), pending, LATE_FILE_WINDOW_MS);
+  }
+
   // Slack may deliver an app_mention before its uploaded file metadata. Match
   // the later file_share to the exact user/channel mention, wait for that
   // original turn to become idle, hydrate files.info, then admit one synthetic
@@ -304,26 +321,11 @@ app.post("/slack/events", slackVerify(), async (c) => {
   }
 
   const run = async () => {
-    const identity = preAdmissionIdentityForEvent(payload);
+    const identity = preAdmissionIdentity;
     const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
     if (identity && !preAdmittedTurn) {
       console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
       return;
-    }
-    if (
-      identity && event?.type === "app_mention" &&
-      (!Array.isArray(event.files) || event.files.length === 0)
-    ) {
-      const pending: PendingFilelessMention = {
-        teamId,
-        channelId: identity.channelId,
-        userId: identity.requesterId,
-        mentionTs: identity.inboundTs,
-        threadTs: identity.threadTs ?? identity.inboundTs,
-        eventId: identity.eventId,
-        expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
-      };
-      await store.kv.set(pendingLateFileKey(pending), pending, LATE_FILE_WINDOW_MS);
     }
     let handedOff = false;
     try {

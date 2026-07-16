@@ -54,7 +54,7 @@ function sessionInputLine(prompt: string | AgentContentPart[]): string {
       size: attachment.size,
       ...(attachment.kind === "staged"
         ? { stageKey: attachment.stageKey, sha256: attachment.sha256 }
-        : {}),
+        : { dataBase64: attachment.dataBase64 }),
     }];
   });
   if (attachments.length === 0) return text || "[non-text prompt]";

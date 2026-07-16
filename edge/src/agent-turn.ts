@@ -784,7 +784,7 @@ export async function runBundledAgentTurn(
     );
     if (restored.parts.length > 0 || restored.notes.length > 0) {
       prompt = mergePromptParts(
-        typeof prompt === "string" ? prompt : promptText,
+        prompt,
         restored.parts,
         restored.notes.map((note) => `prior-thread ${note}`),
       );
@@ -833,7 +833,7 @@ export async function runBundledAgentTurn(
     );
     if (restored.parts.length > 0 || restored.notes.length > 0) {
       prompt = mergePromptParts(
-        typeof prompt === "string" ? prompt : promptText,
+        prompt,
         restored.parts,
         restored.notes.map((note) => `canonical-session ${note}`),
       );

@@ -99,6 +99,7 @@ export function reconstructSessionHistory(
     size: number;
     stageKey?: string;
     sha256?: string;
+    dataBase64?: string;
   }>;
 }> {
   type Attachment = NonNullable<ReturnType<typeof reconstructSessionHistory>[number]["attachments"]>[number];
@@ -137,7 +138,22 @@ export function reconstructSessionHistory(
                 typeof attachment.name === "string" &&
                 typeof attachment.mimeType === "string" &&
                 typeof attachment.size === "number"
-              ) turn.attachments.push(attachment);
+              ) {
+                turn.attachments.push(
+                  attachment.kind === "inline" && typeof attachment.dataBase64 === "string"
+                    ? { ...attachment, kind: "inline" as const, dataBase64: attachment.dataBase64 }
+                    : attachment.kind === "staged" && typeof attachment.stageKey === "string"
+                      ? {
+                          ...attachment,
+                          kind: "staged" as const,
+                          stageKey: attachment.stageKey,
+                          ...(typeof attachment.sha256 === "string"
+                            ? { sha256: attachment.sha256 }
+                            : {}),
+                        }
+                      : attachment,
+                );
+              }
             }
           }
           decoded = true;

@@ -382,13 +382,14 @@ export async function buildPreparedAttachmentContentParts(
 
 /** Combine user text + downloaded file parts for runAgent prompt. */
 export function mergePromptParts(
-  userText: string,
+  userText: string | AgentContentPart[],
   fileParts: AgentContentPart[],
   notes: string[],
 ): string | AgentContentPart[] {
   if (fileParts.length === 0 && notes.length === 0) return userText;
-  const content: AgentContentPart[] = [];
-  if (userText.trim()) content.push({ type: "text", text: userText });
+  const content: AgentContentPart[] = typeof userText === "string"
+    ? (userText.trim() ? [{ type: "text", text: userText }] : [])
+    : [...userText];
   content.push(...fileParts);
   if (notes.length > 0) {
     content.push({
@@ -396,5 +397,8 @@ export function mergePromptParts(
       text: `[attachment notes: ${notes.join("; ")}]`,
     });
   }
-  return content.length > 0 ? content : userText;
+  if (content.length === 0) return userText;
+  return content.length === 1 && content[0]?.type === "text" && typeof userText === "string"
+    ? content[0].text
+    : content;
 }

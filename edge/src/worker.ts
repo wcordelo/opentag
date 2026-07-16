@@ -254,7 +254,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
           const active = await store.activeTurn.get(
             slackObligationThreadKey(candidate.channelId, pending!.threadTs),
           );
-          return Boolean(active);
+          return active?.status === "pending";
         });
         if (!idle) {
           console.error(JSON.stringify({

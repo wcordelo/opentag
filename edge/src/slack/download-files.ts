@@ -278,7 +278,7 @@ export async function buildFileContentParts(
 /** Rehydrate canonical session attachment refs (staged R2 keys or inline bytes). */
 export async function buildPreparedAttachmentContentParts(
   attachments: PreparedAttachment[],
-  bucket: R2Bucket,
+  bucket?: R2Bucket,
   config: Pick<FileDeliveryConfig, "maxFiles" | "maxTextBytes" | "maxInlineBytes"> = {},
 ): Promise<{ parts: AgentContentPart[]; notes: string[] }> {
   const maxFiles = config.maxFiles ?? DEFAULTS.maxFiles;
@@ -319,6 +319,10 @@ export async function buildPreparedAttachmentContentParts(
       }
       prepared = attachment;
     } else {
+      if (!bucket) {
+        notes.push(`skipped "${label}": durable staging is not configured`);
+        continue;
+      }
       const object = await bucket.get(attachment.stageKey);
       if (!object) {
         notes.push(`skipped "${label}": staged attachment not found in storage`);

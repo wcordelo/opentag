@@ -461,13 +461,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       });
       if (found.found && found.ts) return confirm(found.ts);
     }
-    const absent = await this.opts.stateStore.activeTurn.markLiveMessageAbsent({
-      threadKey: fence.threadKey,
-      executionId: fence.executionId,
-      clientMessageId,
-    });
-    if (!absent) throw new Error("live_message_reconciliation_state_failed");
-    throw new SlackApiError("chat.postMessage", "reconciled_absent");
+    // Keep the reserved live identity ambiguous so obligation recovery defers
+    // instead of posting a duplicate when Slack is eventually consistent.
+    throw new SlackApiError("chat.postMessage", "reconciled_unresolved");
   }
 
   private async fenced<T>(

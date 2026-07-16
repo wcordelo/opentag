@@ -28,6 +28,7 @@ import {
   hasValidBearerToken,
   loadAuthoritativeSystemPrompt,
   mapStreamJsonLine,
+  materializeTurnAttachments,
   prepareExecutionHome,
   resolveExecutionHome,
   resolveSessionWorkdir,
@@ -99,6 +100,28 @@ describe("assemblePrompt", () => {
     });
     expect(prompt).toBe("hello");
   });
+
+  it("lists materialized attachment paths before the user input", () => {
+    const prompt = assemblePrompt({ inputLines: ["inspect it"], attachmentPaths: ["/tmp/a.pdf (application/pdf)"] });
+    expect(prompt).toBe("[Attachments]\n- /tmp/a.pdf (application/pdf)\n\ninspect it");
+  });
+});
+
+describe("attachment materialization", () => {
+  it("writes exact inline bytes outside the repository checkout", async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "opentag-attachments-"));
+    try {
+      const paths = await materializeTurnAttachments(root, [{
+        kind: "inline", id: "F1", name: "design plan.pdf", mimeType: "application/pdf",
+        size: 4, dataBase64: Buffer.from([1, 2, 3, 4]).toString("base64"),
+      }]);
+      const filePath = paths[0]!.split(" (")[0]!;
+      expect(filePath).toContain(path.join(root, "attachments"));
+      expect([...await fs.promises.readFile(filePath)]).toEqual([1, 2, 3, 4]);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("git approval and outcome contract", () => {
@@ -130,6 +153,7 @@ describe("git approval and outcome contract", () => {
     expect(requesterAttribution(requesterContext)).toBe("Prompted by: @wcordelo");
     expect(requesterAttribution("[Requester Context]\nGitHub: @wcordelo")).toBeUndefined();
     expect(requesterAttribution("[Requester Context]\n Prompted by: @wcordelo")).toBeUndefined();
+    expect(requesterAttribution("Prompted by: @one\nPrompted by: @two")).toBeUndefined();
     expect(
       gitPolicyPrompt({
         ...validTurn,

@@ -37,14 +37,16 @@ import {
   createSlackWebClient,
   isDefinitiveSlackFailure,
   SlackApiError,
+  type SlackRateScheduler,
   type SlackWebClient,
 } from "./web-api.js";
 import { conflateChatSdkStream } from "./conflate.js";
 import {
-  buildMrkdwnBlocks,
+  buildSlackMessagePages,
   stringsToMarkdownChunks,
-  truncateFallbackText,
 } from "./stream-render.js";
+import { stableSlackClientMessageId } from "./client-message-id.js";
+import { normalizeSlackHistoryMessage } from "./session-history.js";
 import {
   getInboundMessage,
   type InboundMessageTarget,
@@ -52,6 +54,7 @@ import {
 import { bindRequestContext } from "../request-context.js";
 import {
   buildFileContentParts,
+  createR2AttachmentStager,
   extractSlackFiles,
   mergePromptParts,
   type AgentContentPart,
@@ -65,11 +68,23 @@ import {
 } from "./active-turn-registry.js";
 import type { PreAdmittedTurn } from "./pre-admit-turn.js";
 import type { SessionEventDO } from "../store/session-event-do.js";
-import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type {
+  AnalyticsEngineDataset,
+  DurableObjectNamespace,
+  R2Bucket,
+} from "@cloudflare/workers-types";
+import { buildSessionViewUrl } from "./session-link.js";
+import {
+  buildQuickDeployCardFromRefs,
+  findQuickSiteUrls,
+} from "./quick-card.js";
 
 const EXECUTION_FENCE = "__opentagExecutionFence";
 const NEXT_RENDER_FINAL = "__opentagNextRenderFinal";
-type ExecutionFence = Pick<ActiveTurnRecord, "threadKey" | "executionId">;
+type ExecutionFence = Pick<
+  ActiveTurnRecord,
+  "threadKey" | "executionId" | "liveClientMessageId"
+>;
 type FencedTarget = { [EXECUTION_FENCE]?: ExecutionFence };
 type FinalFencedTarget = FencedTarget & { [NEXT_RENDER_FINAL]?: boolean };
 type FencedRef = MessageRef & { [EXECUTION_FENCE]?: ExecutionFence };
@@ -109,11 +124,21 @@ function requireSlackPost<T extends { ok: boolean; ts?: string; error?: string }
   return result as T & { ts: string };
 }
 
+function isSlackSizeFailure(error: unknown): boolean {
+  return error instanceof SlackApiError && [
+    "msg_too_long",
+    "invalid_blocks",
+    "too_many_blocks",
+  ].includes(error.slackError);
+}
+
 type CloudflareSlackAdapterBaseOptions = {
   botToken: string;
   /** Optional bot user id for loop guards; resolved lazily if omitted. */
   botUserId?: string;
   teamId?: string;
+  sessionViewer?: { baseUrl: string; secret: string; runtimeLabel: string };
+  quickBaseDomain?: string;
   /**
    * Minimum ms between `chat.update` calls while streaming (default 800).
    * Conflation absorbs bursts while an update is in flight; this is the
@@ -122,6 +147,15 @@ type CloudflareSlackAdapterBaseOptions = {
   streamUpdateIntervalMs?: number;
   /** Replay source for incremental AG-UI renders (obligation recovery). */
   sessionEvents?: DurableObjectNamespace<SessionEventDO>;
+  /** Durable large-file tier; omitted only in isolated tests/unconfigured dev. */
+  blobs?: R2Bucket;
+  /** Shared by every live renderer created by the production adapter. */
+  slackScheduler?: SlackRateScheduler;
+  deliveryMetrics?: AnalyticsEngineDataset;
+  /** Bounded eventual-consistency reconciliation for ambiguous live posts. */
+  liveReconcileAttempts?: number;
+  liveReconcileDelayMs?: number;
+  reconcileSleep?: (ms: number) => Promise<void>;
 };
 
 /** Production construction always carries the authoritative lifecycle store. */
@@ -181,7 +215,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   readonly conversationStore: ConversationStore;
 
   constructor(private readonly opts: CloudflareSlackAdapterOptions) {
-    this.client = createSlackWebClient(opts.botToken);
+    this.client = createSlackWebClient(opts.botToken, {
+      ...(opts.slackScheduler ? { scheduler: opts.slackScheduler } : {}),
+    });
     this.botUserId = opts.botUserId;
     this.teamId = opts.teamId;
     this.conversationStore = {
@@ -252,6 +288,116 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     }
   }
 
+  /** Persist a bounded useful tool-result summary for isolate-loss replay. */
+  private async mirrorSessionToolResult(
+    fence: ExecutionFence | undefined,
+    payload: { toolCallId: string; tool: string; summary: string },
+  ): Promise<void> {
+    if (!fence || !this.opts.sessionEvents) return;
+    try {
+      const sessionDo = this.opts.sessionEvents.get(
+        this.opts.sessionEvents.idFromName(fence.threadKey),
+      ) as unknown as {
+        appendEvent(args: {
+          executionId: string;
+          kind: "output";
+          payload: unknown;
+        }): Promise<unknown>;
+      };
+      await sessionDo.appendEvent({
+        executionId: fence.executionId,
+        kind: "output",
+        payload: {
+          toolCallId: payload.toolCallId,
+          tool: payload.tool,
+          summary: payload.summary.slice(0, 2_000),
+        },
+      });
+    } catch (err) {
+      console.warn(
+        "[slack] session tool-result mirror failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  /**
+   * Persist terminal session truth while the exact render token is held and
+   * before the final Slack request crosses its external boundary. A retry may
+   * observe an already-terminal execution; that is equivalent confirmation.
+   */
+  private async persistSessionTerminal(
+    fence: ExecutionFence | undefined,
+  ): Promise<void> {
+    if (!fence || !this.opts.sessionEvents) return;
+    const sessionDo = this.opts.sessionEvents.get(
+      this.opts.sessionEvents.idFromName(fence.threadKey),
+    ) as unknown as {
+      appendEvent(args: {
+        executionId: string;
+        kind: "done";
+        payload: unknown;
+      }): Promise<unknown>;
+    };
+    try {
+      await sessionDo.appendEvent({
+        executionId: fence.executionId,
+        kind: "done",
+        payload: {},
+      });
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message === `execution_already_terminal:${fence.executionId}`
+      ) return;
+      throw err;
+    }
+  }
+
+  private async sessionContextBlock(
+    fence: ExecutionFence | undefined,
+  ): Promise<{ block: unknown; markerKey: string } | undefined> {
+    const viewer = this.opts.sessionViewer;
+    const store = this.opts.stateStore;
+    if (!viewer || !store || !fence) return undefined;
+    const markerKey = `session-link:${fence.threadKey}`;
+    if (await store.kv.get(markerKey)) return undefined;
+    const url = await buildSessionViewUrl({
+      baseUrl: viewer.baseUrl,
+      secret: viewer.secret,
+      threadKey: fence.threadKey,
+    });
+    return {
+      markerKey,
+      block: {
+        type: "context",
+        elements: [{
+          type: "mrkdwn",
+          text: `<${url}|Open session events> · ${viewer.runtimeLabel}`,
+        }],
+      },
+    };
+  }
+
+  private emitDeliveryOutcome(
+    outcome: "streamed" | "answer_visible" | "failed_size_limit",
+    fence: ExecutionFence | undefined,
+    channel: string,
+  ): void {
+    if (!fence) return;
+    console.log(JSON.stringify({
+      metric: outcome,
+      threadKey: fence.threadKey,
+      executionId: fence.executionId,
+      channel,
+    }));
+    this.opts.deliveryMetrics?.writeDataPoint({
+      blobs: [outcome, channel, fence.threadKey, fence.executionId],
+      doubles: [1],
+      indexes: [fence.threadKey],
+    });
+  }
+
   private async preAdmittedStillPending(
     turn: PreAdmittedTurn | undefined,
   ): Promise<boolean> {
@@ -266,6 +412,62 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         !snapshot.renderToken &&
         !snapshot.effectToken,
     );
+  }
+
+  /**
+   * Post the one reserved live placeholder and durably reconcile its Slack
+   * timestamp. A transport-ambiguous post is resolved by exact client id
+   * lookup before recovery is allowed to create any replacement.
+   */
+  private async postLiveMessage(
+    value: unknown,
+    args: Parameters<SlackWebClient["postMessage"]>[0],
+  ): Promise<{ ok: boolean; ts?: string; error?: string; duplicate?: boolean }> {
+    const fence = this.fenceOf(value);
+    const clientMessageId = fence?.liveClientMessageId;
+    if (!fence || !clientMessageId || !this.opts.stateStore) {
+      return this.client.postMessage(args);
+    }
+    const postArgs = { ...args, client_msg_id: clientMessageId };
+    const confirm = async (ts: string) => {
+      const confirmed = await this.opts.stateStore!.activeTurn.confirmLiveMessage({
+        threadKey: fence.threadKey,
+        executionId: fence.executionId,
+        clientMessageId,
+        ts,
+      });
+      if (!confirmed) throw new Error("live_message_confirmation_failed");
+      return { ok: true, ts };
+    };
+    try {
+      const result = await this.client.postMessage(postArgs);
+      if (result.ts) return { ...result, ...(await confirm(result.ts)) };
+      if (!result.duplicate) return result;
+    } catch (error) {
+      if (isDefinitiveSlackFailure(error)) throw error;
+      // Continue into the same bounded reconciliation used for a duplicate
+      // response that did not include the original timestamp.
+    }
+    const attempts = Math.max(2, this.opts.liveReconcileAttempts ?? 4);
+    const delayMs = Math.max(0, this.opts.liveReconcileDelayMs ?? 1_000);
+    const sleep = this.opts.reconcileSleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await sleep(delayMs);
+      const found = await this.client.findMessageByClientMessageId({
+        channel: args.channel,
+        ...(args.thread_ts ? { threadTs: args.thread_ts } : {}),
+        clientMessageId,
+        limit: 100,
+      });
+      if (found.found && found.ts) return confirm(found.ts);
+    }
+    const absent = await this.opts.stateStore.activeTurn.markLiveMessageAbsent({
+      threadKey: fence.threadKey,
+      executionId: fence.executionId,
+      clientMessageId,
+    });
+    if (!absent) throw new Error("live_message_reconciliation_state_failed");
+    throw new SlackApiError("chat.postMessage", "reconciled_absent");
   }
 
   private async fenced<T>(
@@ -288,7 +490,10 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     const result = await renderActiveTurnStep(
       this.opts.stateStore,
       fence,
-      action,
+      async () => {
+        if (effectiveFinal) await this.persistSessionTerminal(fence);
+        return action();
+      },
       effectiveFinal,
       { output, isDefinitiveFailure: isDefinitiveSlackFailure },
     );
@@ -438,6 +643,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       const { parts, notes } = await buildFileContentParts(
         refs,
         this.opts.botToken,
+        this.opts.blobs ? { stage: createR2AttachmentStager(this.opts.blobs) } : {},
       );
       const merged = mergePromptParts(normalized.userText, parts, notes);
       if (Array.isArray(merged)) contentParts = merged;
@@ -757,6 +963,26 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     const text = fallbackTextFromIr(ir);
     const channel = String((target as { channel?: string }).channel ?? "");
     const thread_ts = (target as { threadTs?: string }).threadTs;
+    const fence = this.fenceOf(target);
+    const isFinal = (target as FinalFencedTarget)[NEXT_RENDER_FINAL] === true;
+    const context = isFinal ? await this.sessionContextBlock(fence) : undefined;
+    let quickMarkerKey: string | undefined;
+    let quickBlocks: unknown[] = [];
+    if (isFinal && fence && this.opts.quickBaseDomain && this.opts.stateStore) {
+      const refs = findQuickSiteUrls(JSON.stringify(msg.blocks), this.opts.quickBaseDomain);
+      if (refs.length > 0) {
+        quickMarkerKey = `quick-card:${fence.threadKey}:${refs
+          .map((ref) => ref.artifactId).sort().join(",")}`;
+        if (!(await this.opts.stateStore.kv.get(quickMarkerKey))) {
+          const card = buildQuickDeployCardFromRefs(refs);
+          if (card) quickBlocks = renderSlackMessage([card]).blocks;
+        }
+      }
+    }
+    const extraBlocks = [
+      ...(context ? [context.block] : []),
+      ...quickBlocks,
+    ].slice(0, Math.max(0, 50 - msg.blocks.length));
     const body: Record<string, unknown> = {
       channel,
       thread_ts,
@@ -766,11 +992,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     };
     if (msg.accent) {
       body.attachments = [{ color: msg.accent, blocks: msg.blocks }];
+      if (extraBlocks.length > 0) body.blocks = extraBlocks;
     } else {
-      body.blocks = msg.blocks;
+      body.blocks = [...msg.blocks, ...extraBlocks];
     }
     const r = await this.fenced(target, async () => requireSlackPost(
-      await this.client.postMessage(
+      await this.postLiveMessage(target,
       body as {
         channel: string;
         thread_ts?: string;
@@ -781,8 +1008,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     if (!r.ok || !r.ts) {
       throw new Error(`chat.postMessage failed: ${r.error ?? "unknown"}`);
     }
+    if (context && extraBlocks.includes(context.block) && this.opts.stateStore) {
+      await this.opts.stateStore.kv.set(context.markerKey, true, 30 * 24 * 60 * 60_000);
+    }
+    if (quickMarkerKey && quickBlocks.some((block) => extraBlocks.includes(block)) && this.opts.stateStore) {
+      await this.opts.stateStore.kv.set(quickMarkerKey, true, 30 * 24 * 60 * 60_000);
+    }
+    if (isFinal) this.emitDeliveryOutcome("answer_visible", fence, channel);
     const ref: FencedRef = { id: r.ts, channel, ts: r.ts };
-    const fence = this.fenceOf(target);
     if (fence) Object.defineProperty(ref, EXECUTION_FENCE, { value: fence });
     return ref;
   }
@@ -825,7 +1058,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       unfurl_media: false,
     };
     const placeholder = await this.fenced(target, async () => requireSlackPost(
-      await this.client.postMessage(
+      await this.postLiveMessage(target,
       placeholderBody as { channel: string; thread_ts?: string; text: string },
       ),
     ));
@@ -841,6 +1074,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     let lastUpdateAt = 0;
     let lastSent: string | undefined;
     let lastMirroredLen = 0;
+    let streamedOutcomeEmitted = false;
     const fence = this.fenceOf(target);
     const mirrorAccDelta = async (full: string) => {
       if (full.length <= lastMirroredLen) return;
@@ -850,16 +1084,54 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     };
 
     const attemptUpdate = async (text: string, final: boolean): Promise<void> => {
-      await this.fenced(target, async () => requireSlackOk(
-          "chat.update",
-          await this.client.updateMessage({
-          channel,
-          ts,
-          text: truncateFallbackText(text),
-          blocks: buildMrkdwnBlocks(text),
-          }),
-        ), final,
+      const pages = buildSlackMessagePages(text);
+      let sizeLimited = false;
+      await this.fenced(target, async () => {
+        try {
+          requireSlackOk(
+            "chat.update",
+            await this.client.updateMessage({
+            channel,
+            ts,
+            text: pages[0]!.text,
+            blocks: pages[0]!.blocks,
+            }),
+          );
+          if (final) {
+            const identity = this.fenceOf(target)?.executionId ?? `${channel}:${ts}`;
+            for (const page of pages.slice(1)) {
+              requireSlackPost(await this.client.postMessage({
+                channel,
+                thread_ts,
+                text: page.text,
+                blocks: page.blocks,
+                client_msg_id: stableSlackClientMessageId(
+                  `${identity}:continuation:${page.index}`,
+                ),
+              }));
+            }
+          }
+        } catch (error) {
+          if (!final || !isSlackSizeFailure(error)) throw error;
+          const visibleError = "⚠️ The completed answer exceeded Slack's display limits. Open the session link or retry with a narrower request.";
+          requireSlackOk("chat.update", await this.client.updateMessage({
+            channel,
+            ts,
+            text: visibleError,
+            blocks: buildSlackMessagePages(visibleError)[0]!.blocks,
+          }));
+          sizeLimited = true;
+        }
+      }, final);
+      if (final) this.emitDeliveryOutcome(
+        sizeLimited ? "failed_size_limit" : "answer_visible",
+        fence,
+        channel,
       );
+      else if (!streamedOutcomeEmitted) {
+        streamedOutcomeEmitted = true;
+        this.emitDeliveryOutcome("streamed", fence, channel);
+      }
     };
 
     // Skip-if-unchanged guard: cheap, safe because `pushUpdate` is always
@@ -915,23 +1187,121 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     let textEndUpdates: SlackUpdateArgs[] | undefined;
     let terminalTextCommitted = false;
     let runErrorPostFinal = false;
+    let liveMessagePosted = false;
     let lastMirroredLen = 0;
+    let streamedOutcomeEmitted = false;
+    const toolNames = new Map<string, string>();
     const renderFence = this.fenceOf(target);
     const sendUpdate = async (args: SlackUpdateArgs, final: boolean): Promise<void> => {
+      const context = final
+        ? await this.sessionContextBlock(renderFence)
+        : undefined;
+      let quickMarkerKey: string | undefined;
+      let quickBlocks: unknown[] = [];
+      if (final && renderFence && this.opts.quickBaseDomain && this.opts.stateStore) {
+        const refs = findQuickSiteUrls(args.text, this.opts.quickBaseDomain);
+        if (refs.length > 0) {
+          quickMarkerKey = `quick-card:${renderFence.threadKey}:${refs
+            .map((ref) => ref.artifactId).sort().join(",")}`;
+          if (!(await this.opts.stateStore.kv.get(quickMarkerKey))) {
+            const card = buildQuickDeployCardFromRefs(refs);
+            if (card) quickBlocks = renderSlackMessage([card]).blocks;
+          }
+        }
+      }
+      const pages = final ? buildSlackMessagePages(args.text) : [];
+      const paged = pages.length > 1;
+      const existingBlocks = paged
+        ? pages[0]!.blocks
+        : "blocks" in args && Array.isArray(args.blocks)
+          ? args.blocks
+          : [];
+      const candidateExtraBlocks = [
+        ...(context ? [context.block] : []),
+        ...quickBlocks,
+      ];
+      const decorationTarget = paged ? pages[pages.length - 1]!.blocks : existingBlocks;
+      // Never evict answer blocks to make room for UX decoration. Prefer the
+      // once-per-thread session link, then include as much of the card as fits.
+      const extraBlocks = candidateExtraBlocks.slice(
+        0,
+        Math.max(0, 50 - decorationTarget.length),
+      );
+      const contextIncluded = Boolean(context && extraBlocks.includes(context.block));
+      const quickIncluded = quickBlocks.some((block) => extraBlocks.includes(block));
+      const visibleArgs = !paged && extraBlocks.length > 0
+        ? {
+            ...args,
+            blocks: [...existingBlocks, ...extraBlocks],
+          }
+        : paged
+          ? { ...args, text: pages[0]!.text, blocks: pages[0]!.blocks }
+          : args;
       const text = args.text;
       if (text.length > lastMirroredLen) {
         const delta = text.slice(lastMirroredLen);
         lastMirroredLen = text.length;
         await this.mirrorSessionOutput(renderFence, delta);
       }
-      await this.fenced(target, async () => requireSlackOk(
-        "chat.update",
-        await this.client.updateMessage(args),
-      ), final);
+      let sizeLimited = false;
+      await this.fenced(target, async () => {
+        try {
+          requireSlackOk("chat.update", await this.client.updateMessage(visibleArgs));
+          if (paged) {
+            const identity = renderFence?.executionId ?? `${args.channel}:${args.ts}`;
+            for (const page of pages.slice(1)) {
+              const blocks = page.index === pages.length - 1 && extraBlocks.length > 0
+                ? [...page.blocks, ...extraBlocks]
+                : page.blocks;
+              requireSlackPost(await this.client.postMessage({
+                channel: args.channel,
+                thread_ts: t.threadTs,
+                text: page.text,
+                blocks,
+                client_msg_id: stableSlackClientMessageId(
+                  `${identity}:agui-continuation:${page.index}`,
+                ),
+              }));
+            }
+          }
+        } catch (error) {
+          if (!final || !isSlackSizeFailure(error)) throw error;
+          const visibleError = "⚠️ The completed answer exceeded Slack's display limits. Open the session link or retry with a narrower request.";
+          requireSlackOk("chat.update", await this.client.updateMessage({
+            channel: args.channel,
+            ts: args.ts,
+            text: visibleError,
+            blocks: buildSlackMessagePages(visibleError)[0]!.blocks,
+          }));
+          sizeLimited = true;
+        }
+      }, final);
+      if (final) this.emitDeliveryOutcome(
+        sizeLimited ? "failed_size_limit" : "answer_visible",
+        renderFence,
+        t.channel,
+      );
+      else if (!streamedOutcomeEmitted) {
+        streamedOutcomeEmitted = true;
+        this.emitDeliveryOutcome("streamed", renderFence, t.channel);
+      }
+      if (context && contextIncluded && this.opts.stateStore) {
+        await this.opts.stateStore.kv.set(context.markerKey, true, 30 * 24 * 60 * 60_000);
+      }
+      if (quickMarkerKey && quickIncluded && this.opts.stateStore) {
+        await this.opts.stateStore.kv.set(
+          quickMarkerKey,
+          true,
+          30 * 24 * 60 * 60_000,
+        );
+      }
       finalMessage = {
-        channel: args.channel,
-        ts: args.ts,
-        text: args.text,
+        channel: visibleArgs.channel,
+        ts: visibleArgs.ts,
+        text: visibleArgs.text,
+        ...("blocks" in visibleArgs && Array.isArray(visibleArgs.blocks)
+          ? { blocks: visibleArgs.blocks }
+          : {}),
       };
       if (final) terminalTextCommitted = true;
     };
@@ -943,9 +1313,26 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         false,
       ),
       postMessage: async (args) => {
+        const context = runErrorPostFinal
+          ? await this.sessionContextBlock(renderFence)
+          : undefined;
+        const postBlocks = "blocks" in args && Array.isArray(args.blocks)
+          ? args.blocks
+          : [];
+        const contextIncluded = Boolean(context && postBlocks.length < 50);
+        const visibleArgs = contextIncluded && context
+          ? {
+              ...args,
+              blocks: [...postBlocks, context.block],
+            }
+          : args;
         const r = await this.fenced(
           target,
-          async () => requireSlackPost(await this.client.postMessage(args)),
+          async () => requireSlackPost(await (
+            liveMessagePosted
+              ? this.client.postMessage(visibleArgs)
+              : this.postLiveMessage(target, visibleArgs)
+          )),
           runErrorPostFinal,
         );
         if (!r.ok || !r.ts) {
@@ -957,6 +1344,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           );
         }
         if (r.ok && r.ts) {
+          liveMessagePosted = true;
+          if (context && contextIncluded && this.opts.stateStore) {
+            await this.opts.stateStore.kv.set(
+              context.markerKey,
+              true,
+              30 * 24 * 60 * 60_000,
+            );
+          }
           finalMessage = {
             channel: args.channel,
             ts: r.ts,
@@ -984,10 +1379,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       status: statusTs
         ? { threadTs: statusTs, isPane: false }
         : undefined,
-      // Prefer reactions / final replies over `:wrench:` / `:white_check_mark:`
-      // tool-status chat rows (those confused users into thinking the bot
-      // was posting emoji as text).
-      showToolStatus: false,
+      // Channels' renderer is the production conflation equivalent: it
+      // accumulates AG-UI text into one throttled message and coalesces tool
+      // lifecycle by toolCallId. Keep progress enabled so long turns expose
+      // real activity instead of a static Thinking status.
+      showToolStatus: true,
     });
     const baseSubscriber = renderer.subscriber;
     type TextEndArgs = Parameters<
@@ -995,6 +1391,36 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     >[0];
     const subscriber = {
       ...baseSubscriber,
+      onToolCallStartEvent: async (
+        args: Parameters<NonNullable<typeof baseSubscriber.onToolCallStartEvent>>[0],
+      ) => {
+        const event = args.event as { toolCallId?: string; toolCallName?: string };
+        if (event.toolCallId && event.toolCallName) {
+          toolNames.set(event.toolCallId, event.toolCallName);
+        }
+        return baseSubscriber.onToolCallStartEvent?.(args);
+      },
+      onToolCallResultEvent: async (
+        args: Parameters<NonNullable<typeof baseSubscriber.onToolCallResultEvent>>[0],
+      ) => {
+        const result = await baseSubscriber.onToolCallResultEvent?.(args);
+        const event = args.event as {
+          toolCallId?: string;
+          content?: unknown;
+          messageId?: string;
+        };
+        const toolCallId = event.toolCallId ?? event.messageId ?? "unknown";
+        const tool = toolNames.get(toolCallId) ?? "tool";
+        const summary = typeof event.content === "string"
+          ? event.content
+          : JSON.stringify(event.content ?? "");
+        await this.mirrorSessionToolResult(renderFence, {
+          toolCallId,
+          tool,
+          summary,
+        });
+        return result;
+      },
       onTextMessageEndEvent: async (args: TextEndArgs) => {
         const captured: SlackUpdateArgs[] = [];
         textEndUpdates = captured;
@@ -1033,13 +1459,22 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
 
         // Tool-only and empty AG-UI runs still owe the user a visible terminal
         // result. This final post is also the atomic lifecycle commit point.
+        const context = await this.sessionContextBlock(renderFence);
         await this.fenced(target, async () => requireSlackPost(
           await this.client.postMessage({
             channel: t.channel,
             thread_ts: t.threadTs,
             text: "_(Agent completed without a text response.)_",
+            ...(context ? { blocks: [context.block] } : {}),
           }),
         ), true);
+        if (context && this.opts.stateStore) {
+          await this.opts.stateStore.kv.set(
+            context.markerKey,
+            true,
+            30 * 24 * 60 * 60_000,
+          );
+        }
       },
     };
   }
@@ -1130,12 +1565,16 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     const out: ThreadMessage[] = [];
     for (const m of raw.slice(-100)) {
       if (m.subtype && m.subtype !== "file_share") continue;
+      const normalized = normalizeSlackHistoryMessage(m);
       out.push({
-        text: m.text ?? "",
-        ts: m.ts,
-        isBot: Boolean(m.bot_id),
+        text: normalized.text,
+        ts: normalized.ts,
+        isBot: normalized.isBot,
         user: m.user ? await this.client.resolveUser(m.user) : undefined,
-      });
+        // Channels' public type is text-only; retain refs as an additive
+        // structural field for the bundled turn's attachment restaging path.
+        attachments: normalized.attachments,
+      } as ThreadMessage & { attachments: typeof normalized.attachments });
     }
     return out;
   }

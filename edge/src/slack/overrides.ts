@@ -1,8 +1,8 @@
 /**
  * Inline message directives, restored from the v1 slackbot:
- *   --claude | --claude-code | --codex              pick the harness for the thread
+ *   --claude | --claude-code                         pick the harness for the thread
  *   --model <name> (or --model=<name>)              pick the model within that harness
- *   -rsn <effort> (or -rsn=<effort>)                per-turn reasoning effort (codex)
+ *   --codex / -rsn                                  rejected: no Codex runtime is installed
  *   --fable | --opus | --sonnet | --haiku           model shortcuts (imply claude-code)
  *
  * Flags are stripped from the text before it reaches the agent. The harness
@@ -11,9 +11,9 @@
  * choices are sticky at the Slack thread level: the last flag wins for later
  * turns in the same thread. `--model` accepts either a full model id
  * (claude-sonnet-5, claude-opus-4-8, ...), or a Claude alias
- * (fable/opus/sonnet/haiku) which expands to the full id. Reasoning effort only
- * affects the codex harness (it maps to codex's `turn/start` `effort`) and stays
- * per-turn; other harnesses ignore it.
+ * (fable/opus/sonnet/haiku) which expands to the full id. Unsupported provider
+ * and reasoning flags are stripped but returned as errors so callers can reject
+ * the turn before persisting a preference or invoking a runtime.
  */
 
 export type MessageOverrides = {
@@ -21,14 +21,14 @@ export type MessageOverrides = {
   harnessType?: string
   model?: string
   reasoning?: string
+  errors: string[]
 }
 
 // Flag name -> HarnessType wire value (serde lowercase of the Rust enum).
 const HARNESS_FLAGS: Record<string, string> = {
   claude: 'claudecode',
   'claude-code': 'claudecode',
-  claudecode: 'claudecode',
-  codex: 'codex'
+  claudecode: 'claudecode'
 }
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
@@ -86,11 +86,13 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   let harnessType: string | undefined
   let model: string | undefined
   let reasoning: string | undefined
+  const errors: string[] = []
 
   const modelMatch = MODEL_FLAG_PATTERN.exec(cleaned)
   if (modelMatch) {
     const value = modelMatch[1]!
     model = CLAUDE_MODEL_ALIASES[value.toLowerCase()] ?? value
+    harnessType = 'claudecode'
     cleaned = stripMatch(cleaned, modelMatch)
   }
 
@@ -99,8 +101,17 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     const normalized = REASONING_EFFORTS[reasoningMatch[1]!.toLowerCase()]
     if (normalized) {
       reasoning = normalized
-      cleaned = stripMatch(cleaned, reasoningMatch)
+      errors.push(`-rsn ${normalized} is unsupported because no Codex runtime is installed`)
+    } else {
+      errors.push(`unsupported reasoning effort: ${reasoningMatch[1]!}`)
     }
+    cleaned = stripMatch(cleaned, reasoningMatch)
+  }
+
+  const codexMatch = flagPattern('codex').exec(cleaned)
+  if (codexMatch) {
+    errors.push('--codex is unsupported because no Codex runtime is installed')
+    cleaned = stripMatch(cleaned, codexMatch)
   }
 
   for (const [flag, harness] of Object.entries(HARNESS_FLAGS)) {
@@ -118,12 +129,14 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     cleaned = stripMatch(cleaned, match)
   }
 
-  return {
+  const result = {
     cleanedText: cleaned === text ? text : cleaned.trim(),
     harnessType,
     model,
     reasoning
-  }
+  } as MessageOverrides
+  Object.defineProperty(result, 'errors', { value: errors, enumerable: false })
+  return result
 }
 
 function flagPattern(flag: string): RegExp {

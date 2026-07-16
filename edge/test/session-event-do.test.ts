@@ -24,6 +24,7 @@ vi.mock("cloudflare:workers", () => ({
 const { SessionEventEngine, SessionEventDO } = await import(
   "../src/store/session-event-do.js"
 );
+type SessionEventEngineInstance = InstanceType<typeof SessionEventEngine>;
 type KvExecutor = import("../src/store/session-event-do.js").KvExecutor;
 import type { SqlCursor, SqlExecutor, SqlValue } from "../src/store/sql.js";
 
@@ -58,6 +59,28 @@ function nodeSqliteExecutor(db: DatabaseSync): SqlExecutor {
     },
   };
 }
+
+function nodeTransaction(db: DatabaseSync) {
+  return <T>(fn: () => T): T => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  };
+}
+
+type TestEngine = Omit<SessionEventEngineInstance, "execute"> & {
+  execute(args: {
+    executionId: string;
+    forwardedMessageId?: string;
+    inputLines: string[];
+  }): ReturnType<SessionEventEngineInstance["execute"]>;
+};
 
 /** Minimal in-memory shim for the DO KV slots (`ctx.storage.get/put/delete`). */
 function memoryKv(): KvExecutor {
@@ -109,16 +132,97 @@ function makeEngine(now?: () => number) {
   const engine = new SessionEventEngine({
     sql,
     kv: memoryKv(),
+    tx: nodeTransaction(db),
     now,
     newId: (() => {
       let n = 0;
       return () => `id-${++n}`;
     })(),
   });
-  return { engine, close: () => db.close() };
+  const originalExecute = engine.execute.bind(engine);
+  const testEngine = engine as unknown as TestEngine;
+  testEngine.execute = (args) => originalExecute({
+    ...args,
+    forwardedMessageId: args.forwardedMessageId ?? `test:${args.executionId}`,
+  });
+  return { engine: testEngine, db, sql, close: () => db.close() };
 }
 
 describe("SessionEventEngine", () => {
+  it("rejects a missing forwarded message id at runtime", async () => {
+    const { engine } = makeEngine();
+    await expect((engine as unknown as SessionEventEngineInstance).execute({
+      executionId: "missing-forwarded",
+      forwardedMessageId: "",
+      inputLines: ["no"],
+    })).rejects.toThrow("forwarded_message_id_required");
+  });
+
+  it("rolls back execute admission when an input insert faults", async () => {
+    const db = new DatabaseSync(":memory:");
+    const base = nodeSqliteExecutor(db);
+    for (const stmt of EVENTS_DDL) base.exec(stmt);
+    const failing: SqlExecutor = {
+      exec(query, ...bindings) {
+        if (/INSERT INTO events/.test(query)) throw new Error("fault_after_execution_insert");
+        return base.exec(query, ...bindings);
+      },
+    };
+    const engine = new SessionEventEngine({
+      sql: failing,
+      kv: memoryKv(),
+      tx: nodeTransaction(db),
+    });
+    await expect(engine.execute({
+      executionId: "atomic-execute",
+      forwardedMessageId: "atomic-message",
+      inputLines: ["one"],
+    })).rejects.toThrow("fault_after_execution_insert");
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM executions`).get()).toEqual({ n: 0 });
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM events`).get()).toEqual({ n: 0 });
+    db.close();
+  });
+
+  it("rolls back a done event when terminalization faults", async () => {
+    const db = new DatabaseSync(":memory:");
+    const base = nodeSqliteExecutor(db);
+    for (const stmt of EVENTS_DDL) base.exec(stmt);
+    const normal = new SessionEventEngine({
+      sql: base,
+      kv: memoryKv(),
+      tx: nodeTransaction(db),
+    });
+    await normal.execute({
+      executionId: "atomic-done",
+      forwardedMessageId: "atomic-done-message",
+      inputLines: ["go"],
+    });
+    const failing: SqlExecutor = {
+      exec(query, ...bindings) {
+        if (/UPDATE executions SET terminal_at/.test(query)) {
+          throw new Error("fault_before_terminal_update");
+        }
+        return base.exec(query, ...bindings);
+      },
+    };
+    const engine = new SessionEventEngine({
+      sql: failing,
+      kv: memoryKv(),
+      tx: nodeTransaction(db),
+    });
+    await expect(engine.appendEvent({
+      executionId: "atomic-done",
+      kind: "done",
+      payload: { ok: true },
+    })).rejects.toThrow("fault_before_terminal_update");
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM events WHERE kind = 'done'`).get())
+      .toEqual({ n: 0 });
+    expect(db.prepare(
+      `SELECT terminal_at FROM executions WHERE execution_id = 'atomic-done'`,
+    ).get()).toEqual({ terminal_at: null });
+    db.close();
+  });
+
   it("execute() is idempotent by executionId (duplicate on redelivery)", async () => {
     const { engine } = makeEngine();
 
@@ -432,17 +536,42 @@ describe("SessionEventEngine", () => {
     expect((await engine.getState()).executing?.executionId).toBe("exec-active");
     expect(await engine.replay()).toHaveLength(1);
   });
+
+  it("compacts only cursor-safe old terminal history and preserves recent dedup", async () => {
+    let now = 1_000;
+    const { engine, db } = makeEngine(() => now);
+    await engine.execute({ executionId: "old", inputLines: ["old"] });
+    await engine.appendEvent({ executionId: "old", kind: "done", payload: { ok: true } });
+    const safeThrough = (await engine.replay()).at(-1)!.id;
+    now = 2_000;
+    await engine.execute({ executionId: "recent", inputLines: ["recent"] });
+    await engine.appendEvent({ executionId: "recent", kind: "done", payload: { ok: true } });
+    now = 10_000;
+    const compacted = engine.compact({
+      safeThroughEventId: safeThrough,
+      retentionMs: 1_000,
+      retainRecentExecutions: 1,
+    });
+    expect(compacted.eventsDeleted).toBe(2);
+    expect(compacted.executionsDeleted).toBe(1);
+    expect((await engine.replay()).map((event) => event.executionId))
+      .toEqual(["recent", "recent"]);
+    expect(await engine.execute({ executionId: "recent", inputLines: ["duplicate"] }))
+      .toEqual({ accepted: false, duplicate: true });
+    db.close();
+  });
 });
 
 /** Minimal fake `DurableObjectState` — just enough of `ctx.storage` for `SessionEventDO`. */
 function makeFakeCtx(sql: SqlExecutor): {
-  storage: { sql: SqlExecutor } & KvExecutor;
+  storage: { sql: SqlExecutor; transactionSync: <T>(fn: () => T) => T } & KvExecutor;
   blockConcurrencyWhile: (fn: () => Promise<unknown>) => Promise<unknown>;
 } {
   const kvStore = new Map<string, unknown>();
   return {
     storage: {
       sql,
+      transactionSync: (fn) => fn(),
       async get<T>(key: string): Promise<T | undefined> {
         return kvStore.has(key) ? (kvStore.get(key) as T) : undefined;
       },
@@ -473,12 +602,14 @@ describe("SessionEventDO (RPC wrapper smoke test)", () => {
 
     const executed = await doInstance.execute({
       executionId: "do-exec-1",
+      forwardedMessageId: "do-message-1",
       inputLines: ["do it"],
     });
     expect(executed).toEqual({ accepted: true, duplicate: false });
 
     const dup = await doInstance.execute({
       executionId: "do-exec-1",
+      forwardedMessageId: "do-message-1",
       inputLines: ["do it"],
     });
     expect(dup).toEqual({ accepted: false, duplicate: true });

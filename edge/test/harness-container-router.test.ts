@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { Env } from "../src/env.js";
 import { interruptHarnessTurn, runHarnessTurn } from "../src/harness/client.js";
 import { bindRequestContext, slackTurnIdentity } from "../src/request-context.js";
@@ -13,6 +16,11 @@ import {
   routeHarnessRequest,
   type HarnessContainerNamespace,
 } from "../workers/sandbox/src/router.js";
+import { materializeTurnAttachments } from "../workers/sandbox/harness-server.js";
+import {
+  buildFileContentParts,
+  createR2AttachmentStager,
+} from "../src/slack/download-files.js";
 
 const EXEC_A = `ot1e_${"A".repeat(43)}`;
 const EXEC_B = `ot1e_${"B".repeat(43)}`;
@@ -43,6 +51,110 @@ describe("harness Container frontend", () => {
     threadKey: "slack:C1:1.2",
     inputLines: ["hello"],
   };
+
+  it("stages a greater-than-inline Slack file and resolves exact bytes through the real harness path", async () => {
+    const bytes = new Uint8Array(8 * 1024 * 1024 + 1);
+    bytes[0] = 19;
+    bytes[bytes.length - 1] = 211;
+    const objects = new Map<string, Uint8Array>();
+    const bucket = {
+      put: vi.fn(async (key: string, value: Uint8Array) => { objects.set(key, value.slice()); }),
+      get: vi.fn(async (key: string) => {
+        const value = objects.get(key);
+        return value
+          ? { size: value.byteLength, arrayBuffer: async () => value.slice().buffer }
+          : null;
+      }),
+    };
+    // Mirrors the production harness Worker's BLOBS binding.
+    const BLOBS = bucket;
+    const originalFetch = globalThis.fetch;
+    const home = await mkdtemp(path.join(tmpdir(), "opentag-staged-"));
+    try {
+      globalThis.fetch = (async () => new Response(bytes)) as typeof fetch;
+      const prepared = await buildFileContentParts([{
+        id: "F-large",
+        name: "large.pdf",
+        mimetype: "application/pdf",
+        size: bytes.byteLength,
+        url_private: "https://files.slack.com/F-large",
+      }], "xoxb", { stage: createR2AttachmentStager(BLOBS as never) });
+      const attachments = prepared.parts.flatMap((part) => part.attachment ? [part.attachment] : []);
+      expect(attachments).toEqual([expect.objectContaining({ kind: "staged", size: bytes.byteLength })]);
+
+      const containerFetch = vi.fn(async (request: Request) => {
+        const forwarded = await request.json() as { attachments: Parameters<typeof materializeTurnAttachments>[1] };
+        expect(forwarded.attachments).toEqual([
+          expect.objectContaining({ kind: "inline", size: bytes.byteLength }),
+        ]);
+        const paths = await materializeTurnAttachments(home, forwarded.attachments);
+        const filePath = paths[0]!.replace(/ \([^)]*\)$/, "");
+        const visible = new Uint8Array(await readFile(filePath));
+        expect(visible).toEqual(bytes);
+        return new Response('{"kind":"done","payload":{"ok":true,"summary":"saw attachment"}}\n');
+      });
+      const namespace: HarnessContainerNamespace = {
+        getByName: () => ({
+          startAndWaitForPorts: async () => undefined,
+          fetch: containerFetch,
+          setTurnApproval: async () => undefined,
+          clearTurnApproval: async () => true,
+        }),
+      };
+      const service = {
+        fetch: (url: string, init?: RequestInit) => routeHarnessRequest(
+          new Request(url, init), namespace, authToken, undefined, BLOBS as never,
+        ),
+      };
+      const session = {
+        create: async () => ({ sessionId: "sess-large", restarted: false }),
+        execute: async () => ({ accepted: true, duplicate: false }),
+        appendEvent: async () => ({ id: 1 }),
+        replay: async () => [],
+        getState: async () => ({ interrupted: false }),
+      };
+      const result = await runHarnessTurn({
+        HARNESS: service,
+        HARNESS_AUTH_TOKEN: authToken,
+        SESSION_EVENTS: { idFromName: (name: string) => name, get: () => session },
+      } as unknown as Env, {
+        threadKey: "slack:C1:1.2",
+        conversationKey: "C1::1.2",
+        executionId: EXEC_A,
+        forwardedMessageId: FORWARDED_A,
+        prompt: "inspect the large attachment",
+        attachments,
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(containerFetch).toHaveBeenCalledOnce();
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("fails closed before container admission when staged storage is unavailable", async () => {
+    const fake = fakeNamespace();
+    const response = await routeHarnessRequest(new Request("https://harness/turn", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({
+        ...validTurn,
+        attachments: [{
+          kind: "staged",
+          id: "F1",
+          name: "file.pdf",
+          mimeType: "application/pdf",
+          size: 1,
+          stageKey: "slack-attachments/missing/file.pdf",
+        }],
+      }),
+    }), fake.namespace, authToken);
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "staged_attachment_store_unavailable" });
+    expect(fake.setTurnApproval).not.toHaveBeenCalled();
+    expect(fake.fetch).not.toHaveBeenCalled();
+  });
 
   it("accepts one real Slack identity unchanged through /turn and exact /interrupt", async () => {
     const identity = await slackTurnIdentity(bindRequestContext({}, {

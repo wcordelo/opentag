@@ -12,6 +12,7 @@ import {
   createSlackWebClient,
   isDefinitiveSlackFailure,
   SlackApiError,
+  sharedSlackRateScheduler,
 } from "./web-api.js";
 import {
   conversationKeyFromThreadKey,
@@ -32,14 +33,37 @@ import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
 import { interruptHarnessTurn } from "../harness/client.js";
 import { cancelTask } from "../tasks/runtime.js";
-async function stableSlackClientMessageId(input: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)),
-  ).slice(0, 16);
-  digest[6] = (digest[6]! & 0x0f) | 0x50;
-  digest[8] = (digest[8]! & 0x3f) | 0x80;
-  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+import { stableSlackClientMessageId } from "./client-message-id.js";
+
+export async function interruptAguiTurn(
+  env: Pick<Env, "AGENT_RUNTIME" | "AGENT_URL" | "AGENT_AUTH_HEADER">,
+  executionId: string,
+): Promise<{ accepted: true; quiescent: true }> {
+  const url = new URL(env.AGENT_URL);
+  url.pathname = "/opentag/control/interrupt";
+  url.search = "";
+  const headers = new Headers({ "content-type": "application/json" });
+  if (env.AGENT_AUTH_HEADER) headers.set("authorization", env.AGENT_AUTH_HEADER);
+  const request = new Request(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ executionId }),
+  });
+  const response = env.AGENT_RUNTIME
+    ? await env.AGENT_RUNTIME.fetch(request)
+    : await fetch(request);
+  if (!response.ok) throw new Error(`agui_interrupt_http_${response.status}`);
+  const result = await response.json() as {
+    accepted?: boolean;
+    quiescent?: boolean;
+    executionId?: string;
+  };
+  if (
+    result.accepted !== true ||
+    result.quiescent !== true ||
+    result.executionId !== executionId
+  ) throw new Error("agui_interrupt_not_quiescent");
+  return { accepted: true, quiescent: true };
 }
 
 /** The subset of a Slack Events API `event` object this module reads. */
@@ -193,7 +217,9 @@ export async function handleStopCommand(
     }
 
     const slackClient = env.SLACK_BOT_TOKEN
-      ? createSlackWebClient(env.SLACK_BOT_TOKEN)
+      ? createSlackWebClient(env.SLACK_BOT_TOKEN, {
+          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT),
+        })
       : undefined;
 
     // First make success delivery durably impossible. The short state lock is
@@ -321,6 +347,8 @@ export async function handleStopCommand(
           if (!harnessInterrupt.accepted) {
             throw new Error("harness_interrupt_not_accepted");
           }
+        } else if (env.AGENT_RUNTIME || env.AGENT_URL) {
+          await interruptAguiTurn(env, activeTurn.executionId);
         }
       }
 
@@ -329,6 +357,8 @@ export async function handleStopCommand(
       if (conversationKey) {
         const { adapter } = await getOrCreateBot(env);
         if (typeof adapter.abortConversation === "function") {
+          // Local abort is only latency optimization; definitive acceptance
+          // comes from the exact named runtime control call above.
           adapter.abortConversation(conversationKey);
         }
       }
@@ -365,7 +395,7 @@ export async function handleStopCommand(
         // This is intentionally last: durable suppression, exact DO
         // cancellation, approval revocation, and container /interrupt have
         // all completed successfully before the user sees this promise.
-        const clientMessageId = await stableSlackClientMessageId(stopEventId);
+        const clientMessageId = stableSlackClientMessageId(stopEventId);
         let posted = false;
         let lastError: unknown;
         // A thrown network failure is ambiguous. Retry only with the same

@@ -25,7 +25,8 @@ import {
 } from "./slack/stop-routing.js";
 import {
   isQuickInteraction,
-  handleQuickAction,
+  handoffPreparedQuickAction,
+  prepareQuickAction,
   quickActionEventId,
 } from "./slack/quick-actions.js";
 import {
@@ -34,6 +35,20 @@ import {
   preAdmissionIdentityForEvent,
   preAdmitSlackTurn,
 } from "./slack/pre-admit-turn.js";
+import { verifySessionViewToken } from "./slack/session-link.js";
+import { probeDurabilityHealth } from "./health.js";
+import {
+  hydrateLateFileRefs,
+  lateFileRepairDedupeKey,
+  matchLateFileEvent,
+  pendingLateFileKey,
+  waitForLateFileThreadIdle,
+  LATE_FILE_WINDOW_MS,
+  type LateFileEvent,
+  type PendingFilelessMention,
+} from "./slack/late-file-repair.js";
+import { createSlackWebClient, sharedSlackRateScheduler } from "./slack/web-api.js";
+import { slackObligationThreadKey } from "./slack/obligation-thread-key.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -42,15 +57,37 @@ export { SessionEventDO } from "./store/session-event-do.js";
 
 const app = new Hono<AppEnv>();
 
-app.get("/health", async (c) =>
-  c.json({
-    ok: true,
+app.get("/sessions/:token", async (c) => {
+  const secret = c.env.ADMIN_SECRET;
+  if (!secret || !c.env.SESSION_EVENTS) {
+    return c.json({ error: "session_view_unavailable" }, 503);
+  }
+  const claims = await verifySessionViewToken(c.req.param("token"), secret);
+  if (!claims) return c.json({ error: "invalid_or_expired_session_link" }, 401);
+  const session = c.env.SESSION_EVENTS.get(
+    c.env.SESSION_EVENTS.idFromName(claims.threadKey),
+  ) as unknown as {
+    getState(): Promise<unknown>;
+    replay(afterEventId?: number): Promise<unknown[]>;
+  };
+  const [state, events] = await Promise.all([session.getState(), session.replay()]);
+  return c.json({ threadKey: claims.threadKey, state, events }, 200, {
+    "cache-control": "private, no-store",
+    "x-robots-tag": "noindex, nofollow",
+  });
+});
+
+app.get("/health", async (c) => {
+  const durability = await probeDurabilityHealth(c.env);
+  return c.json({
+    ok: durability.ok,
     product: "claude-tag-cf",
     store: "durable-object-sqlite",
-    spine: ["BOT_STATE", "WORKSPACE_CONFIG", "KNOWLEDGE", "RESEARCH_TASKS"],
+    spine: ["BOT_STATE", "SESSION_EVENTS", "WORKSPACE_CONFIG", "KNOWLEDGE", "RESEARCH_TASKS"],
+    checks: durability.checks,
     botEngine: await resolveBotEngineKind(),
-  }),
-);
+  }, durability.ok ? 200 : 503);
+});
 
 app.get("/debug/store", requireAdminAuth(), async (c) => {
   const store = createDurableObjectStore(c.env.BOT_STATE);
@@ -156,6 +193,97 @@ app.post("/slack/events", slackVerify(), async (c) => {
 
   const teamId = payload.team_id ?? "unknown";
   const exec = c.executionCtx;
+  const event = payload.event as {
+    type?: string;
+    channel?: string;
+    channel_type?: string;
+    user?: string;
+    text?: string;
+    ts?: string;
+    thread_ts?: string;
+    files?: LateFileEvent["files"];
+  } | undefined;
+  const store = createDurableObjectStore(c.env.BOT_STATE);
+
+  // Slack may deliver an app_mention before its uploaded file metadata. Match
+  // the later file_share to the exact user/channel mention, wait for that
+  // original turn to become idle, hydrate files.info, then admit one synthetic
+  // continuation with a stable event id. Replays hit the ordinary durable
+  // pre-admission dedupe and can never create a second turn.
+  if (
+    event?.channel && event.user && event.ts &&
+    Array.isArray(event.files) && event.files.length > 0
+  ) {
+    const key = pendingLateFileKey({ teamId, channelId: event.channel, userId: event.user });
+    const pending = await store.kv.get<PendingFilelessMention>(key);
+    const candidate: LateFileEvent = {
+      teamId,
+      channelId: event.channel,
+      userId: event.user,
+      fileTs: event.ts,
+      threadTs: event.thread_ts,
+      files: event.files,
+    };
+    if (matchLateFileEvent(pending, candidate)) {
+      const repair = async () => {
+        const token = c.env.SLACK_BOT_TOKEN;
+        const files = token
+          ? await hydrateLateFileRefs(candidate.files, async (fileId) =>
+              createSlackWebClient(token, {
+                scheduler: sharedSlackRateScheduler(c.env.ENVIRONMENT),
+              }).getFileInfo(fileId))
+          : candidate.files;
+        const idle = await waitForLateFileThreadIdle(async () => {
+          const active = await store.activeTurn.get(
+            slackObligationThreadKey(candidate.channelId, pending!.threadTs),
+          );
+          return Boolean(active);
+        });
+        if (!idle) {
+          console.error(JSON.stringify({
+            metric: "late_file_repair_timeout",
+            eventId: pending!.eventId,
+            threadTs: pending!.threadTs,
+          }));
+          return;
+        }
+        const synthetic = {
+          ...payload,
+          event_id: lateFileRepairDedupeKey(pending!, { ...candidate, files }),
+          event: {
+            ...event,
+            type: "message",
+            subtype: "file_share",
+            channel_type: event.channel_type ?? "channel",
+            thread_ts: pending!.threadTs,
+            text: "Use the newly attached file(s) with my previous request.",
+            files,
+          },
+        } as SlackEventCallbackPayload;
+        const identity = preAdmissionIdentityForEvent(synthetic);
+        const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
+        if (!preAdmittedTurn) return;
+        let handedOff = false;
+        try {
+          const { adapter } = await getOrCreateBot(c.env);
+          await adapter.handleEventsBody(synthetic, {
+            teamId,
+            preAdmittedTurn,
+            onTurnHandoff: () => { handedOff = true; },
+          });
+          if (handedOff) await store.kv.delete(key);
+        } finally {
+          if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
+        }
+      };
+      if (exec?.waitUntil) {
+        exec.waitUntil(repair().catch((err) => console.error("[slack/events:late-file]", err)));
+      } else {
+        await repair();
+      }
+      return c.json({ ok: true });
+    }
+  }
 
   // Stop-command routing (GOAL.md Phase A2 Task 1): a matching stop phrase
   // never reaches the bot engine — it interrupts the session + clears
@@ -181,6 +309,21 @@ app.post("/slack/events", slackVerify(), async (c) => {
     if (identity && !preAdmittedTurn) {
       console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
       return;
+    }
+    if (
+      identity && event?.type === "app_mention" &&
+      (!Array.isArray(event.files) || event.files.length === 0)
+    ) {
+      const pending: PendingFilelessMention = {
+        teamId,
+        channelId: identity.channelId,
+        userId: identity.requesterId,
+        mentionTs: identity.inboundTs,
+        threadTs: identity.threadTs ?? identity.inboundTs,
+        eventId: identity.eventId,
+        expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
+      };
+      await store.kv.set(pendingLateFileKey(pending), pending, LATE_FILE_WINDOW_MS);
     }
     let handedOff = false;
     try {
@@ -295,10 +438,6 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
     return c.json({ error: "missing_stable_click_identity" }, 400);
   }
   const run = async () => {
-    if (isQuick) {
-      await handleQuickAction(c.env, payload, teamId);
-      return;
-    }
     const { adapter } = await getOrCreateBot(c.env);
     await adapter.handleInteractionPayload(payload);
   };
@@ -316,13 +455,30 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
     return c.json({ ok: true });
   }
 
+
+  // Quick clicks follow the same correctness boundary: stable identity and
+  // the active-turn + initial obligation transaction MUST be durable before
+  // Slack receives 200. Only profile resolution/framework handoff is deferred.
+  let prepared;
+  try {
+    const result = await prepareQuickAction(c.env, payload, teamId);
+    if (!result.handled) return c.json({ error: "invalid_quick_action" }, 400);
+    prepared = result.prepared;
+  } catch (err) {
+    console.error("[slack/interactions] quick pre-admission failed", err);
+    return c.json({ error: "interaction_persistence_failed" }, 503);
+  }
+  if (!prepared) return c.json({ ok: true, duplicate: true });
+
+  const handoff = () => handoffPreparedQuickAction(c.env, prepared);
+
   const exec = c.executionCtx;
   if (exec?.waitUntil) {
     exec.waitUntil(
-      run().catch((err) => console.error("[slack/interactions]", err)),
+      handoff().catch((err) => console.error("[slack/interactions]", err)),
     );
   } else {
-    await run();
+    await handoff();
   }
 
   return c.json({ ok: true });

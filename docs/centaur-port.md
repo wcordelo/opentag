@@ -1,7 +1,15 @@
-# Centaur to OpenTag port ledger
+# Centaur to OpenTag core-spine port ledger
 
-Status: **implemented through phases A1–A5**
-Updated: **2026-07-13**
+Status: **A1-A5 core spine landed; remaining subfeatures are listed below**
+Updated: **2026-07-14**
+
+This status is not a claim that every planned subfeature is complete.
+Production harness enablement is an operator deployment step, and analytics
+bindings remain optional. Inline and staged attachment tiers, delayed-upload
+repair, prior-thread restoration, authenticated R2 resolution at the harness
+frontend, the signed session viewer, durable quick-action admission, exact
+AG-UI interruption, and artifact/research cards are source-complete when their
+documented bindings are configured.
 
 OpenTag did not migrate Centaur's Kubernetes platform. It extracted the Slack
 UX and reliability lessons that made Centaur feel dependable, then rebuilt the
@@ -56,12 +64,13 @@ operating model.
 | Runtime interrupt | `stop-routing.ts`, harness `/interrupt`, research cancel | New Cloudflare control path | Implemented with quiescence confirmation |
 | Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky model/harness; per-turn reasoning |
 | Harness restart transcript re-feed | `agent-turn.ts`, harness client | Adapted | Last 24k characters passed to harness |
-| Quick cards | `quick-card.ts` | Generalized from Quick-site cards | Reusable artifact/card builder |
+| Quick cards | `quick-card.ts`, research Slack delivery | Generalized from Quick-site cards | Artifact actions plus final-research Retry/Dig deeper/Export |
 | Buttons become user-authored turns | `quick-actions.ts` | Adapted to OpenTag ingress | Implemented; inherits dedup and policy |
 | Requester attribution | `request-context.ts`, `buildRequesterContextBlock()` | Adapted | Exact `Prompted by:` line enforced for PRs |
 | Sandbox behavior prompt | `containers/harness/SYSTEM_PROMPT.md` | Selected sections copied/adapted | Active in harness image |
 | Clone-per-session branch workflow | `harness-server.ts` | Rebuilt for CF Container storage | Implemented on `opentag/session-*` |
 | Harness event normalization | `harness-server.ts`, `harness/client.ts` | New pinned NDJSON contract | Implemented; event persisted before success |
+| Attachment transport | `download-files.ts`, harness frontend + server | Inline plus durable R2 tier | 8 MiB inline; staged through 32 MiB; size/digest verified |
 | Tool-host bridge | `tool-host.ts` | TypeScript port of small Python bridge pattern | Optional, image-ready |
 | Delivery metrics taxonomy | Structured logs throughout lifecycle | Pattern port | Implemented minimum counters |
 
@@ -90,7 +99,9 @@ Key behavioral decisions retained:
 - Flags are removed before thread memory, titles, transcripts, or models see
   the user text.
 - Model and harness choices are sticky to a thread.
-- Reasoning effort is per turn.
+- Every `-rsn` reasoning value is visibly rejected because OpenTag has no
+  Codex runtime. Disconnected Claude/model choices also fail visibly and are
+  not saved as sticky preferences.
 - A flags-only message saves the preference and returns a confirmation without
   invoking a model.
 
@@ -165,6 +176,10 @@ OpenTag added:
 - requester re-resolution through Slack;
 - the same tool policy, active-turn, render, and Stop fences.
 
+Final research delivery uses the same mechanism for Retry, Dig deeper, and
+Export. The durable research obligation supplies a stable task reference; the
+click's Slack message/action timestamps form its stable ingress identity.
+
 ### Coding harness became one CF Container per session
 
 Centaur assumes K8s sandboxes, repo mounts, sidecars, and a Rust harness server.
@@ -174,6 +189,8 @@ OpenTag instead uses:
 - clone/reuse under `/work/<sessionId>`;
 - a dedicated `opentag/session-<prefix>` branch;
 - a Node harness server speaking NDJSON;
+- an authenticated frontend that resolves staged R2 attachments, verifies
+  declared size and SHA-256, and forwards a bounded inline envelope;
 - an execution-specific disposable `HOME`;
 - a non-root Ubuntu image with Claude Code and core developer tools;
 - direct postcondition checks after Claude exits.
@@ -247,7 +264,7 @@ Claude's own success claim is held until OpenTag verifies:
 | ParadeDB/Postgres platform | DO SQLite satisfies OpenTag's session/delivery state |
 | Warm-pool and capacity manager | Team-scale OpenTag accepts container cold starts |
 | Node-local repo cache and hostPath mounts | No Cloudflare equivalent; clone/reuse per session |
-| Rails console | Not needed for Slack UX; a future read-only event viewer can be smaller |
+| Rails console | Replaced by a signed, read-only SessionEventDO JSON viewer |
 | Full `iron-proxy` protocol coverage | No arbitrary TCP/UDP NetworkPolicy equivalent |
 | Amp/Codex/multi-provider harness matrix | Claude Code is the first supported coding harness |
 | Centaur observability stack | OpenTag uses structured Worker logs today |
@@ -263,25 +280,27 @@ Claude's own success claim is held until OpenTag verifies:
 | Session events | `api-rs` | SessionEventDO | Narrower, Slack-delivery focused |
 | Stop | Session API interrupt | Exact multi-plane cancellation | Includes research and process quiescence |
 | Model flags | Multi-harness session config | Sticky DO state | Only Claude Code is a real alternate harness |
-| Quick actions | Site-specific buttons | Generic synthetic turns | Artifact-domain posting hook remains optional |
+| Quick actions | Site-specific buttons | Generic synthetic turns | Artifact cards require `QUICK_BASE_DOMAIN`; research cards are final-delivery actions |
 | Repo access | Mounted cache | Clone/reuse per session | Higher cold-start cost, simpler ops |
 | Credentials | `iron-proxy` sidecar | Container outbound handlers | HTTP/HTTPS scope only |
 | Coding success | Harness result | Git/PR postconditions | OpenTag verifies commit and attribution |
-| Console | Rails app | None | Event viewer remains future work |
+| Console | Rails app | Signed SessionEventDO viewer | Read-only JSON, not an operations console |
 
 ## Known limits and next expansions
 
 - The bot-to-harness service binding is not enabled by default; deployment and
-  secrets are operator actions.
+  secrets are operator actions. The harness `BLOBS` binding must name the same
+  bucket used by the bot's staged attachment writer.
 - Clone-per-session can be slow for large repositories. R2-backed snapshots or
   shallow-cache refresh are possible future optimizations.
 - The harness streams NDJSON into the event log, but Slack currently posts the
   accumulated harness answer as one final fenced message. `onText` is the hook
   for future live coding output.
-- Structured task/plan chunk cards can use the existing conflation union when
-  the harness emits richer event kinds.
-- A read-only session/event viewer can be built over SessionEventDO without
-  importing Centaur's Rails console.
+- AG-UI text uses the Channels incremental renderer; the bespoke conflation
+  helper remains the adapter `stream()` path. Richer harness task/plan events
+  are not yet emitted.
+- Set `SESSION_VIEWER_BASE_URL` with `ADMIN_SECRET` to append a signed,
+  expiring first-turn event link. The endpoint is read-only and no-store.
 - The current outbound policy is deliberately GitHub-specific. Other git hosts
   need their own parser, allowlist, branch proof, and API authorization logic.
 

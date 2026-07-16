@@ -8,6 +8,8 @@ function baseEnv(over: Partial<Env> = {}): Env {
     BOT_STATE: {} as Env["BOT_STATE"],
     WORKSPACE_CONFIG: {} as Env["WORKSPACE_CONFIG"],
     KNOWLEDGE: {} as Env["KNOWLEDGE"],
+    SESSION_EVENTS: {} as Env["SESSION_EVENTS"],
+    DELIVERY_METRICS: {} as Env["DELIVERY_METRICS"],
     AGENT_URL: "",
     ...over,
   };

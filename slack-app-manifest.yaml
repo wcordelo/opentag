@@ -55,6 +55,7 @@ oauth_config:
       - mpim:read # list group DMs
       - users:read # resolve user IDs to names for context
       - users:read.email # resolve user emails to match Slack users to Linear/Notion
+      - users.profile:read # resolve labeled custom fields such as GitHub attribution
       - team:read # workspace info
       # --- Write replies and generative UI ---
       - chat:write # post and edit messages in channels bot is in

@@ -22,6 +22,7 @@ export interface Env {
   HARNESS_AUTH_TOKEN?: string;
   HARNESS_ALLOWED_REPO_HOSTS?: string;
   HARNESS_ALLOWED_REPO_ORGS?: string;
+  BLOBS?: R2Bucket;
 }
 
 const APPROVAL_KEY = "github-approval-scope";

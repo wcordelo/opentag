@@ -4,6 +4,7 @@ import { DurableObjectStateStore } from "../store/durable-object-state-store.js"
 import { ACTIVE_TURN_TTL_MS, type ActiveTurnRecord } from "./active-turn-registry.js";
 import { conversationKeyOf, DM_SCOPE, stripMentions } from "./channels-slack-lite.js";
 import { slackObligationThreadKey } from "./obligation-thread-key.js";
+import { stableSlackClientMessageId } from "./client-message-id.js";
 
 /** Exact durable ownership established before any bot/profile/file/config await. */
 export type PreAdmittedTurn = Readonly<{
@@ -138,6 +139,7 @@ export async function preAdmitSlackTurn(
     threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
     conversationKey: identity.conversationKey,
     executionId,
+    liveClientMessageId: stableSlackClientMessageId(executionId),
     ...(identity.threadTs ? { threadTs: identity.threadTs } : {}),
     registeredAt: Date.now(),
   };
@@ -151,6 +153,8 @@ export async function preAdmitSlackTurn(
       afterEventId: 0,
       channel: identity.channelId,
       threadTs: identity.threadTs,
+      liveClientMessageId: record.liveClientMessageId,
+      liveMessageState: "reserved",
       timeoutMs: ACTIVE_TURN_TTL_MS,
     },
   });

@@ -16,7 +16,7 @@ import {
 } from "./quick-card.js";
 import { conversationKeyOf, DM_SCOPE } from "./channels-slack-lite.js";
 import { bindRequestContext } from "../request-context.js";
-import { createSlackWebClient } from "./web-api.js";
+import { createSlackWebClient, sharedSlackRateScheduler } from "./web-api.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
 import {
@@ -30,6 +30,20 @@ export interface QuickAction {
   kind: QuickActionKind;
   ref: QuickRef;
 }
+
+/** Durable ownership plus decoded click data established before HTTP 200. */
+export type PreparedQuickAction = Readonly<{
+  payload: QuickInteractionPayload;
+  action: QuickAction;
+  teamId: string;
+  channel: string;
+  userId: string;
+  messageTs?: string;
+  threadTs?: string;
+  conversationKey: string;
+  quickEventId: string;
+  preAdmittedTurn: NonNullable<Awaited<ReturnType<typeof preAdmitSlackTurn>>>;
+}>;
 
 const PROMPTS: Record<QuickActionKind, (ref: QuickRef) => string> = {
   regenerate: (ref) =>
@@ -47,7 +61,17 @@ const PROMPTS: Record<QuickActionKind, (ref: QuickRef) => string> = {
   retry: (ref) =>
     ref.type === "issue_list"
       ? `Re-run the previous Linear issue search in this thread${ref.heading ? ` ("${ref.heading}")` : ""} and post the updated results.`
-      : `Retry the previous request in this thread with the same parameters.`,
+      : ref.type === "research"
+        ? `Retry research task \`${ref.taskId}\` in this thread from the original question and post a fresh result.`
+        : `Retry the previous request in this thread with the same parameters.`,
+  dig_deeper: (ref) =>
+    ref.type === "research"
+      ? `Dig deeper on research task \`${ref.taskId}\`. Identify gaps in its result, run additional research, and post a more detailed synthesis in this thread.`
+      : `Dig deeper on the previous result in this thread and post a more detailed synthesis.`,
+  export: (ref) =>
+    ref.type === "research"
+      ? `Export the full result of research task \`${ref.taskId}\` as a durable artifact, then post the artifact link in this thread.`
+      : `Export the previous result as a durable artifact and post its link in this thread.`,
 };
 
 const QUICK_KINDS: ReadonlySet<string> = new Set([
@@ -55,6 +79,8 @@ const QUICK_KINDS: ReadonlySet<string> = new Set([
   "files",
   "delete",
   "retry",
+  "dig_deeper",
+  "export",
 ] satisfies QuickActionKind[]);
 
 /** Map a Slack action_id back to its quick action kind, or null. */
@@ -73,6 +99,7 @@ export function parseQuickRef(value: string | undefined): QuickRef | null {
       artifactId?: unknown;
       url?: unknown;
       heading?: unknown;
+      taskId?: unknown;
     };
     if (
       parsed.type === "artifact" &&
@@ -88,6 +115,9 @@ export function parseQuickRef(value: string | undefined): QuickRef | null {
           ? { heading: parsed.heading }
           : {}),
       };
+    }
+    if (parsed.type === "research" && typeof parsed.taskId === "string" && parsed.taskId.length > 0) {
+      return { type: "research", taskId: parsed.taskId };
     }
     return null;
   } catch {
@@ -146,11 +176,11 @@ export function quickActionEventId(payload: unknown): string | undefined {
  * ingress sink. Best-effort: malformed payloads log and return handled:false;
  * they never throw out of the interactions route.
  */
-export async function handleQuickAction(
+export async function prepareQuickAction(
   env: Env,
   payload: unknown,
   teamId = "unknown",
-): Promise<{ handled: boolean }> {
+): Promise<{ handled: boolean; prepared?: PreparedQuickAction }> {
   const body = payload as QuickInteractionPayload;
   const action = body.actions?.[0];
   const channel = body.channel?.id;
@@ -195,6 +225,40 @@ export async function handleQuickAction(
     console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: quickEventId }));
     return { handled: true };
   }
+  return {
+    handled: true,
+    prepared: Object.freeze({
+      payload: body,
+      action: quick,
+      teamId,
+      channel,
+      userId,
+      ...(messageTs ? { messageTs } : {}),
+      ...(threadTs ? { threadTs } : {}),
+      conversationKey,
+      quickEventId,
+      preAdmittedTurn,
+    }),
+  };
+}
+
+/** Handoff only an already-owned quick click to the normal ingress sink. */
+export async function handoffPreparedQuickAction(
+  env: Env,
+  prepared: PreparedQuickAction,
+): Promise<{ handled: true }> {
+  const {
+    action: quick,
+    teamId,
+    channel,
+    userId,
+    messageTs,
+    threadTs,
+    conversationKey,
+    quickEventId,
+    preAdmittedTurn,
+  } = prepared;
+  const isDm = channel.startsWith("D");
   let handedOff = false;
   try {
     const { adapter } = await getOrCreateBot(env);
@@ -267,6 +331,17 @@ export async function handleQuickAction(
   }
 }
 
+/** Compatibility helper for direct/library callers; Worker ingress uses the split API. */
+export async function handleQuickAction(
+  env: Env,
+  payload: unknown,
+  teamId = "unknown",
+): Promise<{ handled: boolean }> {
+  const result = await prepareQuickAction(env, payload, teamId);
+  if (!result.prepared) return { handled: result.handled };
+  return handoffPreparedQuickAction(env, result.prepared);
+}
+
 /**
  * Resolve the clicking user's display name/email so the synthetic turn carries
  * real requester identity ([Requester Context], tool permission checks).
@@ -274,7 +349,9 @@ export async function handleQuickAction(
 async function resolveClickingUser(env: Env, userId: string) {
   if (!env.SLACK_BOT_TOKEN) return { id: userId };
   try {
-    return await createSlackWebClient(env.SLACK_BOT_TOKEN).resolveUser(userId);
+    return await createSlackWebClient(env.SLACK_BOT_TOKEN, {
+      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT),
+    }).resolveUser(userId);
   } catch {
     return { id: userId };
   }

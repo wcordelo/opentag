@@ -3,6 +3,8 @@ import {
   validateTurnRequest,
   validateInterruptRequest,
   type RepoPolicy,
+  type TurnAttachment,
+  type TurnRequestBody,
 } from "../turn-contract.js";
 
 export interface HarnessContainerStub {
@@ -16,7 +18,66 @@ export interface HarnessContainerNamespace {
   getByName(name: string): HarnessContainerStub;
 }
 
-export const MAX_TURN_BODY_BYTES = 1024 * 1024;
+// One 8 MiB inline file expands to ~10.7 MiB in base64. The contract separately
+// enforces five attachments and an 8 MiB decoded aggregate.
+export const MAX_TURN_BODY_BYTES = 12 * 1024 * 1024;
+export const MAX_RESOLVED_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32_768)));
+  }
+  return btoa(chunks.join(""));
+}
+
+function hex(bytes: Uint8Array): string {
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+/** Resolve authenticated staged refs before the container boundary. */
+export async function resolveStagedTurnAttachments(
+  body: TurnRequestBody,
+  bucket?: R2Bucket,
+): Promise<TurnRequestBody> {
+  if (!body.attachments?.some((attachment) => attachment.kind === "staged")) return body;
+  if (!bucket) throw new Error("staged_attachment_store_unavailable");
+  let total = 0;
+  const attachments: TurnAttachment[] = [];
+  for (const attachment of body.attachments) {
+    if (attachment.kind === "inline") {
+      total += attachment.size;
+      attachments.push(attachment);
+      continue;
+    }
+    const object = await bucket.get(attachment.stageKey);
+    if (!object) throw new Error(`staged_attachment_not_found:${attachment.id}`);
+    if (object.size !== attachment.size) {
+      throw new Error(`staged_attachment_size_mismatch:${attachment.id}`);
+    }
+    total += object.size;
+    if (total > MAX_RESOLVED_ATTACHMENT_BYTES) throw new Error("attachments_too_large");
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    if (bytes.byteLength !== attachment.size) {
+      throw new Error(`staged_attachment_size_mismatch:${attachment.id}`);
+    }
+    if (attachment.sha256) {
+      const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+      if (digest !== attachment.sha256) {
+        throw new Error(`staged_attachment_digest_mismatch:${attachment.id}`);
+      }
+    }
+    attachments.push({
+      kind: "inline",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      dataBase64: bytesToBase64(bytes),
+    });
+  }
+  return { ...body, attachments };
+}
 
 export function isValidSessionId(value: unknown): value is string {
   return isSafeIdentifier(value);
@@ -168,6 +229,7 @@ export async function routeHarnessRequest(
     allowedHosts: new Set(["github.com"]),
     allowedOrgs: new Set(),
   },
+  attachmentBucket?: R2Bucket,
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -255,10 +317,26 @@ export async function routeHarnessRequest(
     return jsonError(validation.error, 400);
   }
 
-  const container = containers.getByName(validation.body.sessionId);
-  await container.setTurnApproval(validation.body as unknown as Record<string, unknown>);
+  const hadStagedAttachments = validation.body.attachments?.some(
+    (attachment) => attachment.kind === "staged",
+  ) === true;
+  let turnBody: TurnRequestBody;
+  try {
+    turnBody = await resolveStagedTurnAttachments(validation.body, attachmentBucket);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "staged_attachment_resolution_failed";
+    return jsonError(message, message === "staged_attachment_store_unavailable" ? 503 : 422);
+  }
+  const resolvedValidation = validateTurnRequest(turnBody, repoPolicy);
+  if (!resolvedValidation.ok) return jsonError(resolvedValidation.error, 400);
+  const forwardedBytes = hadStagedAttachments
+    ? new TextEncoder().encode(JSON.stringify(resolvedValidation.body))
+    : bytes;
+
+  const container = containers.getByName(resolvedValidation.body.sessionId);
+  await container.setTurnApproval(resolvedValidation.body as unknown as Record<string, unknown>);
   const clearApproval = () =>
-    container.clearTurnApproval(validation.body.executionId);
+    container.clearTurnApproval(resolvedValidation.body.executionId);
   let upstream: Response;
   try {
     // Approval is installed first so the container can never run with a stale
@@ -268,10 +346,11 @@ export async function routeHarnessRequest(
     const headers = new Headers(request.headers);
     // The public bearer is verified above and never crosses into the container.
     headers.set("Authorization", "Bearer opentag-egress-injected-not-a-secret");
+    headers.delete("content-length");
     const forwarded = new Request(request.url, {
       method: request.method,
       headers,
-      body: bytes,
+      body: forwardedBytes,
       signal: request.signal,
     });
     upstream = await raceAbort(container.fetch(forwarded), request.signal);
@@ -285,7 +364,7 @@ export async function routeHarnessRequest(
   }
   return wrapTurnResponse(
     upstream,
-    validation.body.executionId,
+    resolvedValidation.body.executionId,
     (executionId) => container.clearTurnApproval(executionId),
   );
 }

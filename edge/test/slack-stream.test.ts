@@ -49,6 +49,42 @@ async function* delayedChunks(parts: string[]): AsyncIterable<string> {
 }
 
 describe("CloudflareSlackAdapter.stream", () => {
+  it("does not cross the final Slack boundary when terminal persistence fails", async () => {
+    const original = globalThis.fetch;
+    const slack = [] as string[];
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      slack.push(String(url));
+      return Response.json({ ok: true, ts: "10.1" });
+    }) as typeof fetch;
+    const activeTurn = {
+      beginRender: async () => ({ status: "claimed" as const, token: "r1" }),
+      confirmRender: async () => true,
+      failRender: async () => true,
+    };
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      stateStore: { activeTurn } as unknown as LifecycleStateStore,
+      sessionEvents: {
+        idFromName: () => "session-id",
+        get: () => ({
+          appendEvent: async () => { throw new Error("session_unavailable"); },
+        }),
+      } as never,
+    });
+    const target = { channel: "C1" };
+    adapter.bindExecutionFence(target, {
+      threadKey: "slack:C1:1.0",
+      executionId: "exec-terminal-failure",
+    });
+    try {
+      const renderer = adapter.createRunRenderer(target as never);
+      await expect(renderer.finish?.()).rejects.toThrow("session_unavailable");
+      expect(slack).toEqual([]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it.each([
     { mode: "text", expected: "final answer" },
     { mode: "tool-only", expected: "completed without a text response" },
@@ -58,8 +94,10 @@ describe("CloudflareSlackAdapter.stream", () => {
     async ({ mode, expected }) => {
       const original = globalThis.fetch;
       const requests: Array<{ method: string; text: string }> = [];
+      const order: string[] = [];
       globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
         const method = String(url).split("/").pop()!;
+        order.push(`slack:${method}`);
         const body = new URLSearchParams(String(init?.body ?? ""));
         requests.push({ method, text: body.get("text") ?? "" });
         return method === "chat.postMessage"
@@ -94,6 +132,15 @@ describe("CloudflareSlackAdapter.stream", () => {
       const adapter = new CloudflareSlackAdapter({
         botToken: "xoxb-test",
         stateStore: { activeTurn } as unknown as LifecycleStateStore,
+        sessionEvents: {
+          idFromName: () => "session-id",
+          get: () => ({
+            appendEvent: async (event: { kind: string; executionId: string }) => {
+              order.push(`session:${event.kind}:${event.executionId}`);
+              return { id: 1 };
+            },
+          }),
+        } as never,
       });
       const target = { channel: "C1" };
       adapter.bindExecutionFence(target, {
@@ -124,6 +171,10 @@ describe("CloudflareSlackAdapter.stream", () => {
           { final: true, output: true },
         ]);
         expect(requests.at(-1)?.text).toContain(expected);
+        const terminal = order.indexOf("session:done:exec-final");
+        expect(terminal).toBeGreaterThanOrEqual(0);
+        expect(terminal).toBeLessThan(order.length - 1);
+        expect(order.at(-1)).toMatch(/^slack:/);
       } finally {
         globalThis.fetch = original;
       }
@@ -565,7 +616,7 @@ describe("CloudflareSlackAdapter.stream", () => {
     }
   });
 
-  it("truncates huge content to <=50 blocks and <=3000 chars per block", async () => {
+  it("preserves huge content across <=50-block continuation messages", async () => {
     const { calls, restore } = mockFetch();
     try {
       const adapter = new CloudflareSlackAdapter({
@@ -585,20 +636,22 @@ describe("CloudflareSlackAdapter.stream", () => {
       await adapter.stream({ channel: "C1", threadTs: "1.0" } as never, one());
 
       const updateCalls = calls.filter((c) => c.method === "chat.update");
-      const last = updateCalls[updateCalls.length - 1]!;
-      const lastBlocks = JSON.parse(last.body.blocks!) as Array<{
-        text: { text: string };
-      }>;
-      expect(lastBlocks.length).toBeLessThanOrEqual(50);
-      for (const b of lastBlocks) {
-        expect(b.text.text.length).toBeLessThanOrEqual(3000);
+      const continuationCalls = calls.filter((c) => c.method === "chat.postMessage").slice(1);
+      const visibleCalls = [updateCalls[updateCalls.length - 1]!, ...continuationCalls];
+      const reconstructed: string[] = [];
+      for (const call of visibleCalls) {
+        const blocks = JSON.parse(call.body.blocks!) as Array<{
+          text: { text: string };
+        }>;
+        expect(blocks.length).toBeLessThanOrEqual(50);
+        for (const block of blocks) {
+          expect(block.text.text.length).toBeLessThanOrEqual(3000);
+          reconstructed.push(block.text.text);
+        }
+        expect(call.body.text!.length).toBeLessThanOrEqual(35_000);
       }
-      // Overflow marker present since 200k chars >> 50*3000 cap.
-      expect(lastBlocks[lastBlocks.length - 1]!.text.text.endsWith("…")).toBe(
-        true,
-      );
-      // Fallback text field truncated to 35k chars.
-      expect(last.body.text!.length).toBeLessThanOrEqual(35_000);
+      expect(continuationCalls.length).toBeGreaterThan(0);
+      expect(reconstructed.join("")).toBe(huge);
     } finally {
       restore();
     }

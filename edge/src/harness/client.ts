@@ -25,6 +25,7 @@
  */
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
+import type { PreparedAttachment } from "../slack/download-files.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -39,6 +40,8 @@ export interface RunHarnessTurnArgs {
   /** Stable forwarded-message identity used for durable dedup. */
   forwardedMessageId: string;
   prompt: string;
+  /** Bounded inline/staged attachment envelope; never flattened to omission text. */
+  attachments?: PreparedAttachment[];
   model?: string;
   /** `[Requester Context]` block (SPEC §5-A5 item 5) — built by the caller (agent-turn.ts). */
   requesterContext?: string;
@@ -392,6 +395,7 @@ export async function runHarnessTurn(
     inputLines: [args.prompt],
     remoteGitApproved: args.remoteGitApproved === true,
   };
+  if (args.attachments?.length) body.attachments = args.attachments;
   if (args.model) body.model = args.model;
   if (args.requesterContext) body.requesterContext = args.requesterContext;
   // SPEC §3.6: the caller supplies the transcript re-feed; we truncate it

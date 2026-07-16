@@ -2,6 +2,7 @@
  * Workers-safe Slack file → AG-UI content parts (no Node Buffer).
  * Mirrors @copilotkit/channels-slack buildFileContentParts semantics.
  */
+import type { R2Bucket } from "@cloudflare/workers-types";
 export type SlackFileRef = {
   id?: string;
   name?: string;
@@ -13,23 +14,60 @@ export type SlackFileRef = {
 
 type MediaDataSource = { type: "data"; value: string; mimeType: string };
 
+export type PreparedAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+} & (
+  | { kind: "inline"; dataBase64: string }
+  | { kind: "staged"; stageKey: string; sha256?: string }
+);
+
 export type AgentContentPart =
-  | { type: "text"; text: string }
-  | { type: "image"; source: MediaDataSource }
-  | { type: "audio"; source: MediaDataSource }
-  | { type: "video"; source: MediaDataSource }
-  | { type: "document"; source: MediaDataSource };
+  | { type: "text"; text: string; attachment?: PreparedAttachment }
+  | { type: "image"; source: MediaDataSource; attachment?: PreparedAttachment }
+  | { type: "audio"; source: MediaDataSource; attachment?: PreparedAttachment }
+  | { type: "video"; source: MediaDataSource; attachment?: PreparedAttachment }
+  | { type: "document"; source: MediaDataSource; attachment?: PreparedAttachment };
+
+export type AttachmentStager = (input: {
+  file: SlackFileRef;
+  bytes: Uint8Array;
+  mimeType: string;
+}) => Promise<{ stageKey: string; sha256?: string }>;
+
+/** Content-addressed durable staging shared by live and reconstructed files. */
+export function createR2AttachmentStager(bucket: R2Bucket): AttachmentStager {
+  return async ({ file, bytes, mimeType }) => {
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const safeName = (file.name ?? file.id ?? "attachment").replace(/[^A-Za-z0-9._-]+/g, "_");
+    const stageKey = `slack-attachments/${sha256}/${safeName}`;
+    await bucket.put(stageKey, bytes, {
+      httpMetadata: { contentType: mimeType || "application/octet-stream" },
+      customMetadata: { slackFileId: file.id ?? "", sha256 },
+    });
+    return { stageKey, sha256 };
+  };
+}
 
 export type FileDeliveryConfig = {
   maxBytesPerFile?: number;
   maxFiles?: number;
   maxTextBytes?: number;
+  /** Upper bound for an inline AG-UI/harness attachment. */
+  maxInlineBytes?: number;
+  /** Upper bound accepted when a durable stager is supplied. */
+  maxStagedBytes?: number;
+  stage?: AttachmentStager;
 };
 
 const DEFAULTS = {
   maxBytesPerFile: 8 * 1024 * 1024,
   maxFiles: 5,
   maxTextBytes: 200 * 1024,
+  maxStagedBytes: 32 * 1024 * 1024,
 } as const;
 
 const TEXT_MIME_EXACT = new Set([
@@ -66,6 +104,47 @@ function utf8Decode(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
+function withAttachment<T extends Omit<AgentContentPart, "attachment">>(
+  part: T,
+  attachment: PreparedAttachment,
+): T & { attachment: PreparedAttachment } {
+  // Agent-turn can read this metadata in-process, while AG-UI JSON encoding
+  // sees only its native content shape (and does not duplicate base64 bytes).
+  Object.defineProperty(part, "attachment", { value: attachment, enumerable: false });
+  return part as T & { attachment: PreparedAttachment };
+}
+
+async function readResponseBounded(res: Response, limit: number): Promise<Uint8Array> {
+  const declared = Number(res.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new Error("attachment_too_large");
+  if (!res.body) {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength > limit) throw new Error("attachment_too_large");
+    return bytes;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("attachment_too_large");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export function extractSlackFiles(event: unknown): SlackFileRef[] {
   const files = (event as { files?: unknown } | undefined)?.files;
   if (!Array.isArray(files)) return [];
@@ -81,6 +160,9 @@ export async function buildFileContentParts(
   config: FileDeliveryConfig = {},
 ): Promise<{ parts: AgentContentPart[]; notes: string[] }> {
   const maxBytes = config.maxBytesPerFile ?? DEFAULTS.maxBytesPerFile;
+  const maxInlineBytes = config.maxInlineBytes ?? maxBytes;
+  const maxStagedBytes = config.maxStagedBytes ?? DEFAULTS.maxStagedBytes;
+  const downloadLimit = config.stage ? maxStagedBytes : maxInlineBytes;
   const maxFiles = config.maxFiles ?? DEFAULTS.maxFiles;
   const maxText = config.maxTextBytes ?? DEFAULTS.maxTextBytes;
 
@@ -107,9 +189,9 @@ export async function buildFileContentParts(
       );
       continue;
     }
-    if (typeof f.size === "number" && f.size > maxBytes) {
+    if (typeof f.size === "number" && f.size > downloadLimit) {
       notes.push(
-        `skipped "${label}": ${f.size} bytes exceeds the ${maxBytes}-byte cap`,
+        `skipped "${label}": ${f.size} bytes exceeds the ${downloadLimit}-byte cap`,
       );
       continue;
     }
@@ -123,40 +205,70 @@ export async function buildFileContentParts(
         notes.push(`skipped "${label}": download failed (HTTP ${res.status})`);
         continue;
       }
-      bytes = new Uint8Array(await res.arrayBuffer());
+      bytes = await readResponseBounded(res, downloadLimit);
     } catch (err) {
       notes.push(`skipped "${label}": ${(err as Error).message}`);
       continue;
     }
-    if (bytes.byteLength > maxBytes) {
-      notes.push(
-        `skipped "${label}": ${bytes.byteLength} bytes exceeds the ${maxBytes}-byte cap`,
-      );
+    const id = f.id ?? `${label}:${bytes.byteLength}`;
+    let prepared: PreparedAttachment;
+    if (bytes.byteLength <= maxInlineBytes) {
+      prepared = {
+        kind: "inline",
+        id,
+        name: label,
+        mimeType: mime || "application/octet-stream",
+        size: bytes.byteLength,
+        dataBase64: toBase64(bytes),
+      };
+    } else if (config.stage) {
+      try {
+        const staged = await config.stage({ file: f, bytes, mimeType: mime });
+        prepared = {
+          kind: "staged",
+          id,
+          name: label,
+          mimeType: mime || "application/octet-stream",
+          size: bytes.byteLength,
+          stageKey: staged.stageKey,
+          ...(staged.sha256 ? { sha256: staged.sha256 } : {}),
+        };
+      } catch (err) {
+        notes.push(`skipped "${label}": staging failed (${(err as Error).message})`);
+        continue;
+      }
+    } else {
+      notes.push(`skipped "${label}": durable staging is not configured`);
       continue;
     }
 
-    if (media) {
-      parts.push({
+    if (media && prepared.kind === "inline") {
+      parts.push(withAttachment({
         type: media,
         source: {
           type: "data",
           value: toBase64(bytes),
           mimeType: mime,
         },
-      });
-    } else {
+      }, prepared));
+    } else if (prepared.kind === "inline") {
       let buf = bytes;
       let truncated = false;
       if (buf.byteLength > maxText) {
         buf = buf.subarray(0, maxText);
         truncated = true;
       }
-      parts.push({
+      parts.push(withAttachment({
         type: "text",
         text:
           `Attached file "${label}" (${mime}${truncated ? ", truncated" : ""}):\n` +
           utf8Decode(buf),
-      });
+      }, prepared));
+    } else {
+      parts.push(withAttachment({
+        type: "text",
+        text: `[Staged attachment: ${label} (${mime}, ${bytes.byteLength} bytes)]`,
+      }, prepared));
     }
   }
 

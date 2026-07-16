@@ -57,7 +57,13 @@ async function deliverPending(ctx: Awaited<ReturnType<typeof createResearchConte
   for (const candidate of deliveries) {
     const d = await ctx.storage.claimDelivery(candidate.id);
     if (!d) continue;
-    const outcome = await postToSlackThread(d.threadKey, d.payload.text, d.id);
+    const outcome = await postToSlackThread(
+      d.threadKey,
+      d.payload.text,
+      d.id,
+      undefined,
+      d.payload,
+    );
     if (outcome.status === "delivered") {
       await ctx.orchestrator.markDeliveryDelivered(d.id);
       console.log(`[research-worker] delivered ${d.payload.type} to ${d.threadKey}`);

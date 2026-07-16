@@ -1,7 +1,7 @@
 # OpenTag operations guide
 
 Status: **current runbook**
-Updated: **2026-07-13**
+Updated: **2026-07-14**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
@@ -133,6 +133,10 @@ cd edge
 | `AGENT_RUNTIME` | Service binding | Bot | Same-zone call to `opentag-agent` |
 | `AGENT_AUTH_HEADER` | Secret | Bot + agent | Optional AG-UI authentication |
 | `ADMIN_SECRET` | Secret | Bot | `/admin/*`, `/debug/*`, `/tasks/start` |
+| `SESSION_VIEWER_BASE_URL` | Var | Bot | Public bot origin for signed, expiring session links |
+| `QUICK_BASE_DOMAIN` | Var | Bot | Artifact host suffix eligible for final action cards |
+| `BLOBS` | R2 binding | Bot + harness + research | Durable staged attachments and research blobs; bot/harness must name the same bucket |
+| `DELIVERY_METRICS` | Analytics Engine binding | Bot | Confirmed `streamed`, `answer_visible`, and `failed_size_limit` outcomes |
 | `INTERNAL_SECRET` | Secret | Bot + research | Internal research authentication |
 | `RESEARCH_TASKS` | Service binding | Bot | `opentag-orchestrator` |
 | `HARNESS` | Service binding | Bot | Optional `opentag-harness` call |
@@ -152,6 +156,13 @@ cd edge
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
 `HARNESS_URL` still supply a request URL/path, but public `workers.dev` fetches
 between Workers in the same zone can fail with Cloudflare 1042.
+
+AG-UI requests carry the exact execution ID to the named runtime Container.
+Stop calls `/opentag/control/interrupt` through `AGENT_RUNTIME` and only reports
+success after the runtime returns matching accepted/quiescent proof. Signed
+`/sessions/:token` links are read-only, expire after seven days, return
+`Cache-Control: private, no-store`, and require `ADMIN_SECRET` as their HMAC
+key; rotate that secret to revoke outstanding links.
 
 ## Deploy the AG-UI agent
 
@@ -197,7 +208,10 @@ bot binding.
 
 1. Set a non-empty organization allowlist in
    `edge/workers/sandbox/wrangler.toml` or its deployment environment.
-2. Configure harness Worker secrets:
+2. Verify the harness `BLOBS` R2 binding names the same bucket as the bot
+   binding. Staged references fail closed if the binding, object, size, or
+   digest does not match.
+3. Configure harness Worker secrets:
 
 ```bash
 cd edge/workers/sandbox
@@ -244,7 +258,10 @@ must share `INTERNAL_SECRET` with the bot and have delivery/model secrets needed
 by its configured adapters.
 
 The research Worker is not a Slack Request URL. Its `/slack/*` routes return
-`410 slack_demoted` intentionally.
+`410 slack_demoted` intentionally. A confirmed final research delivery includes
+Retry, Dig deeper, and Export buttons. Those clicks return to
+`opentag-bot`'s `/slack/interactions`, acquire exact durable pre-admission using
+the click identity, and then enter the ordinary synthetic-turn sink.
 
 ## Health checks
 
@@ -281,7 +298,12 @@ Useful metric names include:
 | `obligation_silent_clear` | Terminal/interrupt state required no new post |
 | `obligation_stale_execution` | Session `executing` marker outlived its exact active-turn row; crash recovery proceeds |
 | `stop_command_received` | Stop parser accepted the Slack message |
-| `harness_fallback` | Non-coding harness failure fell back to AG-UI |
+| `streamed` | Slack confirmed the first non-final streamed update |
+| `answer_visible` | Slack confirmed the final answer render |
+| `failed_size_limit` | Slack definitively rejected the final answer for size and confirmed the bounded visible error |
+| `late_file_repair_timeout` | A correlated delayed upload did not reach exact thread idle within the repair window |
+| `session_history_compacted` | Alarm recovery compacted events through a caller-proven replay cursor |
+| `session_history_compaction_error` | Best-effort compaction failed after the visible obligation was safely served |
 
 Filter by `threadKey` and `executionId` to reconstruct a turn. The same exact
 execution ID should appear across pre-admission, SessionEventDO, harness, Stop,
@@ -306,6 +328,13 @@ than one busy note per thread per minute.
 6. Verify the final Slack render was confirmed, not merely attempted.
 
 Do not delete the obligation as a first response. It is the recovery mechanism.
+
+Request-time Slack clients in one Worker isolate share the same per-channel
+scheduler. Production requests are spaced at one call per second, and a Slack
+`Retry-After` response advances that channel's next eligible time. Durable
+Object alarm recovery is a separate runtime owner: it serves due obligations
+sequentially and persists deferred/retry timing in the obligation row, rather
+than assuming it can share an isolate-local scheduler with request handlers.
 
 If a live AG-UI render was visible but replay has no output, look for
 `session output mirror failed`. Mirroring is best-effort; the obligation must
@@ -353,6 +382,16 @@ The bot is fetching a same-zone Worker publicly. Configure `AGENT_RUNTIME` (or
 - Confirm `codingTask` includes a repository.
 - Confirm IDs match the `ot1e_` / `ot1m_` wire formats.
 
+### Harness rejects a staged attachment
+
+- Confirm bot and harness `BLOBS` bindings point to the same R2 bucket.
+- Check for `staged_attachment_store_unavailable`, `not_found`,
+  `size_mismatch`, or `digest_mismatch`; each is a deliberate fail-closed
+  boundary and the turn is not silently run without the attachment.
+- The authenticated harness frontend resolves at most 32 MiB decoded across
+  at most five attachments. The container keeps rejecting any staged ref that
+  crosses its boundary unresolved.
+
 ### Harness cannot push or create a PR
 
 - Confirm the Slack remote-git approval completed durably for the exact turn.
@@ -377,9 +416,9 @@ must declare their compile-time packages in `edge/package.json`.
 ## Rollback and safety
 
 - Bot, agent, harness, and research deploy independently.
-- Disconnecting the `HARNESS` binding returns the bot to AG-UI-only operation;
-  sticky harness preferences remain recorded but cannot activate the coding
-  runtime.
+- Disconnecting the `HARNESS` binding makes coding or explicitly harness-routed
+  turns fail visibly. The bot must not silently reinterpret that intent as an
+  AG-UI turn; restore the binding or deliberately select an AG-UI mode.
 - Do not delete DO migrations from a deployed config.
 - Do not force-push a recovery commit over concurrent Bugbot or automation
   changes.

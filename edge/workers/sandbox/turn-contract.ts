@@ -24,12 +24,23 @@ export interface RepoSpec {
   branch?: string;
 }
 
+export type TurnAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+} & (
+  | { kind: "inline"; dataBase64: string }
+  | { kind: "staged"; stageKey: string; sha256?: string }
+);
+
 export interface TurnRequestBody {
   sessionId: string;
   executionId: string;
   forwardedMessageId?: string;
   threadKey: string;
   inputLines: string[];
+  attachments?: TurnAttachment[];
   model?: string;
   repo?: RepoSpec;
   requesterContext?: string;
@@ -72,9 +83,10 @@ export function isSafeIdentifier(value: unknown): value is string {
 
 /** Accept only the exact, single-line attribution formats emitted by agent-turn. */
 export function requesterAttribution(requesterContext?: string): string | undefined {
-  return requesterContext
+  const matches = requesterContext
     ?.split(/\r?\n/)
-    .find((line) => ATTRIBUTION_RE.test(line));
+    .filter((line) => ATTRIBUTION_RE.test(line)) ?? [];
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function validateRepoSpec(repo: unknown, policy: RepoPolicy):
@@ -136,6 +148,46 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       record.inputLines.reduce<number>((sum, line) => sum + (typeof line === "string" ? line.length : 0), 0) > 512 * 1024) {
     return { ok: false, error: "invalid_input_lines" };
   }
+  let attachments: TurnAttachment[] | undefined;
+  if (record.attachments !== undefined) {
+    if (!Array.isArray(record.attachments) || record.attachments.length > 5) {
+      return { ok: false, error: "invalid_attachments" };
+    }
+    let inlineBytes = 0;
+    for (const value of record.attachments) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return { ok: false, error: "invalid_attachments" };
+      }
+      const item = value as Record<string, unknown>;
+      if (typeof item.id !== "string" || item.id.length > 256 ||
+          typeof item.name !== "string" || item.name.length > 255 ||
+          typeof item.mimeType !== "string" || item.mimeType.length > 255 ||
+          typeof item.size !== "number" || !Number.isSafeInteger(item.size) || item.size < 0 ||
+          item.size > 32 * 1024 * 1024) {
+        return { ok: false, error: "invalid_attachments" };
+      }
+      if (item.kind === "inline") {
+        if (typeof item.dataBase64 !== "string" || item.dataBase64.length > 44 * 1024 * 1024 ||
+            !/^[A-Za-z0-9+/]*={0,2}$/.test(item.dataBase64)) {
+          return { ok: false, error: "invalid_attachments" };
+        }
+        inlineBytes += Math.floor(item.dataBase64.length * 3 / 4) -
+          (item.dataBase64.endsWith("==") ? 2 : item.dataBase64.endsWith("=") ? 1 : 0);
+      } else if (item.kind === "staged") {
+        if (typeof item.stageKey !== "string" || item.stageKey.length > 512 ||
+            !/^[A-Za-z0-9/_.-]+$/.test(item.stageKey) ||
+            (item.sha256 !== undefined && (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256)))) {
+          return { ok: false, error: "invalid_attachments" };
+        }
+      } else {
+        return { ok: false, error: "invalid_attachments" };
+      }
+    }
+    // The authenticated frontend resolves staged R2 objects into this same
+    // envelope. Keep a hard decoded aggregate cap equal to the staged tier.
+    if (inlineBytes > 32 * 1024 * 1024) return { ok: false, error: "attachments_too_large" };
+    attachments = record.attachments as TurnAttachment[];
+  }
   if (record.model !== undefined &&
       (typeof record.model !== "string" || !MODEL_RE.test(record.model))) {
     return { ok: false, error: "invalid_model" };
@@ -178,6 +230,7 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       ...(record.forwardedMessageId === undefined ? {} : { forwardedMessageId: record.forwardedMessageId as string }),
       threadKey: record.threadKey,
       inputLines: record.inputLines as string[],
+      ...(attachments ? { attachments } : {}),
       ...(record.model === undefined ? {} : { model: record.model as string }),
       ...(normalizedRepo ? { repo: normalizedRepo } : {}),
       ...(record.requesterContext === undefined ? {} : { requesterContext: record.requesterContext as string }),

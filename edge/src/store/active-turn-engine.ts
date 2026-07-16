@@ -17,6 +17,9 @@ type Row = {
   execution_id: string;
   thread_ts: string | null;
   choice_id: string | null;
+  live_client_msg_id: string | null;
+  live_message_ts: string | null;
+  live_message_state: "unreserved" | "reserved" | "posted" | "absent";
   registered_at: number;
   delivery_status: ActiveTurnDeliveryStatus;
   render_token: string | null;
@@ -42,7 +45,8 @@ function hitlCancelledKey(choiceId: string): string {
 }
 
 const COLUMNS = `thread_key, channel_id, conversation_key, execution_id,
-  thread_ts, choice_id, registered_at, delivery_status, render_token,
+  thread_ts, choice_id, live_client_msg_id, live_message_ts, live_message_state,
+  registered_at, delivery_status, render_token,
   effect_token, effect_name, effect_resource, confirmed_output, stop_event_id, updated_at, expires_at`;
 
 export class ActiveTurnEngine {
@@ -81,13 +85,15 @@ export class ActiveTurnEngine {
         record.threadKey,
       );
       this.sql.exec(
-        `INSERT INTO active_turns (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, 0, NULL, ?, ?)`,
+        `INSERT INTO active_turns (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'pending', NULL, NULL, NULL, NULL, 0, NULL, ?, ?)`,
         record.threadKey,
         record.channelId,
         record.conversationKey,
         record.executionId,
         record.threadTs ?? null,
         record.choiceId ?? null,
+        record.liveClientMessageId ?? null,
+        record.liveClientMessageId ? "reserved" : "unreserved",
         record.registeredAt,
         now,
         now + ttlMs,
@@ -95,13 +101,17 @@ export class ActiveTurnEngine {
       if (obligation) {
         this.sql.exec(
           `INSERT INTO render_obligations
-             (thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt)
-           VALUES (?, ?, ?, ?, ?, ?, 0)
+             (thread_key, execution_id, after_event_id, channel, thread_ts,
+              live_client_msg_id, live_message_ts, live_message_state, deadline, attempt)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0)
            ON CONFLICT(thread_key) DO UPDATE SET
              execution_id = excluded.execution_id,
              after_event_id = excluded.after_event_id,
              channel = excluded.channel,
              thread_ts = excluded.thread_ts,
+             live_client_msg_id = excluded.live_client_msg_id,
+             live_message_ts = NULL,
+             live_message_state = excluded.live_message_state,
              deadline = excluded.deadline,
              attempt = 0`,
           record.threadKey,
@@ -109,10 +119,79 @@ export class ActiveTurnEngine {
           obligation.afterEventId,
           obligation.channel,
           obligation.threadTs ?? null,
+          record.liveClientMessageId ?? null,
+          record.liveClientMessageId ? "reserved" : "unreserved",
           now + obligation.timeoutMs,
         );
       }
       return { accepted: true, duplicate: false };
+    });
+  }
+
+  /** Confirm the Slack timestamp returned for the reserved live client id. */
+  confirmLiveMessage(
+    threadKey: string,
+    executionId: string,
+    clientMessageId: string,
+    ts: string,
+  ): boolean {
+    return this.tx(() => {
+      const row = this.row(threadKey);
+      if (
+        !row || row.execution_id !== executionId ||
+        row.live_client_msg_id !== clientMessageId ||
+        !["reserved", "posted"].includes(row.live_message_state)
+      ) return false;
+      this.sql.exec(
+        `UPDATE active_turns SET live_message_ts = ?, live_message_state = 'posted', updated_at = ?
+         WHERE thread_key = ? AND execution_id = ? AND live_client_msg_id = ?`,
+        ts,
+        this.now(),
+        threadKey,
+        executionId,
+        clientMessageId,
+      );
+      this.sql.exec(
+        `UPDATE render_obligations SET live_message_ts = ?, live_message_state = 'posted'
+         WHERE thread_key = ? AND execution_id = ? AND live_client_msg_id = ?`,
+        ts,
+        threadKey,
+        executionId,
+        clientMessageId,
+      );
+      return true;
+    });
+  }
+
+  /** Mark a bounded, authoritative lookup as absent before recovery may post anew. */
+  markLiveMessageAbsent(
+    threadKey: string,
+    executionId: string,
+    clientMessageId: string,
+  ): boolean {
+    return this.tx(() => {
+      const row = this.row(threadKey);
+      if (
+        !row || row.execution_id !== executionId ||
+        row.live_client_msg_id !== clientMessageId ||
+        row.live_message_state !== "reserved"
+      ) return false;
+      this.sql.exec(
+        `UPDATE active_turns SET live_message_state = 'absent', updated_at = ?
+         WHERE thread_key = ? AND execution_id = ? AND live_client_msg_id = ?`,
+        this.now(),
+        threadKey,
+        executionId,
+        clientMessageId,
+      );
+      this.sql.exec(
+        `UPDATE render_obligations SET live_message_state = 'absent'
+         WHERE thread_key = ? AND execution_id = ? AND live_client_msg_id = ?`,
+        threadKey,
+        executionId,
+        clientMessageId,
+      );
+      return true;
     });
   }
 
@@ -876,6 +955,9 @@ export class ActiveTurnEngine {
         executionId: row.execution_id,
         ...(row.thread_ts ? { threadTs: row.thread_ts } : {}),
         ...(row.choice_id ? { choiceId: row.choice_id } : {}),
+        ...(row.live_client_msg_id
+          ? { liveClientMessageId: row.live_client_msg_id }
+          : {}),
         registeredAt: row.registered_at,
       },
       status: row.delivery_status,
@@ -886,6 +968,11 @@ export class ActiveTurnEngine {
         ? { effectResource: JSON.parse(row.effect_resource) as ActiveTurnEffectResource }
         : {}),
       ...(row.stop_event_id ? { stopEventId: row.stop_event_id } : {}),
+      liveMessage: {
+        state: row.live_message_state,
+        ...(row.live_client_msg_id ? { clientMessageId: row.live_client_msg_id } : {}),
+        ...(row.live_message_ts ? { ts: row.live_message_ts } : {}),
+      },
       updatedAt: row.updated_at,
     };
   }

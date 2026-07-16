@@ -22,12 +22,13 @@ import {
 
 export const QUICK_ACTION_PREFIX = "quick_";
 
-export type QuickActionKind = "regenerate" | "files" | "delete" | "retry";
+export type QuickActionKind = "regenerate" | "files" | "delete" | "retry" | "dig_deeper" | "export";
 
 /** Ref carried in a quick button's `value` (JSON, ≤2,000 chars on Slack). */
 export type QuickRef =
   | { type: "artifact"; artifactId: string; url: string }
-  | { type: "issue_list"; heading?: string };
+  | { type: "issue_list"; heading?: string }
+  | { type: "research"; taskId: string };
 
 /** DNS label: 1-63 chars, lowercase alphanumerics, internal hyphens. */
 const ARTIFACT_ID = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";

@@ -89,6 +89,17 @@ function makeSessionEvents() {
     const kv = new Map<string, unknown>();
     engine = new SessionEventEngine({
       sql,
+      tx: (fn) => {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const result = fn();
+          db.exec("COMMIT");
+          return result;
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      },
       kv: {
         get: async <T>(key: string) => kv.get(key) as T | undefined,
         put: async (key: string, value: unknown) => { kv.set(key, value); },
@@ -161,6 +172,7 @@ function makeBotState() {
     timeoutMs?: number;
   }> = [];
   const obligationClearCalls: Array<{ threadKey: string; executionId?: string }> = [];
+  const sessionHandoffs = new Map<string, Record<string, unknown>>();
   const activeDb = new DatabaseSync(":memory:");
   const activeSql = sqliteExecutor(activeDb);
   migrate(activeSql);
@@ -194,6 +206,32 @@ function makeBotState() {
     return result;
   };
   const stub = {
+    sessionHandoffStart: async (args: {
+      threadKey: string;
+      executionId: string;
+      forwardedMessageId: string;
+      inputLines: string[];
+      delayMs?: number;
+    }) => {
+      const row = {
+        ...args,
+        status: "pending",
+        dueAt: Date.now() + (args.delayMs ?? 0),
+        attempt: 0,
+        expiresAt: Date.now() + 60_000,
+      };
+      sessionHandoffs.set(args.threadKey, row);
+      return row;
+    },
+    sessionHandoffGet: async ({ threadKey }: { threadKey: string }) =>
+      sessionHandoffs.get(threadKey),
+    sessionHandoffClear: async ({
+      threadKey,
+      executionId,
+    }: { threadKey: string; executionId: string }) => {
+      if (sessionHandoffs.get(threadKey)?.executionId !== executionId) return false;
+      return sessionHandoffs.delete(threadKey);
+    },
     kvGet: async <T>(key: string) => values.get(key) as T | undefined,
     kvSet: async (key: string, value: unknown) => { values.set(key, value); },
     kvDelete: async (key: string) => { values.delete(key); },
@@ -356,6 +394,21 @@ function makeBotState() {
     activeTurnRefresh: async (record: import("../src/store/active-turn-types.js").ActiveTurnRecord) =>
       activeTurns.refresh(record, 2 * 60 * 60_000),
     activeTurnGet: async ({ threadKey }: { threadKey: string }) => activeTurns.get(threadKey),
+    activeTurnConfirmLiveMessage: async (args: {
+      threadKey: string; executionId: string; clientMessageId: string; ts: string;
+    }) => activeTurns.confirmLiveMessage(
+      args.threadKey,
+      args.executionId,
+      args.clientMessageId,
+      args.ts,
+    ),
+    activeTurnMarkLiveMessageAbsent: async (args: {
+      threadKey: string; executionId: string; clientMessageId: string;
+    }) => activeTurns.markLiveMessageAbsent(
+      args.threadKey,
+      args.executionId,
+      args.clientMessageId,
+    ),
     activeTurnLatest: async ({ channelId }: { channelId: string }) => activeTurns.latest(channelId),
     activeTurnRegisterChoice: async (args: {
       threadKey: string; executionId: string; choiceId: string;
@@ -618,6 +671,16 @@ describe("real /agent ingress and Stop lifecycle", () => {
         SLACK_SIGNING_SECRET: signingSecret,
         SLACK_BOT_TOKEN: "xoxb-test",
         AGENT_URL: "https://agent.test/run",
+        AGENT_RUNTIME: {
+          fetch: async (request: Request) => {
+            const body = await request.json() as { executionId?: string };
+            return Response.json({
+              accepted: true,
+              quiescent: true,
+              executionId: body.executionId,
+            });
+          },
+        },
         BOT_STATE: botState.namespace,
         WORKSPACE_CONFIG: {
           idFromName: (name: string) => ({ name }),

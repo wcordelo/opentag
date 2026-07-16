@@ -487,8 +487,19 @@ describe("production Slack remote-git ingress", () => {
     } as never;
     const originalFetch = globalThis.fetch;
     const slackCalls: string[] = [];
-    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
-      slackCalls.push(String(url));
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = url instanceof Request ? url.url : String(url);
+      slackCalls.push(requestUrl);
+      if (new URL(requestUrl).pathname === "/opentag/control/interrupt") {
+        const body = url instanceof Request
+          ? await url.clone().json() as { executionId?: string }
+          : JSON.parse(String(init?.body ?? "{}")) as { executionId?: string };
+        return Response.json({
+          accepted: true,
+          quiescent: true,
+          executionId: body.executionId,
+        });
+      }
       return Response.json({ ok: true, ts: "222.333" });
     });
     try {

@@ -76,6 +76,12 @@ export function withTestLifecycleStore<T extends StateStore>(
       rows.set(record.threadKey, {
         record,
         status: "pending",
+        liveMessage: {
+          state: record.liveClientMessageId ? "reserved" : "unreserved",
+          ...(record.liveClientMessageId
+            ? { clientMessageId: record.liveClientMessageId }
+            : {}),
+        },
         updatedAt: Date.now(),
       });
       return { accepted: true, duplicate: false };
@@ -93,6 +99,21 @@ export function withTestLifecycleStore<T extends StateStore>(
     },
     refresh: async (record) => Boolean(exact(record.threadKey, record.executionId)),
     get: async (threadKey) => rows.get(threadKey),
+    confirmLiveMessage: async ({ threadKey, executionId, clientMessageId, ts }) => {
+      const row = exact(threadKey, executionId);
+      if (row?.liveMessage.clientMessageId !== clientMessageId) return false;
+      row.liveMessage = { state: "posted", clientMessageId, ts };
+      return true;
+    },
+    markLiveMessageAbsent: async ({ threadKey, executionId, clientMessageId }) => {
+      const row = exact(threadKey, executionId);
+      if (
+        row?.liveMessage.clientMessageId !== clientMessageId ||
+        row.liveMessage.state !== "reserved"
+      ) return false;
+      row.liveMessage = { state: "absent", clientMessageId };
+      return true;
+    },
     latest: async (channelId) => [...rows.values()]
       .filter((row) => row.record.channelId === channelId)
       .sort((a, b) => b.record.registeredAt - a.record.registeredAt)[0],
@@ -149,6 +170,7 @@ export function withTestLifecycleStore<T extends StateStore>(
         const created: ActiveTurnSnapshot = {
           record,
           status: "pending",
+          liveMessage: { state: "unreserved" },
           updatedAt: Date.now(),
         };
         rows.set(threadKey, created);
@@ -256,5 +278,30 @@ export function withTestLifecycleStore<T extends StateStore>(
     },
   };
 
-  return Object.assign(base, { obligation, activeTurn });
+  const handoffs = new Map<string, Awaited<
+    ReturnType<LifecycleStateStore["sessionHandoff"]["start"]>
+  >>();
+  const sessionHandoff: LifecycleStateStore["sessionHandoff"] = {
+    start: async (args) => {
+      const existing = handoffs.get(args.threadKey);
+      if (existing) return existing;
+      const now = Date.now();
+      const row = {
+        ...args,
+        status: "pending" as const,
+        dueAt: now + (args.delayMs ?? 0),
+        attempt: 0,
+        expiresAt: now + 24 * 60 * 60_000,
+      };
+      handoffs.set(args.threadKey, row);
+      return row;
+    },
+    get: async (threadKey) => handoffs.get(threadKey),
+    clear: async ({ threadKey, executionId }) => {
+      if (handoffs.get(threadKey)?.executionId !== executionId) return false;
+      return handoffs.delete(threadKey);
+    },
+  };
+
+  return Object.assign(base, { obligation, activeTurn, sessionHandoff });
 }

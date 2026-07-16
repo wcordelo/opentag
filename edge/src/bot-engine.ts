@@ -30,6 +30,7 @@ import {
 import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
 import { runSlackTurnLifecycle } from "./slack/turn-lifecycle.js";
+import { sharedSlackRateScheduler } from "./slack/web-api.js";
 import {
   adoptSlackShortcut,
   finishSilentShortcut,
@@ -47,6 +48,41 @@ type BotHandle = {
   bot: Bot;
   adapter: CloudflareSlackAdapter;
 };
+
+function findExecutionId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const hit = findExecutionId(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.description === "OpenTag execution control" &&
+    typeof record.value === "string"
+  ) {
+    try {
+      const parsed = JSON.parse(record.value) as { executionId?: unknown };
+      if (typeof parsed.executionId === "string") return parsed.executionId;
+    } catch { /* malformed context is ignored */ }
+  }
+  for (const child of Object.values(record)) {
+    const hit = findExecutionId(child);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+export function agentExecutionIdFromRequest(init: RequestInit): string | undefined {
+  if (typeof init.body !== "string") return undefined;
+  try {
+    return findExecutionId(JSON.parse(init.body));
+  } catch {
+    return undefined;
+  }
+}
 
 let singleton: BotHandle | null = null;
 
@@ -69,12 +105,29 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   if (!env.AGENT_URL) {
     throw new Error("AGENT_URL is required for AG-UI agent replies");
   }
+  if (env.ENVIRONMENT === "production" && !env.SESSION_EVENTS) {
+    throw new Error("SESSION_EVENTS is required for production terminal ownership");
+  }
 
   const stateStore = createBotStoreAdapter(env.BOT_STATE);
+  const slackScheduler = sharedSlackRateScheduler(env.ENVIRONMENT);
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
     stateStore,
+    slackScheduler,
+    deliveryMetrics: env.DELIVERY_METRICS,
     ...(env.SESSION_EVENTS ? { sessionEvents: env.SESSION_EVENTS } : {}),
+    ...(env.BLOBS ? { blobs: env.BLOBS } : {}),
+    ...(env.SESSION_VIEWER_BASE_URL && env.ADMIN_SECRET
+      ? {
+          sessionViewer: {
+            baseUrl: env.SESSION_VIEWER_BASE_URL,
+            secret: env.ADMIN_SECRET,
+            runtimeLabel: `AG-UI · ${env.AGENT_MODEL ?? "runtime default"}`,
+          },
+        }
+      : {}),
+    ...(env.QUICK_BASE_DOMAIN ? { quickBaseDomain: env.QUICK_BASE_DOMAIN } : {}),
   });
   bindCommandEnv(env, adapter);
 
@@ -85,7 +138,12 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   // Prefer service binding so Worker→Worker does not hit CF 1042 (same-zone
   // workers.dev fetch is blocked). AGENT_URL still supplies the request URL/path.
   const agentFetch = env.AGENT_RUNTIME
-    ? (url: string, init: RequestInit) => env.AGENT_RUNTIME!.fetch(url, init)
+    ? (url: string, init: RequestInit) => {
+        const executionId = agentExecutionIdFromRequest(init);
+        const headers = new Headers(init.headers);
+        if (executionId) headers.set("x-opentag-execution-id", executionId);
+        return env.AGENT_RUNTIME!.fetch(url, { ...init, headers });
+      }
     : undefined;
 
   const bot = createBot({

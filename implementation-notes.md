@@ -243,6 +243,11 @@ All GOAL.md A3 done criteria pass (review agent verdict). Typecheck clean; full 
 
 ## Phase A2 — Session DO + never-silent guarantee (2026-07-12)
 
+> Historical implementation snapshot. Later remediation tightened terminal
+> ordering so SessionEventDO `done` persistence precedes final Slack delivery,
+> and made Stop depend on exact AG-UI runtime quiescence. Current source and
+> `DECISIONS.md` are authoritative where this snapshot differs.
+
 ### Status
 All GOAL.md A2 done criteria pass (independent review agent verdict). Typecheck clean;
 full suite 112/112. Not yet deployed — `wrangler deploy` gates on user approval (house

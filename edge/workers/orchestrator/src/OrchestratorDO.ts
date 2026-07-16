@@ -31,6 +31,28 @@ function parseAllowedChannels(raw?: string): string[] | undefined {
   return channels.length > 0 ? channels : undefined;
 }
 
+export async function deliverResearchSlackObligation(
+  obligation: {
+    id: string;
+    threadKey: string;
+    payload: { type?: string; text?: string; taskId?: string };
+  },
+  botToken: string,
+  deliver = postToSlackThread,
+) {
+  const { payload } = obligation;
+  if (!payload.text) return { status: "definitive_failure" as const, error: "missing_delivery_text" };
+  return deliver(
+    obligation.threadKey,
+    payload.text,
+    obligation.id,
+    botToken,
+    payload.type === "final" && payload.taskId
+      ? { type: "final", text: payload.text, taskId: payload.taskId }
+      : undefined,
+  );
+}
+
 interface ExecutionLogBody {
   id?: string;
   sessionId?: string;
@@ -299,12 +321,10 @@ export class OrchestratorDO implements DurableObject {
         await storage.markDeliverySuppressed(obligation.id);
         continue;
       }
-      const outcome = await postToSlackThread(
-          obligation.threadKey,
-          payload.text,
-          obligation.id,
-          this.env.SLACK_BOT_TOKEN,
-        );
+      const outcome = await deliverResearchSlackObligation(
+        { id: obligation.id, threadKey: obligation.threadKey, payload },
+        this.env.SLACK_BOT_TOKEN,
+      );
       if (outcome.status === "delivered") {
         await storage.markDeliveryDelivered(obligation.id);
       } else if (outcome.status === "definitive_failure") {

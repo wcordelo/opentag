@@ -22,6 +22,10 @@ export interface TriageAgentEnv {
   AGENT_MODEL?: string;
   /** Resolve secret *refs* from AG-UI context (name → value). */
   getSecret?: (name: string) => string | undefined;
+  /** Runtime-owned exact execution cancellation/quiescence registry. */
+  executionControl?: {
+    register(executionId: string, controller: AbortController): () => void;
+  };
 }
 
 interface McpHttpTransport {
@@ -414,6 +418,18 @@ export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
   return new BuiltInAgent({
     type: "tanstack",
     factory: async (ctx) => {
+      const controlRaw = extractContextValue(ctx.input, "OpenTag execution control");
+      let executionId: string | undefined;
+      if (typeof controlRaw === "string") {
+        try {
+          const parsed = JSON.parse(controlRaw) as { executionId?: unknown };
+          if (typeof parsed.executionId === "string") executionId = parsed.executionId;
+        } catch { /* invalid control context cannot create an exact registration */ }
+      }
+      const settleExecution = executionId
+        ? env.executionControl?.register(executionId, ctx.abortController)
+        : undefined;
+      try {
       const {
         messages,
         systemPrompts,
@@ -459,7 +475,7 @@ export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
             `never invent data or claim a write/read succeeded.`
           : "";
 
-      return chat({
+      const result = chat({
         adapter: openaiText(model),
         messages,
         systemPrompts: [systemPrompt + availabilityNote, ...systemPrompts],
@@ -471,6 +487,18 @@ export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
         middleware: [stripNullishToolArgsMiddleware],
         abortController: ctx.abortController,
       });
+      if (!settleExecution) return result;
+      return (async function* controlledResult() {
+        try {
+          yield* result;
+        } finally {
+          settleExecution();
+        }
+      })();
+      } catch (err) {
+        settleExecution?.();
+        throw err;
+      }
     },
   });
 }

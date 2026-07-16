@@ -83,6 +83,7 @@ describe("RenderObligationEngine", () => {
       afterEventId: 5,
       channel: "C1",
       threadTs: "1.0",
+      liveMessageState: "unreserved",
       deadline: 61_000,
       attempt: 0,
     });
@@ -278,6 +279,7 @@ function makeFakeSessionEvents(opts: {
   executingByThread?: Map<string, string>;
   sessionIdByThread?: Map<string, string>;
   controlLog?: string[];
+  compactCalls?: Array<{ threadKey: string; safeThroughEventId: number }>;
 }) {
   const eventsByThread = opts.eventsByThread ?? new Map<string, ReplayEvent[]>();
   const interruptedThreads = opts.interruptedThreads ?? new Set<string>();
@@ -302,6 +304,10 @@ function makeFakeSessionEvents(opts: {
       replay: async (afterEventId?: number) => {
         const events = eventsByThread.get(id.name) ?? [];
         return events.filter((e) => e.id > (afterEventId ?? 0));
+      },
+      compact: async ({ safeThroughEventId }: { safeThroughEventId: number }) => {
+        opts.compactCalls?.push({ threadKey: id.name, safeThroughEventId });
+        return { compacted: safeThroughEventId, retained: 1 };
       },
       interruptExpected: async (executionId: string) => {
         opts.controlLog?.push(`session:${executionId}`);
@@ -375,6 +381,58 @@ describe("ConversationStateDO render obligations", () => {
     }
   });
 
+  it("alarm resumes only the exact pre-execution SessionEventDO handoff", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T10:00:00Z"));
+    const calls: Array<Record<string, unknown>> = [];
+    let attempt = 0;
+    const sessions = {
+      idFromName: (name: string) => ({ name }),
+      get: (id: { name: string }) => ({
+        execute: async (args: Record<string, unknown>) => {
+          calls.push({ threadKey: id.name, ...args });
+          attempt += 1;
+          if (attempt === 1) throw new Error("transient handoff");
+          return { accepted: true, duplicate: false };
+        },
+      }),
+    };
+    const { doInstance, close } = makeDo({ SESSION_EVENTS: sessions });
+    try {
+      await doInstance.sessionHandoffStart({
+        threadKey: "slack:C-handoff:1.0",
+        executionId: "exec-handoff",
+        forwardedMessageId: "message-handoff",
+        inputLines: ["hello"],
+        delayMs: -1,
+      });
+      await doInstance.alarm();
+      expect(await doInstance.sessionHandoffGet({ threadKey: "slack:C-handoff:1.0" }))
+        .toMatchObject({ status: "pending", attempt: 1 });
+      vi.advanceTimersByTime(2_001);
+      await doInstance.alarm();
+      expect(calls).toEqual([
+        {
+          threadKey: "slack:C-handoff:1.0",
+          executionId: "exec-handoff",
+          forwardedMessageId: "message-handoff",
+          inputLines: ["hello"],
+        },
+        {
+          threadKey: "slack:C-handoff:1.0",
+          executionId: "exec-handoff",
+          forwardedMessageId: "message-handoff",
+          inputLines: ["hello"],
+        },
+      ]);
+      expect(await doInstance.sessionHandoffGet({ threadKey: "slack:C-handoff:1.0" }))
+        .toMatchObject({ status: "accepted", attempt: 2 });
+    } finally {
+      close();
+      vi.useRealTimers();
+    }
+  });
+
   it("durably resumes Stop through exact session+harness quiescence before form-encoded Slack ack", async () => {
     const controlLog: string[] = [];
     const threadKey = "slack:CSTOP:10.0";
@@ -390,11 +448,18 @@ describe("ConversationStateDO render obligations", () => {
         return new Response(JSON.stringify({ interrupted: true }), { status: 200 });
       },
     };
-    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      slackAttempts += 1;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("Content-Type"))
         .toBe("application/x-www-form-urlencoded;charset=UTF-8");
       const form = new URLSearchParams(String(init?.body));
+      if (String(url).includes("assistant.threads.setStatus")) {
+        expect(form.get("channel_id")).toBe("CSTOP");
+        expect(form.get("thread_ts")).toBe("10.0");
+        expect(form.get("status")).toBe("");
+        controlLog.push("status:CSTOP");
+        return Response.json({ ok: true });
+      }
+      slackAttempts += 1;
       clientMessageIds.push(form.get("client_msg_id") ?? "");
       expect(form.get("thread_ts")).toBe("10.0");
       controlLog.push(`slack:${form.get("channel")}`);
@@ -427,6 +492,7 @@ describe("ConversationStateDO render obligations", () => {
       expect(controlLog).toEqual([
         "session:exec-stop",
         "harness:exec-stop",
+        "status:CSTOP",
         "slack:CSTOP",
       ]);
       expect((await doInstance.activeTurnGet({ threadKey }))?.status)
@@ -436,7 +502,9 @@ describe("ConversationStateDO render obligations", () => {
       expect(controlLog).toEqual([
         "session:exec-stop",
         "harness:exec-stop",
+        "status:CSTOP",
         "slack:CSTOP",
+        "status:CSTOP",
         "slack:CSTOP",
       ]);
       expect(await doInstance.activeTurnGet({ threadKey })).toBeUndefined();
@@ -551,24 +619,25 @@ describe("ConversationStateDO render obligations", () => {
   });
 
   it("set -> alarm due -> reconstructed fallback posted, obligation cleared", async () => {
+    const compactCalls: Array<{ threadKey: string; safeThroughEventId: number }> = [];
     const eventsByThread = new Map<string, ReplayEvent[]>([
       [
         "slack:C1:1.0",
         [
           { id: 1, executionId: "exec-1", kind: "output", payload: "final ", createdAt: 1 },
-          { id: 2, executionId: "exec-1", kind: "output", payload: { text: "answer" }, createdAt: 2 },
+          { id: 2, executionId: "exec-1", kind: "output", payload: { text: "final answer" }, createdAt: 2 },
         ],
       ],
     ]);
     const { doInstance, close } = makeDo({
       SLACK_BOT_TOKEN: "xoxb-test",
-      SESSION_EVENTS: makeFakeSessionEvents({ eventsByThread }),
+      SESSION_EVENTS: makeFakeSessionEvents({ eventsByThread, compactCalls }),
     });
     try {
       await doInstance.obligationSet({
         threadKey: "slack:C1:1.0",
         executionId: "exec-1",
-        afterEventId: 0,
+        afterEventId: 1,
         channel: "C1",
         threadTs: "1.0",
         timeoutMs: -1000,
@@ -585,6 +654,9 @@ describe("ConversationStateDO render obligations", () => {
       expect(body.text).toContain("Recovered after an interrupted turn");
       expect(fetchCalls[0]!.contentType)
         .toBe("application/x-www-form-urlencoded;charset=UTF-8");
+      expect(compactCalls).toEqual([
+        { threadKey: "slack:C1:1.0", safeThroughEventId: 1 },
+      ]);
       expect(fetchCalls[0]!.rawBody).toContain("thread_ts=1.0");
 
       expect(
@@ -871,6 +943,77 @@ describe("ConversationStateDO render obligations", () => {
       expect(scheduled!).toBeLessThanOrEqual(after + 60 * 60_000 + 1000);
     } finally {
       close();
+    }
+  });
+
+  it("pages large replay losslessly instead of exhausting Slack size retries", async () => {
+    const threadKey = "slack:C-large:1.0";
+    const executionId = "exec-large";
+    const output = "x".repeat(200_000);
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SESSION_EVENTS: makeFakeSessionEvents({
+        eventsByThread: new Map([[threadKey, [
+          { id: 1, executionId, kind: "output", payload: output, createdAt: 1 },
+          { id: 2, executionId, kind: "done", payload: { ok: true }, createdAt: 2 },
+        ]]]),
+      }),
+    });
+    try {
+      await doInstance.obligationSet({
+        threadKey,
+        executionId,
+        afterEventId: 0,
+        channel: "C-large",
+        threadTs: "1.0",
+        timeoutMs: -1,
+      });
+      await doInstance.alarm();
+      expect(fetchCalls.length).toBeGreaterThan(1);
+      const rendered = fetchCalls.flatMap((call) => {
+        const blocks = JSON.parse((call.body as { blocks: string }).blocks) as Array<{
+          text: { text: string };
+        }>;
+        expect(blocks.length).toBeLessThanOrEqual(50);
+        return blocks.map((block) => block.text.text);
+      }).join("");
+      expect(rendered.match(/x/g)?.length).toBe(output.length);
+      expect(await doInstance.obligationGet({ threadKey })).toBeUndefined();
+    } finally {
+      close();
+    }
+  });
+
+  it("retains a slow dead letter after the bounded definitive-failure budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T18:00:00Z"));
+    globalThis.fetch = vi.fn(async () => Response.json({
+      ok: false,
+      error: "invalid_auth",
+    })) as typeof fetch;
+    const threadKey = "slack:C-dead:1.0";
+    const { doInstance, close } = makeDo({
+      SLACK_BOT_TOKEN: "bad-token",
+      SESSION_EVENTS: makeFakeSessionEvents({}),
+    });
+    try {
+      await doInstance.obligationSet({
+        threadKey,
+        executionId: "exec-dead",
+        afterEventId: 0,
+        channel: "C-dead",
+        timeoutMs: -1,
+      });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await doInstance.alarm();
+        vi.advanceTimersByTime(60_001);
+      }
+      const retained = await doInstance.obligationGet({ threadKey });
+      expect(retained).toMatchObject({ executionId: "exec-dead", attempt: 3 });
+      expect(retained?.deadline).toBeGreaterThan(Date.now() + 5 * 60 * 60_000);
+    } finally {
+      close();
+      vi.useRealTimers();
     }
   });
 

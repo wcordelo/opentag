@@ -54,6 +54,59 @@ function fixture() {
 }
 
 describe("ActiveTurnEngine transactional state machine", () => {
+  it("durably reconciles a reserved live client id into the obligation timestamp", () => {
+    const db = new DatabaseSync(":memory:");
+    const sql = sqlFor(db);
+    migrate(sql);
+    const tx = <T>(fn: () => T): T => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = fn();
+        db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    };
+    const engine = new ActiveTurnEngine(sql, tx, () => 1_000);
+    const record = {
+      channelId: "C-live",
+      threadKey: "slack:C-live:1.0",
+      conversationKey: "C-live::1.0",
+      executionId: "exec-live",
+      liveClientMessageId: "11111111-1111-5111-8111-111111111111",
+      registeredAt: 1,
+    };
+    expect(engine.register(record, 10_000, {
+      afterEventId: 0,
+      channel: record.channelId,
+      timeoutMs: 5_000,
+    }).accepted).toBe(true);
+    expect(engine.get(record.threadKey)?.liveMessage).toEqual({
+      state: "reserved",
+      clientMessageId: record.liveClientMessageId,
+    });
+    expect(engine.confirmLiveMessage(
+      record.threadKey,
+      record.executionId,
+      record.liveClientMessageId,
+      "123.456",
+    )).toBe(true);
+    expect(engine.get(record.threadKey)?.liveMessage).toEqual({
+      state: "posted",
+      clientMessageId: record.liveClientMessageId,
+      ts: "123.456",
+    });
+    expect(db.prepare(
+      `SELECT live_message_state, live_message_ts FROM render_obligations WHERE thread_key = ?`,
+    ).get(record.threadKey)).toEqual({
+      live_message_state: "posted",
+      live_message_ts: "123.456",
+    });
+    db.close();
+  });
+
   it("atomically pre-admits an execution with its alarm obligation", () => {
     const db = new DatabaseSync(":memory:");
     const sql = sqlFor(db);

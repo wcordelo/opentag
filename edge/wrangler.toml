@@ -6,6 +6,10 @@ main = "src/worker.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
+[[analytics_engine_datasets]]
+binding = "DELIVERY_METRICS"
+dataset = "opentag_delivery_dev"
+
 # Bot conversation state (HITL, turn locks, transcripts, dedup).
 [[durable_objects.bindings]]
 name = "BOT_STATE"

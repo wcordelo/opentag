@@ -266,7 +266,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000100");
 
     await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Add a script",
     );
@@ -312,7 +312,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     });
 
     const outcome = await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Explain this repository",
       undefined,
@@ -391,7 +391,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it("deliberately falls back to AG-UI for a read-only harness failure", async () => {
+  it("does not fall back to AG-UI for a selected read-only harness failure", async () => {
     runHarnessTurnMock.mockResolvedValue({
       ok: false,
       text: "",
@@ -400,16 +400,16 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     });
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000225");
 
-    await runBundledAgentTurn(
+    await expect(runBundledAgentTurn(
       makeEnv({
         HARNESS_URL: "https://harness.example.com",
         HARNESS_REPO_URL: "https://github.com/acme/repo",
       }),
       thread as never,
       "--claude Explain the session event log",
-    );
+    )).rejects.toMatchObject({ failureKind: "http" });
 
-    expect(runAgent).toHaveBeenCalledOnce();
+    expect(runAgent).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -454,12 +454,13 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
   });
 
   it("never calls the harness when no HARNESS/HARNESS_URL binding is configured, even with --claude", async () => {
-    const { thread, runAgent } = makeThreadSpies("C1::1111111111.000300");
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000300");
 
     await runBundledAgentTurn(makeEnv(), thread as never, "--claude Add a script");
 
     expect(runHarnessTurnMock).not.toHaveBeenCalled();
-    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
   });
 
   it("never calls the harness for a plain message with no harness flag, even if HARNESS_URL is configured", async () => {
@@ -468,7 +469,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     await runBundledAgentTurn(
       makeEnv({ HARNESS_URL: "https://harness.example.com" }),
       thread as never,
-      "just chatting",
+      "Explain today's weather",
     );
 
     expect(runHarnessTurnMock).not.toHaveBeenCalled();
@@ -480,7 +481,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000500");
 
     await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Add a script",
     );
@@ -495,7 +496,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread } = makeThreadSpies("C1::1111111111.000600");
 
     await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Open a pull request",
       {
@@ -528,7 +529,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread } = makeThreadSpies("C1::1111111111.000610");
 
     await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Open a pull request",
       {
@@ -550,7 +551,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread } = makeThreadSpies("C1::1111111111.000620");
 
     await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Open a pull request",
       {
@@ -695,7 +696,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000800");
 
     const outcome = await runBundledAgentTurn(
-      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      makeEnv({ HARNESS_URL: "https://harness.example.com", HARNESS_REPO_URL: "https://github.com/acme/repo" }),
       thread as never,
       "--claude Make a change",
     );

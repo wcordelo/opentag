@@ -1,4 +1,8 @@
-import type { DurableObjectNamespace, R2Bucket } from "@cloudflare/workers-types";
+import type {
+  AnalyticsEngineDataset,
+  DurableObjectNamespace,
+  R2Bucket,
+} from "@cloudflare/workers-types";
 import type { ConversationStateDO } from "./store/conversation-state-do.js";
 import type { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 import type { KnowledgeDO } from "./memory/knowledge-do.js";
@@ -11,14 +15,10 @@ export interface Env {
   BOT_STATE: DurableObjectNamespace<ConversationStateDO>;
   WORKSPACE_CONFIG: DurableObjectNamespace<WorkspaceConfigDO>;
   KNOWLEDGE: DurableObjectNamespace<KnowledgeDO>;
-  /**
-   * Per-thread session event log (SPEC.md §3.2/§4.1) — replay source for
-   * `ConversationStateDO`'s render-obligation alarm fallback (SPEC.md §3.1).
-   * Optional: a later phase registers this Durable Object in wrangler.toml;
-   * until then, obligation writes fall back to `afterEventId: 0` and the
-   * alarm's fallback path degrades to the "please retry" error card.
-   */
-  SESSION_EVENTS?: DurableObjectNamespace<SessionEventDO>;
+  /** Required per-thread durable session log and exact execute/forward dedup. */
+  SESSION_EVENTS: DurableObjectNamespace<SessionEventDO>;
+  /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
+  DELIVERY_METRICS: AnalyticsEngineDataset;
   BLOBS?: R2Bucket;
 
   /** Service binding to research task Worker (opentag-orchestrator). */
@@ -37,6 +37,11 @@ export interface Env {
   ADMIN_SECRET?: string;
 
   AGENT_URL: string;
+  AGENT_MODEL?: string;
+  /** Public bot origin used for signed, read-only session viewer links. */
+  SESSION_VIEWER_BASE_URL?: string;
+  /** Artifact host suffix whose final URLs receive synthetic-turn action cards. */
+  QUICK_BASE_DOMAIN?: string;
   AGENT_AUTH_HEADER?: string;
   ENVIRONMENT?: string;
   DEFAULT_ACCESS_BUNDLE_ID?: string;

@@ -14,6 +14,16 @@ export type ActiveTurnRecord = {
   threadTs?: string;
   choiceId?: string;
   registeredAt: number;
+  /** Reserved before execution and reused for every ambiguous placeholder retry. */
+  liveClientMessageId?: string;
+};
+
+export type LiveMessageState = "unreserved" | "reserved" | "posted" | "absent";
+
+export type LiveMessageIdentity = {
+  clientMessageId?: string;
+  ts?: string;
+  state: LiveMessageState;
 };
 
 /** Exact downstream resource created by a fenced non-Slack effect. */
@@ -40,6 +50,7 @@ export type ActiveTurnSnapshot = {
   effectName?: string;
   effectResource?: ActiveTurnEffectResource;
   stopEventId?: string;
+  liveMessage: LiveMessageIdentity;
   updatedAt: number;
 };
 

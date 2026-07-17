@@ -39,6 +39,29 @@ Do not deploy any Worker or Container without explicit user approval.
 
 Slack Request URLs must point at **`opentag-bot`**, not the research orchestrator.
 
+### Running services locally (dev environment already installed)
+
+Deps are installed by the startup update script (`pnpm install` at root; `npm ci` in
+`edge/` and `edge/workers/sandbox/`). Root is **pnpm**, everything under `edge/` is **npm**.
+
+Two services run in dev without Slack credentials:
+
+- **AG-UI runtime:** `pnpm runtime` → `http://localhost:8200`. Smoke test with a real model
+  turn (uses the OpenAI adapter; `OPENAI_API_KEY` is provided as a secret in this env):
+  `POST /api/copilotkit/agent/triage/run` with body
+  `{"threadId":"t","runId":"r","state":{},"messages":[{"id":"m","role":"user","content":"hi"}],"tools":[],"context":[],"forwardedProps":{}}`
+  → streams `RUN_STARTED` … `TEXT_MESSAGE_CONTENT` … `RUN_FINISHED` SSE.
+- **Bot Worker:** `cd edge && npm run dev` (add `-- --port 8787`). Needs `edge/.dev.vars`
+  (`cp .dev.vars.example .dev.vars`; gitignored). Smoke tests: `GET /health` (exercises the
+  DO/SQLite spine) and a signed `POST /slack/events` `url_verification` challenge
+  (HMAC `v0:{ts}:{body}` with `SLACK_SIGNING_SECRET`, headers `X-Slack-Request-Timestamp` +
+  `X-Slack-Signature`). `RESEARCH_TASKS` shows `[not connected]` locally — harmless.
+
+Gotchas:
+- A full Slack round-trip (event → reply) needs real `SLACK_BOT_TOKEN` + `SLACK_SIGNING_SECRET`
+  (not present here), so only ingress verification + the AG-UI turn can be tested locally.
+- `npm ci` wipes `node_modules`; restart any running `wrangler dev` after a reinstall.
+
 ### Linear create pitfalls
 
 - `LINEAR_TEAM_KEY` = team **display name** (e.g. `Berendo`), not a bare key like `CPK`.

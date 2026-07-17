@@ -119,6 +119,11 @@ function makeThreadSpies(conversationKey: string) {
 }
 
 let store: StateStore;
+const runtimeDefaultsMock = vi.hoisted(() => ({
+  value: undefined as
+    | { harnessType: "claudecode"; model?: string }
+    | undefined,
+}));
 const setTitleSpy = vi.fn(
   async (_args: { channel_id: string; thread_ts: string; title: string }) =>
     undefined,
@@ -144,6 +149,9 @@ vi.mock("../src/config/workspace-config-do.js", async (importOriginal) => {
         systemPrompt: "sys",
         policies: {},
         accessBundleId: "default",
+        ...(runtimeDefaultsMock.value
+          ? { runtimeDefaults: runtimeDefaultsMock.value }
+          : {}),
         updatedAt: "now",
       },
       bundle: { id: "default", tools: [], mcpEndpoints: [], secretRefs: [] },
@@ -173,17 +181,30 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
   } as unknown as Parameters<typeof runBundledAgentTurn>[0];
 }
 
-function serialize(value: unknown): string {
-  return JSON.stringify(value);
-}
-
 describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
   beforeEach(() => {
     store = withTestLifecycleStore(makeMemoryStore());
     setTitleSpy.mockClear();
+    runtimeDefaultsMock.value = undefined;
   });
 
-  it("flags-only message posts a sticky confirmation and never runs the agent", async () => {
+  it("uses a channel Claude default and fails visibly without AG-UI fallback when disconnected", async () => {
+    runtimeDefaultsMock.value = {
+      harnessType: "claudecode",
+      model: "claude-sonnet-5",
+    };
+    const { thread, post, runAgent } = makeThreadSpies(
+      "C1::1234567890.000050",
+    );
+    await runBundledAgentTurn(makeEnv(), thread as never, "Inspect this alert");
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
+    expect(await store.kv.get(
+      "thread:overrides:C1::1234567890.000050",
+    )).toBeUndefined();
+  });
+
+  it("does not save or confirm a selection when the harness is disconnected", async () => {
     const { thread, post, runAgent } = makeThreadSpies(
       "C1::1234567890.000100",
     );
@@ -193,57 +214,35 @@ describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
     expect(runAgent).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
     const [confirmation] = post.mock.calls[0]!;
-    expect(String(confirmation)).toContain("claude-opus-4-8");
-    expect(String(confirmation)).not.toContain("--opus");
+    expect(String(confirmation)).toContain("not connected");
+    expect(String(confirmation)).toContain("no preference was saved");
 
-    // Sticky state is still persisted even though the agent never ran.
     const sticky = await store.kv.get<{ model?: string }>(
       "thread:overrides:C1::1234567890.000100",
     );
-    expect(sticky?.model).toBe("claude-opus-4-8");
+    expect(sticky).toBeUndefined();
   });
 
-  it("strips flags before they reach thread memory, setTitle, and runAgent (string prompt)", async () => {
+  it("rejects a mixed model-selection turn before memory, title, or AG-UI", async () => {
     const conversationKey = "C1::1234567890.000200";
-    const { thread, runAgent } = makeThreadSpies(conversationKey);
+    const { thread, post, runAgent } = makeThreadSpies(conversationKey);
 
     await runBundledAgentTurn(makeEnv(), thread as never, "--opus Tell me a joke");
 
-    expect(runAgent).toHaveBeenCalledTimes(1);
-
-    // setTitle received cleaned text only.
-    expect(setTitleSpy).toHaveBeenCalledTimes(1);
-    const titleArgs = setTitleSpy.mock.calls[0]![0];
-    expect(titleArgs.title).toBe("Tell me a joke");
-    expect(titleArgs.title).not.toContain("--opus");
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
+    expect(setTitleSpy).not.toHaveBeenCalled();
 
     // Durable thread memory stored cleaned text only.
     const memory = await store.list.range<{ text: string }>(
       `threadmem:${conversationKey}`,
     );
-    expect(memory.length).toBeGreaterThan(0);
-    for (const line of memory) {
-      expect(line.text).not.toContain("--opus");
-    }
-
-    // The prompt handed to runAgent never contains the raw flag text.
-    const runAgentArgs = runAgent.mock.calls[0]![0];
-    expect(serialize(runAgentArgs.prompt)).not.toContain("--opus");
-    expect(serialize(runAgentArgs.prompt)).toContain("Tell me a joke");
-
-    // A "model preference" context entry records the requested override.
-    const modelContext = runAgentArgs.context?.find(
-      (c) => c.description === "model preference",
-    );
-    expect(modelContext).toBeTruthy();
-    expect(modelContext!.value).toContain("claude-opus-4-8");
-    expect(modelContext!.value).toContain("claudecode");
-    expect(modelContext!.value).not.toContain("--opus");
+    expect(memory).toEqual([]);
   });
 
   it("strips flags per text part for AgentContentPart[] prompts (a flag never spans parts)", async () => {
     const conversationKey = "C1::1234567890.000300";
-    const { thread, runAgent } = makeThreadSpies(conversationKey);
+    const { thread, post, runAgent } = makeThreadSpies(conversationKey);
 
     const prompt = [
       { type: "text" as const, text: "--sonnet" },
@@ -252,16 +251,8 @@ describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
 
     await runBundledAgentTurn(makeEnv(), thread as never, prompt);
 
-    expect(runAgent).toHaveBeenCalledTimes(1);
-    const runAgentArgs = runAgent.mock.calls[0]![0];
-    expect(serialize(runAgentArgs.prompt)).not.toContain("--sonnet");
-    expect(serialize(runAgentArgs.prompt)).toContain("What's up?");
-
-    const modelContext = runAgentArgs.context?.find(
-      (c) => c.description === "model preference",
-    );
-    expect(modelContext).toBeTruthy();
-    expect(modelContext!.value).toContain("claude-sonnet-5");
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
   });
 
   it("flags-only AgentContentPart[] prompt (no non-text parts) also short-circuits", async () => {
@@ -274,9 +265,7 @@ describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
 
     expect(runAgent).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
-    expect(String(post.mock.calls[0]![0])).toContain(
-      "claude-haiku-4-5-20251001",
-    );
+    expect(String(post.mock.calls[0]![0])).toContain("no preference was saved");
   });
 
   it("a non-text part (e.g. an image) keeps the turn running even if all text was flags", async () => {
@@ -293,7 +282,7 @@ describe("runBundledAgentTurn — Phase A3 overrides wiring", () => {
 
     await runBundledAgentTurn(makeEnv(), thread as never, prompt);
 
-    expect(runAgent).toHaveBeenCalledTimes(1);
-    expect(post).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("not connected"));
   });
 });

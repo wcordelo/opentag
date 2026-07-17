@@ -2,6 +2,8 @@
  * Minimal Slack Web API helpers (fetch-based, no @slack/web-api / Bolt).
  */
 import type { PlatformUser } from "@copilotkit/channels-ui";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { SlackRateLimitDO } from "./slack-rate-limit-do.js";
 
 export type SlackWebClient = {
   authTest(): Promise<{ ok: boolean; userId?: string; error?: string }>;
@@ -53,8 +55,19 @@ export type SlackWebClient = {
       user?: string;
       bot_id?: string;
       subtype?: string;
+      client_msg_id?: string;
+      blocks?: unknown[];
+      attachments?: unknown[];
+      files?: unknown[];
     }>
   >;
+  /** Bounded exact lookup after an ambiguously successful placeholder post. */
+  findMessageByClientMessageId(args: {
+    channel: string;
+    threadTs?: string;
+    clientMessageId: string;
+    limit?: number;
+  }): Promise<{ found: boolean; ts?: string }>;
   getChannelHistory(args: {
     channel: string;
     limit?: number;
@@ -65,8 +78,19 @@ export type SlackWebClient = {
       user?: string;
       bot_id?: string;
       subtype?: string;
+      blocks?: unknown[];
+      attachments?: unknown[];
+      files?: unknown[];
     }>
   >;
+  getFileInfo(fileId: string): Promise<{
+    id?: string;
+    name?: string;
+    mimetype?: string;
+    filetype?: string;
+    url_private?: string;
+    size?: number;
+  } | undefined>;
 };
 
 /** A parsed Slack `ok:false` is a definitive rejection, unlike a thrown
@@ -79,14 +103,123 @@ export class SlackApiError extends Error {
   }
 }
 
+export interface SlackRateScheduler {
+  run<T>(channel: string, operation: () => Promise<T>): Promise<T>;
+}
+
+export interface SlackWebClientOptions {
+  /** Shared scheduler; pass one instance to every renderer in an isolate. */
+  scheduler?: SlackRateScheduler;
+  /** Bounded HTTP-429 retries. Defaults to two retries after the first call. */
+  maxRateLimitRetries?: number;
+  /** Injectable sleep seam for deterministic Retry-After tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Serializes Slack writes per channel and spaces their dispatches. The state is
+ * intentionally supplied by the composition root so every renderer shares one
+ * discipline instead of constructing independent stream-local timers.
+ */
+export class SlackChannelRateScheduler implements SlackRateScheduler {
+  private readonly tails = new Map<string, Promise<void>>();
+  private readonly nextAllowedAt = new Map<string, number>();
+
+  constructor(
+    private readonly minIntervalMs = 1_000,
+    private readonly now: () => number = () => Date.now(),
+    private readonly sleep: (ms: number) => Promise<void> =
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  ) {}
+
+  async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+    const prior = this.tails.get(channel) ?? Promise.resolve();
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    const queued = prior.catch(() => undefined).then(() => tail);
+    this.tails.set(channel, queued);
+    await prior.catch(() => undefined);
+    try {
+      const waitMs = Math.max(0, (this.nextAllowedAt.get(channel) ?? 0) - this.now());
+      if (waitMs > 0) await this.sleep(waitMs);
+      this.nextAllowedAt.set(channel, this.now() + this.minIntervalMs);
+      return await operation();
+    } finally {
+      release();
+      if (this.tails.get(channel) === queued) this.tails.delete(channel);
+    }
+  }
+}
+
+const sharedSchedulers = new Map<string, SlackChannelRateScheduler>();
+
+class DurableSlackRateScheduler implements SlackRateScheduler {
+  constructor(
+    private readonly namespace: DurableObjectNamespace<SlackRateLimitDO>,
+    private readonly minIntervalMs: number,
+    private readonly sleep: (ms: number) => Promise<void> =
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  ) {}
+
+  async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+    const stub = this.namespace.get(this.namespace.idFromName(channel)) as unknown as {
+      reserve(args: { minIntervalMs: number }): Promise<{ delayMs: number }>;
+    };
+    const { delayMs } = await stub.reserve({ minIntervalMs: this.minIntervalMs });
+    if (delayMs > 0) await this.sleep(delayMs);
+    return operation();
+  }
+}
+
+const durableSchedulers = new WeakMap<object, SlackRateScheduler>();
+
+/**
+ * Production uses a Durable Object reservation per channel, shared across
+ * Worker isolates. The module singleton remains only a local/test fallback.
+ */
+export function sharedSlackRateScheduler(
+  environment?: string,
+  namespace?: DurableObjectNamespace<SlackRateLimitDO>,
+): SlackRateScheduler {
+  if (namespace) {
+    let scheduler = durableSchedulers.get(namespace as object);
+    if (!scheduler) {
+      scheduler = new DurableSlackRateScheduler(
+        namespace,
+        environment === "production" ? 1_000 : 0,
+      );
+      durableSchedulers.set(namespace as object, scheduler);
+    }
+    return scheduler;
+  }
+  if (environment === "production") {
+    throw new Error("SLACK_RATE_LIMIT is required for production Slack egress");
+  }
+  const key = environment === "production" ? "production" : "non-production";
+  let scheduler = sharedSchedulers.get(key);
+  if (!scheduler) {
+    scheduler = new SlackChannelRateScheduler(key === "production" ? 1_000 : 0);
+    sharedSchedulers.set(key, scheduler);
+  }
+  return scheduler;
+}
+
+export function retryAfterMs(response: Response): number {
+  const raw = response.headers.get("Retry-After");
+  if (!raw) return 1_000;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 1_000;
+}
+
 export function isDefinitiveSlackFailure(error: unknown): boolean {
   return error instanceof SlackApiError;
 }
 
 /**
  * Best-effort GitHub handle extraction (GOAL.md Phase A5 / SPEC.md §5-A5
- * item 5). No dedicated Slack scope for this — `users.profile.get` is a
- * separate OAuth scope we don't request. Only explicitly named `github` /
+ * item 5). Only explicitly named `github` /
  * `github_url` profile fields are trusted; arbitrary status/profile text must
  * never establish attribution. Named fields accept URL, @handle, and plain
  * handle forms.
@@ -147,7 +280,10 @@ function preferredSlackName(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-export function createSlackWebClient(botToken: string): SlackWebClient {
+export function createSlackWebClient(
+  botToken: string,
+  options: SlackWebClientOptions = {},
+): SlackWebClient {
   // Slack Web API: prefer form-urlencoded. JSON bodies break several methods
   // (notably users.info → user_not_found / no profile.email).
   const headers = {
@@ -180,12 +316,33 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
     // Never pass an empty-string body: undici hangs indefinitely on POST with
     // body "" (e.g. auth.test with no args).
     const encoded = body ? encodeForm(body) : "";
-    const res = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      headers,
-      body: encoded || undefined,
-    });
-    return (await res.json()) as T & { ok: boolean; error?: string };
+    const channel = typeof body?.channel === "string"
+      ? body.channel
+      : typeof body?.channel_id === "string"
+        ? body.channel_id
+        : undefined;
+    const maxRetries = options.maxRateLimitRetries ?? 2;
+    for (let attempt = 0; ; attempt += 1) {
+      const dispatch = async (): Promise<Response> =>
+        fetch(`https://slack.com/api/${method}`, {
+          method: "POST",
+          headers,
+          body: encoded || undefined,
+        });
+      // Each HTTP attempt, including Retry-After replays, owns a fresh durable
+      // channel slot. Reserving only once around the whole retry loop lets a
+      // bot retry race a research write in another script.
+      const res = channel && options.scheduler
+        ? await options.scheduler.run(channel, dispatch)
+        : await dispatch();
+      if (res.status === 429 && attempt < maxRetries) {
+        await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(
+          retryAfterMs(res),
+        );
+        continue;
+      }
+      return (await res.json()) as T & { ok: boolean; error?: string };
+    }
   }
 
   const userCache = new Map<string, PlatformUser>();
@@ -269,7 +426,26 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
         }>("users.info", { user: userId });
         const u = r.user;
         if (r.ok && u?.id) {
-          const githubHandle = extractGithubHandle(u.profile);
+          let githubHandle = extractGithubHandle(u.profile);
+          // users.profile.get with labels is authoritative for custom profile
+          // fields. users.info remains the source for identity/email/timezone.
+          try {
+            const profileResult = await api<{ profile?: { fields?: unknown } }>(
+              "users.profile.get",
+              { user: userId, include_labels: true },
+            );
+            if (profileResult.ok) {
+              githubHandle = extractGithubHandle(profileResult.profile) ?? githubHandle;
+            } else {
+              console.warn("[slack] users.profile.get failed", userId, profileResult.error);
+            }
+          } catch (err) {
+            console.warn(
+              "[slack] users.profile.get error",
+              userId,
+              err instanceof Error ? err.message : err,
+            );
+          }
           user = {
             id: u.id,
             name: preferredSlackName(
@@ -379,6 +555,10 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             user?: string;
             bot_id?: string;
             subtype?: string;
+            client_msg_id?: string;
+            blocks?: unknown[];
+            attachments?: unknown[];
+            files?: unknown[];
           }>;
         }>("conversations.replies", {
           channel,
@@ -403,6 +583,43 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
         return [];
       }
     },
+    async findMessageByClientMessageId({
+      channel,
+      threadTs,
+      clientMessageId,
+      limit = 100,
+    }) {
+      const method = threadTs ? "conversations.replies" : "conversations.history";
+      const r = await api<{
+        messages?: Array<{ ts?: string; client_msg_id?: string }>;
+      }>(method, {
+        channel,
+        ...(threadTs ? { ts: threadTs } : {}),
+        limit: Math.min(100, Math.max(1, limit)),
+        inclusive: true,
+      });
+      if (!r.ok) {
+        throw new SlackApiError(method, r.error ?? "unknown");
+      }
+      const match = (r.messages ?? []).find(
+        (message) => message.client_msg_id === clientMessageId,
+      );
+      return match?.ts ? { found: true, ts: match.ts } : { found: false };
+    },
+    async getFileInfo(fileId) {
+      const r = await api<{
+        file?: {
+          id?: string;
+          name?: string;
+          mimetype?: string;
+          filetype?: string;
+          url_private?: string;
+          size?: number;
+        };
+      }>("files.info", { file: fileId });
+      if (!r.ok) throw new SlackApiError("files.info", r.error ?? "unknown");
+      return r.file;
+    },
     async getChannelHistory({ channel, limit = 50 }) {
       try {
         const r = await api<{
@@ -412,6 +629,9 @@ export function createSlackWebClient(botToken: string): SlackWebClient {
             user?: string;
             bot_id?: string;
             subtype?: string;
+            blocks?: unknown[];
+            attachments?: unknown[];
+            files?: unknown[];
           }>;
         }>("conversations.history", {
           channel,

@@ -88,16 +88,112 @@ describe("Slack delivery", () => {
     }
   });
 
+  it("posts final research results with Retry, Dig deeper, and Export actions", async () => {
+    let form: URLSearchParams | undefined;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url, init) => {
+      form = new URLSearchParams(String(init?.body ?? ""));
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    try {
+      await postToSlackThread(
+        "slack:C1:1.0",
+        "final synthesis",
+        "delivery-final",
+        "token",
+        { type: "final", text: "final synthesis", taskId: "research-42" },
+      );
+      const blocks = JSON.parse(form!.get("blocks")!) as Array<{
+        type: string;
+        elements?: Array<{ action_id: string; value: string }>;
+      }>;
+      expect(blocks[0]).toMatchObject({ type: "section" });
+      const actions = blocks.find((block) => block.type === "actions")!.elements!;
+      expect(actions.map((action) => action.action_id)).toEqual([
+        "quick_retry", "quick_dig_deeper", "quick_export",
+      ]);
+      expect(actions.map((action) => JSON.parse(action.value))).toEqual([
+        { type: "research", taskId: "research-42" },
+        { type: "research", taskId: "research-42" },
+        { type: "research", taskId: "research-42" },
+      ]);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it("losslessly pages a 200k final result with stable per-page identities", async () => {
+    const text = "0123456789".repeat(20_000);
+    const firstPosts: URLSearchParams[] = [];
+    const replayPosts: URLSearchParams[] = [];
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_url, init) => {
+        firstPosts.push(new URLSearchParams(String(init?.body ?? "")));
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      await expect(postToSlackThread(
+        "slack:C1:1.0",
+        text,
+        "delivery-large-final",
+        "token",
+        { type: "final", text, taskId: "research-large" },
+      )).resolves.toEqual({ status: "delivered", duplicate: false });
+
+      expect(firstPosts.length).toBeGreaterThan(1);
+      expect(firstPosts.map((form) => form.get("text") ?? "").join("")).toBe(text);
+      const firstIds = firstPosts.map((form) => form.get("client_msg_id"));
+      expect(new Set(firstIds).size).toBe(firstPosts.length);
+      for (const [index, form] of firstPosts.entries()) {
+        expect((form.get("text") ?? "").length).toBeLessThanOrEqual(35_000);
+        const blocks = JSON.parse(form.get("blocks") ?? "[]") as Array<{
+          type: string;
+          text?: { text?: string };
+          elements?: Array<{ action_id?: string }>;
+        }>;
+        expect(blocks.length).toBeLessThanOrEqual(50);
+        for (const block of blocks) {
+          if (block.type === "section") {
+            expect(block.text?.text?.length ?? 0).toBeLessThanOrEqual(3_000);
+          }
+        }
+        const actionIds = blocks
+          .flatMap((block) => block.elements ?? [])
+          .map((element) => element.action_id);
+        if (index === firstPosts.length - 1) {
+          expect(actionIds).toEqual(["quick_retry", "quick_dig_deeper", "quick_export"]);
+        } else {
+          expect(actionIds).toEqual([]);
+        }
+      }
+
+      globalThis.fetch = (async (_url, init) => {
+        replayPosts.push(new URLSearchParams(String(init?.body ?? "")));
+        return Response.json({ ok: false, error: "duplicate_client_msg_id" });
+      }) as typeof fetch;
+      await expect(postToSlackThread(
+        "slack:C1:1.0",
+        text,
+        "delivery-large-final",
+        "token",
+        { type: "final", text, taskId: "research-large" },
+      )).resolves.toEqual({ status: "delivered", duplicate: true });
+      expect(replayPosts.map((form) => form.get("client_msg_id"))).toEqual(firstIds);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it("distinguishes definitive Slack rejection from ambiguous transport/parse outcomes", async () => {
     const orig = globalThis.fetch;
     try {
       globalThis.fetch = (async () => Response.json({ ok: false, error: "channel_not_found" })) as typeof fetch;
       await expect(postToSlackThread("slack:C1:1.0", "x", "reject", "token"))
-        .resolves.toEqual({ status: "definitive_failure", error: "channel_not_found" });
+        .resolves.toEqual({ status: "definitive_failure", error: "page_1_of_1:channel_not_found" });
 
       globalThis.fetch = (async () => { throw new Error("socket reset"); }) as typeof fetch;
       await expect(postToSlackThread("slack:C1:1.0", "x", "transport", "token"))
-        .resolves.toEqual({ status: "ambiguous", error: "socket reset" });
+        .resolves.toEqual({ status: "ambiguous", error: "page_1_of_1:socket reset" });
 
       globalThis.fetch = (async () => new Response("not-json", { status: 502 })) as typeof fetch;
       await expect(postToSlackThread("slack:C1:1.0", "x", "parse", "token"))

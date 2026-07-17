@@ -130,7 +130,7 @@ describe("extractStopCommandEvent", () => {
     expect(extractStopCommandEvent(payload)).toBeUndefined();
   });
 
-  it("ignores event.subtype — a threaded stop message with a subtype still matches", () => {
+  it("rejects subtype messages so automation cannot acquire Stop authority", () => {
     const event: SlackStopEvent = {
       type: "message",
       channel: "C1",
@@ -139,7 +139,7 @@ describe("extractStopCommandEvent", () => {
       ts: "8.0",
       thread_ts: "8.0",
     };
-    expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
+    expect(extractStopCommandEvent(eventCallback(event))).toBeUndefined();
   });
 
   it("ignores channel-level message stops without an app_mention", () => {
@@ -564,6 +564,16 @@ describe("handleStopCommand", () => {
       ts: "13.0",
     };
     expect(extractStopCommandEvent(eventCallback(event))).toBeUndefined();
+  });
+
+  it("app-authored messages without bot_id can never issue Stop", () => {
+    expect(extractStopCommandEvent(eventCallback({
+      type: "message",
+      channel: "D1",
+      app_id: "A123",
+      text: "stop",
+      ts: "1.0",
+    }))).toBeUndefined();
   });
 
   it("does nothing (no throw) when channel or thread timestamp is missing", async () => {

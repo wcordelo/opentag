@@ -9,7 +9,10 @@ import {
 } from "./tools/index.js";
 import { resolveAllowedTools } from "./config/access-bundle.js";
 import { loadTurnAccess } from "./config/workspace-config-do.js";
-import { requireRequestContext } from "./request-context.js";
+import {
+  requireRequestContext,
+  type RequestActor,
+} from "./request-context.js";
 import { createDurableObjectStore } from "./store/index.js";
 import {
   appendThreadMemory,
@@ -22,11 +25,20 @@ import {
 } from "./slack/thread-memory.js";
 import type { Env } from "./env.js";
 import type { Renderable } from "@copilotkit/channels-ui";
-import type { AgentContentPart } from "./slack/download-files.js";
+import {
+  buildFileContentParts,
+  contentPartsFromCanonicalAttachments,
+  createR2AttachmentStager,
+  mergePromptParts,
+  type AgentContentPart,
+  type PreparedAttachment,
+  type SlackFileRef,
+} from "./slack/download-files.js";
 export type { AgentContentPart } from "./slack/download-files.js";
 import {
   createSlackWebClient,
   isDefinitiveSlackFailure,
+  sharedSlackRateScheduler,
 } from "./slack/web-api.js";
 import { getInboundMessage } from "./slack/inbound-target.js";
 import {
@@ -50,6 +62,10 @@ import {
 } from "./slack/active-turn-registry.js";
 import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
 import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
+import { reconstructSessionHistory } from "./slack/session-history.js";
+import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
+import { bindPermissionSnapshot } from "./permissions/context.js";
+import { buildPermissionSnapshot } from "./permissions/snapshot.js";
 
 type Requester = {
   id?: string;
@@ -93,7 +109,9 @@ async function ensureRequesterProfile(
   }
   if (!env.SLACK_BOT_TOKEN) return requester;
   try {
-    const fresh = await createSlackWebClient(env.SLACK_BOT_TOKEN).resolveUser(
+    const fresh = await createSlackWebClient(env.SLACK_BOT_TOKEN, {
+      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+    }).resolveUser(
       requester.id,
     );
     const freshTz = timezoneOf(fresh as Requester);
@@ -132,11 +150,27 @@ function timezoneOf(requester?: Requester): string | undefined {
   return ext.timezone?.trim() || undefined;
 }
 
+function attachmentDedupeKeys(attachment: {
+  id?: string;
+  kind?: string;
+  stageKey?: string;
+  sha256?: string;
+}): string[] {
+  const keys: string[] = [];
+  if (attachment.id) keys.push(`id:${attachment.id}`);
+  if (attachment.kind === "staged" && attachment.stageKey) {
+    keys.push(`stage:${attachment.stageKey}`);
+  }
+  if (attachment.sha256) keys.push(`sha256:${attachment.sha256}`);
+  return keys;
+}
+
 type ThreadMessageLite = {
   text?: string;
   ts?: string;
   isBot?: boolean;
   user?: { name?: string; handle?: string; id?: string };
+  attachments?: SlackFileRef[];
 };
 
 export type AgentThread = {
@@ -258,33 +292,65 @@ function emailsFromTranscript(messages: ThreadMessageLite[]): string[] {
   return found;
 }
 
+function historySortKey(ts?: string, at?: number): number {
+  if (ts) {
+    const n = Number(ts);
+    if (Number.isFinite(n)) return n;
+  }
+  if (typeof at === "number") return at / 1000;
+  return 0;
+}
+
+/** Normalize thread text so SessionEventDO replay dedupes against Slack history. */
+function historyDedupeKey(text: string): string {
+  let normalized = extractMessageOverrides(text).cleanedText;
+  normalized = normalized
+    .replace(/<[^|>\s]+\|([^>]+)>/g, "$1")
+    .replace(/<@[^>]+>/g, "")
+    .replace(/<#[^>]+>/g, "")
+    .replace(/<!([^>]+)>/g, "$1")
+    .replace(/<([^>]+)>/g, "$1");
+  return normalized.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function mergeHistory(
   slack: ThreadMessageLite[],
-  memory: Array<{ role: "user" | "bot"; text: string; name?: string }>,
+  memory: Array<{
+    role: "user" | "bot";
+    text: string;
+    name?: string;
+    at?: number;
+    attachments?: ThreadMessageLite["attachments"];
+  }>,
 ): ThreadMessageLite[] {
-  if (slack.length === 0) {
-    return memory.map((m) => ({
-      text: m.text,
-      isBot: m.role === "bot",
-      user: m.name ? { name: m.name } : undefined,
-    }));
-  }
-  // Prefer Slack when present; append any DO-only user lines not already seen.
+  type Row = ThreadMessageLite & { _sort: number };
+  const rows: Row[] = slack.map((m) => ({
+    text: m.text,
+    isBot: m.isBot,
+    ts: m.ts,
+    user: m.user,
+    attachments: m.attachments,
+    _sort: historySortKey(m.ts),
+  }));
   const seen = new Set(
-    slack.map((m) => (m.text ?? "").replace(/\s+/g, " ").trim().toLowerCase()),
+    slack
+      .map((m) => historyDedupeKey(m.text ?? ""))
+      .filter(Boolean),
   );
-  const out = [...slack];
   for (const m of memory) {
-    const key = m.text.replace(/\s+/g, " ").trim().toLowerCase();
+    const key = historyDedupeKey(m.text);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    out.push({
+    rows.push({
       text: m.text,
       isBot: m.role === "bot",
       user: m.name ? { name: m.name } : undefined,
+      attachments: m.attachments,
+      _sort: historySortKey(undefined, m.at),
     });
   }
-  return out;
+  rows.sort((a, b) => a._sort - b._sort);
+  return rows.map(({ _sort, ...rest }) => rest);
 }
 
 function embedTranscriptInPrompt(
@@ -333,7 +399,18 @@ function safeSlackDisplayName(value?: string): string | undefined {
     : undefined;
 }
 
-export function buildRequesterContextBlock(requester?: Requester): string | undefined {
+export function buildRequesterContextBlock(
+  requester?: Requester,
+  actor?: RequestActor,
+): string | undefined {
+  if (actor?.kind === "slack_automation") {
+    const lines = ["[Requester Context]", "Actor: Slack automation"];
+    const name = safeSlackDisplayName(actor.displayName);
+    if (name) lines.push(`Name: ${name}`);
+    if (actor.botId) lines.push(`Bot ID: ${actor.botId.slice(0, 256)}`);
+    if (actor.appId) lines.push(`App ID: ${actor.appId.slice(0, 256)}`);
+    return lines.join("\n");
+  }
   if (!requester) return undefined;
   const lines: string[] = [];
   const githubHandle = requester.githubHandle?.trim();
@@ -385,12 +462,29 @@ function deriveHarnessThreadKey(
   return slackObligationThreadKey(channelId, threadTs);
 }
 
-/** Text parts joined; non-text parts (images, etc.) noted rather than dropped silently. */
+/** Text plus human-readable attachment names; binary content travels separately. */
 function harnessPromptText(prompt: string | AgentContentPart[]): string {
   if (typeof prompt === "string") return prompt;
   return prompt
-    .map((p) => (p.type === "text" ? p.text : "[attachment omitted]"))
+    .flatMap((p) => {
+      if (p.type === "text") return [p.text];
+      if (p.attachment) {
+        return [`[Attachment: ${p.attachment.name} (${p.attachment.mimeType}, ${p.attachment.size} bytes)]`];
+      }
+      // Native media parts duplicate the explicit attachment metadata part.
+      return [];
+    })
     .join("\n");
+}
+
+function harnessAttachments(prompt: string | AgentContentPart[]): PreparedAttachment[] {
+  if (typeof prompt === "string") return [];
+  return prompt
+    .flatMap((part) => part.attachment ? [part.attachment] : []);
+}
+
+function agentRuntimePrompt(prompt: string | AgentContentPart[]): string | AgentContentPart[] {
+  return prompt;
 }
 
 /** SPEC §3.6: transcript re-feed, truncated to 24k chars from the most recent end. */
@@ -435,13 +529,46 @@ function formatOverrideConfirmation(resolved: {
   if (resolved.effectiveReasoning)
     bits.push(`reasoning: ${resolved.effectiveReasoning}`);
   const summary = bits.join(", ") || "preference";
-  return `✓ Saved: ${summary} (applies to this thread)`;
+  return `✓ Active: ${summary} (applies to this thread)`;
+}
+
+function promptOverrideText(prompt: string | AgentContentPart[]): string {
+  return typeof prompt === "string"
+    ? prompt
+    : prompt
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join(" ");
+}
+
+function harnessCapability(env: Env): { ok: true } | { ok: false; reason: string } {
+  if (!env.HARNESS && !env.HARNESS_URL) {
+    return { ok: false, reason: "the Claude Code harness is not connected" };
+  }
+  return { ok: true };
+}
+
+async function postVisibleRuntimeRejection(
+  thread: AgentThread,
+  message: string,
+): Promise<AgentTurnOutcome> {
+  try {
+    markThreadNextRenderFinal(thread);
+    await thread.post(`⚠️ ${message}`);
+  } catch (err) {
+    if (err instanceof Error && err.message === "active_turn_render_suppressed") {
+      return { status: "interrupted" };
+    }
+    throw err;
+  }
+  return { status: "completed" };
 }
 
 /**
  * Strip override flags from `prompt` (SPEC §2.2, GOAL Phase A3), merge them
  * into the thread's sticky overrides, and return the cleaned prompt plus the
- * effective model/harness/reasoning for this turn.
+ * effective Claude model/harness for this turn. Reasoning flags are rejected
+ * before this function can persist or execute them.
  *
  * String prompts are stripped directly. `AgentContentPart[]` prompts are
  * stripped per text part (a flag never spans parts), but flags are *detected*
@@ -452,12 +579,18 @@ async function stripOverridesFromPrompt(
   store: Parameters<typeof resolveThreadOverrides>[0],
   conversationKey: string,
   prompt: string | AgentContentPart[],
+  channelDefaults?: Parameters<typeof resolveThreadOverrides>[3],
 ): Promise<{
   cleanedPrompt: string | AgentContentPart[];
   resolved: ResolvedThreadOverrides;
 }> {
   if (typeof prompt === "string") {
-    const resolved = await resolveThreadOverrides(store, conversationKey, prompt);
+    const resolved = await resolveThreadOverrides(
+      store,
+      conversationKey,
+      prompt,
+      channelDefaults,
+    );
     return { cleanedPrompt: resolved.cleanedText, resolved };
   }
 
@@ -469,6 +602,7 @@ async function stripOverridesFromPrompt(
     store,
     conversationKey,
     detectionText,
+    channelDefaults,
   );
   const cleanedPrompt = prompt.map((p) =>
     p.type === "text"
@@ -485,7 +619,8 @@ export async function runBundledAgentTurn(
   requesterIn?: Requester,
   executionIdentity?: TurnExecutionIdentity,
 ): Promise<AgentTurnOutcome> {
-  const teamId = requireRequestContext(thread).teamId;
+  const requestContext = requireRequestContext(thread);
+  const teamId = requestContext.teamId;
   const channelId = channelFromThread(thread);
   const conversationKey = thread.conversationKey ?? "";
   const store = createDurableObjectStore(env.BOT_STATE);
@@ -509,7 +644,37 @@ export async function runBundledAgentTurn(
     );
   };
   if (!(await exactTurnPending())) return { status: "interrupted" };
-  const requester = await ensureRequesterProfile(env, requesterIn);
+  const requester =
+    requestContext.actor.kind === "slack_user"
+      ? await ensureRequesterProfile(env, requesterIn)
+      : requesterIn;
+  if (!(await exactTurnPending())) return { status: "interrupted" };
+
+  // Capability validation precedes sticky persistence. Unsupported provider
+  // flags and disconnected Claude selections must never be saved/confirmed as
+  // if a runtime switch took effect.
+  const requestedOverrides = extractMessageOverrides(promptOverrideText(promptIn));
+  if (requestedOverrides.errors.length > 0) {
+    return postVisibleRuntimeRejection(
+      thread,
+      `${requestedOverrides.errors.join("; ")}. No preference was saved.`,
+    );
+  }
+  if (requestedOverrides.harnessType === "claudecode") {
+    const capability = harnessCapability(env);
+    if (!capability.ok) {
+      return postVisibleRuntimeRejection(
+        thread,
+        `${capability.reason}; this turn was not sent to another runtime and no preference was saved.`,
+      );
+    }
+  }
+
+  const { config, bundle } = await loadTurnAccess(
+    env.WORKSPACE_CONFIG,
+    teamId,
+    channelId,
+  );
   if (!(await exactTurnPending())) return { status: "interrupted" };
 
   // Phase A3 (GOAL.md / SPEC §2.2): parse + strip --model/--harness/-rsn
@@ -520,18 +685,10 @@ export async function runBundledAgentTurn(
     store,
     conversationKey,
     promptIn,
+    config.runtimeDefaults,
   );
   if (!(await exactTurnPending())) return { status: "interrupted" };
-  const prompt = cleanedPrompt;
-
-  // Phase A5 (GOAL.md / SPEC §3.6 + §4.4): route to the Claude Code harness
-  // container instead of the AG-UI agent when the thread's effective harness
-  // is "claudecode" AND a way to reach the container is actually configured.
-  // Neither binding set (the default until the container Worker deploys) —
-  // this stays false and behavior is byte-for-byte what it was pre-A5.
-  const useHarness =
-    overrides.effectiveHarnessType === "claudecode" &&
-    Boolean(env.HARNESS || env.HARNESS_URL);
+  let prompt = cleanedPrompt;
 
   if (overrides.hasMessageFlags && isEmptyAfterStrip(prompt)) {
     try {
@@ -546,12 +703,6 @@ export async function runBundledAgentTurn(
     return { status: "completed" };
   }
 
-  const { config, bundle } = await loadTurnAccess(
-    env.WORKSPACE_CONFIG,
-    teamId,
-    channelId,
-  );
-  if (!(await exactTurnPending())) return { status: "interrupted" };
   const allowed = new Set(
     resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
   );
@@ -563,6 +714,44 @@ export async function runBundledAgentTurn(
     allowed.delete("start_task");
     allowed.delete("research_progress");
   }
+  allowed.add("show_permissions");
+  if (requestContext.actor.kind === "slack_automation") {
+    for (const toolName of [...allowed]) {
+      if (!AUTOMATION_SAFE_TOOLS.has(toolName)) allowed.delete(toolName);
+    }
+  }
+
+  const permissionSnapshot = buildPermissionSnapshot({
+    teamId,
+    channelId,
+    conversationKey,
+    executionId: executionIdentity?.executionId,
+    actor: requestContext.actor,
+    config,
+    bundle,
+    allToolNames: ALL_EDGE_TOOL_NAMES,
+    allowedTools: allowed,
+    runtime: {
+      ...(overrides.effectiveHarnessType === "claudecode"
+        ? { harnessType: "claudecode" as const }
+        : {}),
+      ...(overrides.effectiveModel ? { model: overrides.effectiveModel } : {}),
+      harnessSource: overrides.harnessSource,
+      modelSource: overrides.modelSource,
+      harnessConnected: harnessCapability(env).ok,
+    },
+  });
+  bindPermissionSnapshot(thread, permissionSnapshot);
+  console.log(JSON.stringify({
+    metric: "permission_snapshot_generated",
+    actorKind: requestContext.actor.kind,
+    surface: "agent",
+  }));
+  console.log(JSON.stringify({
+    metric: "runtime_default_selected",
+    harnessSource: overrides.harnessSource,
+    modelSource: overrides.modelSource,
+  }));
 
   const timeZone =
     timezoneOf(requester) ||
@@ -576,6 +765,29 @@ export async function runBundledAgentTurn(
           .filter((p): p is { type: "text"; text: string } => p.type === "text")
           .map((p) => p.text)
           .join(" ");
+
+  const humanActor = requestContext.actor.kind === "slack_user";
+  const repositoryCodingIntent =
+    humanActor &&
+    (executionIdentity?.createPullRequest === true ||
+      isRepositoryCodingIntent(promptText));
+  const selectedClaudeHarness = overrides.effectiveHarnessType === "claudecode";
+  const useHarness = selectedClaudeHarness || repositoryCodingIntent;
+  if (useHarness) {
+    const capability = harnessCapability(env);
+    if (!capability.ok) {
+      return postVisibleRuntimeRejection(
+        thread,
+        `${capability.reason}. This authoritative turn was not sent to AG-UI.`,
+      );
+    }
+    if (repositoryCodingIntent && !env.HARNESS_REPO_URL) {
+      return postVisibleRuntimeRejection(
+        thread,
+        "repository coding requires HARNESS_REPO_URL; this turn was not sent to AG-UI.",
+      );
+    }
+  }
 
   // Assistant thread title from the first user message (SPEC §3.5). Durable
   // dedup makes this once-per-thread across isolates; errors are best-effort.
@@ -593,7 +805,9 @@ export async function runBundledAgentTurn(
         if (titleThreadTs) {
           const fence = getTurnExecutionContext(thread);
           if (!fence) throw new Error("exact_execution_context_required_for_title");
-          const setTitle = () => createSlackWebClient(env.SLACK_BOT_TOKEN!).setTitle({
+          const setTitle = () => createSlackWebClient(env.SLACK_BOT_TOKEN!, {
+            scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+          }).setTitle({
               channel_id: channelId,
               thread_ts: titleThreadTs,
               title: promptText.trim().slice(0, 100),
@@ -654,6 +868,34 @@ export async function runBundledAgentTurn(
   }
   if (!(await exactTurnPending())) return { status: "interrupted" };
 
+  // Re-stage bounded prior-thread files so follow-ups survive isolate loss and
+  // use the same AG-UI/harness transport as files on the current event.
+  const priorAttachments = slackHistory
+    .filter((message) => message.ts !== requestContext.inbound?.ts)
+    .flatMap((message) => message.attachments ?? [])
+    .slice(-5);
+  const seenAttachmentKeys = new Set<string>();
+  for (const file of priorAttachments) {
+    for (const key of attachmentDedupeKeys({ id: file.id })) {
+      seenAttachmentKeys.add(key);
+    }
+  }
+  if (priorAttachments.length > 0 && env.SLACK_BOT_TOKEN) {
+    const restored = await buildFileContentParts(
+      priorAttachments,
+      env.SLACK_BOT_TOKEN,
+      env.BLOBS ? { stage: createR2AttachmentStager(env.BLOBS) } : {},
+    );
+    if (restored.parts.length > 0 || restored.notes.length > 0) {
+      prompt = mergePromptParts(
+        prompt,
+        restored.parts,
+        restored.notes.map((note) => `prior-thread ${note}`),
+      );
+    }
+  }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
+
   let durableHistory: Awaited<ReturnType<typeof readThreadMemory>> = [];
   try {
     durableHistory = await readThreadMemory(store, conversationKey);
@@ -665,7 +907,50 @@ export async function runBundledAgentTurn(
   }
   if (!(await exactTurnPending())) return { status: "interrupted" };
 
-  const history = mergeHistory(slackHistory, durableHistory);
+  let sessionHistory: ReturnType<typeof reconstructSessionHistory> = [];
+  if (env.SESSION_EVENTS) {
+    try {
+      const threadKey = deriveHarnessThreadKey(channelId, conversationKey, thread);
+      const session = env.SESSION_EVENTS.get(env.SESSION_EVENTS.idFromName(threadKey)) as unknown as {
+        replay(afterEventId?: number): Promise<Parameters<typeof reconstructSessionHistory>[0]>;
+      };
+      sessionHistory = reconstructSessionHistory(
+        await session.replay(),
+        executionIdentity?.executionId,
+      );
+    } catch (err) {
+      throw new Error(
+        `session_event_replay_failed:${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
+
+  // SessionEventDO is the canonical isolate-loss source. Rehydrate its file
+  // refs through the same bounded Slack/R2 path even when Slack history is
+  // empty; structured tool results remain in `sessionHistory` text below.
+  const canonicalAttachments = sessionHistory
+    .flatMap((message) => message.attachments ?? [])
+    .filter((attachment) => {
+      const keys = attachmentDedupeKeys(attachment);
+      return keys.length === 0 || !keys.some((key) => seenAttachmentKeys.has(key));
+    })
+    .slice(-5);
+  if (canonicalAttachments.length > 0) {
+    const restored = contentPartsFromCanonicalAttachments(canonicalAttachments);
+    if (restored.parts.length > 0 || restored.notes.length > 0) {
+      prompt = mergePromptParts(
+        prompt,
+        restored.parts,
+        restored.notes.map((note) => `canonical-session ${note}`),
+      );
+    }
+  }
+  if (!(await exactTurnPending())) return { status: "interrupted" };
+
+  const history = mergeHistory(slackHistory, [...sessionHistory, ...durableHistory]);
 
   const transcriptEmails = emailsFromTranscript(history);
   for (const match of promptText.match(EMAIL_RE) ?? []) {
@@ -719,7 +1004,10 @@ export async function runBundledAgentTurn(
   // win) append it to AG-UI context too, so PR-attribution guidance in the
   // container's SYSTEM_PROMPT — and any future AG-UI attribution use — has
   // something to read regardless of which path this turn takes.
-  const requesterContextBlock = buildRequesterContextBlock(requester);
+  const requesterContextBlock = buildRequesterContextBlock(
+    requester,
+    requestContext.actor,
+  );
   if (requesterContextBlock) {
     toolContext.push({
       description: "Requester Context",
@@ -727,7 +1015,7 @@ export async function runBundledAgentTurn(
     });
   }
 
-  if (assigneeEmail) {
+  if (humanActor && assigneeEmail) {
     toolContext.push({
       description: "Linear assignee email for this conversation",
       value: [
@@ -740,7 +1028,7 @@ export async function runBundledAgentTurn(
         "Only ask for an email when assigning to a DIFFERENT person and you do not know theirs.",
       ].join("\n"),
     });
-  } else if (requester?.id) {
+  } else if (humanActor && requester?.id) {
     toolContext.push({
       description: "Linear assignee email for this conversation",
       value: [
@@ -780,8 +1068,6 @@ export async function runBundledAgentTurn(
       requested.push(`model ${overrides.effectiveModel}`);
     if (overrides.effectiveHarnessType)
       requested.push(`harness ${overrides.effectiveHarnessType}`);
-    if (overrides.effectiveReasoning)
-      requested.push(`reasoning effort ${overrides.effectiveReasoning}`);
     toolContext.push({
       description: "model preference",
       value: useHarness
@@ -823,6 +1109,16 @@ export async function runBundledAgentTurn(
 
   const enrichedPrompt = embedTranscriptInPrompt(prompt, history);
 
+  // The service-bound AG-UI runtime uses this exact durable identity as its
+  // cross-isolate control key. bot-engine also copies it to an HTTP header;
+  // keeping it in AG-UI context makes the wire request self-describing.
+  if (executionIdentity?.executionId) {
+    toolContext.push({
+      description: "OpenTag execution control",
+      value: JSON.stringify({ executionId: executionIdentity.executionId }),
+    });
+  }
+
   if (useHarness) {
     if (!(await exactTurnPending())) return { status: "interrupted" };
     const harnessThreadKey = deriveHarnessThreadKey(
@@ -842,9 +1138,7 @@ export async function runBundledAgentTurn(
           requireRequestContext(thread).inbound?.ts ?? harnessPromptText(prompt),
       ],
     );
-    const codingTask =
-      Boolean(env.HARNESS_REPO_URL) &&
-      (identity.createPullRequest === true || isRepositoryCodingIntent(promptText));
+    const codingTask = repositoryCodingIntent;
     if (!(await exactTurnPending())) return { status: "interrupted" };
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
@@ -852,12 +1146,16 @@ export async function runBundledAgentTurn(
       executionId: identity.executionId,
       forwardedMessageId: identity.forwardedMessageId,
       prompt: harnessPromptText(prompt),
+      attachments: harnessAttachments(prompt),
       model: overrides.effectiveModel,
       requesterContext: requesterContextBlock,
       transcript: buildHarnessTranscript(history),
       codingTask,
-      remoteGitApproved: identity.remoteGitApproved === true,
-      createPullRequest: identity.createPullRequest === true,
+      remoteGitApproved:
+        humanActor && identity.remoteGitApproved === true,
+      createPullRequest:
+        humanActor && identity.createPullRequest === true,
+      permissionSnapshot,
     });
 
     // Stop owns the sole durable terminal transition. Never fall back to
@@ -918,28 +1216,18 @@ export async function runBundledAgentTurn(
       };
     }
 
-    if (codingTask) {
-      throw new AuthoritativeHarnessError(
-        harnessResult.failureKind,
-        harnessResult.error,
-        harnessResult.terminalPersisted,
-      );
-    }
-
-    // Harness configured but the turn failed (unavailable, duplicate
-    // execution, container error, stream ended without `done`, etc.) — fall
-    // back to the normal AG-UI path below so users aren't stranded, rather
-    // than surfacing a harness-specific error. `runHarnessTurn` has already
-    // given the SessionEventDO event log a terminal `done` event of its own.
-    logMetric("harness_fallback", {
-      threadKey: harnessThreadKey,
-      error: harnessResult.error ?? "unknown",
-    });
+    // A selected/authoritative harness is never allowed to fall through to a
+    // different runtime after any harness-side failure.
+    throw new AuthoritativeHarnessError(
+      harnessResult.failureKind,
+      harnessResult.error,
+      harnessResult.terminalPersisted,
+    );
   }
 
   if (!(await exactTurnPending())) return { status: "interrupted" };
   await thread.runAgent({
-    prompt: enrichedPrompt,
+    prompt: agentRuntimePrompt(enrichedPrompt),
     context: toolContext,
     tools: guardToolsByBundle(
       ALL_EDGE_TOOLS.filter((t) => allowed.has(t.name)),

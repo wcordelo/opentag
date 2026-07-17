@@ -5,6 +5,7 @@ import { defineBotCommand } from "@copilotkit/channels";
 import {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
+  normalizeChannelRuntimeDefaults,
   resolveAllowedTools,
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
@@ -28,6 +29,7 @@ import type { Env } from "../env.js";
 import type { CloudflareSlackAdapter } from "../slack/cloudflare-slack-adapter.js";
 import { slackObligationThreadKey } from "../slack/obligation-thread-key.js";
 import { runSlackTurnLifecycle } from "../slack/turn-lifecycle.js";
+import { extractMessageOverrides } from "../slack/overrides.js";
 import { resolveThreadOverrides } from "../store/thread-overrides.js";
 import {
   adoptSlackShortcut,
@@ -68,6 +70,47 @@ function threadTsFromKey(conversationKey: string): string | undefined {
   return scope;
 }
 
+export function parseRuntimeCommand(
+  text: string,
+):
+  | { kind: "show" }
+  | { kind: "clear" }
+  | { kind: "set"; value: unknown }
+  | undefined {
+  const trimmed = text.trim();
+  const match = /^runtime\s+(show|clear|set)(?:\s+([\s\S]*))?$/i.exec(trimmed);
+  if (!match) return undefined;
+  const kind = match[1]!.toLowerCase();
+  const rest = (match[2] ?? "").trim();
+  if (kind === "show" && !rest) return { kind: "show" };
+  if (kind === "clear" && !rest) return { kind: "clear" };
+  if (kind !== "set") throw new Error(`Usage: /config runtime ${kind}`);
+  const tokens = rest.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  let harnessType: string | undefined;
+  let model: string | undefined;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    const [flag, inline] = token.split("=", 2);
+    const value = (inline ?? tokens[++index])?.replace(/^"|"$/g, "");
+    if (!flag || !value || !["--harness", "--model"].includes(flag)) {
+      throw new Error(
+        "Usage: /config runtime set --harness claude-code [--model <id-or-alias>]",
+      );
+    }
+    if (flag === "--harness") harnessType = value;
+    if (flag === "--model") model = value;
+  }
+  if (!harnessType) {
+    throw new Error(
+      "Usage: /config runtime set --harness claude-code [--model <id-or-alias>]",
+    );
+  }
+  return {
+    kind: "set",
+    value: { harnessType, ...(model ? { model } : {}) },
+  };
+}
+
 export const edgeCommands = [
   defineBotCommand({
     name: "config",
@@ -81,21 +124,45 @@ export const edgeCommands = [
         const key = conversationKeyOf(thread as { conversationKey?: string });
         const channelId = channelFromKey(key);
         const teamId = requireRequestContext(thread).teamId;
+        if (requireRequestContext(thread).actor.kind !== "slack_user") {
+          await postFinalShortcut(thread, "⛔ Automation actors cannot change channel configuration.");
+          return;
+        }
         const { config: existing } = await loadTurnAccess(
           env.WORKSPACE_CONFIG,
           teamId,
           channelId,
         );
         if (!(await shortcutStillPending(adopted))) return;
+        const runtimeCommand = parseRuntimeCommand(text ?? "");
+        if (runtimeCommand?.kind === "show") {
+          const current = existing.runtimeDefaults;
+          await postFinalShortcut(
+            thread,
+            current
+              ? `Channel runtime default: harness \`${current.harnessType ?? "deployment"}\`, model \`${current.model ?? "harness default"}\`. Existing sticky thread choices take precedence.`
+              : "Channel runtime default is not set; deployment defaults apply. Existing sticky thread choices take precedence.",
+          );
+          return;
+        }
+        const runtimeDefaults =
+          runtimeCommand?.kind === "clear"
+            ? undefined
+            : runtimeCommand?.kind === "set"
+              ? normalizeChannelRuntimeDefaults(runtimeCommand.value)
+              : existing.runtimeDefaults;
         const next: WorkspaceChannelConfig = {
           teamId,
           channelId,
-          systemPrompt: text?.trim() || DEFAULT_SYSTEM_PROMPT,
+          systemPrompt: runtimeCommand
+            ? existing.systemPrompt
+            : text?.trim() || DEFAULT_SYSTEM_PROMPT,
           policies: existing.policies ?? {
             allowMemoryWrite: true,
             allowTasks: true,
           },
           accessBundleId: existing.accessBundleId || DEFAULT_BUNDLE.id,
+          ...(runtimeDefaults ? { runtimeDefaults } : {}),
           updatedAt: new Date().toISOString(),
         };
         const effect = await runShortcutEffect(adopted, "command_config", async () => {
@@ -118,7 +185,11 @@ export const edgeCommands = [
         }
         await postFinalShortcut(
           thread,
-          `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
+          runtimeCommand?.kind === "clear"
+            ? "Channel runtime default cleared. Deployment defaults now apply unless a sticky thread choice exists."
+            : runtimeCommand?.kind === "set"
+              ? `Channel runtime default set: harness \`${runtimeDefaults?.harnessType}\`, model \`${runtimeDefaults?.model ?? "harness default"}\`. Existing sticky thread choices take precedence.`
+              : `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
         );
       } catch (err) {
         if (err instanceof Error && err.message === "active_turn_render_suppressed") return;
@@ -167,11 +238,20 @@ export const edgeCommands = [
           );
           return;
         }
+        const requestedOverrides = extractMessageOverrides(text);
+        if (requestedOverrides.errors.length > 0) {
+          await postFinalShortcut(
+            thread,
+            `⚠️ ${requestedOverrides.errors.join("; ")}. No preference was saved.`,
+          );
+          return;
+        }
         const stateStore = createBotStoreAdapter(env.BOT_STATE);
         const { cleanedText, effectiveModel } = await resolveThreadOverrides(
           stateStore,
           key,
           text,
+          config.runtimeDefaults,
         );
         if (!(await shortcutStillPending(adopted))) return;
         const threadKey = slackObligationThreadKey(channelId, threadTs);

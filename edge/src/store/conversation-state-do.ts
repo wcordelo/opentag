@@ -12,6 +12,15 @@ import type { SqlExecutor } from "./sql.js";
 import type { SessionEventDO } from "./session-event-do.js";
 import { interruptHarnessTurn } from "../harness/client.js";
 import type { Env } from "../env.js";
+import { buildSlackMessagePages } from "../slack/stream-render.js";
+import {
+  stableSlackDiagnosticPageClientMessageId,
+  stableSlackPageClientMessageId,
+} from "../slack/client-message-id.js";
+import {
+  SessionHandoffEngine,
+  type SessionHandoffRow,
+} from "./session-handoff-engine.js";
 
 /**
  * How often the background alarm sweeps expired rows. Lazy expiry already keeps
@@ -30,6 +39,7 @@ const DEFAULT_OBLIGATION_TIMEOUT_MS = 20 * 60_000;
 /** Retry backoff for a definitive failed fallback post; capped at {@link OBLIGATION_MAX_ATTEMPTS}. */
 const OBLIGATION_RETRY_DELAY_MS = 60_000;
 const OBLIGATION_MAX_ATTEMPTS = 3;
+const OBLIGATION_DEAD_LETTER_RETRY_MS = 6 * 60 * 60_000;
 /** Re-arm delay when the session reports the execution is still live (not crashed). */
 const OBLIGATION_LIVE_DEFER_MS = 2 * 60_000;
 /** Re-arm delay while a render's outcome is ambiguous and its token is fenced. */
@@ -45,20 +55,6 @@ class ObligationDeferredError extends Error {
 
 function isSlackDuplicateMessage(error: unknown): boolean {
   return error === "duplicate_message" || error === "duplicate_client_msg_id";
-}
-
-async function stableObligationClientMessageId(ob: {
-  threadKey: string;
-  executionId: string;
-}): Promise<string> {
-  const input = `obligation:${ob.threadKey}:${ob.executionId}`;
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)),
-  ).slice(0, 16);
-  digest[6] = (digest[6]! & 0x0f) | 0x50;
-  digest[8] = (digest[8]! & 0x3f) | 0x80;
-  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function stableStopClientMessageId(stopEventId: string): Promise<string> {
@@ -98,8 +94,32 @@ interface ConversationStateDoEnv {
   HARNESS?: Fetcher;
   HARNESS_URL?: string;
   HARNESS_AUTH_TOKEN?: string;
+  AGENT_RUNTIME?: Fetcher;
+  AGENT_URL?: string;
+  AGENT_AUTH_HEADER?: string;
   RESEARCH_TASKS?: Fetcher;
   INTERNAL_SECRET?: string;
+  DELIVERY_METRICS?: AnalyticsEngineDataset;
+}
+
+export type DeliveryOutcome =
+  | "streamed"
+  | "answer_visible"
+  | "fallback_sent"
+  | "error_visible"
+  | "failed_size_limit";
+
+function emitDeliveryOutcome(
+  env: ConversationStateDoEnv,
+  outcome: DeliveryOutcome,
+  fields: { threadKey: string; executionId: string; channel: string },
+): void {
+  console.log(JSON.stringify({ metric: outcome, ...fields }));
+  env.DELIVERY_METRICS?.writeDataPoint({
+    blobs: [outcome, fields.channel, fields.threadKey, fields.executionId],
+    doubles: [1],
+    indexes: [fields.threadKey],
+  });
 }
 
 /**
@@ -131,7 +151,7 @@ export interface SessionEventsRpc {
   >;
   execute(args: {
     executionId: string;
-    forwardedMessageId?: string;
+    forwardedMessageId: string;
     inputLines: string[];
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
@@ -139,6 +159,10 @@ export interface SessionEventsRpc {
     kind: "output" | "error" | "done";
     payload: unknown;
   }): Promise<{ id: number }>;
+  compact(args: { safeThroughEventId: number }): Promise<{
+    compacted: number;
+    retained: number;
+  }>;
   interruptExpected(
     executionId: string,
   ): Promise<{ interrupted: boolean; cancelled: true }>;
@@ -150,6 +174,9 @@ export interface RenderObligationRow {
   afterEventId: number;
   channel: string;
   threadTs?: string;
+  liveClientMessageId?: string;
+  liveMessageTs?: string;
+  liveMessageState: "unreserved" | "reserved" | "posted" | "absent";
   deadline: number;
   attempt: number;
 }
@@ -160,6 +187,9 @@ function mapObligationRow(row: {
   after_event_id: number;
   channel: string;
   thread_ts: string | null;
+  live_client_msg_id: string | null;
+  live_message_ts: string | null;
+  live_message_state: "unreserved" | "reserved" | "posted" | "absent";
   deadline: number;
   attempt: number;
 }): RenderObligationRow {
@@ -169,13 +199,18 @@ function mapObligationRow(row: {
     afterEventId: row.after_event_id,
     channel: row.channel,
     threadTs: row.thread_ts ?? undefined,
+    ...(row.live_client_msg_id
+      ? { liveClientMessageId: row.live_client_msg_id }
+      : {}),
+    ...(row.live_message_ts ? { liveMessageTs: row.live_message_ts } : {}),
+    liveMessageState: row.live_message_state,
     deadline: row.deadline,
     attempt: row.attempt,
   };
 }
 
 const OBLIGATION_COLUMNS =
-  "thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt";
+  "thread_key, execution_id, after_event_id, channel, thread_ts, live_client_msg_id, live_message_ts, live_message_state, deadline, attempt";
 
 export interface RenderObligationEngineDeps {
   sql: SqlExecutor;
@@ -208,18 +243,23 @@ export class RenderObligationEngine {
     afterEventId: number;
     channel: string;
     threadTs?: string;
+    liveClientMessageId?: string;
     timeoutMs?: number;
   }): { deadline: number } {
     const deadline =
       this.now() + (args.timeoutMs ?? DEFAULT_OBLIGATION_TIMEOUT_MS);
     this.sql.exec(
-      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt)
-       VALUES (?, ?, ?, ?, ?, ?, 0)
+      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts,
+         live_client_msg_id, live_message_ts, live_message_state, deadline, attempt)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0)
        ON CONFLICT(thread_key) DO UPDATE SET
          execution_id   = excluded.execution_id,
          after_event_id = excluded.after_event_id,
          channel        = excluded.channel,
          thread_ts      = excluded.thread_ts,
+         live_client_msg_id = excluded.live_client_msg_id,
+         live_message_ts = NULL,
+         live_message_state = excluded.live_message_state,
          deadline       = excluded.deadline,
          attempt        = 0`,
       args.threadKey,
@@ -227,6 +267,8 @@ export class RenderObligationEngine {
       args.afterEventId,
       args.channel,
       args.threadTs ?? null,
+      args.liveClientMessageId ?? null,
+      args.liveClientMessageId ? "reserved" : "unreserved",
       deadline,
     );
     return { deadline };
@@ -260,6 +302,9 @@ export class RenderObligationEngine {
         after_event_id: number;
         channel: string;
         thread_ts: string | null;
+        live_client_msg_id: string | null;
+        live_message_ts: string | null;
+        live_message_state: "unreserved" | "reserved" | "posted" | "absent";
         deadline: number;
         attempt: number;
       }>(
@@ -279,6 +324,9 @@ export class RenderObligationEngine {
         after_event_id: number;
         channel: string;
         thread_ts: string | null;
+        live_client_msg_id: string | null;
+        live_message_ts: string | null;
+        live_message_state: "unreserved" | "reserved" | "posted" | "absent";
         deadline: number;
         attempt: number;
       }>(
@@ -320,13 +368,17 @@ export class RenderObligationEngine {
     const deadline = this.now() + retryDelayMs;
     const attempt = row.attempt + 1;
     this.sql.exec(
-      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts,
+         live_client_msg_id, live_message_ts, live_message_state, deadline, attempt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(thread_key) DO UPDATE SET
          execution_id   = excluded.execution_id,
          after_event_id = excluded.after_event_id,
          channel        = excluded.channel,
          thread_ts      = excluded.thread_ts,
+         live_client_msg_id = excluded.live_client_msg_id,
+         live_message_ts = excluded.live_message_ts,
+         live_message_state = excluded.live_message_state,
          deadline       = excluded.deadline,
          attempt        = excluded.attempt
        WHERE render_obligations.execution_id = excluded.execution_id`,
@@ -335,6 +387,9 @@ export class RenderObligationEngine {
       row.afterEventId,
       row.channel,
       row.threadTs ?? null,
+      row.liveClientMessageId ?? null,
+      row.liveMessageTs ?? null,
+      row.liveMessageState,
       deadline,
       attempt,
     );
@@ -348,12 +403,16 @@ export class RenderObligationEngine {
   reinsertForDefer(row: RenderObligationRow, deferDelayMs: number): void {
     const deadline = this.now() + deferDelayMs;
     this.sql.exec(
-      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts, deadline, attempt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO render_obligations (thread_key, execution_id, after_event_id, channel, thread_ts,
+         live_client_msg_id, live_message_ts, live_message_state, deadline, attempt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(thread_key) DO UPDATE SET
          after_event_id = excluded.after_event_id,
          channel        = excluded.channel,
          thread_ts      = excluded.thread_ts,
+         live_client_msg_id = excluded.live_client_msg_id,
+         live_message_ts = excluded.live_message_ts,
+         live_message_state = excluded.live_message_state,
          deadline       = excluded.deadline,
          attempt        = excluded.attempt
        WHERE render_obligations.execution_id = excluded.execution_id`,
@@ -362,8 +421,19 @@ export class RenderObligationEngine {
       row.afterEventId,
       row.channel,
       row.threadTs ?? null,
+      row.liveClientMessageId ?? null,
+      row.liveMessageTs ?? null,
+      row.liveMessageState,
       deadline,
       row.attempt,
+    );
+  }
+
+  /** Retain the last obligation after the bounded fast retry budget. */
+  reinsertDeadLetter(row: RenderObligationRow, retryDelayMs: number): void {
+    this.reinsertForRetry(
+      { ...row, attempt: OBLIGATION_MAX_ATTEMPTS - 1 },
+      retryDelayMs,
     );
   }
 }
@@ -404,7 +474,7 @@ export function reconstructMarkdown(
       if (typeof text === "string") parts.push(text);
     }
   }
-  return parts.join("").trim();
+  return parts.join("");
 }
 
 /**
@@ -438,6 +508,7 @@ export class ConversationStateDO extends DurableObject {
   private readonly engine: SqlStateEngine;
   private readonly obligations: RenderObligationEngine;
   private readonly activeTurns: ActiveTurnEngine;
+  private readonly handoffs: SessionHandoffEngine;
 
   constructor(ctx: DurableObjectState, env: unknown) {
     // `env` is opaque to the store — it never reads bindings — so we hand the
@@ -469,6 +540,10 @@ export class ConversationStateDO extends DurableObject {
       sql,
       (fn) => this.ctx.storage.transactionSync(fn),
     );
+    this.handoffs = new SessionHandoffEngine(
+      sql,
+      (fn) => this.ctx.storage.transactionSync(fn),
+    );
   }
 
   /**
@@ -489,17 +564,95 @@ export class ConversationStateDO extends DurableObject {
     }
 
     await this.servePendingStopContinuations();
+    await this.serveDueSessionHandoffs();
     await this.serveDueObligations(now);
 
     const earliest = this.obligations.earliestDeadline();
+    const earliestHandoff = this.handoffs.earliestDue();
     const stopRetryAt = this.activeTurns.pendingStopContinuations().length > 0
       ? now + STOP_CONTINUATION_RETRY_MS
       : undefined;
-    const obligationOrSweep = earliest !== undefined ? Math.min(nextSweepAt, earliest) : nextSweepAt;
+    const obligationAt = earliest !== undefined ? Math.min(nextSweepAt, earliest) : nextSweepAt;
+    const obligationOrSweep = earliestHandoff !== undefined
+      ? Math.min(obligationAt, earliestHandoff)
+      : obligationAt;
     const next = stopRetryAt !== undefined
       ? Math.min(obligationOrSweep, stopRetryAt)
       : obligationOrSweep;
     await this.ctx.storage.setAlarm(next);
+  }
+
+  // ── exact SessionEventDO handoff retry (M8) ─────────────────────────────
+
+  async sessionHandoffStart(args: {
+    threadKey: string;
+    executionId: string;
+    forwardedMessageId: string;
+    inputLines: string[];
+    delayMs?: number;
+  }): Promise<SessionHandoffRow> {
+    const row = this.handoffs.start(args);
+    await this.rescheduleAlarm();
+    return row;
+  }
+
+  async sessionHandoffGet(args: { threadKey: string }): Promise<SessionHandoffRow | undefined> {
+    return this.handoffs.get(args.threadKey);
+  }
+
+  async sessionHandoffClear(args: {
+    threadKey: string;
+    executionId: string;
+  }): Promise<boolean> {
+    const cleared = this.handoffs.clear(args.threadKey, args.executionId);
+    await this.rescheduleAlarm();
+    return cleared;
+  }
+
+  private async serveDueSessionHandoffs(): Promise<void> {
+    const env = this.env as unknown as ConversationStateDoEnv;
+    const row = this.handoffs.claimDue();
+    if (!row?.claimToken) return;
+    if (!env.SESSION_EVENTS) {
+      this.handoffs.retry({
+        threadKey: row.threadKey,
+        executionId: row.executionId,
+        claimToken: row.claimToken,
+        reason: "session_events_unavailable",
+      });
+      return;
+    }
+    try {
+      const session = env.SESSION_EVENTS.get(
+        env.SESSION_EVENTS.idFromName(row.threadKey),
+      ) as unknown as SessionEventsRpc;
+      const result = await session.execute({
+        executionId: row.executionId,
+        forwardedMessageId: row.forwardedMessageId,
+        inputLines: row.inputLines,
+      });
+      if (result.accepted) {
+        this.handoffs.complete({ ...row, claimToken: row.claimToken, outcome: "accepted" });
+      } else if (result.duplicate) {
+        this.handoffs.complete({ ...row, claimToken: row.claimToken, outcome: "duplicate" });
+      } else if (result.cancelled) {
+        this.handoffs.complete({ ...row, claimToken: row.claimToken, outcome: "cancelled" });
+      } else {
+        this.handoffs.retry({
+          threadKey: row.threadKey,
+          executionId: row.executionId,
+          claimToken: row.claimToken,
+          reason: "session_busy",
+        });
+      }
+    } catch (error) {
+      this.handoffs.retry({
+        threadKey: row.threadKey,
+        executionId: row.executionId,
+        claimToken: row.claimToken,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // ── render obligations (SPEC.md §3.1 / §4.2) ────────────────────────────
@@ -516,6 +669,7 @@ export class ConversationStateDO extends DurableObject {
     afterEventId: number;
     channel: string;
     threadTs?: string;
+    liveClientMessageId?: string;
     timeoutMs?: number;
   }): Promise<void> {
     this.obligations.set(args);
@@ -538,6 +692,11 @@ export class ConversationStateDO extends DurableObject {
     threadKey: string;
   }): Promise<RenderObligationRow | undefined> {
     return this.obligations.get(args.threadKey);
+  }
+
+  async healthCheck(): Promise<{ ok: true; storage: "sqlite" }> {
+    this.ctx.storage.sql.exec(`SELECT 1 AS ok`).one();
+    return { ok: true, storage: "sqlite" };
   }
 
   // ── exact active-turn / render fencing ─────────────────────────────────
@@ -570,6 +729,32 @@ export class ConversationStateDO extends DurableObject {
 
   async activeTurnGet(args: { threadKey: string }) {
     return this.activeTurns.get(args.threadKey);
+  }
+
+  async activeTurnConfirmLiveMessage(args: {
+    threadKey: string;
+    executionId: string;
+    clientMessageId: string;
+    ts: string;
+  }): Promise<boolean> {
+    return this.activeTurns.confirmLiveMessage(
+      args.threadKey,
+      args.executionId,
+      args.clientMessageId,
+      args.ts,
+    );
+  }
+
+  async activeTurnMarkLiveMessageAbsent(args: {
+    threadKey: string;
+    executionId: string;
+    clientMessageId: string;
+  }): Promise<boolean> {
+    return this.activeTurns.markLiveMessageAbsent(
+      args.threadKey,
+      args.executionId,
+      args.clientMessageId,
+    );
   }
 
   async activeTurnLatest(args: { channelId: string }) {
@@ -826,7 +1011,11 @@ export class ConversationStateDO extends DurableObject {
       (await this.ctx.storage.get<number>(NEXT_SWEEP_KEY)) ??
       Date.now() + SWEEP_INTERVAL_MS;
     const earliest = this.obligations.earliestDeadline();
-    const next = earliest !== undefined ? Math.min(nextSweepAt, earliest) : nextSweepAt;
+    const earliestHandoff = this.handoffs.earliestDue();
+    const nextObligation = earliest !== undefined ? Math.min(nextSweepAt, earliest) : nextSweepAt;
+    const next = earliestHandoff !== undefined
+      ? Math.min(nextObligation, earliestHandoff)
+      : nextObligation;
     await this.ctx.storage.setAlarm(next);
   }
 
@@ -859,6 +1048,38 @@ export class ConversationStateDO extends DurableObject {
             // binding, rejection, malformed response, or transport ambiguity
             // leaves the durable row cancelled for the next alarm.
             if (!harnessInterrupt.accepted) continue;
+          } else if (!snapshot.effectResource) {
+            if (!env.AGENT_RUNTIME && !env.AGENT_URL) continue;
+            const interruptUrl = new URL(env.AGENT_URL ?? "https://opentag-agent.invalid");
+            interruptUrl.pathname = "/opentag/control/interrupt";
+            interruptUrl.search = "";
+            const headers = new Headers({ "content-type": "application/json" });
+            if (env.AGENT_AUTH_HEADER) headers.set("authorization", env.AGENT_AUTH_HEADER);
+            let response: Response;
+            try {
+              const request = new Request(interruptUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ executionId: record.executionId }),
+              });
+              response = env.AGENT_RUNTIME
+                ? await env.AGENT_RUNTIME.fetch(request)
+                : await fetch(request);
+            } catch {
+              continue;
+            }
+            if (!response.ok) continue;
+            let result: { accepted?: boolean; quiescent?: boolean; executionId?: string };
+            try {
+              result = await response.json();
+            } catch {
+              continue;
+            }
+            if (
+              result.accepted !== true ||
+              result.quiescent !== true ||
+              result.executionId !== record.executionId
+            ) continue;
           }
           this.activeTurns.cancelRegisteredChoices(
             record.threadKey,
@@ -906,6 +1127,39 @@ export class ConversationStateDO extends DurableObject {
           ) continue;
         }
         if (!env.SLACK_BOT_TOKEN) continue;
+        // Alarm-resumed Stop must clear the same root-thread assistant status
+        // before it can truthfully acknowledge quiescence. Empty status is
+        // idempotent, so an ambiguous response is safely retried next alarm.
+        if (record.threadTs) {
+          const statusForm = new URLSearchParams({
+            channel_id: record.channelId,
+            thread_ts: record.threadTs,
+            status: "",
+          });
+          let statusResponse: Response;
+          try {
+            statusResponse = await fetch(
+              "https://slack.com/api/assistant.threads.setStatus",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                  Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+                },
+                body: statusForm.toString(),
+              },
+            );
+          } catch {
+            continue;
+          }
+          let statusJson: { ok?: boolean };
+          try {
+            statusJson = await statusResponse.json() as { ok?: boolean };
+          } catch {
+            continue;
+          }
+          if (!statusResponse.ok || statusJson.ok !== true) continue;
+        }
         if (current.status === "cancel_controlled") {
           if (!this.activeTurns.beginCancelAck(
             record.threadKey,
@@ -971,9 +1225,10 @@ export class ConversationStateDO extends DurableObject {
     const env = this.env as unknown as ConversationStateDoEnv;
 
     for (const ob of due) {
-      this.obligations.delete(ob.threadKey, ob.executionId);
       try {
         await this.serveObligation(ob, env);
+        await this.compactServedHistory(ob, env);
+        this.obligations.clear({ threadKey: ob.threadKey, executionId: ob.executionId });
       } catch (err) {
         if (err instanceof ObligationDeferredError) {
           console.log(
@@ -999,8 +1254,47 @@ export class ConversationStateDO extends DurableObject {
         );
         if (ob.attempt + 1 < OBLIGATION_MAX_ATTEMPTS) {
           this.obligations.reinsertForRetry(ob, OBLIGATION_RETRY_DELAY_MS);
+        } else {
+          // Exhaustion is a retained dead letter, never deletion of the last
+          // visible-answer obligation. It retries slowly with the same stable
+          // message identities until an operator/configuration repair lands.
+          this.obligations.reinsertDeadLetter(ob, OBLIGATION_DEAD_LETTER_RETRY_MS);
         }
       }
+    }
+  }
+
+  /**
+   * The obligation cursor is the production proof that every event at or
+   * before `afterEventId` was already incorporated before this render began.
+   * Compact only after the obligation has been served (or affirmatively
+   * cleared by Stop), and never retry a visible Slack post because compaction
+   * itself was unavailable.
+   */
+  private async compactServedHistory(
+    ob: RenderObligationRow,
+    env: ConversationStateDoEnv,
+  ): Promise<void> {
+    if (!env.SESSION_EVENTS || ob.afterEventId <= 0) return;
+    try {
+      const sessionDo = env.SESSION_EVENTS.get(
+        env.SESSION_EVENTS.idFromName(ob.threadKey),
+      ) as unknown as SessionEventsRpc;
+      const result = await sessionDo.compact({ safeThroughEventId: ob.afterEventId });
+      console.log(JSON.stringify({
+        metric: "session_history_compacted",
+        threadKey: ob.threadKey,
+        safeThroughEventId: ob.afterEventId,
+        compacted: result.compacted,
+        retained: result.retained,
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        metric: "session_history_compaction_error",
+        threadKey: ob.threadKey,
+        safeThroughEventId: ob.afterEventId,
+        error: error instanceof Error ? error.message : String(error),
+      }));
     }
   }
 
@@ -1095,9 +1389,10 @@ export class ConversationStateDO extends DurableObject {
         ob,
         env,
         successfulTerminal
-          ? `_Recovered completed turn:_\n${content}`
+          ? content
           : `_Recovered after an interrupted turn:_\n${content}`,
         "fallback_sent",
+        successfulTerminal ? "output" : "diagnostic",
       );
       return;
     }
@@ -1107,6 +1402,7 @@ export class ConversationStateDO extends DurableObject {
       env,
       "⚠️ This turn was interrupted before an answer could be delivered. Please retry.",
       "error_visible",
+      "diagnostic",
     );
   }
 
@@ -1116,6 +1412,7 @@ export class ConversationStateDO extends DurableObject {
     env: ConversationStateDoEnv,
     text: string,
     outcome: "fallback_sent" | "error_visible",
+    pageNamespace: "output" | "diagnostic" = "output",
   ): Promise<void> {
     if (!env.SLACK_BOT_TOKEN) {
       console.error(
@@ -1143,56 +1440,161 @@ export class ConversationStateDO extends DurableObject {
     // claim that exact execution, so obligation recovery may still proceed.
     const token = render.status === "claimed" ? render.token : undefined;
 
-    const body = new URLSearchParams({
-      channel: ob.channel,
-      text,
-      client_msg_id: await stableObligationClientMessageId(ob),
-    });
-    if (ob.threadTs) body.set("thread_ts", ob.threadTs);
-
-    let res: Response;
-    try {
-      res = await fetch("https://slack.com/api/chat.postMessage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
-        },
-        body: body.toString(),
+    const pages = buildSlackMessagePages(text);
+    let reconciledLiveTs = ob.liveMessageTs;
+    if (
+      ob.liveMessageState === "reserved" &&
+      ob.liveClientMessageId
+    ) {
+      reconciledLiveTs = await this.findSlackMessageByClientId(ob, env);
+      if (reconciledLiveTs) {
+        this.activeTurns.confirmLiveMessage(
+          ob.threadKey,
+          ob.executionId,
+          ob.liveClientMessageId,
+          reconciledLiveTs,
+        );
+      }
+    }
+    for (const page of pages) {
+      let updateExisting = page.index === 0 && Boolean(
+        reconciledLiveTs ??
+        (ob.liveMessageState === "posted" ? ob.liveMessageTs : undefined),
+      );
+      let targetTs = reconciledLiveTs ?? ob.liveMessageTs;
+      const body = new URLSearchParams({
+        channel: ob.channel,
+        text: page.text,
+        blocks: JSON.stringify(page.blocks),
       });
-    } catch (err) {
-      // Ambiguous transport failure: retain the render token so Stop cannot
-      // acknowledge after Slack may have applied this fallback. Replays use
-      // the same client_msg_id and do not consume the rejection retry budget.
-      throw new ObligationDeferredError(
-        OBLIGATION_AMBIGUOUS_DEFER_MS,
-        "render_transport_ambiguous",
-      );
-    }
-    let json: {
-      ok?: boolean;
-      error?: string;
-    };
-    try {
-      json = await res.json() as { ok?: boolean; error?: string };
-    } catch {
-      throw new ObligationDeferredError(
-        OBLIGATION_AMBIGUOUS_DEFER_MS,
-        "render_response_ambiguous",
-      );
-    }
-    const duplicate = isSlackDuplicateMessage(json.error);
-    if (!duplicate && (!res.ok || json.ok !== true)) {
-      if (json.ok !== false) {
+      if (updateExisting) {
+        body.set("ts", targetTs!);
+      } else {
+        const clientMessageId =
+          page.index === 0 && ob.liveMessageState === "reserved"
+            ? ob.liveClientMessageId
+            : pageNamespace === "output"
+              ? stableSlackPageClientMessageId(ob.executionId, page.index)
+              : stableSlackDiagnosticPageClientMessageId(
+                  ob.executionId,
+                  page.index,
+                );
+        if (!clientMessageId) {
+          throw new Error("reserved_live_message_missing_client_id");
+        }
+        body.set("client_msg_id", clientMessageId);
+        if (ob.threadTs) body.set("thread_ts", ob.threadTs);
+      }
+
+      let res: Response;
+      try {
+        res = await fetch(
+          `https://slack.com/api/${updateExisting ? "chat.update" : "chat.postMessage"}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+            },
+            body: body.toString(),
+          },
+        );
+      } catch {
+        if (token) {
+          this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+        }
+        throw new ObligationDeferredError(
+          OBLIGATION_AMBIGUOUS_DEFER_MS,
+          "render_transport_ambiguous",
+        );
+      }
+      let json: { ok?: boolean; error?: string; ts?: string };
+      try {
+        json = await res.json() as { ok?: boolean; error?: string; ts?: string };
+      } catch {
+        if (token) {
+          this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+        }
         throw new ObligationDeferredError(
           OBLIGATION_AMBIGUOUS_DEFER_MS,
           "render_response_ambiguous",
         );
       }
-      if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
-      // Thrown here on purpose: the caller (`serveDueObligations`) catches
-      // this per-obligation and decides whether to retry.
-      throw new Error(`chat.postMessage failed: ${json.error ?? res.status}`);
+      const duplicate = !updateExisting && isSlackDuplicateMessage(json.error);
+      if (
+        page.index === 0 &&
+        ob.liveMessageState === "reserved" &&
+        ob.liveClientMessageId
+      ) {
+        if (json.ok === true && json.ts) {
+          reconciledLiveTs = json.ts;
+          this.activeTurns.confirmLiveMessage(
+            ob.threadKey,
+            ob.executionId,
+            ob.liveClientMessageId,
+            json.ts,
+          );
+        } else if (duplicate) {
+          const found = await this.findSlackMessageByClientId(ob, env);
+          if (!found) {
+            throw new ObligationDeferredError(
+              OBLIGATION_AMBIGUOUS_DEFER_MS,
+              "live_message_identity_unreconciled",
+            );
+          }
+          reconciledLiveTs = found;
+          this.activeTurns.confirmLiveMessage(
+            ob.threadKey,
+            ob.executionId,
+            ob.liveClientMessageId,
+            found,
+          );
+          // The duplicate only proves the original create. Apply the recovered
+          // final content to that exact message before releasing ownership.
+          body.delete("client_msg_id");
+          body.delete("thread_ts");
+          body.set("ts", found);
+          updateExisting = true;
+          targetTs = found;
+          const update = await fetch("https://slack.com/api/chat.update", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+            },
+            body: body.toString(),
+          });
+          const updated = await update.json() as { ok?: boolean; error?: string };
+          if (!update.ok || updated.ok !== true) {
+            throw new ObligationDeferredError(
+              OBLIGATION_AMBIGUOUS_DEFER_MS,
+              `live_message_update_${updated.error ?? update.status}`,
+            );
+          }
+        }
+      }
+      if (!duplicate && (!res.ok || json.ok !== true)) {
+        if (res.status === 429) {
+          if (token) {
+            this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          }
+          throw new ObligationDeferredError(
+            Math.max(1_000, Number(res.headers.get("Retry-After") ?? 1) * 1_000),
+            "slack_rate_limited",
+          );
+        }
+        if (json.ok !== false) {
+          if (token) {
+            this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          }
+          throw new ObligationDeferredError(
+            OBLIGATION_AMBIGUOUS_DEFER_MS,
+            "render_response_ambiguous",
+          );
+        }
+        if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+        throw new Error(`${updateExisting ? "chat.update" : "chat.postMessage"} failed: ${json.error ?? res.status}`);
+      }
     }
 
     if (token && !this.activeTurns.confirmRender(
@@ -1205,13 +1607,45 @@ export class ConversationStateDO extends DurableObject {
       throw new Error("obligation_final_confirmation_failed");
     }
 
-    console.log(
-      JSON.stringify({
-        metric: outcome,
-        threadKey: ob.threadKey,
-        executionId: ob.executionId,
-      }),
-    );
+    emitDeliveryOutcome(env, outcome, {
+      threadKey: ob.threadKey,
+      executionId: ob.executionId,
+      channel: ob.channel,
+    });
+  }
+
+  private async findSlackMessageByClientId(
+    ob: RenderObligationRow,
+    env: ConversationStateDoEnv,
+  ): Promise<string | undefined> {
+    if (!env.SLACK_BOT_TOKEN || !ob.liveClientMessageId) return undefined;
+    const body = new URLSearchParams({
+      channel: ob.channel,
+      limit: "100",
+      inclusive: "true",
+    });
+    const method = ob.threadTs ? "conversations.replies" : "conversations.history";
+    if (ob.threadTs) body.set("ts", ob.threadTs);
+    try {
+      const response = await fetch(`https://slack.com/api/${method}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        },
+        body: body.toString(),
+      });
+      const json = await response.json() as {
+        ok?: boolean;
+        messages?: Array<{ ts?: string; client_msg_id?: string }>;
+      };
+      if (!response.ok || json.ok !== true) return undefined;
+      return json.messages?.find(
+        (message) => message.client_msg_id === ob.liveClientMessageId,
+      )?.ts;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── RPC surface (mirrors StateStore, async at the boundary) ─────────────────

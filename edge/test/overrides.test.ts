@@ -113,10 +113,11 @@ describe('overrides', () => {
       expect(result.cleanedText).toBe('No effort')
     })
 
-    it('-rsn with unknown value is ignored', () => {
+    it('-rsn with unknown value is stripped and rejected', () => {
       const result = extractMessageOverrides('-rsn unknown Text')
       expect(result.reasoning).toBeUndefined()
-      expect(result.cleanedText).toBe('-rsn unknown Text')
+      expect(result.cleanedText).toBe('Text')
+      expect(result.errors).toEqual(['unsupported reasoning effort: unknown'])
     })
   })
 
@@ -139,10 +140,11 @@ describe('overrides', () => {
       expect(result.cleanedText).toBe('Message')
     })
 
-    it('--codex sets harnessType codex', () => {
+    it('--codex is stripped and rejected', () => {
       const result = extractMessageOverrides('--codex Message')
-      expect(result.harnessType).toBe('codex')
+      expect(result.harnessType).toBeUndefined()
       expect(result.cleanedText).toBe('Message')
+      expect(result.errors).toEqual(['--codex is unsupported because no Codex runtime is installed'])
     })
   })
 
@@ -174,11 +176,11 @@ describe('overrides', () => {
 
     it('multiple flags all strip correctly', () => {
       const result = extractMessageOverrides('--sonnet --codex -rsn high What?')
-      // Last harness flag wins (codex), model is sonnet from model shortcut
-      expect(result.harnessType).toBe('codex')
+      expect(result.harnessType).toBe('claudecode')
       expect(result.model).toBe('claude-sonnet-5')
       expect(result.reasoning).toBe('high')
       expect(result.cleanedText).toBe('What?')
+      expect(result.errors).toHaveLength(2)
     })
 
     it('text with no flags returns same reference (cleanedText === input)', () => {
@@ -330,15 +332,17 @@ describe('overrides', () => {
       const result = extractMessageOverrides('--model opus -rsn med --codex Question?')
       expect(result.model).toBe('claude-opus-4-8')
       expect(result.reasoning).toBe('medium')
-      expect(result.harnessType).toBe('codex')
+      expect(result.harnessType).toBe('claudecode')
       expect(result.cleanedText).toBe('Question?')
+      expect(result.errors).toHaveLength(2)
     })
 
     it('harness flag + model shortcut (shortcut wins for model)', () => {
       const result = extractMessageOverrides('--codex --sonnet Message')
-      expect(result.harnessType).toBe('codex')
+      expect(result.harnessType).toBe('claudecode')
       expect(result.model).toBe('claude-sonnet-5')
       expect(result.cleanedText).toBe('Message')
+      expect(result.errors).toHaveLength(1)
     })
 
     it('explicit model + model shortcut (explicit wins if first)', () => {

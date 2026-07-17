@@ -115,6 +115,10 @@ describe("harness zero-trust egress policy", () => {
     expect(authorizeGithubWrite({
       host: "api.github.com", method: "POST", pathname: "/repos/acme/widget/pulls", search: "", executionId: "exec-1", bodyText: bodyText.replace("Prompted by: @will", ""),
     }, scope, 2_000)).toBe(false);
+    expect(authorizeGithubWrite({
+      host: "api.github.com", method: "POST", pathname: "/repos/acme/widget/pulls", search: "", executionId: "exec-1",
+      bodyText: JSON.stringify({ title: "Fix", body: "Prompted by: @will\nPrompted by: @mallory", head: scope.branch, base: "main" }),
+    }, scope, 2_000)).toBe(false);
   });
 
   it("binds overlapping approvals to the exact originating execution", () => {

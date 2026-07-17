@@ -11,10 +11,15 @@ import {
   awaitRemoteGitApproval,
   requesterForApproval,
 } from "../hitl/remote-git-approval.js";
-import { copyRequestContext, slackTurnIdentity } from "../request-context.js";
+import {
+  copyRequestContext,
+  requireRequestContext,
+  slackTurnIdentity,
+} from "../request-context.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import { extractMessageOverrides } from "./overrides.js";
 import { resolveThreadOverrides } from "../store/thread-overrides.js";
+import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { isRepositoryCodingIntent } from "../coding-intent.js";
 import {
   ACTIVE_TURN_TTL_MS,
@@ -25,9 +30,10 @@ import {
 } from "./active-turn-registry.js";
 import type { CloudflareSlackAdapter } from "./cloudflare-slack-adapter.js";
 import { markThreadNextRenderFinal } from "./cloudflare-slack-adapter.js";
-import { createSlackWebClient } from "./web-api.js";
+import { createSlackWebClient, sharedSlackRateScheduler } from "./web-api.js";
 import { firstSlackTs, slackObligationThreadKey } from "./obligation-thread-key.js";
 import { bindTurnExecutionContext } from "./turn-execution-context.js";
+import { stableSlackClientMessageId } from "./client-message-id.js";
 
 const RENDER_OBLIGATION_TIMEOUT_MS = ACTIVE_TURN_TTL_MS;
 
@@ -42,7 +48,25 @@ function sessionInputLine(prompt: string | AgentContentPart[]): string {
     .map((part) => part.text)
     .join(" ")
     .trim();
-  return text || "[non-text prompt]";
+  const attachments = prompt.flatMap((part) => {
+    const attachment = part.attachment;
+    if (!attachment) return [];
+    return [{
+      kind: attachment.kind,
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      ...(attachment.stageKey ? { stageKey: attachment.stageKey } : {}),
+      ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+    }];
+  });
+  if (attachments.length === 0) return text || "[non-text prompt]";
+  return JSON.stringify({
+    type: "opentag_input_v1",
+    text: text || "[non-text prompt]",
+    attachments,
+  });
 }
 
 function cleanedSessionInputLine(
@@ -50,11 +74,17 @@ function cleanedSessionInputLine(
   cleanedText: string,
 ): string {
   if (typeof prompt === "string") return cleanedText || "[non-text prompt]";
-  const cleanedParts = prompt.map((part) =>
-    part.type === "text"
-      ? { ...part, text: extractMessageOverrides(part.text).cleanedText }
-      : part,
-  );
+  const cleanedParts = prompt.map((part) => {
+    if (part.type !== "text") return part;
+    const cleaned = { ...part, text: extractMessageOverrides(part.text).cleanedText };
+    if (part.attachment) {
+      Object.defineProperty(cleaned, "attachment", {
+        value: part.attachment,
+        enumerable: false,
+      });
+    }
+    return cleaned;
+  });
   return sessionInputLine(cleanedParts);
 }
 
@@ -71,13 +101,14 @@ function cleanedSessionInputLine(
  * turn it rejected. Deduped per thread so rapid-fire messages get at most
  * one note a minute.
  */
-async function postTurnRejectedFeedback(
+export async function postTurnRejectedFeedback(
   env: Env,
   stateStore: ReturnType<typeof createBotStoreAdapter>,
   args: {
     reason: "duplicate" | "concurrent";
     channelId: string;
     threadTs?: string;
+    liveClientMessageId?: string;
     threadKey: string;
   },
 ): Promise<void> {
@@ -89,7 +120,9 @@ async function postTurnRejectedFeedback(
       60_000,
     );
     if (seen) return;
-    await createSlackWebClient(env.SLACK_BOT_TOKEN).postMessage({
+    await createSlackWebClient(env.SLACK_BOT_TOKEN, {
+      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+    }).postMessage({
       channel: args.channelId,
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
       text: "⚠️ Another turn is already running in this thread. Send *Stop* to cancel it, then retry.",
@@ -104,6 +137,7 @@ async function postTurnRejectedFeedback(
 
 async function admitSessionExecution(
   env: Env,
+  stateStore: ReturnType<typeof createBotStoreAdapter>,
   args: {
     threadKey: string;
     executionId: string;
@@ -112,14 +146,62 @@ async function admitSessionExecution(
   },
 ): Promise<"accepted" | "duplicate" | "cancelled" | "rejected"> {
   if (!env.SESSION_EVENTS) return "accepted";
+  // Persist the exact immutable handoff before the cross-DO call. The owning
+  // ConversationStateDO alarm retries only this pre-runtime admission; it can
+  // never replay model/tool side effects. A short delay gives the request-local
+  // fast path first ownership while retaining crash-safe retry state.
+  await stateStore.sessionHandoff.start({
+    threadKey: args.threadKey,
+    executionId: args.executionId,
+    forwardedMessageId: args.forwardedMessageId ?? args.executionId,
+    inputLines: [args.inputLine],
+    delayMs: 250,
+  });
   const sessionDo = env.SESSION_EVENTS.get(
     env.SESSION_EVENTS.idFromName(args.threadKey),
   ) as unknown as SessionEventsRpc;
-  const executed = await sessionDo.execute({
-    executionId: args.executionId,
-    forwardedMessageId: args.forwardedMessageId,
-    inputLines: [args.inputLine],
-  });
+  let executed;
+  try {
+    executed = await sessionDo.execute({
+      executionId: args.executionId,
+      forwardedMessageId: args.forwardedMessageId ?? args.executionId,
+      inputLines: [args.inputLine],
+    });
+    try {
+      await stateStore.sessionHandoff.clear({
+        threadKey: args.threadKey,
+        executionId: args.executionId,
+      });
+    } catch (err) {
+      // Exact SessionEvent admission is already definitive. A leftover row
+      // can only observe duplicate on alarm; it cannot replay runtime work.
+      console.warn(
+        "[turn] accepted session handoff cleanup failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  } catch (initialError) {
+    // The durable alarm owns bounded retry after an unaccepted transport/RPC
+    // failure. Stay with this invocation long enough to continue only after
+    // exact acceptance; never retry runBundledAgentTurn itself.
+    const deadline = Date.now() + 7_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const handoff = await stateStore.sessionHandoff.get(args.threadKey);
+      if (!handoff || handoff.executionId !== args.executionId) break;
+      if (handoff.status === "accepted") {
+        await stateStore.sessionHandoff.clear({
+          threadKey: args.threadKey,
+          executionId: args.executionId,
+        });
+        return "accepted";
+      }
+      if (handoff.status === "cancelled") return "cancelled";
+      if (handoff.status === "duplicate") return "duplicate";
+      if (handoff.status === "exhausted") break;
+    }
+    throw initialError;
+  }
   if (executed.cancelled) return "cancelled";
   if (executed.accepted) return "accepted";
   if (executed.duplicate) return "duplicate";
@@ -137,8 +219,13 @@ async function terminalizeSessionExecution(
   ) as unknown as SessionEventsRpc;
   try {
     await sessionDo.appendEvent({ executionId, kind: "done", payload: {} });
-  } catch {
-    // Harness or an earlier terminal may have already closed the execution.
+  } catch (err) {
+    // Harness or the final renderer may already have closed the execution.
+    if (
+      err instanceof Error &&
+      err.message === `execution_already_terminal:${executionId}`
+    ) return;
+    throw err;
   }
 }
 
@@ -164,6 +251,7 @@ async function writeRenderObligation(
     executionId: string;
     channel: string;
     threadTs?: string;
+    liveClientMessageId?: string;
   },
 ): Promise<void> {
   let afterEventId = 0;
@@ -171,7 +259,16 @@ async function writeRenderObligation(
     const sessionDo = env.SESSION_EVENTS.get(
       env.SESSION_EVENTS.idFromName(args.threadKey),
     ) as unknown as SessionEventsRpc;
-    const events = await sessionDo.replay();
+    let events;
+    try {
+      events = await sessionDo.replay();
+    } catch (err) {
+      throw new Error(
+        `session_event_replay_failed:${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     afterEventId = events.length > 0 ? events[events.length - 1]!.id : 0;
   }
   await stateStore.obligation.set({
@@ -180,6 +277,7 @@ async function writeRenderObligation(
     afterEventId,
     channel: args.channel,
     threadTs: args.threadTs,
+    liveClientMessageId: args.liveClientMessageId,
     timeoutMs: RENDER_OBLIGATION_TIMEOUT_MS,
   });
 }
@@ -224,6 +322,7 @@ export async function runSlackTurnLifecycle(
     threadKey: obligationThreadKey,
     conversationKey,
     executionId,
+    liveClientMessageId: stableSlackClientMessageId(executionId),
     threadTs: statusThreadTs,
     choiceId: approvalChoiceId,
     registeredAt: Date.now(),
@@ -267,6 +366,7 @@ export async function runSlackTurnLifecycle(
         reason: registration.duplicate ? "duplicate" : "concurrent",
         channelId,
         threadTs: statusThreadTs,
+        liveClientMessageId: activeTurn.liveClientMessageId,
         threadKey: obligationThreadKey,
       });
       logMetric(
@@ -292,10 +392,17 @@ export async function runSlackTurnLifecycle(
           .map((part) => part.text)
           .join(" ")
       : prompt;
+    const requestContext = requireRequestContext(thread);
+    const { config: channelConfig } = await loadTurnAccess(
+      env.WORKSPACE_CONFIG,
+      requestContext.teamId,
+      channelId,
+    );
     const approvalOverrides = await resolveThreadOverrides(
       stateStore,
       conversationKey,
       approvalText,
+      channelConfig.runtimeDefaults,
     );
     if (!(await isExactTurnPending(stateStore, activeTurn))) {
       await stateStore.obligation.clear({
@@ -309,6 +416,7 @@ export async function runSlackTurnLifecycle(
       return;
     }
     const needsRemoteGitApproval = Boolean(
+      requestContext.actor.kind === "slack_user" &&
       env.HARNESS_REPO_URL &&
         (env.HARNESS || env.HARNESS_URL) &&
         approvalOverrides.effectiveHarnessType === "claudecode" &&
@@ -323,6 +431,7 @@ export async function runSlackTurnLifecycle(
         executionId,
         channel: channelId,
         threadTs: statusThreadTs,
+        liveClientMessageId: activeTurn.liveClientMessageId,
       });
     }
     await refreshActiveTurn(stateStore, activeTurn);
@@ -337,7 +446,7 @@ export async function runSlackTurnLifecycle(
       });
       return;
     }
-    const sessionAdmission = await admitSessionExecution(env, {
+    const sessionAdmission = await admitSessionExecution(env, stateStore, {
       threadKey: obligationThreadKey,
       executionId,
       forwardedMessageId,
@@ -381,14 +490,24 @@ export async function runSlackTurnLifecycle(
       executionId,
       channel: channelId,
       threadTs: statusThreadTs,
+      liveClientMessageId: activeTurn.liveClientMessageId,
     });
     if (statusThreadTs) {
-      await adapter.setStatus({
-        channel: channelId,
-        threadTs: statusThreadTs,
-        status: "Thinking…",
-        fence: activeTurn,
-      });
+      try {
+        await adapter.setStatus({
+          channel: channelId,
+          threadTs: statusThreadTs,
+          status: "Thinking…",
+          fence: activeTurn,
+        });
+      } catch (err) {
+        // Progress is cosmetic. Exact output/effect fences remain authoritative;
+        // rate limits or missing Slack status support must not abort execution.
+        console.warn(
+          "[turn] initial status failed",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
 
     const remoteGit = needsRemoteGitApproval
@@ -463,13 +582,26 @@ export async function runSlackTurnLifecycle(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const recovery =
+      err instanceof Error && err.name === "AuthoritativeHarnessError"
+        ? "Check HARNESS / the Claude Code harness Worker — retry in a few seconds."
+        : "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.";
     logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
     console.error("[bot] Slack turn failed", msg);
+    if (
+      msg.startsWith("session_event_mirror_failed:") ||
+      msg.startsWith("session_event_replay_failed:")
+    ) {
+      // Canonical session state is unavailable or incomplete. Do not start a
+      // different runtime, append done, post a final error, or clear the
+      // obligation; the exact active lifecycle remains retryable.
+      return;
+    }
     try {
       markThreadNextRenderFinal(thread);
       await thread.post(
         `⚠️ Something went wrong (agent didn't finish): ${msg.slice(0, 180)}\n` +
-          "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.",
+          recovery,
       );
     } catch {
       // Leave an outstanding obligation for alarm recovery when no error card landed.

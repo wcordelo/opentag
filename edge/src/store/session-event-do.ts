@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { SqlCursor, SqlExecutor, SqlValue } from "./sql.js";
+import type { SqlCursor, SqlExecutor, SqlValue, TransactionRunner } from "./sql.js";
 
 /**
  * `SessionEventDO` — the "mini api-rs" described in SPEC.md §3.2/§4.1.
@@ -14,9 +14,10 @@ import type { SqlCursor, SqlExecutor, SqlValue } from "./sql.js";
  *     rows per `execution_id`, replayable from any `afterEventId` cursor —
  *     this is what lets a crashed Worker isolate reconstruct a thread's state
  *     (see the render-obligation alarm in `conversation-state-do.ts`).
- *   - DO KV slots (`session:created` / `session:executing` / `session:interrupted`)
- *     track the small amount of "current session" state that doesn't belong
- *     in the append-only log.
+ *   - SQL `executions`, `cancelled_executions`, and `events` are authoritative
+ *     for admission, terminal state, interruption, replay, and dedup. The sole
+ *     KV record `session:created` is compatibility metadata for harness/model
+ *     selection; legacy executing/interrupted keys are cleanup-only.
  *
  * Deliberately NOT ported: warm pools, capacity management, multi-tenant
  * permission checks, or an HTTP surface — callers talk to this DO exclusively
@@ -25,7 +26,7 @@ import type { SqlCursor, SqlExecutor, SqlValue } from "./sql.js";
  * `harnessType` mismatch on `create()` mirrors centaur's "409 → restart on
  * harness mismatch" semantics (SPEC.md §3.6): rather than silently continuing
  * a session under a different harness, the event log and KV slots are wiped
- * and a fresh session is created. Callers are expected to re-feed thread
+ * and compatibility metadata is replaced. Callers are expected to re-feed thread
  * context (e.g. Slack transcript) after a `restarted: true` response.
  */
 
@@ -85,15 +86,18 @@ interface ExecutingSlot {
 }
 
 const KEY_CREATED = "session:created";
+/** Legacy compatibility keys: never read as source of truth. */
 const KEY_EXECUTING = "session:executing";
 const KEY_INTERRUPTED = "session:interrupted";
 
 /** Sentinel used when a caller doesn't pin a harness explicitly. */
 const DEFAULT_HARNESS = "default";
+export const SESSION_EVENT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+export const SESSION_EVENT_RECENT_EXECUTIONS = 256;
 // ── KV seam ─────────────────────────────────────────────────────────────────
 
 /**
- * The narrow slice of `DurableObjectStorage` this DO needs for its KV slots
+ * The narrow slice of `DurableObjectStorage` this DO needs for compatibility metadata
  * (as opposed to the SQL-backed `events` table). Depending on this local
  * shape — rather than the full `DurableObjectStorage` type — keeps
  * {@link SessionEventEngine} portable: it can run against `ctx.storage` in
@@ -111,6 +115,8 @@ export interface KvExecutor {
 
 export interface SessionEventEngineDeps {
   sql: SqlExecutor;
+  /** Crash-atomic runner. Production must supply storage.transactionSync. */
+  tx: TransactionRunner;
   kv: KvExecutor;
   /** Injectable clock (epoch ms). Defaults to `Date.now`. */
   now?: () => number;
@@ -128,12 +134,14 @@ export interface SessionEventEngineDeps {
 export class SessionEventEngine {
   private readonly sql: SqlExecutor;
   private readonly kv: KvExecutor;
+  private readonly tx: TransactionRunner;
   private readonly now: () => number;
   private readonly newId: () => string;
 
   constructor(deps: SessionEventEngineDeps) {
     this.sql = deps.sql;
     this.kv = deps.kv;
+    this.tx = deps.tx;
     this.now = deps.now ?? (() => Date.now());
     this.newId = deps.newId ?? (() => crypto.randomUUID());
   }
@@ -156,7 +164,7 @@ export class SessionEventEngine {
         throw new Error(`harness_change_while_executing:${executing.executionId}`);
       }
       // Harness mismatch: centaur's "409 → restart" semantics. Wipe the
-      // event log + KV slots and start a fresh session under the new harness.
+      // authoritative SQL history + compatibility metadata, then restart.
       this.sql.exec(`DELETE FROM events`);
       this.sql.exec(`DELETE FROM executions`);
       await this.kv.delete(KEY_CREATED);
@@ -185,9 +193,12 @@ export class SessionEventEngine {
 
   async execute(args: {
     executionId: string;
-    forwardedMessageId?: string;
+    forwardedMessageId: string;
     inputLines: string[];
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }> {
+    if (!args.forwardedMessageId || !args.forwardedMessageId.trim()) {
+      throw new Error("forwarded_message_id_required");
+    }
     // Cancellation and admission live in this DO and run without an await
     // between the check and insert. A Stop that arrives before this RPC leaves
     // a durable tombstone; a Stop that arrives after it sees the admitted row.
@@ -252,24 +263,25 @@ export class SessionEventEngine {
     // consume a generic "cancel next" marker here: an idle Stop must not
     // poison a later, unrelated turn. The lifecycle publishes the active-turn
     // record before this RPC, so a racing Stop has the exact executionId.
-    const now = this.now();
-    const createdAt = now;
-    this.sql.exec(
-      `INSERT INTO executions
-         (execution_id, forwarded_message_id, started_at, terminal_at)
-       VALUES (?, ?, ?, NULL)`,
-      args.executionId,
-      args.forwardedMessageId ?? null,
-      createdAt,
-    );
-    for (const line of args.inputLines) {
+    const createdAt = this.now();
+    this.tx(() => {
       this.sql.exec(
-        `INSERT INTO events (execution_id, kind, payload, created_at) VALUES (?, 'input', ?, ?)`,
+        `INSERT INTO executions
+           (execution_id, forwarded_message_id, started_at, terminal_at)
+         VALUES (?, ?, ?, NULL)`,
         args.executionId,
-        JSON.stringify(line),
+        args.forwardedMessageId,
         createdAt,
       );
-    }
+      for (const line of args.inputLines) {
+        this.sql.exec(
+          `INSERT INTO events (execution_id, kind, payload, created_at) VALUES (?, 'input', ?, ?)`,
+          args.executionId,
+          JSON.stringify(line),
+          createdAt,
+        );
+      }
+    });
 
     return { accepted: true, duplicate: false };
   }
@@ -310,25 +322,28 @@ export class SessionEventEngine {
     }
 
     const createdAt = this.now();
-    const row = this.sql
-      .exec<{ id: number }>(
-        `INSERT INTO events (execution_id, kind, payload, created_at)
-         VALUES (?, ?, ?, ?) RETURNING id`,
-        args.executionId,
-        args.kind,
-        JSON.stringify(args.payload),
-        createdAt,
-      )
-      .one();
+    const row = this.tx(() => {
+      const inserted = this.sql
+        .exec<{ id: number }>(
+          `INSERT INTO events (execution_id, kind, payload, created_at)
+           VALUES (?, ?, ?, ?) RETURNING id`,
+          args.executionId,
+          args.kind,
+          JSON.stringify(args.payload),
+          createdAt,
+        )
+        .one();
+      if (args.kind === "done") {
+        this.sql.exec(
+          `UPDATE executions SET terminal_at = ? WHERE execution_id = ?`,
+          createdAt,
+          args.executionId,
+        );
+      }
+      return inserted;
+    });
 
-    if (args.kind === "done") {
-      this.sql.exec(
-        `UPDATE executions SET terminal_at = ? WHERE execution_id = ?`,
-        createdAt,
-        args.executionId,
-      );
-      await this.kv.delete(KEY_EXECUTING);
-    }
+    if (args.kind === "done") await this.kv.delete(KEY_EXECUTING);
 
     return { id: row.id };
   }
@@ -367,34 +382,92 @@ export class SessionEventEngine {
 
   async interruptExpected(executionId: string): Promise<{ interrupted: boolean; cancelled: true }> {
     const cancelledAt = this.now();
-    this.sql.exec(
-      `INSERT OR IGNORE INTO cancelled_executions (execution_id, cancelled_at)
-       VALUES (?, ?)`,
-      executionId,
-      cancelledAt,
-    );
-    const executing = this.activeExecution();
-    if (executing?.executionId !== executionId) {
-      return { interrupted: false, cancelled: true };
-    }
+    const interrupted = this.tx(() => {
+      this.sql.exec(
+        `INSERT OR IGNORE INTO cancelled_executions (execution_id, cancelled_at)
+         VALUES (?, ?)`,
+        executionId,
+        cancelledAt,
+      );
+      const executing = this.activeExecution();
+      if (executing?.executionId !== executionId) return false;
 
-    // Terminalize synchronously with the tombstone. appendEvent is not used
-    // here because its KV await would reopen a cancellation/terminal window.
-    this.sql.exec(
-      `INSERT INTO events (execution_id, kind, payload, created_at)
-       VALUES (?, 'done', ?, ?)`,
-      executionId,
-      JSON.stringify({ interrupted: true }),
-      cancelledAt,
-    );
-    this.sql.exec(
-      `UPDATE executions SET terminal_at = ?
-       WHERE execution_id = ? AND terminal_at IS NULL`,
-      cancelledAt,
-      executionId,
-    );
+      this.sql.exec(
+        `INSERT INTO events (execution_id, kind, payload, created_at)
+         VALUES (?, 'done', ?, ?)`,
+        executionId,
+        JSON.stringify({ interrupted: true }),
+        cancelledAt,
+      );
+      this.sql.exec(
+        `UPDATE executions SET terminal_at = ?
+         WHERE execution_id = ? AND terminal_at IS NULL`,
+        cancelledAt,
+        executionId,
+      );
+      return true;
+    });
+    if (!interrupted) return { interrupted: false, cancelled: true };
     await this.kv.delete(KEY_EXECUTING);
     return { interrupted: true, cancelled: true };
+  }
+
+  /**
+   * Compact only terminal history that is both older than the retention cutoff
+   * and at/below a caller-proven replay cursor. The newest bounded execution
+   * window, every active execution, and newer cancellation tombstones survive.
+   */
+  compact(args: {
+    safeThroughEventId: number;
+    retentionMs?: number;
+    retainRecentExecutions?: number;
+  }): { eventsDeleted: number; executionsDeleted: number; tombstonesDeleted: number } {
+    const cutoff = this.now() - (args.retentionMs ?? SESSION_EVENT_RETENTION_MS);
+    const retain = Math.max(1, args.retainRecentExecutions ?? SESSION_EVENT_RECENT_EXECUTIONS);
+    return this.tx(() => {
+      this.sql.exec(
+        `DELETE FROM events
+         WHERE id <= ? AND created_at < ? AND execution_id IN (
+           SELECT execution_id FROM executions
+           WHERE terminal_at IS NOT NULL AND terminal_at < ?
+             AND execution_id NOT IN (
+               SELECT execution_id FROM executions
+               WHERE terminal_at IS NOT NULL
+               ORDER BY terminal_at DESC, execution_id DESC LIMIT ?
+             )
+         )`,
+        args.safeThroughEventId,
+        cutoff,
+        cutoff,
+        retain,
+      );
+      const eventsDeleted = this.changes();
+      this.sql.exec(
+        `DELETE FROM executions
+         WHERE terminal_at IS NOT NULL AND terminal_at < ?
+           AND execution_id NOT IN (SELECT DISTINCT execution_id FROM events)
+           AND execution_id NOT IN (
+             SELECT execution_id FROM cancelled_executions WHERE cancelled_at >= ?
+           )`,
+        cutoff,
+        cutoff,
+      );
+      const executionsDeleted = this.changes();
+      this.sql.exec(
+        `DELETE FROM cancelled_executions
+         WHERE cancelled_at < ?
+           AND execution_id NOT IN (
+             SELECT execution_id FROM executions WHERE terminal_at IS NULL
+           )`,
+        cutoff,
+      );
+      const tombstonesDeleted = this.changes();
+      return { eventsDeleted, executionsDeleted, tombstonesDeleted };
+    });
+  }
+
+  private changes(): number {
+    return this.sql.exec<{ n: number }>(`SELECT changes() AS n`).one().n;
   }
 
   async interrupt(): Promise<{ interrupted: boolean }> {
@@ -447,7 +520,7 @@ export class SessionEventEngine {
  * the same guarantee `ConversationStateDO` leans on for its StateStore.
  *
  * See the module-level jsdoc above for the centaur `api-rs` lineage and the
- * KV-slot vs. SQL-table split.
+ * authoritative SQL vs. compatibility-metadata split.
  */
 export class SessionEventDO extends DurableObject {
   private readonly engine: SessionEventEngine;
@@ -466,13 +539,17 @@ export class SessionEventDO extends DurableObject {
       migrateEvents(sql);
     });
 
-    this.engine = new SessionEventEngine({ sql, kv });
+    this.engine = new SessionEventEngine({
+      sql,
+      kv,
+      tx: (fn) => this.ctx.storage.transactionSync(fn),
+    });
   }
 
   /**
    * Idempotent by `(threadKey, harnessType)`: same harness on an existing
    * session returns the existing `sessionId` unchanged. A different harness
-   * wipes the event log + KV slots and starts fresh (`restarted: true`) —
+   * wipes authoritative SQL history and replaces compatibility metadata (`restarted: true`) —
    * see the module jsdoc for why this mirrors centaur's 409 semantics.
    */
   async create(args: {
@@ -485,14 +562,13 @@ export class SessionEventDO extends DurableObject {
 
   /**
    * Idempotent by `executionId`: a redelivered execute with an `executionId`
-   * that's already in flight (`session:executing`) or that already produced
-   * an `input` event is a no-op (`duplicate: true`). Otherwise appends one
-   * `input` event per line and marks the session executing. The prior
-   * interrupted execution id remains available to its streaming client.
+   * that's already in SQL `executions` or already produced an `input` event is
+   * a no-op (`duplicate: true`). Otherwise atomically inserts the execution and
+   * every input row. Prior cancellation remains queryable in SQL.
    */
   async execute(args: {
     executionId: string;
-    forwardedMessageId?: string;
+    forwardedMessageId: string;
     inputLines: string[];
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }> {
     return this.engine.execute(args);
@@ -506,8 +582,8 @@ export class SessionEventDO extends DurableObject {
   }
 
   /**
-   * Append one event row. Only `done` clears `session:executing`; `error`
-   * remains non-terminal so the pinned `error` then `done` stream is valid.
+   * Append one event row. Only `done` atomically terminalizes the SQL execution;
+   * `error` remains non-terminal so the pinned `error` then `done` stream is valid.
    */
   async appendEvent(args: {
     executionId: string;
@@ -530,10 +606,17 @@ export class SessionEventDO extends DurableObject {
     return this.engine.replay(afterEventId);
   }
 
+  async compact(args: {
+    safeThroughEventId: number;
+    retentionMs?: number;
+    retainRecentExecutions?: number;
+  }): Promise<{ eventsDeleted: number; executionsDeleted: number; tombstonesDeleted: number }> {
+    return this.engine.compact(args);
+  }
+
   /**
-   * If an execution is in flight: append a `done` event
-   * (`{ interrupted: true }`), clear `session:executing`, and set
-   * `session:interrupted`. No-op (`interrupted: false`) if nothing was running.
+   * If an execution is in flight: atomically insert its cancellation tombstone,
+   * append `done`, and terminalize the SQL execution. No-op if idle.
    */
   async interrupt(): Promise<{ interrupted: boolean }> {
     return this.engine.interrupt();
@@ -547,6 +630,11 @@ export class SessionEventDO extends DurableObject {
     interruptedExecutionId?: string;
   }> {
     return this.engine.getState();
+  }
+
+  async healthCheck(): Promise<{ ok: true; storage: "sqlite" }> {
+    this.ctx.storage.sql.exec(`SELECT 1 AS ok`).one();
+    return { ok: true, storage: "sqlite" };
   }
 }
 

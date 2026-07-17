@@ -6,6 +6,10 @@ main = "src/worker.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
+[[analytics_engine_datasets]]
+binding = "DELIVERY_METRICS"
+dataset = "opentag_delivery_dev"
+
 # Bot conversation state (HITL, turn locks, transcripts, dedup).
 [[durable_objects.bindings]]
 name = "BOT_STATE"
@@ -27,6 +31,14 @@ class_name = "KnowledgeDO"
 name = "SESSION_EVENTS"
 class_name = "SessionEventDO"
 
+[[durable_objects.bindings]]
+name = "DEFERRED_INGRESS"
+class_name = "DeferredIngressDO"
+
+[[durable_objects.bindings]]
+name = "SLACK_RATE_LIMIT"
+class_name = "SlackRateLimitDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -39,6 +51,10 @@ new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
 tag = "v3-session-events"
 new_sqlite_classes = ["SessionEventDO"]
 
+[[migrations]]
+tag = "v4-durable-ingress-rate-limit"
+new_classes = ["DeferredIngressDO", "SlackRateLimitDO"]
+
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"
@@ -47,6 +63,10 @@ bucket_name = "opentag-research-blobs"
 [[services]]
 binding = "RESEARCH_TASKS"
 service = "opentag-orchestrator"
+
+[[services]]
+binding = "BOT_SELF"
+service = "opentag-edge"
 
 # Claude Code harness container (GOAL.md Phase A5, SPEC.md §3.6/§4.4). The
 # container Worker + image ship separately (edge/workers/sandbox/ +

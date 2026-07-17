@@ -18,6 +18,10 @@ instance_type = "basic"
 name = "HARNESS_CONTAINER"
 class_name = "HarnessContainer"
 
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "opentag-research-blobs"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["HarnessContainer"]

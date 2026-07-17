@@ -1,7 +1,7 @@
 # OpenTag operations guide
 
 Status: **current runbook**
-Updated: **2026-07-13**
+Updated: **2026-07-14**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
@@ -129,10 +129,19 @@ cd edge
 | --- | --- | --- | --- |
 | `SLACK_BOT_TOKEN` | Secret | Bot | Slack Web API |
 | `SLACK_SIGNING_SECRET` | Secret | Bot | Slack HMAC verification |
+| `SLACK_BOT_USER_ID` | Var | Bot | Exact installed bot user ID required by trusted rich-payload mentions |
+| `SLACK_TRUSTED_TRIGGER_ACTORS` | Var | Bot | Exact `bot:B...` / `app:A...` allowlist; unset disables the feature |
 | `AGENT_URL` | Secret/string | Bot | AG-UI request URL/path |
 | `AGENT_RUNTIME` | Service binding | Bot | Same-zone call to `opentag-agent` |
 | `AGENT_AUTH_HEADER` | Secret | Bot + agent | Optional AG-UI authentication |
 | `ADMIN_SECRET` | Secret | Bot | `/admin/*`, `/debug/*`, `/tasks/start` |
+| `SESSION_VIEWER_BASE_URL` | Var | Bot | Public bot origin for signed, expiring session links |
+| `QUICK_BASE_DOMAIN` | Var | Bot | Artifact host suffix eligible for final action cards |
+| `DEFERRED_INGRESS` | Durable Object binding | Bot | Stable quick-click and delayed-file jobs, owned before Slack acknowledgement |
+| `BOT_SELF` | Service binding | Bot | Authenticated alarm replay into `opentag-bot` |
+| `SLACK_RATE_LIMIT` | Durable Object binding | Bot | Cross-isolate per-channel Slack dispatch reservations |
+| `BLOBS` | R2 binding | Bot + harness + research | Durable staged attachments and research blobs; bot/harness must name the same bucket |
+| `DELIVERY_METRICS` | Analytics Engine binding | Bot | Confirmed `streamed`, `answer_visible`, and `failed_size_limit` outcomes |
 | `INTERNAL_SECRET` | Secret | Bot + research | Internal research authentication |
 | `RESEARCH_TASKS` | Service binding | Bot | `opentag-orchestrator` |
 | `HARNESS` | Service binding | Bot | Optional `opentag-harness` call |
@@ -152,6 +161,13 @@ cd edge
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
 `HARNESS_URL` still supply a request URL/path, but public `workers.dev` fetches
 between Workers in the same zone can fail with Cloudflare 1042.
+
+AG-UI requests carry the exact execution ID to the named runtime Container.
+Stop calls `/opentag/control/interrupt` through `AGENT_RUNTIME` and only reports
+success after the runtime returns matching accepted/quiescent proof. Signed
+`/sessions/:token` links are read-only, expire after seven days, return
+`Cache-Control: private, no-store`, and require `ADMIN_SECRET` as their HMAC
+key; rotate that secret to revoke outstanding links.
 
 ## Deploy the AG-UI agent
 
@@ -197,7 +213,10 @@ bot binding.
 
 1. Set a non-empty organization allowlist in
    `edge/workers/sandbox/wrangler.toml` or its deployment environment.
-2. Configure harness Worker secrets:
+2. Verify the harness `BLOBS` R2 binding names the same bucket as the bot
+   binding. Staged references fail closed if the binding, object, size, or
+   digest does not match.
+3. Configure harness Worker secrets:
 
 ```bash
 cd edge/workers/sandbox
@@ -244,13 +263,16 @@ must share `INTERNAL_SECRET` with the bot and have delivery/model secrets needed
 by its configured adapters.
 
 The research Worker is not a Slack Request URL. Its `/slack/*` routes return
-`410 slack_demoted` intentionally.
+`410 slack_demoted` intentionally. A confirmed final research delivery includes
+Retry, Dig deeper, and Export buttons. Those clicks return to
+`opentag-bot`'s `/slack/interactions`, acquire exact durable pre-admission using
+the click identity, and then enter the ordinary synthetic-turn sink.
 
 ## Health checks
 
 | Surface | Request | Expected |
 | --- | --- | --- |
-| Bot | `GET /health` | `ok`, product, StateStore, bot engine |
+| Bot | `GET /health` | `ok`, product, StateStore, bot engine, trusted-rich-trigger readiness |
 | Agent | Agent Worker health route | Worker/Container reachable |
 | Harness Worker | `GET /health` | `{ok:true, worker:"opentag-harness"}` |
 | Harness container | Internal `GET /health` | Claude Code version |
@@ -281,11 +303,69 @@ Useful metric names include:
 | `obligation_silent_clear` | Terminal/interrupt state required no new post |
 | `obligation_stale_execution` | Session `executing` marker outlived its exact active-turn row; crash recovery proceeds |
 | `stop_command_received` | Stop parser accepted the Slack message |
-| `harness_fallback` | Non-coding harness failure fell back to AG-UI |
+| `streamed` | Slack confirmed the first non-final streamed update |
+| `answer_visible` | Slack confirmed the final answer render |
+| `failed_size_limit` | Slack definitively rejected the final answer for size and confirmed the bounded visible error |
+| `late_file_repair_timeout` | A correlated delayed upload did not reach exact thread idle within the repair window |
+| `session_history_compacted` | Alarm recovery compacted events through a caller-proven replay cursor |
+| `session_history_compaction_error` | Best-effort compaction failed after the visible obligation was safely served |
+| `trusted_rich_mention_admitted` | Exact allowlisted rich-payload mention entered durable admission |
+| `trusted_rich_mention_ignored` | Rich-trigger candidate failed closed with a bounded reason |
+| `runtime_default_selected` | Runtime selection source labels for the accepted turn |
+| `permission_snapshot_generated` | Redacted snapshot generation by actor kind and surface |
 
 Filter by `threadKey` and `executionId` to reconstruct a turn. The same exact
 execution ID should appear across pre-admission, SessionEventDO, harness, Stop,
 and final render logs.
+
+## Inspect effective permissions
+
+- Agent turn: call the reserved `show_permissions` tool.
+- Operator: `GET /admin/permissions?teamId=<team>&channelId=<channel>` with the
+  existing admin bearer. Responses are `Cache-Control: no-store`.
+- Claude harness: run `opentag permissions` during the active execution.
+
+These surfaces are informational. They never grant a tool, secret, network
+destination, git operation, or write. Automation snapshots deliberately omit
+MCP endpoint and secret-reference names.
+
+## Configure channel runtime defaults
+
+Use `/config runtime show`, `/config runtime set --harness claude-code
+[--model <id-or-alias>]`, and `/config runtime clear`. The authenticated
+`POST /admin/config` surface accepts the same `runtimeDefaults` object and
+validation. Effective precedence is explicit message flag, sticky thread
+choice, channel default, then deployment default. Existing sticky threads keep
+masking a changed channel default until overwritten or expired.
+
+If a channel selects Claude Code while the harness is disconnected, the turn
+fails visibly and never falls back to AG-UI. Reasoning defaults and unsupported
+harnesses are rejected.
+
+## Enable trusted rich-payload mentions
+
+The feature is disabled unless both variables are valid:
+
+```text
+SLACK_BOT_USER_ID=U0123456789
+SLACK_TRUSTED_TRIGGER_ACTORS=bot:B0123456789,app:A0123456789
+```
+
+Matching is exact against verified raw Slack IDs. A trusted actor must also
+contain an exact `<@SLACK_BOT_USER_ID>` mention inside `blocks` or
+`attachments`; top-level text alone does not use this fallback. Own-bot posts,
+untrusted actors, malformed payloads, DMs without a rich mention, edits, and
+other subtypes fail closed. No new Slack scope or reinstall is required by this
+source change.
+
+Invalid allowlist tokens are ignored and reported only as a bounded count in
+the startup warning and `GET /health`. An allowlist with no valid entries, or
+valid entries without a valid bot user ID, makes readiness fail with
+`invalid_config` or `missing_target_id`; raw payload text and invalid tokens are
+never logged.
+
+Rollback is immediate: unset `SLACK_TRUSTED_TRIGGER_ACTORS`. Clear channel
+defaults with `/config runtime clear`.
 
 For a concurrent rejection, confirm the request is genuinely distinct. Stable
 redeliveries intentionally stay silent; a distinct ask should produce no more
@@ -307,8 +387,22 @@ than one busy note per thread per minute.
 
 Do not delete the obligation as a first response. It is the recovery mechanism.
 
+Every request-time Slack client reserves its dispatch slot in the
+`SLACK_RATE_LIMIT` Durable Object named for the channel. Production requests
+are therefore spaced at one call per second across Worker isolates, and a Slack
+`Retry-After` response replays the identical form body through the same durable
+discipline. Render-obligation alarm recovery is a separate sequential Durable
+Object owner and persists its own deferred/retry timing.
+
+Quick clicks and delayed-file repairs are stored in `DEFERRED_INGRESS` and have
+an alarm armed before Slack receives HTTP 200. The alarm calls the authenticated
+`BOT_SELF` route, retries with bounded backoff, and retains an exhausted record
+plus `deferred_ingress_exhausted` metric rather than silently discarding work.
+
 If a live AG-UI render was visible but replay has no output, look for
-`session output mirror failed`. Mirroring is best-effort; the obligation must
+`session_event_mirror_failed`. Session output and tool events are canonical
+before delivery; an append or replay failure suppresses runtime/final delivery
+and leaves the exact active turn plus obligation retryable. The obligation must
 still produce an explicit retry/error surface rather than remain silent.
 
 ### Stop says nothing or appears stuck
@@ -353,6 +447,16 @@ The bot is fetching a same-zone Worker publicly. Configure `AGENT_RUNTIME` (or
 - Confirm `codingTask` includes a repository.
 - Confirm IDs match the `ot1e_` / `ot1m_` wire formats.
 
+### Harness rejects a staged attachment
+
+- Confirm bot and harness `BLOBS` bindings point to the same R2 bucket.
+- Check for `staged_attachment_store_unavailable`, `not_found`,
+  `size_mismatch`, or `digest_mismatch`; each is a deliberate fail-closed
+  boundary and the turn is not silently run without the attachment.
+- The authenticated harness frontend resolves at most 32 MiB decoded across
+  at most five attachments. The container keeps rejecting any staged ref that
+  crosses its boundary unresolved.
+
 ### Harness cannot push or create a PR
 
 - Confirm the Slack remote-git approval completed durably for the exact turn.
@@ -377,9 +481,9 @@ must declare their compile-time packages in `edge/package.json`.
 ## Rollback and safety
 
 - Bot, agent, harness, and research deploy independently.
-- Disconnecting the `HARNESS` binding returns the bot to AG-UI-only operation;
-  sticky harness preferences remain recorded but cannot activate the coding
-  runtime.
+- Disconnecting the `HARNESS` binding makes coding or explicitly harness-routed
+  turns fail visibly. The bot must not silently reinterpret that intent as an
+  AG-UI turn; restore the binding or deliberately select an AG-UI mode.
 - Do not delete DO migrations from a deployed config.
 - Do not force-push a recovery commit over concurrent Bugbot or automation
   changes.
@@ -394,7 +498,8 @@ must declare their compile-time packages in `edge/package.json`.
 - [ ] Mention receives a streaming answer and status clears.
 - [ ] Thread follow-up works without a new mention.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
-- [ ] `--model`/`--claude` flags are stripped and saved correctly.
+- [ ] Supported `--model`/`--claude` flags are stripped and saved only when the
+  Claude harness is connected; `-rsn`/unsupported providers fail visibly.
 - [ ] `stop` during AG-UI suppresses later output.
 - [ ] Create/Cancel HITL works across isolates.
 - [ ] Linear create defaults to requester profile email.

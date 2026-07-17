@@ -26,7 +26,10 @@ export function stringsToMarkdownChunks(
 }
 
 /** Split text into <= maxChars segments, preferring newline boundaries. */
-function splitIntoSegments(text: string, maxChars: number): string[] {
+export function splitIntoSegments(text: string, maxChars: number): string[] {
+  if (!Number.isInteger(maxChars) || maxChars <= 0) {
+    throw new RangeError("maxChars must be a positive integer");
+  }
   const segments: string[] = [];
   let rest = text;
   while (rest.length > 0) {
@@ -34,18 +37,22 @@ function splitIntoSegments(text: string, maxChars: number): string[] {
       segments.push(rest);
       break;
     }
-    let cut = rest.lastIndexOf("\n", maxChars);
-    if (cut <= 0) cut = maxChars;
+    // Include the preferred boundary newline in the preceding segment. This
+    // keeps segmentation byte-for-byte lossless while guaranteeing that even
+    // a newline at index zero makes progress.
+    const newline = rest.lastIndexOf("\n", maxChars - 1);
+    const cut = newline >= 0 ? newline + 1 : maxChars;
     segments.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n/, "");
+    rest = rest.slice(cut);
   }
   return segments;
 }
 
 /**
- * Build Block Kit `section`/`mrkdwn` blocks for the given text, enforcing the
- * per-block char limit and the max-blocks-per-message limit. Overflow is
- * truncated with a trailing "…" rather than allowed to spill past the cap.
+ * Build one Slack-safe page of Block Kit `section`/`mrkdwn` blocks. Callers
+ * rendering complete output must use {@link buildSlackMessagePages}; this
+ * compatibility helper intentionally returns only page one so an individual
+ * request can never violate Slack's 50-block ceiling.
  */
 export function buildMrkdwnBlocks(text: string): Array<{
   type: "section";
@@ -53,19 +60,46 @@ export function buildMrkdwnBlocks(text: string): Array<{
 }> {
   const content = text.length > 0 ? text : "(empty)";
   const segments = splitIntoSegments(content, MAX_BLOCK_CHARS);
-  const overflow = segments.length > MAX_BLOCKS_PER_MESSAGE;
   const kept = segments.slice(0, MAX_BLOCKS_PER_MESSAGE);
-  const blocks = kept.map((seg) => ({
+  return kept.map((seg) => ({
     type: "section" as const,
     text: { type: "mrkdwn" as const, text: seg },
   }));
-  if (overflow && blocks.length > 0) {
-    const last = blocks[blocks.length - 1]!;
-    const suffix = "…";
-    const room = Math.max(0, MAX_BLOCK_CHARS - suffix.length);
-    last.text.text = last.text.text.slice(0, room) + suffix;
+}
+
+export interface SlackMessagePage {
+  /** Zero-based, stable page number used to derive continuation identities. */
+  index: number;
+  /** Human-readable fallback field, independently bounded to 35k chars. */
+  text: string;
+  blocks: Array<{
+    type: "section";
+    text: { type: "mrkdwn"; text: string };
+  }>;
+}
+
+/**
+ * Losslessly page arbitrary markdown into Slack-valid messages. Each page is
+ * independently bounded to 50 blocks and each block to 3,000 characters.
+ * Page indices are deterministic, allowing callers to derive stable
+ * `client_msg_id`s and resume at the first unconfirmed continuation.
+ */
+export function buildSlackMessagePages(text: string): SlackMessagePage[] {
+  const content = text.length > 0 ? text : "(empty)";
+  const segments = splitIntoSegments(content, MAX_BLOCK_CHARS);
+  const pages: SlackMessagePage[] = [];
+  for (let offset = 0; offset < segments.length; offset += MAX_BLOCKS_PER_MESSAGE) {
+    const pageSegments = segments.slice(offset, offset + MAX_BLOCKS_PER_MESSAGE);
+    pages.push({
+      index: pages.length,
+      text: truncateFallbackText(pageSegments.join("")),
+      blocks: pageSegments.map((segment) => ({
+        type: "section",
+        text: { type: "mrkdwn", text: segment },
+      })),
+    });
   }
-  return blocks;
+  return pages;
 }
 
 /** Truncate the `text` fallback field to Slack's 35k char limit. */

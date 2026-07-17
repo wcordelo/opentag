@@ -17,6 +17,7 @@ import type {
   ActiveTurnRenderClaim,
   ActiveTurnSnapshot,
 } from "./active-turn-types.js";
+import type { SessionHandoffRow } from "./session-handoff-engine.js";
 
 export interface StateStore {
   kv: {
@@ -100,6 +101,17 @@ export interface StateStore {
  * KV bookkeeping.
  */
 export interface LifecycleStateStore extends StateStore {
+  sessionHandoff: {
+    start(args: {
+      threadKey: string;
+      executionId: string;
+      forwardedMessageId: string;
+      inputLines: string[];
+      delayMs?: number;
+    }): Promise<SessionHandoffRow>;
+    get(threadKey: string): Promise<SessionHandoffRow | undefined>;
+    clear(args: { threadKey: string; executionId: string }): Promise<boolean>;
+  };
   obligation: {
     set(args: {
       threadKey: string;
@@ -107,6 +119,7 @@ export interface LifecycleStateStore extends StateStore {
       afterEventId: number;
       channel: string;
       threadTs?: string;
+      liveClientMessageId?: string;
       timeoutMs?: number;
     }): Promise<void>;
     clear(args: { threadKey: string; executionId?: string }): Promise<void>;
@@ -131,11 +144,25 @@ export interface LifecycleStateStore extends StateStore {
         afterEventId: number;
         channel: string;
         threadTs?: string;
+        liveClientMessageId?: string;
+        liveMessageTs?: string;
+        liveMessageState: "unreserved" | "reserved" | "posted" | "absent";
         timeoutMs: number;
       };
     }): Promise<{ accepted: boolean; duplicate: boolean }>;
     refresh(record: ActiveTurnRecord): Promise<boolean>;
     get(threadKey: string): Promise<ActiveTurnSnapshot | undefined>;
+    confirmLiveMessage(args: {
+      threadKey: string;
+      executionId: string;
+      clientMessageId: string;
+      ts: string;
+    }): Promise<boolean>;
+    markLiveMessageAbsent(args: {
+      threadKey: string;
+      executionId: string;
+      clientMessageId: string;
+    }): Promise<boolean>;
     latest(channelId: string): Promise<ActiveTurnSnapshot | undefined>;
     claimCancellation(args: {
       threadKey: string;

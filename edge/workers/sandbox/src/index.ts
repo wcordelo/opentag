@@ -24,6 +24,7 @@ export default {
             .filter(Boolean),
         ),
       },
+      env.BLOBS,
     );
   },
 };

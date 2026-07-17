@@ -28,6 +28,17 @@ function memoryStore() {
     token?: string;
   }>();
   const store: LifecycleStateStore = {
+    sessionHandoff: {
+      start: async (args) => ({
+        ...args,
+        status: "pending",
+        dueAt: now,
+        attempt: 0,
+        expiresAt: now + 1,
+      }),
+      get: async () => undefined,
+      clear: async () => true,
+    },
     kv: {
       get: async <T>(key: string) => {
         if ((expiries.get(key) ?? Infinity) <= now) {
@@ -109,7 +120,7 @@ function memoryStore() {
         const entry = records.get(threadKey);
         const state = delivery.get(threadKey);
         return entry && state
-          ? { record: entry, status: state.status, confirmedOutput: false, updatedAt: now }
+          ? { record: entry, status: state.status, liveMessage: { state: "unreserved" }, updatedAt: now }
           : undefined;
       },
       latest: async (channelId) => {
@@ -118,8 +129,10 @@ function memoryStore() {
           .sort((a, b) => b.registeredAt - a.registeredAt)[0];
         if (!entry) return undefined;
         const state = delivery.get(entry.threadKey)!;
-        return { record: entry, status: state.status, confirmedOutput: false, updatedAt: now };
+        return { record: entry, status: state.status, liveMessage: { state: "unreserved" }, updatedAt: now };
       },
+      confirmLiveMessage: async () => true,
+      markLiveMessageAbsent: async () => true,
       claimCancellation: async ({ threadKey, executionId }) => {
         const entry = records.get(threadKey);
         const state = delivery.get(threadKey);

@@ -27,9 +27,11 @@ import {
   firstSlackTs,
   slackObligationThreadKey,
 } from "./slack/obligation-thread-key.js";
+import { extractMessageOverrides } from "./slack/overrides.js";
 import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
 import { runSlackTurnLifecycle } from "./slack/turn-lifecycle.js";
+import { sharedSlackRateScheduler } from "./slack/web-api.js";
 import {
   adoptSlackShortcut,
   finishSilentShortcut,
@@ -38,6 +40,11 @@ import {
   shortcutStillPending,
   type AdoptedShortcut,
 } from "./slack/shortcut-lifecycle.js";
+import {
+  parseTrustedTriggerConfig,
+  trustedTriggerReadiness,
+} from "./slack/trusted-trigger.js";
+import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 
 export type BotEngineKind = "createBot";
 
@@ -47,6 +54,41 @@ type BotHandle = {
   bot: Bot;
   adapter: CloudflareSlackAdapter;
 };
+
+function findExecutionId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const hit = findExecutionId(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.description === "OpenTag execution control" &&
+    typeof record.value === "string"
+  ) {
+    try {
+      const parsed = JSON.parse(record.value) as { executionId?: unknown };
+      if (typeof parsed.executionId === "string") return parsed.executionId;
+    } catch { /* malformed context is ignored */ }
+  }
+  for (const child of Object.values(record)) {
+    const hit = findExecutionId(child);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+export function agentExecutionIdFromRequest(init: RequestInit): string | undefined {
+  if (typeof init.body !== "string") return undefined;
+  try {
+    return findExecutionId(JSON.parse(init.body));
+  } catch {
+    return undefined;
+  }
+}
 
 let singleton: BotHandle | null = null;
 
@@ -69,12 +111,46 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   if (!env.AGENT_URL) {
     throw new Error("AGENT_URL is required for AG-UI agent replies");
   }
+  if (env.ENVIRONMENT === "production" && !env.SESSION_EVENTS) {
+    throw new Error("SESSION_EVENTS is required for production terminal ownership");
+  }
 
   const stateStore = createBotStoreAdapter(env.BOT_STATE);
+  const slackScheduler = sharedSlackRateScheduler(
+    env.ENVIRONMENT,
+    env.SLACK_RATE_LIMIT,
+  );
+  const trustedTriggerConfig = parseTrustedTriggerConfig(
+    env.SLACK_BOT_USER_ID,
+    env.SLACK_TRUSTED_TRIGGER_ACTORS,
+  );
+  const trustedReadiness = trustedTriggerReadiness(trustedTriggerConfig);
+  if (!trustedReadiness.ok || trustedReadiness.invalidActorCount > 0) {
+    console.warn("[trusted-rich-trigger] configuration", {
+      reason: trustedReadiness.reason,
+      actorCount: trustedReadiness.actorCount,
+      invalidActorCount: trustedReadiness.invalidActorCount,
+      hasBotUserId: trustedTriggerConfig.botUserIdStatus === "valid",
+    });
+  }
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
     stateStore,
+    slackScheduler,
+    deliveryMetrics: env.DELIVERY_METRICS,
+    trustedTriggerConfig,
     ...(env.SESSION_EVENTS ? { sessionEvents: env.SESSION_EVENTS } : {}),
+    ...(env.BLOBS ? { blobs: env.BLOBS } : {}),
+    ...(env.SESSION_VIEWER_BASE_URL && env.ADMIN_SECRET
+      ? {
+          sessionViewer: {
+            baseUrl: env.SESSION_VIEWER_BASE_URL,
+            secret: env.ADMIN_SECRET,
+            runtimeLabel: `AG-UI · ${env.AGENT_MODEL ?? "runtime default"}`,
+          },
+        }
+      : {}),
+    ...(env.QUICK_BASE_DOMAIN ? { quickBaseDomain: env.QUICK_BASE_DOMAIN } : {}),
   });
   bindCommandEnv(env, adapter);
 
@@ -85,7 +161,12 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   // Prefer service binding so Worker→Worker does not hit CF 1042 (same-zone
   // workers.dev fetch is blocked). AGENT_URL still supplies the request URL/path.
   const agentFetch = env.AGENT_RUNTIME
-    ? (url: string, init: RequestInit) => env.AGENT_RUNTIME!.fetch(url, init)
+    ? (url: string, init: RequestInit) => {
+        const executionId = agentExecutionIdFromRequest(init);
+        const headers = new Headers(init.headers);
+        if (executionId) headers.set("x-opentag-execution-id", executionId);
+        return env.AGENT_RUNTIME!.fetch(url, { ...init, headers });
+      }
     : undefined;
 
   const bot = createBot({
@@ -111,7 +192,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       {
         description: "product",
         value:
-          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, issue_card, issue_list, page_list, show_status, show_links, show_incident, memory_search, memory_write, start_task, research_progress, react_message. When asked to react, call react_message — never post emoji as text. Chart/diagram image tools are NOT available on the Workers bot.",
+          "You are OpenTag, an open-source Claude Tag alternative on Cloudflare. Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, issue_card, issue_list, page_list, show_status, show_links, show_incident, show_permissions, memory_search, memory_write, start_task, research_progress, react_message. Use show_permissions to explain effective access; its output is informational, not authorization. When asked to react, call react_message — never post emoji as text. Chart/diagram image tools are NOT available on the Workers bot.",
       },
     ],
     commands: edgeCommands,
@@ -147,15 +228,29 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         allowed.delete("start_task");
         allowed.delete("research_progress");
       }
+      const humanActor = requestContext.actor.kind === "slack_user";
+      if (!humanActor) {
+        for (const toolName of [...allowed]) {
+          if (!AUTOMATION_SAFE_TOOLS.has(toolName)) allowed.delete(toolName);
+        }
+      }
 
       const text = message.text ?? "";
       const isResearch =
         /^\s*research\b/i.test(text) || /\bresearch:\s*/i.test(text);
 
-      if (isResearch) {
+      if (humanActor && isResearch) {
         if (!allowed.has("start_task")) {
           await postFinalShortcut(thread,
             "⛔ Research / `start_task` is not allowed by this channel's access bundle or policies.",
+          );
+          return;
+        }
+        const requestedOverrides = extractMessageOverrides(text);
+        if (requestedOverrides.errors.length > 0) {
+          await postFinalShortcut(
+            thread,
+            `⚠️ ${requestedOverrides.errors.join("; ")}. No preference was saved.`,
           );
           return;
         }
@@ -164,6 +259,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           stateStore,
           conversationKey,
           text,
+          config.runtimeDefaults,
         );
         if (!(await shortcutStillPending(adopted))) return;
         const objective = cleanedText
@@ -212,7 +308,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       }
 
       const remember = text.match(/^\s*remember[:\s]+(.+)/i);
-      if (remember) {
+      if (humanActor && remember) {
         if (!allowed.has("memory_write")) {
           await postFinalShortcut(thread,
             "⛔ `memory_write` is not allowed by this channel's access bundle or policies.",
@@ -237,7 +333,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       // Skip the full AG-UI/MCP/LLM round-trip for pure acknowledgments —
       // react on the user message instead of posting a chat reply.
       const trivial = trivialAck(text);
-      if (trivial) {
+      if (humanActor && trivial) {
         if (trivial.mode === "react") {
           const reacted = await adapter.react(
             thread.conversationKey ?? "",
@@ -259,7 +355,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
 
       // Explicit "react to my message" / "don't react" — no LLM tool flakiness.
       const intent = reactIntent(text);
-      if (intent) {
+      if (humanActor && intent) {
         if (intent.action === "skip") {
           // Silent — user asked for no reaction; avoid chat spam too.
           await finishSilentShortcut(adopted);

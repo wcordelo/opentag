@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  preAdmitSlackTurnResult,
   preAdmissionIdentityForCommand,
   preAdmissionIdentityForEvent,
 } from "../src/slack/pre-admit-turn.js";
@@ -8,6 +9,55 @@ import { slackTurnIdentitySync } from "../src/request-context.js";
 import { makeWireTurnIdentity, makeWireTurnIdentitySync } from "../src/harness/wire-id.js";
 
 describe("Slack turn pre-admission identity", () => {
+  it("preserves accepted, exact-duplicate, and distinct-concurrent registration outcomes", async () => {
+    const identity = preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-registration",
+      event: {
+        type: "app_mention",
+        channel: "C1",
+        user: "U1",
+        text: "<@UBOT> do work",
+        ts: "10.2",
+        thread_ts: "10.1",
+      },
+    });
+    const outcomes = [
+      { accepted: true, duplicate: false },
+      { accepted: false, duplicate: true },
+      { accepted: false, duplicate: false },
+    ];
+    const stub = {
+      activeTurnRegisterWithObligation: async () => outcomes.shift()!,
+    };
+    const env = {
+      BOT_STATE: {
+        idFromName: (name: string) => name,
+        get: () => stub,
+      },
+    };
+
+    const accepted = await preAdmitSlackTurnResult(env as never, identity);
+    const duplicate = await preAdmitSlackTurnResult(env as never, identity);
+    const concurrent = await preAdmitSlackTurnResult(env as never, identity);
+
+    expect(accepted).toMatchObject({
+      status: "accepted",
+      turn: { record: { executionId: expect.stringMatching(/^ot1e_/) } },
+    });
+    expect(duplicate).toMatchObject({
+      status: "duplicate",
+      turn: {
+        record: {
+          executionId: accepted.status === "accepted"
+            ? accepted.turn.record.executionId
+            : "",
+        },
+      },
+    });
+    expect(concurrent).toEqual({ status: "concurrent" });
+  });
+
   it("derives byte-identical retry-stable wire ids synchronously before registration", async () => {
     const tuples = [
       ["T1", "C1", "1.0", "1.1", "Ev1"],
@@ -21,6 +71,7 @@ describe("Slack turn pre-admission identity", () => {
     }
     const context = {
       teamId: "T1",
+      actor: { kind: "slack_user" as const, userId: "U1" },
       requesterId: "U1",
       inbound: { channel: "C1", ts: "1.1", threadTs: "1.0", identity: "Ev1" },
     };
@@ -46,12 +97,14 @@ describe("Slack turn pre-admission identity", () => {
       channelId: "C1",
       conversationKey: "C1::10.1",
       threadTs: "10.1",
+      actor: { kind: "slack_user", userId: "U1" },
       requesterId: "U1",
       inboundTs: "10.2",
       eventId: "Ev-mention",
     });
     await expect(slackTurnIdentity({
       teamId: identity!.teamId,
+      actor: { kind: "slack_user", userId: identity!.requesterId },
       requesterId: identity!.requesterId,
       inbound: {
         channel: identity!.channelId,

@@ -240,7 +240,10 @@ export function authorizeGithubWrite(
   }
   if (scope.requesterAttribution) {
     const prBody = body.body;
-    if (typeof prBody !== "string" || !prBody.split(/\r?\n/).includes(scope.requesterAttribution)) {
+    const attributionLines = typeof prBody === "string"
+      ? prBody.split(/\r?\n/).filter((line) => line.startsWith("Prompted by:"))
+      : [];
+    if (attributionLines.length !== 1 || attributionLines[0] !== scope.requesterAttribution) {
       return false;
     }
   }

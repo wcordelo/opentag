@@ -6,7 +6,7 @@ import type { SqlExecutor } from "./sql.js";
  * the `_meta` table so a Durable Object that was created on an older schema can
  * upgrade in place on its next constructor run.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 9;
 
 /**
  * One table per {@link import("./sql.js")} StateStore namespace. Everything the
@@ -79,6 +79,9 @@ const DDL = [
      after_event_id INTEGER NOT NULL,
      channel        TEXT NOT NULL,
      thread_ts      TEXT,
+     live_client_msg_id TEXT,
+     live_message_ts TEXT,
+     live_message_state TEXT NOT NULL DEFAULT 'unreserved',
      deadline       INTEGER NOT NULL,
      attempt        INTEGER NOT NULL DEFAULT 0
    )`,
@@ -94,6 +97,9 @@ const DDL = [
      execution_id     TEXT NOT NULL,
      thread_ts        TEXT,
      choice_id        TEXT,
+     live_client_msg_id TEXT,
+     live_message_ts  TEXT,
+     live_message_state TEXT NOT NULL DEFAULT 'unreserved',
      registered_at    INTEGER NOT NULL,
      delivery_status  TEXT NOT NULL,
      render_token     TEXT,
@@ -121,6 +127,25 @@ const DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS active_turn_choices_execution
      ON active_turn_choices (thread_key, execution_id)`,
+
+  // Bounded, exact-execution pre-model handoff retry. The alarm claims one row
+  // before calling SessionEventDO.execute; completion or re-arm is a CAS on
+  // claim_token so a stale attempt cannot overwrite a newer lifecycle action.
+  `CREATE TABLE IF NOT EXISTS session_handoffs (
+     thread_key          TEXT PRIMARY KEY,
+     execution_id       TEXT NOT NULL,
+     forwarded_message_id TEXT NOT NULL,
+     input_lines         TEXT NOT NULL,
+     status              TEXT NOT NULL,
+     due_at              INTEGER NOT NULL,
+     attempt             INTEGER NOT NULL DEFAULT 0,
+     claim_token         TEXT,
+     claimed_at          INTEGER,
+     result              TEXT,
+     expires_at          INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS session_handoffs_due
+     ON session_handoffs (status, due_at)`,
 ];
 
 /**
@@ -165,6 +190,37 @@ export function migrate(sql: SqlExecutor): void {
       .toArray();
     if (!columns.some((column) => column.name === "effect_resource")) {
       sql.exec(`ALTER TABLE active_turns ADD COLUMN effect_resource TEXT`);
+    }
+  }
+
+  if (current > 0 && current < 8) {
+    const activeColumns = sql
+      .exec<{ name: string }>(`PRAGMA table_info(active_turns)`)
+      .toArray();
+    if (!activeColumns.some((column) => column.name === "live_client_msg_id")) {
+      sql.exec(`ALTER TABLE active_turns ADD COLUMN live_client_msg_id TEXT`);
+    }
+    if (!activeColumns.some((column) => column.name === "live_message_ts")) {
+      sql.exec(`ALTER TABLE active_turns ADD COLUMN live_message_ts TEXT`);
+    }
+    if (!activeColumns.some((column) => column.name === "live_message_state")) {
+      sql.exec(
+        `ALTER TABLE active_turns ADD COLUMN live_message_state TEXT NOT NULL DEFAULT 'unreserved'`,
+      );
+    }
+    const obligationColumns = sql
+      .exec<{ name: string }>(`PRAGMA table_info(render_obligations)`)
+      .toArray();
+    if (!obligationColumns.some((column) => column.name === "live_client_msg_id")) {
+      sql.exec(`ALTER TABLE render_obligations ADD COLUMN live_client_msg_id TEXT`);
+    }
+    if (!obligationColumns.some((column) => column.name === "live_message_ts")) {
+      sql.exec(`ALTER TABLE render_obligations ADD COLUMN live_message_ts TEXT`);
+    }
+    if (!obligationColumns.some((column) => column.name === "live_message_state")) {
+      sql.exec(
+        `ALTER TABLE render_obligations ADD COLUMN live_message_state TEXT NOT NULL DEFAULT 'unreserved'`,
+      );
     }
   }
 

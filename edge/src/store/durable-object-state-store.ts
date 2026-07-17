@@ -139,6 +139,12 @@ export class DurableObjectStateStore implements LifecycleStateStore {
     depth: async (key: string): Promise<number> => this.stub(key).queueDepth(key),
   };
 
+  readonly sessionHandoff: LifecycleStateStore["sessionHandoff"] = {
+    start: async (args) => this.lifecycleStub().sessionHandoffStart(args),
+    get: async (threadKey) => this.lifecycleStub().sessionHandoffGet({ threadKey }),
+    clear: async (args) => this.lifecycleStub().sessionHandoffClear(args),
+  };
+
   /**
    * Render-obligation client (SPEC.md §3.1 / §4.2), not part of the base
    * `StateStore` contract. Routes through the same {@link Partitioner} as
@@ -153,6 +159,7 @@ export class DurableObjectStateStore implements LifecycleStateStore {
       afterEventId: number;
       channel: string;
       threadTs?: string;
+      liveClientMessageId?: string;
       timeoutMs?: number;
     }): Promise<void> => {
       await this.lifecycleStub().obligationSet(args);
@@ -177,6 +184,9 @@ export class DurableObjectStateStore implements LifecycleStateStore {
         afterEventId: number;
         channel: string;
         threadTs?: string;
+        liveClientMessageId?: string;
+        liveMessageTs?: string;
+        liveMessageState: "unreserved" | "reserved" | "posted" | "absent";
         timeoutMs: number;
       };
     }) => this.lifecycleStub().activeTurnRegisterWithObligation(args),
@@ -184,6 +194,12 @@ export class DurableObjectStateStore implements LifecycleStateStore {
       this.lifecycleStub().activeTurnRefresh(record),
     get: async (threadKey: string) =>
       this.lifecycleStub().activeTurnGet({ threadKey }),
+    confirmLiveMessage: async (args: {
+      threadKey: string; executionId: string; clientMessageId: string; ts: string;
+    }) => this.lifecycleStub().activeTurnConfirmLiveMessage(args),
+    markLiveMessageAbsent: async (args: {
+      threadKey: string; executionId: string; clientMessageId: string;
+    }) => this.lifecycleStub().activeTurnMarkLiveMessageAbsent(args),
     latest: async (channelId: string) =>
       this.lifecycleStub().activeTurnLatest({ channelId }),
     registerChoice: async (args: {

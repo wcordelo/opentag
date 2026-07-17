@@ -48,6 +48,8 @@ const {
   buildQuickActionPrompt,
   isQuickInteraction,
   handleQuickAction,
+  prepareQuickAction,
+  handoffPreparedQuickAction,
 } = await import("../src/slack/quick-actions.js");
 
 type Block = {
@@ -163,6 +165,8 @@ describe("parsing", () => {
   it("parseQuickActionKind accepts known kinds only, with prefix", () => {
     expect(parseQuickActionKind("quick_retry")).toBe("retry");
     expect(parseQuickActionKind("quick_regenerate")).toBe("regenerate");
+    expect(parseQuickActionKind("quick_dig_deeper")).toBe("dig_deeper");
+    expect(parseQuickActionKind("quick_export")).toBe("export");
     expect(parseQuickActionKind("quick_nope")).toBeNull();
     expect(parseQuickActionKind("ck:abc")).toBeNull();
   });
@@ -249,6 +253,48 @@ describe("handleQuickAction", () => {
     } finally {
       globalThis.fetch = orig;
     }
+  });
+
+  it("re-enters exact durable ingress from a research Dig deeper card", async () => {
+    const researchClick = payload({
+      actions: [{
+        action_id: "quick_dig_deeper",
+        value: JSON.stringify({ type: "research", taskId: "research-42" }),
+        action_ts: "12.2",
+      }],
+    });
+    const prepared = await prepareQuickAction(
+      { SLACK_BOT_TOKEN: undefined } as never,
+      researchClick,
+      "T1",
+    );
+    expect(prepared.prepared?.quickEventId).toBe("quick:C1:10.0:12.2");
+    expect(prepared.prepared?.preAdmittedTurn.record.executionId).toBe("test-quick-execution");
+    await handoffPreparedQuickAction(
+      { SLACK_BOT_TOKEN: undefined } as never,
+      prepared.prepared!,
+    );
+    const turn = onTurn.mock.calls[0]![0] as { userText: string; eventId: string };
+    expect(turn.userText).toContain("research-42");
+    expect(turn.userText).toContain("Dig deeper");
+    expect(turn.eventId).toBe("quick:C1:10.0:12.2");
+  });
+
+  it("separates durable pre-admission from deferred framework handoff", async () => {
+    const prepared = await prepareQuickAction(
+      { SLACK_BOT_TOKEN: undefined } as never,
+      payload(),
+      "T1",
+    );
+    expect(prepared.handled).toBe(true);
+    expect(prepared.prepared?.preAdmittedTurn.record.executionId)
+      .toBe("test-quick-execution");
+    expect(onTurn).not.toHaveBeenCalled();
+    await handoffPreparedQuickAction(
+      { SLACK_BOT_TOKEN: undefined } as never,
+      prepared.prepared!,
+    );
+    expect(onTurn).toHaveBeenCalledOnce();
   });
 
   it("bad JSON value → handled:false, no turn", async () => {

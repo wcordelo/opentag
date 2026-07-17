@@ -204,6 +204,57 @@ describe("CloudflareSlackAdapter", () => {
     expect(sink.turns).toHaveLength(0);
   });
 
+  it("admits an exact trusted rich mention as automation without users.info", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("Slack API lookup must not run for automation");
+    });
+    globalThis.fetch = fetchSpy as typeof fetch;
+    try {
+      const adapter = new CloudflareSlackAdapter({
+        unsafeAllowUnfencedTestOnly: true,
+        botToken: "xoxb-test",
+        botUserId: "UOPENTAG",
+        trustedTriggerConfig: {
+          botUserId: "UOPENTAG",
+          actors: new Set(["bot:BALERT"]),
+          valid: true,
+        },
+      });
+      const sink = makeSink();
+      await adapter.start(sink);
+      const result = await adapter.handleEventsBody({
+        team_id: "T1",
+        event_id: "Ev-alert",
+        event: {
+          type: "message",
+          subtype: "bot_message",
+          channel: "C1",
+          ts: "3.0",
+          bot_id: "BALERT",
+          attachments: [{
+            pretext: "<@UOPENTAG> inspect elevated checkout errors",
+          }],
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const turn = sink.turns[0] as {
+        user: object;
+        userText: string;
+        conversationKey: string;
+      };
+      expect(turn.userText).toBe("inspect elevated checkout errors");
+      expect(turn.conversationKey).toBe("C1::3.0");
+      expect(requireRequestContext(turn.user)).toMatchObject({
+        actor: { kind: "slack_automation", botId: "BALERT" },
+        requesterId: "bot:BALERT",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("handleCommandBody emits onCommand", async () => {
     const restoreFetch = mockSlackApi();
     try {

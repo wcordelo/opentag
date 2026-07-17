@@ -248,11 +248,11 @@ agent actually executed. Recovery filters replayed output by the obligation's
 exact `executionId`, even when a crash left its cursor at zero.
 
 Harness NDJSON is appended directly under the exact execution. AG-UI
-incremental Markdown is also mirrored into SessionEventDO before each Slack
-update on a best-effort basis; a mirror failure is logged but does not suppress
-a successfully fenced live render. Terminal session state remains explicit, so
-recovery can still produce an error/retry surface when no replayable text was
-captured.
+incremental Markdown is appended to SessionEventDO before each Slack update;
+an append failure suppresses delivery and leaves the exact obligation retryable.
+Only successfully appended canonical bytes may cross the Slack boundary.
+Terminal session state remains explicit, so recovery can still produce an
+error/retry surface when no replayable text was captured.
 
 This is the Cloudflare-native version of Centaur's Postgres render obligations
 and startup recovery scan. Durable Object serialization replaces the external
@@ -302,13 +302,14 @@ Inline flags are stripped before the model sees the prompt:
 
 - `--claude` selects the Claude Code harness type.
 - `--model <id>` and model aliases select a sticky thread model.
-- `-rsn <effort>` is per-turn reasoning only.
+- `-rsn <effort>` is reserved syntax and currently fails visibly; no deployed
+  OpenTag runtime accepts or persists reasoning effort.
 
 Sticky model and harness preferences live in DO-backed thread state. If the
-Claude Code harness is selected but not configured, ordinary non-coding turns
-may fall back to AG-UI with an explicit metric. Repository coding turns treat
-the harness as authoritative: they fail visibly instead of falling back to a
-runtime that cannot satisfy git postconditions.
+Claude Code harness is selected but not configured, every selected turn fails
+visibly, including ordinary non-coding turns. Explicit or sticky Claude
+selection is authoritative and never falls back to AG-UI; repository coding
+turns additionally require `HARNESS_REPO_URL`.
 
 The AG-UI path injects the current Slack transcript on every run because agent
 message lists are isolate-local. The harness path re-feeds up to 24,000 recent

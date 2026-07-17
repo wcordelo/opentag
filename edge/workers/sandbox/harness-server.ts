@@ -45,6 +45,7 @@ import {
   type RepoPolicy,
   type RepoSpec,
   type TurnRequestBody,
+  type TurnAttachment,
   type TurnValidation,
 } from "./turn-contract.js";
 
@@ -65,7 +66,9 @@ const PORT = Number(process.env.PORT || 8080);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const WORK_ROOT = process.env.WORK_ROOT || "/work";
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 10 * 60_000);
-const MAX_BODY_BYTES = Number(process.env.HARNESS_MAX_BODY_BYTES || 1024 * 1024);
+// The authenticated Worker may resolve the 32 MiB staged tier to base64 before
+// forwarding. 48 MiB bounds that expansion plus the rest of the turn JSON.
+const MAX_BODY_BYTES = Number(process.env.HARNESS_MAX_BODY_BYTES || 48 * 1024 * 1024);
 const GIT_TIMEOUT_MS = Number(process.env.HARNESS_GIT_TIMEOUT_MS || 2 * 60_000);
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const MAX_SYSTEM_PROMPT_BYTES = 1024 * 1024;
@@ -124,6 +127,7 @@ export function assemblePrompt(input: {
   transcript?: string;
   inputLines: string[];
   gitPolicy?: string;
+  attachmentPaths?: string[];
 }): string {
   const sections: string[] = [];
   const context = input.requesterContext?.trim();
@@ -132,9 +136,49 @@ export function assemblePrompt(input: {
   if (transcript) sections.push(transcript);
   const gitPolicy = input.gitPolicy?.trim();
   if (gitPolicy) sections.push(gitPolicy);
+  if (input.attachmentPaths?.length) {
+    sections.push(`[Attachments]\n${input.attachmentPaths.map((value) => `- ${value}`).join("\n")}`);
+  }
   const body = (input.inputLines ?? []).join("\n").trim();
   if (body) sections.push(body);
   return sections.join("\n\n");
+}
+
+export async function materializeTurnAttachments(
+  executionHome: string,
+  attachments: TurnAttachment[] | undefined,
+): Promise<string[]> {
+  if (!attachments?.length) return [];
+  const attachmentRoot = path.join(executionHome, "attachments");
+  await fs.promises.mkdir(attachmentRoot, { recursive: true, mode: 0o700 });
+  const paths: string[] = [];
+  for (let index = 0; index < attachments.length; index += 1) {
+    const attachment = attachments[index]!;
+    if (attachment.kind !== "inline") {
+      throw new Error(`staged_attachment_unresolved:${attachment.id}`);
+    }
+    const safeName = attachment.name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160) || "attachment";
+    const target = path.join(attachmentRoot, `${index + 1}-${safeName}`);
+    const bytes = Buffer.from(attachment.dataBase64, "base64");
+    if (bytes.byteLength !== attachment.size) throw new Error(`attachment_size_mismatch:${attachment.id}`);
+    await fs.promises.writeFile(target, bytes, { mode: 0o600 });
+    paths.push(`${target} (${attachment.mimeType})`);
+  }
+  return paths;
+}
+
+export async function materializePermissionSnapshot(
+  executionHome: string,
+  snapshot: TurnRequestBody["permissionSnapshot"],
+): Promise<string | undefined> {
+  if (!snapshot) return undefined;
+  const target = path.join(executionHome, "opentag-permissions.json");
+  await fs.promises.writeFile(target, `${JSON.stringify(snapshot, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  return target;
 }
 
 
@@ -1098,6 +1142,7 @@ export function buildClaudeEnv(
   sessionId?: string,
   executionId?: string,
   executionHome?: string,
+  permissionsFile?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
   // Repository-controlled code receives only obvious sentinels. Real Anthropic,
@@ -1140,6 +1185,8 @@ export function buildClaudeEnv(
     env.GIT_CONFIG_VALUE_0 = `${EXECUTION_BINDING_HEADER}: ${executionId}`;
   }
   if (model) env.CLAUDE_MODEL = model;
+  if (permissionsFile) env.OPENTAG_PERMISSIONS_FILE = permissionsFile;
+  else delete env.OPENTAG_PERMISSIONS_FILE;
   return env;
 }
 
@@ -1391,12 +1438,6 @@ export async function runTurnStreaming(
     }
   }
 
-  const prompt = assemblePrompt({
-    requesterContext: body.requesterContext,
-    transcript: body.transcript,
-    gitPolicy: gitPolicyPrompt(body),
-    inputLines: body.inputLines,
-  });
   let systemPromptText: string;
   try {
     systemPromptText = await loadAuthoritativeSystemPrompt(
@@ -1419,7 +1460,6 @@ export async function runTurnStreaming(
     return;
   }
   throwIfAborted(signal);
-  const args = buildClaudeArgs({ prompt, model: body.model, systemPromptText });
 
   let executionHome: string;
   try {
@@ -1436,6 +1476,29 @@ export async function runTurnStreaming(
     return;
   }
 
+  let attachmentPaths: string[];
+  let permissionsFile: string | undefined;
+  try {
+    attachmentPaths = await materializeTurnAttachments(executionHome, body.attachments);
+    permissionsFile = await materializePermissionSnapshot(
+      executionHome,
+      body.permissionSnapshot,
+    );
+  } catch (err) {
+    try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* next setup reports */ }
+    emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
+    emit({ kind: "done", payload: { ok: false, summary: "attachment setup failed" } });
+    return;
+  }
+  const prompt = assemblePrompt({
+    requesterContext: body.requesterContext,
+    transcript: body.transcript,
+    gitPolicy: gitPolicyPrompt(body),
+    inputLines: body.inputLines,
+    attachmentPaths,
+  });
+  const args = buildClaudeArgs({ prompt, model: body.model, systemPromptText });
+
   const env = buildClaudeEnv(
     process.env,
     body.model,
@@ -1444,6 +1507,7 @@ export async function runTurnStreaming(
     body.sessionId,
     body.executionId,
     executionHome,
+    permissionsFile,
   );
   let claudeResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 

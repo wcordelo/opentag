@@ -45,3 +45,32 @@ Slack Request URLs must point at **`opentag-bot`**, not the research orchestrato
 - Bot token needs **`users:read.email`** (reinstall + refresh secret after scope changes).
 - Slack Web API: use **form-urlencoded** (`edge/src/slack/web-api.ts`) — JSON `users.info` skips email.
 - HITL Create/Cancel needs `choiceId` durable poll (`edge/src/hitl/durable-choice.ts`).
+
+### Cursor Cloud specific instructions
+
+Cloud env config lives in [`.cursor/environment.json`](./.cursor/environment.json). Boot `install` refreshes both lockfiles (`pnpm` at repo root, `npm ci` in `edge/`). Node 22 matches CI.
+
+**Validate after pull (exact CI sequence):**
+
+```bash
+cd edge && npm run typecheck && npm test && npm run test:e2e
+# optional root runtime:
+pnpm test
+```
+
+**Local hello-world (terminals auto-start in Cloud):**
+
+1. Agent brain: `pnpm runtime` → `POST http://127.0.0.1:8200/api/copilotkit/agent/triage/run` should emit `RUN_STARTED` (bad/over-quota OpenAI key → `RUN_ERROR`, not a crash).
+2. Bot Worker: ensure `edge/.dev.vars` exists (`cp edge/.dev.vars.example edge/.dev.vars` is fine for unit/dev), then `npm --prefix edge run dev` → `GET /health`.
+
+**Secrets (Cursor Secrets tab / env):**
+
+| Secret | Needed for |
+| --- | --- |
+| `OPENAI_API_KEY` | Real AG-UI triage turns (required; funded key) |
+| `LINEAR_API_KEY` + `LINEAR_TEAM_KEY` | Linear create/list tools |
+| `SLACK_BOT_TOKEN` + `SLACK_SIGNING_SECRET` | Live Slack Events (tunnel or deployed Worker) |
+| `SLACK_BOT_USER_ID` + `SLACK_TRUSTED_TRIGGER_ACTORS` | Trusted rich-payload mentions (disabled until both set) |
+| `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | Optional harness only — not the triage runtime |
+
+Do not deploy Workers/Containers from Cloud without explicit user approval. `pnpm run check-types` may fail on a pre-existing `lib/research/adapters/storage-postgres.ts` issue; prefer `edge` typecheck/tests for the product surface.

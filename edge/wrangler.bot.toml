@@ -47,7 +47,7 @@ new_sqlite_classes = ["SessionEventDO"]
 
 [[migrations]]
 tag = "v3-durable-ingress-rate-limit"
-new_classes = ["DeferredIngressDO", "SlackRateLimitDO"]
+new_sqlite_classes = ["DeferredIngressDO", "SlackRateLimitDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"

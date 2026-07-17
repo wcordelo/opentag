@@ -1,0 +1,16 @@
+{
+  "name": "opentag",
+  "install": "pnpm install && npm ci --prefix edge",
+  "terminals": [
+    {
+      "name": "agent-runtime",
+      "command": "pnpm runtime",
+      "description": "Dev-only AG-UI triage brain on :8200 (requires OPENAI_API_KEY)."
+    },
+    {
+      "name": "edge-bot",
+      "command": "test -f edge/.dev.vars || cp edge/.dev.vars.example edge/.dev.vars; npm --prefix edge run dev",
+      "description": "Local Cloudflare bot Worker (wrangler) on :8787."
+    }
+  ]
+}

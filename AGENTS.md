@@ -60,8 +60,17 @@ pnpm test
 
 **Local hello-world (terminals auto-start in Cloud):**
 
-1. Agent brain: `pnpm runtime` → `POST http://127.0.0.1:8200/api/copilotkit/agent/triage/run` should emit `RUN_STARTED` (bad/over-quota OpenAI key → `RUN_ERROR`, not a crash).
-2. Bot Worker: ensure `edge/.dev.vars` exists (`cp edge/.dev.vars.example edge/.dev.vars` is fine for unit/dev), then `npm --prefix edge run dev` → `GET /health`.
+1. Agent brain: `pnpm runtime`, then POST with `tools`/`context` arrays required:
+
+```bash
+curl -sN -X POST http://127.0.0.1:8200/api/copilotkit/agent/triage/run \
+  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
+  -d '{"threadId":"t1","runId":"r1","messages":[{"id":"m1","role":"user","content":"ping"}],"tools":[],"context":[]}'
+```
+
+Expect `RUN_STARTED` (funded `OPENAI_API_KEY` streams a reply; bad/over-quota → `RUN_ERROR`, not a crash).
+
+2. Bot Worker: ensure `edge/.dev.vars` exists (`cp edge/.dev.vars.example edge/.dev.vars` is fine for unit/dev), then `npm --prefix edge run dev` → `GET /health` (checks include `deferredIngress` / `slackRateLimit` after the Centaur/OpenTag 2 merges).
 
 **Secrets (Cursor Secrets tab / env):**
 

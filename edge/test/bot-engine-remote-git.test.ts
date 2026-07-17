@@ -166,6 +166,7 @@ vi.mock("../src/config/workspace-config-do.js", () => ({
 vi.mock("../src/request-context.js", () => ({
   copyRequestContext: () => ({
     teamId: "T1",
+    actor: { kind: "slack_user", userId: "U123" },
     requesterId: "U123",
     inbound: { channel: "C1", ts: "111.333", threadTs: "111.222" },
     preAdmittedTurn: {
@@ -181,6 +182,7 @@ vi.mock("../src/request-context.js", () => ({
   }),
   requireRequestContext: () => ({
     teamId: "T1",
+    actor: { kind: "slack_user", userId: "U123" },
     requesterId: "U123",
     inbound: { channel: "C1", ts: "111.333", threadTs: "111.222" },
     preAdmittedTurn: {

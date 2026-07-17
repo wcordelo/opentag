@@ -5,6 +5,8 @@ import {
   matchLateFileEvent,
   needsFileInfoHydration,
   pendingLateFileKey,
+  pendingLateFileScopeKey,
+  selectPendingLateFileMention,
   waitForLateFileThreadIdle,
 } from "../src/slack/late-file-repair.js";
 
@@ -20,8 +22,41 @@ describe("late file repair primitives", () => {
       threadTs: "99.000", files: [{ id: "F1" }],
     };
     expect(matchLateFileEvent(pending, event, 110_000)).toBe(true);
-    expect(pendingLateFileKey(pending)).toBe("late-file:T1:C1:U1");
+    expect(pendingLateFileScopeKey(pending)).toBe("late-file-pending:T1:C1:U1");
+    expect(pendingLateFileKey(pending)).toBe("late-file-pending:T1:C1:U1:Ev1");
     expect(lateFileRepairDedupeKey(pending, event)).toBe("late-file-repair:Ev1:110.000:F1");
+  });
+
+  it("matches one exact thread and refuses an ambiguous unthreaded upload", () => {
+    const second = {
+      ...pending,
+      mentionTs: "101.000",
+      threadTs: "101.000",
+      eventId: "Ev2",
+    };
+    expect(selectPendingLateFileMention(
+      [pending, second],
+      {
+        teamId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        fileTs: "102.000",
+        threadTs: "99.000",
+        files: [{ id: "F1" }],
+      },
+      102_000,
+    )).toEqual({ status: "matched", pending });
+    expect(selectPendingLateFileMention(
+      [pending, second],
+      {
+        teamId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        fileTs: "102.000",
+        files: [{ id: "F1" }],
+      },
+      102_000,
+    )).toEqual({ status: "ambiguous" });
   });
 
   it("rejects cross-user and expired uploads and identifies file_info repair", () => {

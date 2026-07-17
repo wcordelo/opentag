@@ -327,11 +327,28 @@ export async function routeHarnessRequest(
     const message = error instanceof Error ? error.message : "staged_attachment_resolution_failed";
     return jsonError(message, message === "staged_attachment_store_unavailable" ? 503 : 422);
   }
+  if (turnBody.permissionSnapshot) {
+    turnBody = {
+      ...turnBody,
+      permissionSnapshot: {
+        ...turnBody.permissionSnapshot,
+        sandbox: {
+          network: "denied_by_default",
+          credentialExposure: "sentinel_only",
+          allowedRepoHosts: [...repoPolicy.allowedHosts].sort(),
+          allowedRepoOrgs: [...repoPolicy.allowedOrgs].sort(),
+          remoteGitApproved: turnBody.remoteGitApproved === true,
+          createPullRequest: turnBody.createPullRequest === true,
+        },
+      },
+    };
+  }
   const resolvedValidation = validateTurnRequest(turnBody, repoPolicy);
   if (!resolvedValidation.ok) return jsonError(resolvedValidation.error, 400);
-  const forwardedBytes = hadStagedAttachments
-    ? new TextEncoder().encode(JSON.stringify(resolvedValidation.body))
-    : bytes;
+  const forwardedBytes =
+    hadStagedAttachments || resolvedValidation.body.permissionSnapshot
+      ? new TextEncoder().encode(JSON.stringify(resolvedValidation.body))
+      : bytes;
 
   const container = containers.getByName(resolvedValidation.body.sessionId);
   await container.setTurnApproval(resolvedValidation.body as unknown as Record<string, unknown>);

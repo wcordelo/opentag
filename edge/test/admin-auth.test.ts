@@ -10,6 +10,7 @@ function baseEnv(over: Partial<Env> = {}): Env {
     KNOWLEDGE: {} as Env["KNOWLEDGE"],
     SESSION_EVENTS: {} as Env["SESSION_EVENTS"],
     DELIVERY_METRICS: {} as Env["DELIVERY_METRICS"],
+    DEFERRED_INGRESS: {} as Env["DEFERRED_INGRESS"],
     AGENT_URL: "",
     ...over,
   };

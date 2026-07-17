@@ -11,6 +11,16 @@ export type SlackDeliveryOutcome =
   | { status: "definitive_failure"; error: string }
   | { status: "ambiguous"; error: string };
 
+export interface ResearchSlackRateScheduler {
+  run<T>(channel: string, operation: () => Promise<T>): Promise<T>;
+}
+
+export interface ResearchSlackDeliveryOptions {
+  scheduler?: ResearchSlackRateScheduler;
+  maxRateLimitRetries?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 const SLACK_BLOCK_TEXT_MAX = 3_000;
 const SLACK_MESSAGE_BLOCKS_MAX = 50;
 const SLACK_FALLBACK_TEXT_MAX = 35_000;
@@ -82,6 +92,7 @@ export async function postToSlackThread(
   obligationId: string,
   botToken?: string,
   delivery?: SlackDeliveryPayload,
+  options: ResearchSlackDeliveryOptions = {},
 ): Promise<SlackDeliveryOutcome> {
   const token = botToken ?? process.env["SLACK_BOT_TOKEN"];
   if (!token) return { status: "definitive_failure", error: "missing_bot_token" };
@@ -120,16 +131,34 @@ export async function postToSlackThread(
     if (threadTs) form.set("thread_ts", threadTs);
     if (page.blocks) form.set("blocks", JSON.stringify(page.blocks));
 
+    const encoded = form.toString();
     let res: Response;
+    const maxRetries = options.maxRateLimitRetries ?? 2;
     try {
-      res = await fetch("https://slack.com/api/chat.postMessage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          Authorization: `Bearer ${token}`,
-        },
-        body: form.toString(),
-      });
+      for (let attempt = 0; ; attempt += 1) {
+        const dispatch = () => fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            Authorization: `Bearer ${token}`,
+          },
+          body: encoded,
+        });
+        res = options.scheduler
+          ? await options.scheduler.run(parsed.channel, dispatch)
+          : await dispatch();
+        if (res.status !== 429) break;
+        if (attempt >= maxRetries) {
+          return {
+            status: "ambiguous",
+            error: pageError(index, pages.length, "ratelimited"),
+          };
+        }
+        await (options.sleep ?? ((ms) =>
+          new Promise((resolve) => setTimeout(resolve, ms))))(
+            retryAfterMs(res),
+          );
+      }
     } catch (err) {
       return {
         status: "ambiguous",
@@ -199,4 +228,15 @@ function splitSlackText(text: string, maxLen: number): string[] {
 
 function pageError(index: number, total: number, error: string): string {
   return `page_${index + 1}_of_${total}:${error}`;
+}
+
+function retryAfterMs(response: Response): number {
+  const raw = response.headers.get("Retry-After");
+  if (!raw) return 1_000;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1_000);
+  }
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 1_000;
 }

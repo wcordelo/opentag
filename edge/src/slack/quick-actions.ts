@@ -216,6 +216,7 @@ export async function prepareQuickAction(
     channelId: channel,
     conversationKey,
     ...(threadTs ? { threadTs } : {}),
+    actor: { kind: "slack_user", userId },
     requesterId: userId,
     inboundTs: messageTs ?? threadTs ?? quickEventId,
     eventId: quickEventId,
@@ -316,8 +317,8 @@ export async function handoffPreparedQuickAction(
     if (!(await isPreAdmittedTurnPending(env, preAdmittedTurn))) {
       return { handled: true };
     }
-    handedOff = true;
     await adapter.getSink().onTurn(turn);
+    handedOff = true;
     console.log(
       JSON.stringify({
         metric: "quick_action_turn",
@@ -350,7 +351,7 @@ async function resolveClickingUser(env: Env, userId: string) {
   if (!env.SLACK_BOT_TOKEN) return { id: userId };
   try {
     return await createSlackWebClient(env.SLACK_BOT_TOKEN, {
-      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT),
+      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
     }).resolveUser(userId);
   } catch {
     return { id: userId };

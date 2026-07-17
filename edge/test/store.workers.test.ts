@@ -18,6 +18,70 @@ runStateStoreConformance("durable-object-sqlite (workerd)", () => {
 
 // A couple of DO-specific integration checks the pure-engine suite can't cover.
 describe("Durable Object integration", () => {
+  it("persists and clears additive channel runtime defaults without changing other config", async () => {
+    const teamId = `runtime-${crypto.randomUUID()}`;
+    const channelId = "C-runtime";
+    const stub = env.WORKSPACE_CONFIG.get(
+      env.WORKSPACE_CONFIG.idFromName(teamId),
+    );
+    const base = {
+      teamId,
+      channelId,
+      systemPrompt: "keep this prompt",
+      policies: { allowMemoryWrite: true, allowTasks: false },
+      accessBundleId: "default",
+      updatedAt: new Date().toISOString(),
+    };
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify(base),
+    })).status).toBe(200);
+    const withoutDefaults = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as typeof base & {
+      runtimeDefaults?: unknown;
+    };
+    expect(withoutDefaults.runtimeDefaults).toBeUndefined();
+
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        ...base,
+        runtimeDefaults: {
+          harnessType: "claudecode",
+          model: "claude-sonnet-5",
+        },
+      }),
+    })).status).toBe(200);
+    const configured = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as typeof base & {
+      runtimeDefaults?: unknown;
+    };
+    expect(configured).toMatchObject({
+      systemPrompt: "keep this prompt",
+      policies: { allowMemoryWrite: true, allowTasks: false },
+      runtimeDefaults: {
+        harnessType: "claudecode",
+        model: "claude-sonnet-5",
+      },
+    });
+
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify({ ...base, runtimeDefaults: undefined }),
+    })).status).toBe(200);
+    const cleared = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as typeof base & {
+      runtimeDefaults?: unknown;
+    };
+    expect(cleared.runtimeDefaults).toBeUndefined();
+  });
+
   it("isolates state across partitioned instances", async () => {
     const a = createDurableObjectStore(env.BOT_STATE, { partition: () => "inst-a" });
     const b = createDurableObjectStore(env.BOT_STATE, { partition: () => "inst-b" });

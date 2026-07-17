@@ -22,6 +22,7 @@ bindings = [
   { name = "ORCHESTRATOR", class_name = "OrchestratorDO" },
   { name = "RESEARCHER", class_name = "ResearcherDO" },
   { name = "VERIFIER", class_name = "VerifierDO" },
+  { name = "SLACK_RATE_LIMIT", class_name = "SlackRateLimitDO", script_name = "opentag-bot" },
 ]
 
 [[migrations]]

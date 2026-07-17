@@ -29,6 +29,7 @@ import {
   loadAuthoritativeSystemPrompt,
   mapStreamJsonLine,
   materializeTurnAttachments,
+  materializePermissionSnapshot,
   prepareExecutionHome,
   resolveExecutionHome,
   resolveSessionWorkdir,
@@ -121,6 +122,123 @@ describe("attachment materialization", () => {
     } finally {
       await fs.promises.rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("permission snapshot transport", () => {
+  const permissionSnapshot = {
+    version: 1 as const,
+    scope: {
+      teamId: "T1",
+      channelId: "C1",
+      actorKind: "slack_user" as const,
+    },
+    channelAccess: {
+      bundleId: "default",
+      metadataVisibility: "full_names" as const,
+      allowedTools: ["show_permissions"],
+      deniedTools: ["memory_write"],
+      policies: { allowMemoryWrite: false, allowTasks: false },
+      mcpEndpoints: [{ origin: "https://example.com", path: "/mcp" }],
+      secretRefs: ["EXAMPLE_SECRET"],
+    },
+    runtime: {
+      harnessSource: "deployment" as const,
+      modelSource: "deployment" as const,
+      harnessConnected: true,
+    },
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("validates and writes a private per-execution permissions file", async () => {
+    expect(validateTurnRequest(
+      { ...validTurn, permissionSnapshot },
+      repoPolicy,
+    )).toMatchObject({ ok: true });
+    const home = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "opentag-permissions-"),
+    );
+    try {
+      const target = await materializePermissionSnapshot(home, permissionSnapshot);
+      expect(target).toBe(path.join(home, "opentag-permissions.json"));
+      expect(JSON.parse(await fs.promises.readFile(target!, "utf8"))).toEqual(
+        permissionSnapshot,
+      );
+      expect((await fs.promises.stat(target!)).mode & 0o777).toBe(0o600);
+      expect(buildClaudeEnv({}, undefined, false, undefined, undefined, undefined, home, target)
+        .OPENTAG_PERMISSIONS_FILE).toBe(target);
+    } finally {
+      await fs.promises.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects oversized and secret-shaped envelopes", () => {
+    expect(validateTurnRequest({
+      ...validTurn,
+      permissionSnapshot: {
+        ...permissionSnapshot,
+        channelAccess: {
+          ...permissionSnapshot.channelAccess,
+          allowedTools: ["x".repeat(70_000)],
+        },
+      },
+    }, repoPolicy)).toMatchObject({ ok: false });
+    expect(validateTurnRequest({
+      ...validTurn,
+      permissionSnapshot: {
+        ...permissionSnapshot,
+        headers: { authorization: "Bearer secret" },
+      },
+    }, repoPolicy)).toEqual({
+      ok: false,
+      error: "permission_snapshot_forbidden_field",
+    });
+    expect(validateTurnRequest({
+      ...validTurn,
+      permissionSnapshot: {
+        ...permissionSnapshot,
+        channelAccess: {
+          ...permissionSnapshot.channelAccess,
+          apiKey: "secret",
+        },
+      },
+    }, repoPolicy)).toEqual({
+      ok: false,
+      error: "invalid_permission_snapshot",
+    });
+  });
+
+  it("enforces actor metadata visibility and authoritative sandbox shape", () => {
+    expect(validateTurnRequest({
+      ...validTurn,
+      permissionSnapshot: {
+        ...permissionSnapshot,
+        scope: {
+          ...permissionSnapshot.scope,
+          actorKind: "slack_automation",
+        },
+      },
+    }, repoPolicy)).toEqual({
+      ok: false,
+      error: "invalid_permission_snapshot",
+    });
+    expect(validateTurnRequest({
+      ...validTurn,
+      permissionSnapshot: {
+        ...permissionSnapshot,
+        sandbox: {
+          network: "allowed",
+          credentialExposure: "sentinel_only",
+          allowedRepoHosts: ["github.com"],
+          allowedRepoOrgs: ["example"],
+          remoteGitApproved: false,
+          createPullRequest: false,
+        },
+      },
+    }, repoPolicy)).toEqual({
+      ok: false,
+      error: "invalid_permission_snapshot",
+    });
   });
 });
 

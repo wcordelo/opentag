@@ -614,6 +614,234 @@ describe("real /agent ingress and Stop lifecycle", () => {
     expect(botState.obligations.size).toBe(0);
   });
 
+  it("keeps the production lifecycle retryable when canonical replay rejects", async () => {
+    const signingSecret = "signing-secret";
+    const botState = makeBotState();
+    const sessions = makeSessionEvents();
+    const harnessFetch = vi.fn(async () => Response.json({ ok: true }));
+    const agentFetch = vi.fn(async () => Response.json({ ok: true }));
+    const replayFailingNamespace = {
+      idFromName: sessions.namespace.idFromName,
+      get: (id: { name: string }) => ({
+        ...sessions.namespace.get(id),
+        replay: async () => {
+          throw new Error("session_do_unavailable");
+        },
+      }),
+    };
+    const env = {
+      SLACK_SIGNING_SECRET: signingSecret,
+      SLACK_BOT_TOKEN: "xoxb-test",
+      AGENT_URL: "https://agent.test/run",
+      AGENT_RUNTIME: { fetch: agentFetch },
+      HARNESS: { fetch: harnessFetch },
+      HARNESS_URL: "https://harness.test",
+      HARNESS_REPO_URL: "https://github.com/acme/repo",
+      BOT_STATE: botState.namespace,
+      WORKSPACE_CONFIG: makeWorkspaceConfig(),
+      SESSION_EVENTS: replayFailingNamespace,
+      KNOWLEDGE: {} as never,
+    } as unknown as Env;
+    const waitUntil: Promise<unknown>[] = [];
+    const executionCtx = {
+      waitUntil: (promise: Promise<unknown>) => { waitUntil.push(promise); },
+      passThroughOnException: () => undefined,
+      props: {},
+    } as unknown as ExecutionContext;
+    const params = new URLSearchParams({
+      command: "/agent",
+      text: "--claude inspect the current state",
+      channel_id: "C_REPLAY",
+      user_id: "U1",
+      trigger_id: "trigger-replay-failure",
+      team_id: "T1",
+    });
+    const request = await signedRequest(
+      "/slack/commands",
+      params.toString(),
+      signingSecret,
+      "application/x-www-form-urlencoded",
+    );
+
+    expect((await worker.request(request, undefined, env, executionCtx)).status)
+      .toBe(200);
+    await Promise.all(waitUntil);
+
+    expect(harnessFetch).not.toHaveBeenCalled();
+    expect(agentFetch).not.toHaveBeenCalled();
+    expect(slackPosts).toEqual([]);
+    expect(botState.obligations.size).toBe(1);
+    expect(botState.obligationClearCalls).toEqual([]);
+    const retained = [...botState.obligations.values()][0];
+    expect(retained).toMatchObject({ channel: "C_REPLAY", attempt: 0 });
+    sessions.close();
+  });
+
+  it("admits one trusted rich automation turn with channel defaults and safe permissions", async () => {
+    const signingSecret = "signing-secret";
+    const botState = makeBotState();
+    const sessions = makeSessionEvents();
+    const harnessTurns: Array<Record<string, unknown>> = [];
+    const harness = {
+      fetch: vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        expect(new URL(String(request)).pathname).toBe("/turn");
+        harnessTurns.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+        );
+        return new Response(
+          `${JSON.stringify({
+            kind: "output",
+            payload: { text: "Alert inspected once." },
+          })}\n${JSON.stringify({
+            kind: "done",
+            payload: { ok: true },
+          })}\n`,
+          { headers: { "Content-Type": "application/x-ndjson" } },
+        );
+      }),
+    };
+    const workspaceStub = {
+      fetch: async (request: RequestInfo | URL) => {
+        const path = new URL(String(request)).pathname;
+        if (path === "/getConfig") {
+          return Response.json({
+            teamId: "T1",
+            channelId: "C_ALERT",
+            systemPrompt: "integration test",
+            policies: { allowMemoryWrite: true, allowTasks: true },
+            accessBundleId: "default",
+            runtimeDefaults: {
+              harnessType: "claudecode",
+              model: "claude-sonnet-5",
+            },
+            updatedAt: "now",
+          });
+        }
+        if (path === "/getBundle") {
+          return Response.json({
+            id: "default",
+            tools: [],
+            mcpEndpoints: ["https://mcp.example.test/path"],
+            secretRefs: ["EXAMPLE_TOKEN"],
+          });
+        }
+        return Response.json({ ok: true });
+      },
+    };
+    const env = {
+      SLACK_SIGNING_SECRET: signingSecret,
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_BOT_USER_ID: "UOPENTAG",
+      SLACK_TRUSTED_TRIGGER_ACTORS: "bot:BALERT",
+      AGENT_URL: "https://agent.test/run",
+      HARNESS: harness,
+      HARNESS_URL: "https://harness.test",
+      HARNESS_AUTH_TOKEN: "harness-secret",
+      BOT_STATE: botState.namespace,
+      WORKSPACE_CONFIG: {
+        idFromName: (name: string) => ({ name }),
+        get: () => workspaceStub,
+      },
+      SESSION_EVENTS: sessions.namespace,
+      KNOWLEDGE: {} as never,
+    } as unknown as Env;
+    const waitUntil: Promise<unknown>[] = [];
+    const executionCtx = {
+      waitUntil: (promise: Promise<unknown>) => { waitUntil.push(promise); },
+      passThroughOnException: () => undefined,
+      props: {},
+    } as unknown as ExecutionContext;
+    const eventBody = JSON.stringify({
+      type: "event_callback",
+      event_id: "EvTrustedAlert",
+      team_id: "T1",
+      event: {
+        type: "message",
+        subtype: "bot_message",
+        channel: "C_ALERT",
+        ts: "1710000000.777700",
+        bot_id: "BALERT",
+        attachments: [{
+          pretext: "<@UOPENTAG> inspect elevated checkout errors",
+        }],
+      },
+    });
+    const request = await signedRequest(
+      "/slack/events",
+      eventBody,
+      signingSecret,
+      "application/json",
+    );
+    const retry = request.clone();
+
+    expect((await worker.request(request, undefined, env, executionCtx)).status)
+      .toBe(200);
+    await Promise.all(waitUntil);
+    expect(harnessTurns).toHaveLength(1);
+    const first = harnessTurns[0] as {
+      model?: string;
+      codingTask?: boolean;
+      remoteGitApproved?: boolean;
+      createPullRequest?: boolean;
+      requesterContext?: string;
+      permissionSnapshot?: {
+        scope: { actorKind: string };
+        channelAccess: {
+          allowedTools: string[];
+          mcpEndpoints: unknown[];
+          secretRefs: string[];
+        };
+        runtime: {
+          harnessSource: string;
+          modelSource: string;
+        };
+      };
+    };
+    expect(first).toMatchObject({
+      model: "claude-sonnet-5",
+      permissionSnapshot: {
+        scope: { actorKind: "slack_automation" },
+        channelAccess: {
+          allowedTools: expect.arrayContaining([
+            "show_permissions",
+            "show_status",
+          ]),
+          mcpEndpoints: [],
+          secretRefs: [],
+        },
+        runtime: {
+          harnessSource: "channel",
+          modelSource: "channel",
+        },
+      },
+    });
+    expect(first.codingTask).not.toBe(true);
+    expect(first.remoteGitApproved).not.toBe(true);
+    expect(first.createPullRequest).not.toBe(true);
+    expect(first.requesterContext ?? "").not.toContain("Prompted by:");
+    expect(first.permissionSnapshot?.channelAccess.allowedTools).not.toEqual(
+      expect.arrayContaining([
+        "confirm_write",
+        "memory_write",
+        "start_task",
+        "react_message",
+      ]),
+    );
+    const slackFetch = globalThis.fetch as ReturnType<typeof vi.fn>;
+    expect(
+      slackFetch.mock.calls.some(([url]) => String(url).endsWith("/users.info")),
+    ).toBe(false);
+    expect(slackPosts).toHaveLength(1);
+
+    const retryStart = waitUntil.length;
+    expect((await worker.request(retry, undefined, env, executionCtx)).status)
+      .toBe(200);
+    await Promise.all(waitUntil.slice(retryStart));
+    expect(harnessTurns).toHaveLength(1);
+    expect(slackPosts).toHaveLength(1);
+    sessions.close();
+  });
+
   it.each(["/config", "/research"] as const)(
     "pre-admits and stops %s before its first command-specific effect",
     async (command) => {

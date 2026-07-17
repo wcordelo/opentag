@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
+  normalizeChannelRuntimeDefaults,
   type AccessBundle,
   type WorkspaceChannelConfig,
 } from "./config/workspace-config-do.js";
@@ -24,24 +25,26 @@ import {
   type SlackEventCallbackPayload,
 } from "./slack/stop-routing.js";
 import {
+  handleQuickAction,
   isQuickInteraction,
-  handoffPreparedQuickAction,
-  prepareQuickAction,
   quickActionEventId,
 } from "./slack/quick-actions.js";
 import {
   abandonPreAdmittedTurn,
   preAdmissionIdentityForCommand,
   preAdmissionIdentityForEvent,
-  preAdmitSlackTurn,
+  preAdmitSlackTurnResult,
 } from "./slack/pre-admit-turn.js";
+import { postTurnRejectedFeedback } from "./slack/turn-lifecycle.js";
+import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
 import {
   hydrateLateFileRefs,
   lateFileRepairDedupeKey,
-  matchLateFileEvent,
-  pendingLateFileKey,
+  consumedLateFileKey,
+  pendingLateFileScopeKey,
+  selectPendingLateFileMention,
   waitForLateFileThreadIdle,
   LATE_FILE_WINDOW_MS,
   type LateFileEvent,
@@ -49,13 +52,206 @@ import {
 } from "./slack/late-file-repair.js";
 import { createSlackWebClient, sharedSlackRateScheduler } from "./slack/web-api.js";
 import { slackObligationThreadKey } from "./slack/obligation-thread-key.js";
+import type { DeferredIngressJob } from "./deferred-ingress-do.js";
+import { loadTurnAccess, resolveAllowedTools } from "./config/workspace-config-do.js";
+import { ALL_EDGE_TOOL_NAMES } from "./tools/index.js";
+import { buildPermissionSnapshot } from "./permissions/snapshot.js";
+import {
+  parseTrustedTriggerConfig,
+  trustedTriggerReadiness,
+  trustedRichTriggerDecision,
+} from "./slack/trusted-trigger.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 export { KnowledgeDO } from "./memory/knowledge-do.js";
 export { SessionEventDO } from "./store/session-event-do.js";
+export { DeferredIngressDO } from "./deferred-ingress-do.js";
+export { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 
 const app = new Hono<AppEnv>();
+
+function deferredIngressStub(env: AppEnv["Bindings"], jobId: string) {
+  if (!env.DEFERRED_INGRESS) {
+    throw new Error("DEFERRED_INGRESS is required for durable Slack ingress");
+  }
+  return env.DEFERRED_INGRESS.get(
+    env.DEFERRED_INGRESS.idFromName(jobId),
+  ) as unknown as {
+    prepare(job: DeferredIngressJob): Promise<{
+      accepted: boolean;
+      status: "pending" | "running" | "completed" | "exhausted";
+    }>;
+  };
+}
+
+type LateFileRepairJobPayload = {
+  callback: SlackEventCallbackPayload;
+  pending: PendingFilelessMention;
+  candidate: LateFileEvent;
+};
+
+type FileTurnJobPayload = {
+  callback: SlackEventCallbackPayload;
+};
+
+function fileTurnJobId(
+  env: AppEnv["Bindings"],
+  callback: SlackEventCallbackPayload,
+): string | undefined {
+  const identity = preAdmissionIdentityForEvent(
+    callback,
+    parseTrustedTriggerConfig(
+      env.SLACK_BOT_USER_ID,
+      env.SLACK_TRUSTED_TRIGGER_ACTORS,
+    ),
+  );
+  return identity ? `file-turn:${identity.eventId}` : undefined;
+}
+
+async function processFileTurn(
+  env: AppEnv["Bindings"],
+  value: FileTurnJobPayload,
+  teamId: string,
+): Promise<void> {
+  const identity = preAdmissionIdentityForEvent(
+    value.callback,
+    parseTrustedTriggerConfig(
+      env.SLACK_BOT_USER_ID,
+      env.SLACK_TRUSTED_TRIGGER_ACTORS,
+    ),
+  );
+  if (!identity) throw new Error("file_turn_identity_unavailable");
+  const admission = await preAdmitSlackTurnResult(env, identity);
+  if (admission.status === "duplicate") return;
+  if (admission.status === "concurrent") {
+    throw new Error("file_turn_concurrent_active_turn");
+  }
+  if (admission.status === "ineligible") {
+    throw new Error("file_turn_identity_unavailable");
+  }
+  const preAdmittedTurn = admission.turn;
+  let handedOff = false;
+  try {
+    const { adapter } = await getOrCreateBot(env);
+    await adapter.handleEventsBody(value.callback, {
+      teamId,
+      preAdmittedTurn,
+      onTurnHandoff: () => { handedOff = true; },
+    });
+    if (!handedOff) throw new Error("file_turn_not_handed_off");
+  } finally {
+    if (!handedOff) await abandonPreAdmittedTurn(env, preAdmittedTurn);
+  }
+}
+
+async function processLateFileRepair(
+  env: AppEnv["Bindings"],
+  value: LateFileRepairJobPayload,
+): Promise<void> {
+  const { callback, pending, candidate } = value;
+  const store = createDurableObjectStore(env.BOT_STATE);
+  const token = env.SLACK_BOT_TOKEN;
+  const files = token
+    ? await hydrateLateFileRefs(candidate.files, async (fileId) =>
+        createSlackWebClient(token, {
+          scheduler: sharedSlackRateScheduler(
+            env.ENVIRONMENT,
+            env.SLACK_RATE_LIMIT,
+          ),
+        }).getFileInfo(fileId))
+    : candidate.files;
+  const idle = await waitForLateFileThreadIdle(async () => {
+    const active = await store.activeTurn.get(
+      slackObligationThreadKey(candidate.channelId, pending.threadTs),
+    );
+    return Boolean(active);
+  });
+  if (!idle) throw new Error("late_file_repair_thread_busy");
+  const synthetic = {
+    ...callback,
+    event_id: lateFileRepairDedupeKey(pending, { ...candidate, files }),
+    event: {
+      ...(callback.event as Record<string, unknown> | undefined),
+      type: "message",
+      subtype: "file_share",
+      channel: candidate.channelId,
+      thread_ts: pending.threadTs,
+      text: "Use the newly attached file(s) with my previous request.",
+      files,
+    },
+  } as SlackEventCallbackPayload;
+  const identity = preAdmissionIdentityForEvent(
+    synthetic,
+    parseTrustedTriggerConfig(
+      env.SLACK_BOT_USER_ID,
+      env.SLACK_TRUSTED_TRIGGER_ACTORS,
+    ),
+  );
+  const markConsumed = () => store.kv.set(
+    consumedLateFileKey(pending),
+    true,
+    Math.max(1, pending.expiresAt - Date.now()),
+  );
+  const admission = await preAdmitSlackTurnResult(env, identity);
+  if (admission.status === "duplicate") {
+    await markConsumed();
+    return;
+  }
+  if (admission.status === "concurrent") {
+    throw new Error("late_file_repair_concurrent_active_turn");
+  }
+  if (admission.status === "ineligible") {
+    throw new Error("late_file_repair_identity_unavailable");
+  }
+  const preAdmittedTurn = admission.turn;
+  let handedOff = false;
+  try {
+    const { adapter } = await getOrCreateBot(env);
+    await adapter.handleEventsBody(synthetic, {
+      teamId: candidate.teamId,
+      preAdmittedTurn,
+      onTurnHandoff: () => { handedOff = true; },
+    });
+    if (!handedOff) throw new Error("late_file_repair_not_handed_off");
+    await markConsumed();
+  } finally {
+    if (!handedOff) await abandonPreAdmittedTurn(env, preAdmittedTurn);
+  }
+}
+
+app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
+  const job = await c.req.json<DeferredIngressJob>();
+  try {
+    if (job.kind === "quick_action") {
+      if (quickActionEventId(job.payload) !== job.id) {
+        return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
+      }
+      const result = await handleQuickAction(c.env, job.payload, job.teamId);
+      if (!result.handled) {
+        return c.json({ error: "invalid_quick_action" }, 400);
+      }
+    } else if (job.kind === "late_file") {
+      const payload = job.payload as LateFileRepairJobPayload;
+      if (lateFileRepairDedupeKey(payload.pending, payload.candidate) !== job.id) {
+        return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
+      }
+      await processLateFileRepair(c.env, payload);
+    } else if (job.kind === "file_turn") {
+      const payload = job.payload as FileTurnJobPayload;
+      if (fileTurnJobId(c.env, payload.callback) !== job.id) {
+        return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
+      }
+      await processFileTurn(c.env, payload, job.teamId);
+    } else {
+      return c.json({ error: "unsupported_deferred_ingress_kind" }, 400);
+    }
+    return c.json({ ok: true });
+  } catch (error) {
+    console.error("[internal/deferred-ingress]", error);
+    return c.json({ error: "deferred_ingress_processing_failed" }, 503);
+  }
+});
 
 app.get("/sessions/:token", async (c) => {
   const secret = c.env.ADMIN_SECRET;
@@ -79,14 +275,22 @@ app.get("/sessions/:token", async (c) => {
 
 app.get("/health", async (c) => {
   const durability = await probeDurabilityHealth(c.env);
+  const trustedRichMention = trustedTriggerReadiness(
+    parseTrustedTriggerConfig(
+      c.env.SLACK_BOT_USER_ID,
+      c.env.SLACK_TRUSTED_TRIGGER_ACTORS,
+    ),
+  );
+  const ok = durability.ok && trustedRichMention.ok;
   return c.json({
-    ok: durability.ok,
+    ok,
     product: "claude-tag-cf",
     store: "durable-object-sqlite",
     spine: ["BOT_STATE", "SESSION_EVENTS", "WORKSPACE_CONFIG", "KNOWLEDGE", "RESEARCH_TASKS"],
     checks: durability.checks,
+    trustedRichMention,
     botEngine: await resolveBotEngineKind(),
-  }, durability.ok ? 200 : 503);
+  }, ok ? 200 : 503);
 });
 
 app.get("/debug/store", requireAdminAuth(), async (c) => {
@@ -113,15 +317,42 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
-  await stub.fetch("https://do/putConfig", {
+  let runtimeDefaults;
+  if ("runtimeDefaults" in body) {
+    try {
+      runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
+    } catch (error) {
+      return c.json(
+        { error: error instanceof Error ? error.message : "invalid runtime defaults" },
+        400,
+      );
+    }
+  } else {
+    const existingResponse = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId: body.teamId, channelId: body.channelId }),
+    });
+    if (existingResponse.ok) {
+      const existing = await existingResponse.json() as WorkspaceChannelConfig;
+      runtimeDefaults = existing.runtimeDefaults;
+    }
+  }
+  const response = await stub.fetch("https://do/putConfig", {
     method: "POST",
     body: JSON.stringify({
       ...body,
       systemPrompt: body.systemPrompt || DEFAULT_SYSTEM_PROMPT,
       accessBundleId: body.accessBundleId || DEFAULT_BUNDLE.id,
+      ...(runtimeDefaults ? { runtimeDefaults } : {}),
       updatedAt: new Date().toISOString(),
     }),
   });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      response.status >= 500 ? 503 : 400,
+    );
+  }
   return c.json({ ok: true });
 });
 
@@ -140,6 +371,69 @@ app.post("/admin/bundle", requireAdminAuth(), async (c) => {
     } satisfies AccessBundle),
   });
   return c.json({ ok: true });
+});
+
+app.get("/admin/permissions", requireAdminAuth(), async (c) => {
+  const teamId = c.req.query("teamId")?.trim() ?? "";
+  const channelId = c.req.query("channelId")?.trim() ?? "";
+  if (
+    !teamId ||
+    !channelId ||
+    teamId.length > 256 ||
+    channelId.length > 256
+  ) {
+    return c.json(
+      { error: "teamId and channelId are required and must be <= 256 chars" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+  const { config, bundle } = await loadTurnAccess(
+    c.env.WORKSPACE_CONFIG,
+    teamId,
+    channelId,
+  );
+  const allowed = new Set(
+    resolveAllowedTools([...ALL_EDGE_TOOL_NAMES], bundle),
+  );
+  if (config.policies.allowMemoryWrite === false) {
+    allowed.delete("memory_write");
+  }
+  if (config.policies.allowTasks === false) {
+    allowed.delete("start_task");
+    allowed.delete("research_progress");
+  }
+  allowed.add("show_permissions");
+  const snapshot = buildPermissionSnapshot({
+    teamId,
+    channelId,
+    actor: { kind: "operator" },
+    config,
+    bundle,
+    allToolNames: ALL_EDGE_TOOL_NAMES,
+    allowedTools: allowed,
+    runtime: {
+      ...(config.runtimeDefaults?.harnessType
+        ? { harnessType: config.runtimeDefaults.harnessType }
+        : {}),
+      ...(config.runtimeDefaults?.model
+        ? { model: config.runtimeDefaults.model }
+        : {}),
+      harnessSource: config.runtimeDefaults?.harnessType
+        ? "channel"
+        : "deployment",
+      modelSource: config.runtimeDefaults?.model
+        ? "channel"
+        : "deployment",
+      harnessConnected: Boolean(c.env.HARNESS || c.env.HARNESS_URL),
+    },
+  });
+  console.log(JSON.stringify({
+    metric: "permission_snapshot_generated",
+    actorKind: "operator",
+    surface: "admin",
+  }));
+  return c.json(snapshot, 200, { "cache-control": "no-store" });
 });
 
 /** Seed a pending HITL action snapshot key (admin/debug). */
@@ -192,6 +486,10 @@ app.post("/slack/events", slackVerify(), async (c) => {
   }
 
   const teamId = payload.team_id ?? "unknown";
+  const trustedConfig = parseTrustedTriggerConfig(
+    c.env.SLACK_BOT_USER_ID,
+    c.env.SLACK_TRUSTED_TRIGGER_ACTORS,
+  );
   const exec = c.executionCtx;
   const event = payload.event as {
     type?: string;
@@ -205,23 +503,6 @@ app.post("/slack/events", slackVerify(), async (c) => {
   } | undefined;
   const store = createDurableObjectStore(c.env.BOT_STATE);
 
-  const preAdmissionIdentity = preAdmissionIdentityForEvent(payload);
-  if (
-    preAdmissionIdentity && event?.type === "app_mention" &&
-    (!Array.isArray(event.files) || event.files.length === 0)
-  ) {
-    const pending: PendingFilelessMention = {
-      teamId,
-      channelId: preAdmissionIdentity.channelId,
-      userId: preAdmissionIdentity.requesterId,
-      mentionTs: preAdmissionIdentity.inboundTs,
-      threadTs: preAdmissionIdentity.threadTs ?? preAdmissionIdentity.inboundTs,
-      eventId: preAdmissionIdentity.eventId,
-      expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
-    };
-    await store.kv.set(pendingLateFileKey(pending), pending, LATE_FILE_WINDOW_MS);
-  }
-
   // Slack may deliver an app_mention before its uploaded file metadata. Match
   // the later file_share to the exact user/channel mention, wait for that
   // original turn to become idle, hydrate files.info, then admit one synthetic
@@ -231,8 +512,22 @@ app.post("/slack/events", slackVerify(), async (c) => {
     event?.channel && event.user && event.ts &&
     Array.isArray(event.files) && event.files.length > 0
   ) {
-    const key = pendingLateFileKey({ teamId, channelId: event.channel, userId: event.user });
-    const pending = await store.kv.get<PendingFilelessMention>(key);
+    const scopeKey = pendingLateFileScopeKey({
+      teamId,
+      channelId: event.channel,
+      userId: event.user,
+    });
+    const pendingRows = await store.list.range<PendingFilelessMention>(
+      scopeKey,
+      0,
+      -1,
+    );
+    const unconsumed = (
+      await Promise.all(pendingRows.map(async (pending) => ({
+        pending,
+        consumed: Boolean(await store.kv.get(consumedLateFileKey(pending))),
+      })))
+    ).filter((entry) => !entry.consumed).map((entry) => entry.pending);
     const candidate: LateFileEvent = {
       teamId,
       channelId: event.channel,
@@ -241,62 +536,32 @@ app.post("/slack/events", slackVerify(), async (c) => {
       threadTs: event.thread_ts,
       files: event.files,
     };
-    if (matchLateFileEvent(pending, candidate)) {
-      const repair = async () => {
-        const token = c.env.SLACK_BOT_TOKEN;
-        const files = token
-          ? await hydrateLateFileRefs(candidate.files, async (fileId) =>
-              createSlackWebClient(token, {
-                scheduler: sharedSlackRateScheduler(c.env.ENVIRONMENT),
-              }).getFileInfo(fileId))
-          : candidate.files;
-        const idle = await waitForLateFileThreadIdle(async () => {
-          const active = await store.activeTurn.get(
-            slackObligationThreadKey(candidate.channelId, pending!.threadTs),
-          );
-          return active?.status === "pending";
+    const selection = selectPendingLateFileMention(unconsumed, candidate);
+    if (selection.status === "ambiguous") {
+      console.error("[slack/events:late-file] ambiguous pending mention", {
+        teamId,
+        channelId: event.channel,
+        userId: event.user,
+      });
+      return c.json({ error: "late_file_correlation_ambiguous" }, 409);
+    }
+    if (selection.status === "matched") {
+      const pending = selection.pending;
+      const jobId = lateFileRepairDedupeKey(pending, candidate);
+      try {
+        await deferredIngressStub(c.env, jobId).prepare({
+          id: jobId,
+          kind: "late_file",
+          payload: {
+            callback: payload,
+            pending,
+            candidate,
+          } satisfies LateFileRepairJobPayload,
+          teamId,
         });
-        if (!idle) {
-          console.error(JSON.stringify({
-            metric: "late_file_repair_timeout",
-            eventId: pending!.eventId,
-            threadTs: pending!.threadTs,
-          }));
-          return;
-        }
-        const synthetic = {
-          ...payload,
-          event_id: lateFileRepairDedupeKey(pending!, { ...candidate, files }),
-          event: {
-            ...event,
-            type: "message",
-            subtype: "file_share",
-            channel_type: event.channel_type ?? "channel",
-            thread_ts: pending!.threadTs,
-            text: "Use the newly attached file(s) with my previous request.",
-            files,
-          },
-        } as SlackEventCallbackPayload;
-        const identity = preAdmissionIdentityForEvent(synthetic);
-        const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
-        if (!preAdmittedTurn) return;
-        let handedOff = false;
-        try {
-          const { adapter } = await getOrCreateBot(c.env);
-          await adapter.handleEventsBody(synthetic, {
-            teamId,
-            preAdmittedTurn,
-            onTurnHandoff: () => { handedOff = true; },
-          });
-          if (handedOff) await store.kv.delete(key);
-        } finally {
-          if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
-        }
-      };
-      if (exec?.waitUntil) {
-        exec.waitUntil(repair().catch((err) => console.error("[slack/events:late-file]", err)));
-      } else {
-        await repair();
+      } catch (error) {
+        console.error("[slack/events:late-file] durable ownership failed", error);
+        return c.json({ error: "late_file_persistence_failed" }, 503);
       }
       return c.json({ ok: true });
     }
@@ -320,12 +585,73 @@ app.post("/slack/events", slackVerify(), async (c) => {
     return c.json({ ok: true });
   }
 
+  const trustedDecision = trustedRichTriggerDecision(
+    payload.event,
+    trustedConfig,
+  );
+  if (trustedDecision.reason) {
+    console.log(JSON.stringify({
+      metric: "trusted_rich_mention_ignored",
+      reason: trustedDecision.reason,
+    }));
+  }
+
+  // File-bearing ordinary turns use the same immutable callback owner as late
+  // repairs. The callback and alarm exist before 200; R2/session admission can
+  // then fail and retry after isolate loss without losing the attachment.
+  const fileIdentity = preAdmissionIdentityForEvent(payload, trustedConfig);
+  if (
+    fileIdentity &&
+    Array.isArray(event?.files) &&
+    event.files.length > 0
+  ) {
+    const jobId = `file-turn:${fileIdentity.eventId}`;
+    try {
+      await deferredIngressStub(c.env, jobId).prepare({
+        id: jobId,
+        kind: "file_turn",
+        payload: { callback: payload } satisfies FileTurnJobPayload,
+        teamId,
+      });
+    } catch (error) {
+      console.error("[slack/events:file-turn] durable ownership failed", error);
+      return c.json({ error: "file_turn_persistence_failed" }, 503);
+    }
+    return c.json({ ok: true });
+  }
+
   const run = async () => {
-    const identity = preAdmissionIdentity;
-    const preAdmittedTurn = await preAdmitSlackTurn(c.env, identity);
-    if (identity && !preAdmittedTurn) {
-      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+    const identity = preAdmissionIdentityForEvent(payload, trustedConfig);
+    const admission = await preAdmitSlackTurnResult(c.env, identity);
+    if (identity && admission.status !== "accepted") {
+      if (admission.status === "duplicate") {
+        console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+        if (identity.actor.kind === "slack_automation") {
+          console.log(JSON.stringify({
+            metric: "trusted_rich_mention_ignored",
+            reason: "duplicate",
+          }));
+        }
+        return;
+      }
+      if (admission.status === "concurrent") {
+        const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
+        await postTurnRejectedFeedback(c.env, stateStore, {
+          reason: "concurrent",
+          channelId: identity.channelId,
+          threadTs: identity.threadTs,
+          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+        });
+        return;
+      }
       return;
+    }
+    const preAdmittedTurn = admission.status === "accepted" ? admission.turn : undefined;
+    if (identity?.actor.kind === "slack_automation") {
+      console.log(JSON.stringify({
+        metric: "trusted_rich_mention_admitted",
+        actorKind: identity.actor.kind,
+      }));
     }
     let handedOff = false;
     try {
@@ -339,6 +665,37 @@ app.post("/slack/events", slackVerify(), async (c) => {
       if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);
     }
   };
+
+  // Correlation ownership must exist before Slack receives 200; otherwise an
+  // isolate loss can make a later file_share impossible to associate.
+  const eventIdentity = preAdmissionIdentityForEvent(
+    payload,
+    trustedConfig,
+  );
+  if (
+    eventIdentity && event?.type === "app_mention" &&
+    (!Array.isArray(event.files) || event.files.length === 0)
+  ) {
+    const pending: PendingFilelessMention = {
+      teamId,
+      channelId: eventIdentity.channelId,
+      userId: eventIdentity.requesterId,
+      mentionTs: eventIdentity.inboundTs,
+      threadTs: eventIdentity.threadTs ?? eventIdentity.inboundTs,
+      eventId: eventIdentity.eventId,
+      expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
+    };
+    try {
+      await store.list.append(
+        pendingLateFileScopeKey(pending),
+        pending,
+        { maxLen: 32, ttlMs: LATE_FILE_WINDOW_MS },
+      );
+    } catch (error) {
+      console.error("[slack/events] late-file correlation persistence failed", error);
+      return c.json({ error: "late_file_correlation_persistence_failed" }, 503);
+    }
+  }
 
   if (exec?.waitUntil) {
     exec.waitUntil(
@@ -373,16 +730,30 @@ app.post("/slack/commands", slackVerify(), async (c) => {
   }
 
   const identity = preAdmissionIdentityForCommand(body);
-  const preAdmittedTurn = identity
-    ? await preAdmitSlackTurn(c.env, identity)
+  const admission = identity
+    ? await preAdmitSlackTurnResult(c.env, identity)
     : undefined;
 
   // Immediate ack for Slack's 3s deadline; work continues in waitUntil.
   const run = async () => {
-    if (identity && !preAdmittedTurn) {
-      console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+    if (identity && admission && admission.status !== "accepted") {
+      if (admission.status === "duplicate") {
+        console.log(JSON.stringify({ metric: "turn_duplicate_pre_admission", eventId: identity.eventId }));
+        return;
+      }
+      if (admission.status === "concurrent") {
+        const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
+        await postTurnRejectedFeedback(c.env, stateStore, {
+          reason: "concurrent",
+          channelId: identity.channelId,
+          threadTs: identity.threadTs,
+          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+        });
+        return;
+      }
       return;
     }
+    const preAdmittedTurn = admission?.status === "accepted" ? admission.turn : undefined;
     let handedOff = false;
     try {
       const { adapter } = await getOrCreateBot(c.env);
@@ -402,7 +773,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     await run();
   }
 
-  if (identity && !preAdmittedTurn) {
+  if (identity && admission && admission.status === "duplicate") {
     return c.json({
       response_type: "ephemeral",
       text: "Already handling that command.",
@@ -458,31 +829,20 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
   }
 
 
-  // Quick clicks follow the same correctness boundary: stable identity and
-  // the active-turn + initial obligation transaction MUST be durable before
-  // Slack receives 200. Only profile resolution/framework handoff is deferred.
-  let prepared;
+  // The complete immutable click is owned by a Durable Object alarm before
+  // acknowledgement. An isolate can disappear after 200 without losing work.
+  const jobId = quickActionEventId(payload)!;
   try {
-    const result = await prepareQuickAction(c.env, payload, teamId);
-    if (!result.handled) return c.json({ error: "invalid_quick_action" }, 400);
-    prepared = result.prepared;
+    await deferredIngressStub(c.env, jobId).prepare({
+      id: jobId,
+      kind: "quick_action",
+      payload,
+      teamId,
+    });
   } catch (err) {
-    console.error("[slack/interactions] quick pre-admission failed", err);
+    console.error("[slack/interactions] quick durable ownership failed", err);
     return c.json({ error: "interaction_persistence_failed" }, 503);
   }
-  if (!prepared) return c.json({ ok: true, duplicate: true });
-
-  const handoff = () => handoffPreparedQuickAction(c.env, prepared);
-
-  const exec = c.executionCtx;
-  if (exec?.waitUntil) {
-    exec.waitUntil(
-      handoff().catch((err) => console.error("[slack/interactions]", err)),
-    );
-  } else {
-    await handoff();
-  }
-
   return c.json({ ok: true });
 });
 

@@ -2,8 +2,9 @@
  * Unit tests for CloudflareSlackAdapter.stream() — incremental Slack
  * rendering (placeholder post + throttled chat.update, never buffer-then-post).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CloudflareSlackAdapter } from "../src/slack/cloudflare-slack-adapter.js";
+import { stableSlackPageClientMessageId } from "../src/slack/client-message-id.js";
 import type { LifecycleStateStore } from "../src/store/state-store-contract.js";
 
 type Call = {
@@ -180,6 +181,117 @@ describe("CloudflareSlackAdapter.stream", () => {
       }
     },
   );
+
+  it("does not render, terminalize, or clear after an output mirror append failure", async () => {
+    const original = globalThis.fetch;
+    const slackMethods: string[] = [];
+    const appended: string[] = [];
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      const method = String(url).split("/").pop()!;
+      slackMethods.push(method);
+      return method === "chat.postMessage"
+        ? Response.json({ ok: true, ts: "10.1" })
+        : Response.json({ ok: true });
+    }) as typeof fetch;
+    let rowPresent = true;
+    const activeTurn = {
+      beginRender: async () => ({ status: "claimed" as const, token: "r1" }),
+      confirmRender: async (args: { final: boolean }) => {
+        if (args.final) rowPresent = false;
+        return true;
+      },
+      failRender: async () => true,
+    };
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      stateStore: { activeTurn } as unknown as LifecycleStateStore,
+      sessionEvents: {
+        idFromName: () => "session-id",
+        get: () => ({
+          appendEvent: async (event: { kind: string }) => {
+            appended.push(event.kind);
+            if (event.kind === "output") throw new Error("append unavailable");
+            return { id: 1 };
+          },
+        }),
+      } as never,
+    });
+    const target = { channel: "C1" };
+    adapter.bindExecutionFence(target, {
+      threadKey: "slack:C1:1.0",
+      executionId: "exec-output-failure",
+    });
+    try {
+      const renderer = adapter.createRunRenderer(target as never);
+      const subscriber = renderer.subscriber as unknown as {
+        onTextMessageStartEvent(args: unknown): void;
+        onTextMessageContentEvent(args: unknown): void;
+        onTextMessageEndEvent(args: unknown): Promise<void>;
+      };
+      subscriber.onTextMessageStartEvent({ event: { messageId: "m1" } });
+      subscriber.onTextMessageContentEvent({
+        event: { messageId: "m1", delta: "canonical answer bytes" },
+      });
+      await expect(subscriber.onTextMessageEndEvent({
+        event: { messageId: "m1" },
+      })).rejects.toThrow("session_event_mirror_failed:output");
+      expect(appended).toEqual(["output"]);
+      expect(slackMethods).not.toContain("chat.update");
+      expect(rowPresent).toBe(true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("mirrors a tool result before renderer mutation and fails closed on append loss", async () => {
+    const original = globalThis.fetch;
+    const slackMethods: string[] = [];
+    const activeTurn = {
+      beginRender: async () => ({ status: "claimed" as const, token: "r-tool" }),
+      confirmRender: async () => true,
+      failRender: async () => true,
+    };
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      slackMethods.push(String(url).split("/").pop()!);
+      return Response.json({ ok: true, ts: "10.2" });
+    }) as typeof fetch;
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      stateStore: { activeTurn } as unknown as LifecycleStateStore,
+      sessionEvents: {
+        idFromName: () => "session-id",
+        get: () => ({
+          appendEvent: async () => { throw new Error("tool append unavailable"); },
+        }),
+      } as never,
+    });
+    const target = { channel: "C1" };
+    adapter.bindExecutionFence(target, {
+      threadKey: "slack:C1:1.0",
+      executionId: "exec-tool-failure",
+    });
+    try {
+      const renderer = adapter.createRunRenderer(target as never);
+      const subscriber = renderer.subscriber as unknown as {
+        onToolCallStartEvent(args: unknown): Promise<void>;
+        onToolCallResultEvent(args: unknown): Promise<void>;
+      };
+      await subscriber.onToolCallStartEvent({
+        event: { toolCallId: "tool-1", toolCallName: "lookup" },
+      });
+      const beforeResult = [...slackMethods];
+      await expect(subscriber.onToolCallResultEvent({
+        event: {
+          toolCallId: "tool-1",
+          messageId: "tool-result-1",
+          content: "canonical tool output",
+        },
+      })).rejects.toThrow("session_event_mirror_failed:tool");
+      expect(slackMethods).toEqual(beforeResult);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 
   it("serializes final AG-UI update against Stop with no answer-plus-Stopped gap", async () => {
     const original = globalThis.fetch;
@@ -453,6 +565,53 @@ describe("CloudflareSlackAdapter.stream", () => {
     globalThis.fetch = original;
   });
 
+  it("never treats negative history reads as proof an ambiguous live create is absent", async () => {
+    const original = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      const method = String(url).split("/").pop()!;
+      methods.push(method);
+      if (method === "chat.postMessage") {
+        throw new TypeError("connection reset after Slack accepted bytes");
+      }
+      if (method === "conversations.replies") {
+        return Response.json({ ok: true, messages: [] });
+      }
+      throw new Error(`unexpected Slack method ${method}`);
+    }) as typeof fetch;
+    const markLiveMessageAbsent = vi.fn(async () => true);
+    const activeTurn = {
+      beginRender: async () => ({ status: "claimed" as const, token: "r1" }),
+      confirmRender: async () => true,
+      failRender: async () => true,
+      confirmLiveMessage: vi.fn(async () => true),
+      markLiveMessageAbsent,
+    };
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      stateStore: { activeTurn } as unknown as LifecycleStateStore,
+      liveReconcileAttempts: 2,
+      liveReconcileDelayMs: 0,
+    });
+    const target = { channel: "C1", threadTs: "1.0" };
+    adapter.bindExecutionFence(target, {
+      threadKey: "slack:C1:1.0",
+      executionId: "exec-ambiguous",
+      liveClientMessageId: "11111111-1111-5111-8111-111111111111",
+    });
+
+    await expect(adapter.stream(target as never, (async function* () {
+      yield "answer";
+    })())).rejects.toThrow("live_message_identity_unreconciled");
+    expect(methods).toEqual([
+      "chat.postMessage",
+      "conversations.replies",
+      "conversations.replies",
+    ]);
+    expect(markLiveMessageAbsent).not.toHaveBeenCalled();
+    globalThis.fetch = original;
+  });
+
   it("fences a stalled AG-UI update and suppresses every update after Stop", async () => {
     const original = globalThis.fetch;
     let releaseUpdate!: () => void;
@@ -635,8 +794,9 @@ describe("CloudflareSlackAdapter.stream", () => {
 
       await adapter.stream({ channel: "C1", threadTs: "1.0" } as never, one());
 
+      const postCalls = calls.filter((c) => c.method === "chat.postMessage");
       const updateCalls = calls.filter((c) => c.method === "chat.update");
-      const continuationCalls = calls.filter((c) => c.method === "chat.postMessage").slice(1);
+      const continuationCalls = postCalls.slice(1);
       const visibleCalls = [updateCalls[updateCalls.length - 1]!, ...continuationCalls];
       const reconstructed: string[] = [];
       for (const call of visibleCalls) {
@@ -651,6 +811,14 @@ describe("CloudflareSlackAdapter.stream", () => {
         expect(call.body.text!.length).toBeLessThanOrEqual(35_000);
       }
       expect(continuationCalls.length).toBeGreaterThan(0);
+      for (let index = 0; index < continuationCalls.length; index += 1) {
+        expect(continuationCalls[index]!.body.client_msg_id).toBe(
+          stableSlackPageClientMessageId(
+            `C1:${postCalls[0]!.body.ts ?? "101.000000"}`,
+            index + 1,
+          ),
+        );
+      }
       expect(reconstructed.join("")).toBe(huge);
     } finally {
       restore();

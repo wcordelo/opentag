@@ -51,8 +51,11 @@ def check_source_evidence() -> None:
     anchors: dict[str, list[tuple[str, tuple[str, ...]]]] = {
         "C1": [("edge/src/agent-turn.ts", ("AuthoritativeHarnessError",))],
         "C2": [
-            ("edge/src/slack/client-message-id.ts", ("UUID", "stableSlackClientMessageId")),
-            ("edge/src/slack/cloudflare-slack-adapter.ts", ("confirmLiveMessage", "markLiveMessageAbsent")),
+            ("edge/src/slack/client-message-id.ts", ("stableSlackClientMessageId", "stableSlackPageClientMessageId")),
+            ("edge/src/slack/cloudflare-slack-adapter.ts", ("Recoverable answer pages are canonical and decoration-free", "final-answer-decoration")),
+            ("edge/src/store/conversation-state-do.ts", ("reserved_live_message_missing_client_id", "stableSlackPageClientMessageId")),
+            ("edge/test/slack-stream.test.ts", ("never treats negative history reads as proof", "stableSlackPageClientMessageId")),
+            ("edge/test/render-obligation.test.ts", ("decorated AG-UI applied-response-lost continuation", "expect(continuationAttempts[0]).toEqual(normalContinuation)")),
         ],
         "C3": [("edge/src/slack/cloudflare-slack-adapter.ts", ("persistSessionTerminal",))],
         "C4": [("edge/src/slack/stream-render.ts", ("buildSlackMessagePages",))],
@@ -63,13 +66,27 @@ def check_source_evidence() -> None:
         "H2": [("edge/src/slack/overrides.ts", ("--codex", "--model"))],
         "H3": [
             ("edge/src/slack/download-files.ts", ("AttachmentStager",)),
-            ("edge/src/slack/late-file-repair.ts", ("PendingFilelessMention", "matchLateFileEvent")),
+            ("edge/src/slack/late-file-repair.ts", ("pendingLateFileScopeKey", "selectPendingLateFileMention", "consumedLateFileKey")),
+            ("edge/src/deferred-ingress-do.ts", ("DeferredIngressDO", "deferred_ingress_exhausted", "BOT_SELF")),
+            ("edge/src/worker.ts", ("/internal/deferred-ingress", "late_file_correlation_ambiguous", "store.list.append")),
             ("edge/workers/sandbox/turn-contract.ts", ("attachments", "staged")),
             ("edge/workers/sandbox/src/router.ts", ("resolveStagedTurnAttachments", "staged_attachment_digest_mismatch")),
             ("edge/workers/sandbox/wrangler.toml", ('binding = "BLOBS"',)),
             ("edge/test/harness-container-router.test.ts", ("staged", "BLOBS")),
+            ("edge/test/deferred-ingress-do.test.ts", ("repairs a missing %s alarm", '"late_file"', '"file_turn"')),
+            ("edge/test/download-files.test.ts", ("stages the exact bytes on a durable retry", "first R2 put fails")),
+            ("edge/test/late-file-repair.test.ts", ("matches one exact thread", "refuses an ambiguous unthreaded upload")),
+            ("edge/test/worker-deferred-ingress.test.ts", ("file-turn alarm ownership fails", "identical retry")),
+            ("edge/test/worker-deferred-ingress.test.ts", ("retains two same-user pending mentions", "without overwrite")),
         ],
-        "H4": [("edge/src/slack/web-api.ts", ("SlackChannelRateScheduler", "Retry-After"))],
+        "H4": [
+            ("edge/src/slack/web-api.ts", ("DurableSlackRateScheduler", "SLACK_RATE_LIMIT")),
+            ("edge/src/slack/slack-rate-limit-do.ts", ("SlackRateLimitDO", "nextAllowedAt")),
+            ("lib/research/delivery/slack.ts", ('status: "ambiguous"', '"Retry-After"')),
+            ("edge/workers/orchestrator/src/OrchestratorDO.ts", ("researchSlackRateScheduler", "SLACK_RATE_LIMIT")),
+            ("edge/wrangler.research.toml", ('name = "SLACK_RATE_LIMIT"', 'script_name = "opentag-bot"')),
+            ("edge/test/research-final-delivery.test.ts", ("reserves every 429 attempt", "remains drainable", "bot and research scripts")),
+        ],
         "H5": [("edge/src/store/session-event-do.ts", ("transactionSync",))],
         "H6": [
             ("slack-app-manifest.yaml", ("users.profile:read",)),
@@ -82,10 +99,27 @@ def check_source_evidence() -> None:
             ("lib/research/delivery/slack.ts", ("researchDeliveryPages", "slack-pages-v2")),
             ("lib/research/__tests__/delivery.test.ts", ("200k", "stable per-page identities")),
         ],
-        "H8": [("edge/src/worker.ts", ("preAdmitSlackTurn", "waitUntil"))],
+        "H8": [
+            ("edge/src/worker.ts", ("quickActionEventId", "deferredIngressStub", "prepare")),
+            ("edge/src/deferred-ingress-do.ts", ("quick_action", "deferred_ingress_identity_conflict")),
+            ("edge/test/deferred-ingress-do.test.ts", ("repairs a missing %s alarm", '"quick_action"')),
+            ("edge/test/worker-deferred-ingress.test.ts", ("quick-action alarm ownership fails", "identical retry")),
+        ],
         "M1": [("edge/src/slack/cloudflare-slack-adapter.ts", ("createRunRenderer", "showToolStatus"))],
         "M2": [("edge/src/slack/turn-lifecycle.ts", ("Thinking", 'status: ""'))],
-        "M3": [("edge/src/slack/session-history.ts", ("reconstructSessionHistory",))],
+        "M3": [
+            ("edge/src/slack/session-history.ts", ("reconstructSessionHistory",)),
+            ("edge/src/slack/download-files.ts", ("contentPartsFromCanonicalAttachments", "stageKey")),
+            ("edge/src/slack/cloudflare-slack-adapter.ts", ("session_event_mirror_failed:output", "session_event_mirror_failed:tool")),
+            ("edge/src/agent-turn.ts", ("session_event_replay_failed", "throw new Error")),
+            ("edge/src/slack/turn-lifecycle.ts", ("session_event_replay_failed", "append done", "clear the")),
+            ("edge/src/agent-turn.ts", ("canonicalAttachments", "contentPartsFromCanonicalAttachments")),
+            ("edge/test/agent-turn-harness.test.ts", ("SessionEvent-only attachments and tool results", "Restored canonical attachment")),
+            ("edge/test/agent-turn-harness.test.ts", ("fails closed before either runtime", "canonical SessionEvent replay rejects")),
+            ("edge/test/download-files.test.ts", ("durably stages inline bytes", "configured durable staging rejects inline bytes")),
+            ("edge/test/slack-stream.test.ts", ("output mirror append failure", "tool result before renderer mutation")),
+            ("edge/test/slack-agent-stop.integration.test.ts", ("production lifecycle retryable", "canonical replay rejects")),
+        ],
         "M4": [("edge/src/slack/cloudflare-slack-adapter.ts", ("normalizeSlackHistoryMessage",))],
         "M5": [
             ("edge/src/slack/quick-card.ts", ("Re-generate", "View files", "Delete", "dig_deeper", "export")),
@@ -102,6 +136,9 @@ def check_source_evidence() -> None:
         "L1": [("edge/src/slack/session-link.ts", ("HMAC", "7 * 24 * 60 * 60"))],
         "L2": [
             ("edge/src/store/session-event-do.ts", ("authoritative",)),
+            ("ARCHITECTURE.md", ("reasoning effort", "never falls back to AG-UI")),
+            ("edge/test/agent-turn-harness.test.ts", ("channel-selected harness is disconnected", "runAgent")),
+            ("docs/centaur-port.md", ("reasoning flags rejected",)),
             ("docs/operations.md", ("fail visibly",)),
         ],
         "L3": [
@@ -118,10 +155,26 @@ def check_source_evidence() -> None:
                 raise AssertionError(f"{finding_id}: {error}") from error
 
     forbid("lib/research/delivery/slack.ts", "…(truncated)")
+    forbid("edge/src/slack/cloudflare-slack-adapter.ts", "markLiveMessageAbsent")
+    forbid("edge/src/slack/cloudflare-slack-adapter.ts", ":agui-continuation:", ":continuation:")
+    forbid("edge/src/store/conversation-state-do.ts", "stableObligationClientMessageId")
+    forbid("ARCHITECTURE.md", "ordinary non-coding turns may fall back", "selected Claude harness may fall back")
+    forbid(
+        "ARCHITECTURE.md",
+        "best-effort basis",
+        "mirror failure is logged but does not suppress",
+    )
+    forbid(
+        "docs/operations.md",
+        "Mirroring is best-effort",
+        "session output mirror failed",
+    )
 
     required_tests = [
         "edge/test/active-turn-delivery.test.ts",
+        "edge/test/agent-turn-harness.test.ts",
         "edge/test/control-surfaces.test.ts",
+        "edge/test/deferred-ingress-do.test.ts",
         "edge/test/download-files.test.ts",
         "edge/test/health.test.ts",
         "edge/test/late-file-repair.test.ts",
@@ -131,6 +184,7 @@ def check_source_evidence() -> None:
         "edge/test/slack-agent-stop.integration.test.ts",
         "edge/test/slack-stream.test.ts",
         "edge/test/stream-render-pages.test.ts",
+        "edge/test/worker-deferred-ingress.test.ts",
     ]
     for relative in required_tests:
         read(relative)

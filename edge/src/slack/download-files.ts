@@ -20,7 +20,7 @@ export type PreparedAttachment = {
   mimeType: string;
   size: number;
 } & (
-  | { kind: "inline"; dataBase64: string }
+  | { kind: "inline"; dataBase64: string; stageKey?: string; sha256?: string }
   | { kind: "staged"; stageKey: string; sha256?: string }
 );
 
@@ -213,6 +213,16 @@ export async function buildFileContentParts(
     const id = f.id ?? `${label}:${bytes.byteLength}`;
     let prepared: PreparedAttachment;
     if (bytes.byteLength <= maxInlineBytes) {
+      let durableCopy: { stageKey: string; sha256?: string } | undefined;
+      if (config.stage) {
+        try {
+          durableCopy = await config.stage({ file: f, bytes, mimeType: mime });
+        } catch (err) {
+          throw new Error(
+            `attachment_staging_failed:${label}:${(err as Error).message}`,
+          );
+        }
+      }
       prepared = {
         kind: "inline",
         id,
@@ -220,6 +230,8 @@ export async function buildFileContentParts(
         mimeType: mime || "application/octet-stream",
         size: bytes.byteLength,
         dataBase64: toBase64(bytes),
+        ...(durableCopy?.stageKey ? { stageKey: durableCopy.stageKey } : {}),
+        ...(durableCopy?.sha256 ? { sha256: durableCopy.sha256 } : {}),
       };
     } else if (config.stage) {
       try {
@@ -234,8 +246,9 @@ export async function buildFileContentParts(
           ...(staged.sha256 ? { sha256: staged.sha256 } : {}),
         };
       } catch (err) {
-        notes.push(`skipped "${label}": staging failed (${(err as Error).message})`);
-        continue;
+        throw new Error(
+          `attachment_staging_failed:${label}:${(err as Error).message}`,
+        );
       }
     } else {
       notes.push(`skipped "${label}": durable staging is not configured`);
@@ -275,112 +288,43 @@ export async function buildFileContentParts(
   return { parts, notes };
 }
 
-/** Rehydrate canonical session attachment refs (staged R2 keys or inline bytes). */
-export async function buildPreparedAttachmentContentParts(
-  attachments: PreparedAttachment[],
-  bucket?: R2Bucket,
-  config: Pick<FileDeliveryConfig, "maxFiles" | "maxTextBytes" | "maxInlineBytes"> = {},
-): Promise<{ parts: AgentContentPart[]; notes: string[] }> {
-  const maxFiles = config.maxFiles ?? DEFAULTS.maxFiles;
-  const maxText = config.maxTextBytes ?? DEFAULTS.maxTextBytes;
-  const maxInlineBytes = config.maxInlineBytes ?? DEFAULTS.maxBytesPerFile;
-
+/**
+ * Convert canonical SessionEvent attachment metadata back into real prompt
+ * parts. New inline attachments carry a durable stageKey copy; replay promotes
+ * that copy to a staged attachment so the harness frontend resolves the bytes.
+ */
+export function contentPartsFromCanonicalAttachments(
+  attachments: Array<{
+    kind: "inline" | "staged";
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    stageKey?: string;
+    sha256?: string;
+  }>,
+): { parts: AgentContentPart[]; notes: string[] } {
   const parts: AgentContentPart[] = [];
   const notes: string[] = [];
-  const considered = attachments.slice(0, maxFiles);
-  if (attachments.length > maxFiles) {
-    notes.push(
-      `(only the first ${maxFiles} of ${attachments.length} files processed)`,
-    );
-  }
-
-  for (const attachment of considered) {
-    const label = attachment.name ?? attachment.id ?? "file";
-    const mime = (attachment.mimeType ?? "").toLowerCase();
-    const media = mediaPartType(mime);
-
-    let bytes: Uint8Array;
-    let prepared: PreparedAttachment;
-
-    if (attachment.kind === "inline") {
-      if (!attachment.dataBase64) {
-        notes.push(`skipped "${label}": inline attachment has no stored bytes`);
-        continue;
-      }
-      try {
-        const binary = atob(attachment.dataBase64);
-        bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-      } catch (err) {
-        notes.push(`skipped "${label}": ${(err as Error).message}`);
-        continue;
-      }
-      prepared = attachment;
-    } else {
-      if (!bucket) {
-        notes.push(`skipped "${label}": durable staging is not configured`);
-        continue;
-      }
-      const object = await bucket.get(attachment.stageKey);
-      if (!object) {
-        notes.push(`skipped "${label}": staged attachment not found in storage`);
-        continue;
-      }
-      bytes = new Uint8Array(await object.arrayBuffer());
-      if (typeof attachment.size === "number" && bytes.byteLength !== attachment.size) {
-        notes.push(`skipped "${label}": staged attachment size mismatch`);
-        continue;
-      }
-      if (attachment.sha256) {
-        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-        const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-        if (sha256 !== attachment.sha256) {
-          notes.push(`skipped "${label}": staged attachment digest mismatch`);
-          continue;
-        }
-      }
-      prepared = attachment;
-    }
-
-    if (!media && !isText(mime)) {
-      notes.push(
-        `skipped "${label}" (${mime || "unknown"}): unsupported type`,
-      );
+  for (const attachment of attachments) {
+    if (!attachment.stageKey) {
+      notes.push(`could not restore "${attachment.name}": canonical bytes predate durable staging`);
       continue;
     }
-
-    if (media && prepared.kind === "inline") {
-      parts.push(withAttachment({
-        type: media,
-        source: {
-          type: "data",
-          value: toBase64(bytes),
-          mimeType: mime,
-        },
-      }, prepared));
-    } else if (prepared.kind === "inline") {
-      let buf = bytes;
-      let truncated = false;
-      if (buf.byteLength > maxText) {
-        buf = buf.subarray(0, maxText);
-        truncated = true;
-      }
-      parts.push(withAttachment({
-        type: "text",
-        text:
-          `Attached file "${label}" (${mime}${truncated ? ", truncated" : ""}):\n` +
-          utf8Decode(buf),
-      }, prepared));
-    } else {
-      parts.push(withAttachment({
-        type: "text",
-        text: `[Staged attachment: ${label} (${mime}, ${bytes.byteLength} bytes)]`,
-      }, prepared));
-    }
+    const restored: PreparedAttachment = {
+      kind: "staged",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      stageKey: attachment.stageKey,
+      ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+    };
+    parts.push(withAttachment({
+      type: "text",
+      text: `[Restored canonical attachment: ${attachment.name} (${attachment.mimeType}, ${attachment.size} bytes)]`,
+    }, restored));
   }
-
   return { parts, notes };
 }
 

@@ -28,8 +28,8 @@ features:
       url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
     - command: /config
-      description: Set the channel system prompt
-      usage_hint: "<prompt text>"
+      description: Set the channel prompt or runtime defaults
+      usage_hint: "<prompt text> | runtime show|set|clear"
       url: https://opentag-bot.williamlopezc.workers.dev/slack/commands
       should_escape: false
     - command: /research

@@ -17,3 +17,33 @@ export function stableSlackClientMessageId(input: string): string {
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+/**
+ * Canonical identity for lossless answer pages after the reserved live page 0.
+ * Normal AG-UI/stream delivery and alarm recovery must call this exact helper
+ * with the same execution id and zero-based page index.
+ */
+export function stableSlackPageClientMessageId(
+  executionId: string,
+  pageIndex: number,
+): string {
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+    throw new Error("slack_continuation_page_index_must_be_nonnegative");
+  }
+  return stableSlackClientMessageId(
+    `${executionId}:canonical-output-page:${pageIndex}`,
+  );
+}
+
+/** Recovery-only diagnostics intentionally cannot collide with answer pages. */
+export function stableSlackDiagnosticPageClientMessageId(
+  executionId: string,
+  pageIndex: number,
+): string {
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+    throw new Error("slack_diagnostic_page_index_must_be_nonnegative");
+  }
+  return stableSlackClientMessageId(
+    `${executionId}:recovery-diagnostic-page:${pageIndex}`,
+  );
+}

@@ -75,6 +75,8 @@ export interface SlackStopEvent {
   ts?: string;
   thread_ts?: string;
   bot_id?: string;
+  app_id?: string;
+  bot_profile?: unknown;
   subtype?: string;
 }
 
@@ -112,7 +114,7 @@ interface SessionInterruptRpc {
  *
  * Matches only `event_callback` payloads whose `event.type` is
  * `"app_mention"` or (for threaded replies and DMs) `"message"`, with a
- * non-empty `event.text`, and not authored by a bot (`event.bot_id` absent).
+ * non-empty `event.text`, and authored by an exact Slack user.
  * Top-level channel stops require an app mention. `event.subtype` is deliberately
  * not inspected — a stop message flows through this check the same way
  * regardless of subtype.
@@ -137,7 +139,13 @@ export function extractStopCommandEvent(
       return undefined;
     }
   }
-  if (event.bot_id) return undefined;
+  if (
+    !event.user ||
+    event.bot_id ||
+    event.app_id ||
+    event.bot_profile ||
+    event.subtype === "bot_message"
+  ) return undefined;
   const text = event.text;
   if (typeof text !== "string" || text.trim().length === 0) return undefined;
   if (!isSlackStopCommand({ text })) return undefined;
@@ -218,7 +226,7 @@ export async function handleStopCommand(
 
     const slackClient = env.SLACK_BOT_TOKEN
       ? createSlackWebClient(env.SLACK_BOT_TOKEN, {
-          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT),
+          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
         })
       : undefined;
 
@@ -335,10 +343,10 @@ export async function handleStopCommand(
           : durableInterrupt.interrupted
             ? (() => { throw new Error("session_state_unavailable"); })()
             : {};
-        // sessionId persists after the first harness create() for the thread.
-        // Only treat harness as authoritative when it reports an active
-        // interrupt; otherwise fall through to the AG-UI control path.
-        let harnessInterrupted = false;
+        // sessionId persists after a prior harness turn; it does not prove the
+        // active execution is harness-only. Try the container interrupt when a
+        // session exists, then fall back to AG-UI when that path is a no-op.
+        let needsAguiInterrupt = !state.sessionId;
         if (state.sessionId) {
           const harnessInterrupt = await interruptHarnessTurn(env, {
             sessionId: state.sessionId,
@@ -348,12 +356,9 @@ export async function handleStopCommand(
           if (!harnessInterrupt.accepted) {
             throw new Error("harness_interrupt_not_accepted");
           }
-          harnessInterrupted = harnessInterrupt.interrupted;
+          needsAguiInterrupt = !harnessInterrupt.interrupted;
         }
-        if (
-          !harnessInterrupted &&
-          (env.AGENT_RUNTIME || env.AGENT_URL)
-        ) {
+        if (needsAguiInterrupt && (env.AGENT_RUNTIME || env.AGENT_URL)) {
           await interruptAguiTurn(env, activeTurn.executionId);
         }
       }

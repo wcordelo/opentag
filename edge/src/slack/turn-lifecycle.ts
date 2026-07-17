@@ -11,10 +11,15 @@ import {
   awaitRemoteGitApproval,
   requesterForApproval,
 } from "../hitl/remote-git-approval.js";
-import { copyRequestContext, slackTurnIdentity } from "../request-context.js";
+import {
+  copyRequestContext,
+  requireRequestContext,
+  slackTurnIdentity,
+} from "../request-context.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import { extractMessageOverrides } from "./overrides.js";
 import { resolveThreadOverrides } from "../store/thread-overrides.js";
+import { loadTurnAccess } from "../config/workspace-config-do.js";
 import { isRepositoryCodingIntent } from "../coding-intent.js";
 import {
   ACTIVE_TURN_TTL_MS,
@@ -52,9 +57,8 @@ function sessionInputLine(prompt: string | AgentContentPart[]): string {
       name: attachment.name,
       mimeType: attachment.mimeType,
       size: attachment.size,
-      ...(attachment.kind === "staged"
-        ? { stageKey: attachment.stageKey, sha256: attachment.sha256 }
-        : { dataBase64: attachment.dataBase64 }),
+      ...(attachment.stageKey ? { stageKey: attachment.stageKey } : {}),
+      ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
     }];
   });
   if (attachments.length === 0) return text || "[non-text prompt]";
@@ -97,7 +101,7 @@ function cleanedSessionInputLine(
  * turn it rejected. Deduped per thread so rapid-fire messages get at most
  * one note a minute.
  */
-async function postTurnRejectedFeedback(
+export async function postTurnRejectedFeedback(
   env: Env,
   stateStore: ReturnType<typeof createBotStoreAdapter>,
   args: {
@@ -117,7 +121,7 @@ async function postTurnRejectedFeedback(
     );
     if (seen) return;
     await createSlackWebClient(env.SLACK_BOT_TOKEN, {
-      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT),
+      scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
     }).postMessage({
       channel: args.channelId,
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
@@ -255,7 +259,16 @@ async function writeRenderObligation(
     const sessionDo = env.SESSION_EVENTS.get(
       env.SESSION_EVENTS.idFromName(args.threadKey),
     ) as unknown as SessionEventsRpc;
-    const events = await sessionDo.replay();
+    let events;
+    try {
+      events = await sessionDo.replay();
+    } catch (err) {
+      throw new Error(
+        `session_event_replay_failed:${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     afterEventId = events.length > 0 ? events[events.length - 1]!.id : 0;
   }
   await stateStore.obligation.set({
@@ -379,11 +392,17 @@ export async function runSlackTurnLifecycle(
           .map((part) => part.text)
           .join(" ")
       : prompt;
+    const requestContext = requireRequestContext(thread);
+    const { config: channelConfig } = await loadTurnAccess(
+      env.WORKSPACE_CONFIG,
+      requestContext.teamId,
+      channelId,
+    );
     const approvalOverrides = await resolveThreadOverrides(
       stateStore,
       conversationKey,
       approvalText,
-      { persist: false },
+      channelConfig.runtimeDefaults,
     );
     if (!(await isExactTurnPending(stateStore, activeTurn))) {
       await stateStore.obligation.clear({
@@ -397,6 +416,7 @@ export async function runSlackTurnLifecycle(
       return;
     }
     const needsRemoteGitApproval = Boolean(
+      requestContext.actor.kind === "slack_user" &&
       env.HARNESS_REPO_URL &&
         (env.HARNESS || env.HARNESS_URL) &&
         approvalOverrides.effectiveHarnessType === "claudecode" &&
@@ -568,6 +588,15 @@ export async function runSlackTurnLifecycle(
         : "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.";
     logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
     console.error("[bot] Slack turn failed", msg);
+    if (
+      msg.startsWith("session_event_mirror_failed:") ||
+      msg.startsWith("session_event_replay_failed:")
+    ) {
+      // Canonical session state is unavailable or incomplete. Do not start a
+      // different runtime, append done, post a final error, or clear the
+      // obligation; the exact active lifecycle remains retryable.
+      return;
+    }
     try {
       markThreadNextRenderFinal(thread);
       await thread.post(

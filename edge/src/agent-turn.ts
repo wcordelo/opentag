@@ -301,6 +301,18 @@ function historySortKey(ts?: string, at?: number): number {
   return 0;
 }
 
+/** Normalize thread text so SessionEventDO replay dedupes against Slack history. */
+function historyDedupeKey(text: string): string {
+  let normalized = extractMessageOverrides(text).cleanedText;
+  normalized = normalized
+    .replace(/<[^|>\s]+\|([^>]+)>/g, "$1")
+    .replace(/<@[^>]+>/g, "")
+    .replace(/<#[^>]+>/g, "")
+    .replace(/<!([^>]+)>/g, "$1")
+    .replace(/<([^>]+)>/g, "$1");
+  return normalized.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function mergeHistory(
   slack: ThreadMessageLite[],
   memory: Array<{
@@ -322,11 +334,11 @@ function mergeHistory(
   }));
   const seen = new Set(
     slack
-      .map((m) => (m.text ?? "").replace(/\s+/g, " ").trim().toLowerCase())
+      .map((m) => historyDedupeKey(m.text ?? ""))
       .filter(Boolean),
   );
   for (const m of memory) {
-    const key = m.text.replace(/\s+/g, " ").trim().toLowerCase();
+    const key = historyDedupeKey(m.text);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     rows.push({

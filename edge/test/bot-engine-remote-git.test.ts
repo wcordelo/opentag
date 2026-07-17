@@ -100,11 +100,15 @@ vi.mock("../src/create-bot-store.js", () => ({
 
 const setStatus = vi.fn(async () => undefined);
 const reactMock = vi.hoisted(() => vi.fn(async () => true));
+const adapterOptionsMock = vi.hoisted(() => vi.fn());
 vi.mock("../src/slack/cloudflare-slack-adapter.js", () => ({
   markThreadNextRenderFinal: vi.fn((thread: { __testFinal?: boolean }) => {
     thread.__testFinal = true;
   }),
   CloudflareSlackAdapter: class {
+    constructor(options: unknown) {
+      adapterOptionsMock(options);
+    }
     setStatus = setStatus;
     bindThreadExecutionFence() {}
     async react(
@@ -326,12 +330,28 @@ describe("production Slack remote-git ingress", () => {
     setStatus.mockClear();
     reactMock.mockClear();
     reactMock.mockResolvedValue(true);
+    adapterOptionsMock.mockClear();
     memoryWriteMock.mockReset();
     memoryWriteMock.mockResolvedValue(undefined);
     startTaskMock.mockReset();
     startTaskMock.mockResolvedValue({ status: "accepted", taskId: "research-1" });
     resetBotSingleton();
     runBundledAgentTurn.mockResolvedValue(undefined);
+  });
+
+  it("pins the configured Slack bot identity on the adapter", async () => {
+    await getOrCreateBot({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_BOT_USER_ID: "UOPENTAG",
+      AGENT_URL: "https://agent.example.com",
+      BOT_STATE: {} as never,
+      WORKSPACE_CONFIG: {} as never,
+    } as never);
+
+    expect(adapterOptionsMock).toHaveBeenCalledOnce();
+    expect(adapterOptionsMock.mock.calls[0]![0]).toMatchObject({
+      botUserId: "UOPENTAG",
+    });
   });
 
   it("terminalizes trivial reaction and post shortcuts without launching an agent", async () => {

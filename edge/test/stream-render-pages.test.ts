@@ -1,11 +1,39 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMrkdwnBlocks,
   buildSlackMessagePages,
   MAX_BLOCKS_PER_MESSAGE,
   MAX_BLOCK_CHARS,
   MAX_FALLBACK_CHARS,
   splitIntoSegments,
 } from "../src/slack/stream-render.js";
+
+describe("Slack mrkdwn translation", () => {
+  it("translates standard Markdown before building blocks and fallbacks", () => {
+    const input = [
+      "# Capabilities",
+      "",
+      "- **Incident triage:** summarize a thread",
+      "- See [the runbook](https://example.com/runbook)",
+      "- Keep `**literal code**` unchanged",
+    ].join("\n");
+    const expected = [
+      "*Capabilities*",
+      "",
+      "•  *Incident triage:* summarize a thread",
+      "•  See <https://example.com/runbook|the runbook>",
+      "•  Keep `**literal code**` unchanged",
+    ].join("\n");
+
+    const pages = buildSlackMessagePages(input);
+    expect(pages).toHaveLength(1);
+    expect(pages[0]!.text).toBe(expected);
+    expect(pages[0]!.blocks.map((block) => block.text.text).join(""))
+      .toBe(expected);
+    expect(buildMrkdwnBlocks(input).map((block) => block.text.text).join(""))
+      .toBe(expected);
+  });
+});
 
 describe("lossless Slack continuation paging", () => {
   it("preserves every newline at and around the 3,000-character boundary", () => {

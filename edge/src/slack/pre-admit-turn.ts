@@ -66,6 +66,15 @@ export function preAdmissionIdentityForEvent(
   const raw = body as RawEvent;
   const event = raw?.event;
   const type = typeof event?.type === "string" ? event.type : "";
+  const botProfile =
+    event?.bot_profile && typeof event.bot_profile === "object"
+      ? event.bot_profile as Record<string, unknown>
+      : undefined;
+  if (
+    trustedConfig?.botUserId &&
+    (event?.user === trustedConfig.botUserId ||
+      botProfile?.user_id === trustedConfig.botUserId)
+  ) return undefined;
   const trusted = classifyTrustedRichTrigger(event, trustedConfig ?? {
     actors: new Set(),
     valid: true,

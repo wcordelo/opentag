@@ -7,6 +7,7 @@ import {
 import { slackTurnIdentity } from "../src/request-context.js";
 import { slackTurnIdentitySync } from "../src/request-context.js";
 import { makeWireTurnIdentity, makeWireTurnIdentitySync } from "../src/harness/wire-id.js";
+import { parseTrustedTriggerConfig } from "../src/slack/trusted-trigger.js";
 
 describe("Slack turn pre-admission identity", () => {
   it("preserves accepted, exact-duplicate, and distinct-concurrent registration outcomes", async () => {
@@ -182,5 +183,32 @@ describe("Slack turn pre-admission identity", () => {
       event_id: "Ev-bot",
       event: { type: "message", channel_type: "im", channel: "D1", bot_id: "B1", text: "echo", ts: "1.0" },
     })).toBeUndefined();
+  });
+
+  it("rejects self-authored threaded messages before durable admission", () => {
+    const config = parseTrustedTriggerConfig("UOPENTAG", undefined);
+    const base = {
+      type: "message",
+      channel: "C1",
+      text: "OPENTAG_FORMAT_OK",
+      ts: "2.0",
+      thread_ts: "1.0",
+    };
+
+    expect(preAdmissionIdentityForEvent({
+      event_id: "Ev-self-user",
+      event: { ...base, user: "UOPENTAG", bot_id: "BOPENTAG" },
+    }, config)).toBeUndefined();
+    expect(preAdmissionIdentityForEvent({
+      event_id: "Ev-self-profile",
+      event: {
+        ...base,
+        bot_profile: { user_id: "UOPENTAG", id: "BOPENTAG" },
+      },
+    }, config)).toBeUndefined();
+    expect(preAdmissionIdentityForEvent({
+      event_id: "Ev-human-reply",
+      event: { ...base, user: "U1" },
+    }, config)).toMatchObject({ requesterId: "U1" });
   });
 });

@@ -143,15 +143,25 @@ export const claudexOutbound: OutboundHandler<Env> = async (request, workerEnv) 
     let bodyPump: Promise<void> | undefined;
     if (request.method !== "GET" && request.method !== "HEAD") {
       const declared = request.headers.get("content-length");
-      const length = declared && /^\d+$/.test(declared) ? Number(declared) : Number.NaN;
-      if (!Number.isSafeInteger(length) || length <= 0) {
-        return deny("Claudex request length required", 411);
+      const parsedLength = declared && /^\d+$/.test(declared) ? Number(declared) : Number.NaN;
+      if (Number.isSafeInteger(parsedLength) && parsedLength > 0) {
+        if (parsedLength > MAX_CLAUDEX_REQUEST_BYTES) return deny("Claudex request too large", 413);
+        if (!request.body) return deny("Claudex request body required", 400);
+        const fixed = new FixedLengthStream(parsedLength);
+        body = fixed.readable;
+        bodyPump = request.body.pipeTo(fixed.writable);
+      } else {
+        const bytes = await request.arrayBuffer();
+        const length = bytes.byteLength;
+        if (length <= 0) return deny("Claudex request body required", 400);
+        if (length > MAX_CLAUDEX_REQUEST_BYTES) return deny("Claudex request too large", 413);
+        body = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(bytes));
+            controller.close();
+          },
+        });
       }
-      if (length > MAX_CLAUDEX_REQUEST_BYTES) return deny("Claudex request too large", 413);
-      if (!request.body) return deny("Claudex request body required", 400);
-      const fixed = new FixedLengthStream(length);
-      body = fixed.readable;
-      bodyPump = request.body.pipeTo(fixed.writable);
     }
     const forwarded = new Request(request.url, {
       method: request.method,
@@ -230,6 +240,16 @@ export const sourceDownloadOutbound: OutboundHandler<Env> = (request) => {
   return fetch(request);
 };
 
+/** Route Claudex hosts from CLAUDEX_PROXY_URL when outboundByHost keys do not match. */
+export const harnessFallbackOutbound: OutboundHandler<Env> = (request, workerEnv, ctx) => {
+  const host = new URL(request.url).hostname.toLowerCase();
+  const proxy = claudexProxyOrigin(workerEnv);
+  if (proxy && host === proxy.hostname.toLowerCase()) {
+    return claudexOutbound(request, workerEnv, ctx);
+  }
+  return sourceDownloadOutbound(request, workerEnv, ctx);
+};
+
 /** One recyclable Claude Code harness container per durable session name. */
 export class HarnessContainer extends Container<Env> {
   defaultPort = 8080;
@@ -285,4 +305,4 @@ HarnessContainer.outboundByHost = {
   "api.github.com": githubApiOutbound,
   "claudex.internal": claudexOutbound,
 };
-HarnessContainer.outbound = sourceDownloadOutbound;
+HarnessContainer.outbound = harnessFallbackOutbound;

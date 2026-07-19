@@ -60,6 +60,21 @@ async function persistAuth(env: ProxyEnv, container: DurableObjectStub<ClaudexPr
   });
 }
 
+let authPersistQueue: Promise<void> = Promise.resolve();
+
+function scheduleAuthPersist(
+  env: ProxyEnv,
+  container: DurableObjectStub<ClaudexProxyContainer>,
+  ctx: ExecutionContext,
+): void {
+  authPersistQueue = authPersistQueue
+    .then(() => persistAuth(env, container))
+    .catch((error: unknown) => {
+      console.error(JSON.stringify({ event: "claudex_auth_persist_failed", error: String(error) }));
+    });
+  ctx.waitUntil(authPersistQueue);
+}
+
 function proxyContainer(env: ProxyEnv): DurableObjectStub<ClaudexProxyContainer> {
   return env.CLAUDEX_PROXY_CONTAINER.getByName(CONTAINER_NAME);
 }
@@ -103,9 +118,7 @@ export default {
     if (!hasAuth) return json({ ok: false, error: "codex_auth_missing" }, 503);
 
     const response = await container.fetch(withoutCallerCredentials(request));
-    ctx.waitUntil(persistAuth(env, container).catch((error: unknown) => {
-      console.error(JSON.stringify({ event: "claudex_auth_persist_failed", error: String(error) }));
-    }));
+    scheduleAuthPersist(env, container, ctx);
     return response;
   },
 } satisfies ExportedHandler<ProxyEnv>;

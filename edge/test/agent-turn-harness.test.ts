@@ -479,6 +479,26 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     expect(post.mock.calls[0]![0]).toBe("Done via Claude Code.");
   });
 
+  it("routes GPT models through the Claudex Claude Code harness", async () => {
+    runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Done via Claudex." });
+    const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000101");
+
+    await runBundledAgentTurn(
+      makeEnv({ HARNESS_URL: "https://harness.example.com" }),
+      thread as never,
+      "--claudex --model gpt-5.6-sol Explain this code",
+    );
+
+    expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+    expect(runHarnessTurnMock.mock.calls[0]![1]).toMatchObject({
+      harnessType: "claudex",
+      model: "gpt-5.6-sol",
+      prompt: "Explain this code",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith("Done via Claudex.");
+  });
+
   it("restores SessionEvent-only attachments and tool results into the real harness turn", async () => {
     runHarnessTurnMock.mockResolvedValue({ ok: true, text: "Compared." });
     const replay = vi.fn(async () => [

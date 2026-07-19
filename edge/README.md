@@ -2,7 +2,7 @@
 
 The `edge/` workspace is the testable Cloudflare target: the Slack bot,
 Durable Object state, optional research Worker, production AG-UI Container,
-and optional Claude Code harness.
+Claude Code harness, and private Claudex proxy.
 
 Current architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
@@ -17,7 +17,8 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 | `wrangler.bot.toml` | `opentag-bot`, production Slack surface | Active target |
 | `wrangler.toml` | `opentag-edge`, local/development bot | Active target |
 | `workers/agent-runtime/` | `opentag-agent`, AG-UI triage Container | Production runtime |
-| `workers/sandbox/` | `opentag-harness`, Claude Code Container | Code-complete, opt-in |
+| `workers/sandbox/` | `opentag-harness`, Claude Code Container | Production coding runtime |
+| `workers/claudex-proxy/` | `opentag-claudex-proxy`, CLIProxyAPI Container | Private Claudex backend |
 | `wrangler.research.toml` | `opentag-orchestrator`, internal research | Optional task plane |
 | `wrangler.bot-store.toml` | StateStore workerd alias | Test-only |
 | `workers/wasm-dispatch/` | Intent dispatcher | Optional research build path |
@@ -42,6 +43,10 @@ Harness package check:
 cd workers/sandbox
 npm ci
 npm run typecheck
+
+cd ../claudex-proxy
+npm ci
+npm run typecheck
 ```
 
 ## Bot request flow
@@ -57,7 +62,7 @@ flowchart LR
     Life <--> State
     Life <--> Events["SESSION_EVENTS"]
     Life --> Agent["AGENT_RUNTIME"]
-    Life -. opt-in .-> Harness["HARNESS"]
+    Life -->|"coding / selected"| Harness["HARNESS"]
     Fast -. optional .-> Research["RESEARCH_TASKS"]
 ```
 
@@ -119,8 +124,10 @@ deferred only while its exact active-turn row still exists; an orphaned
 
 The default is `AGENT_RUNTIME` plus the `AGENT_URL` path. Same-zone
 `workers.dev` fetches can fail with Cloudflare 1042, so use the service binding.
-The harness is selected only when the sticky override is `claudecode` and its
-binding/URL is configured. Qualifying coding work does not fall back to AG-UI.
+Repository coding defaults to `claudecode`. `--claude` selects native Claude;
+`--claudex` or a `gpt-*` model selects the same Claude Code binary through the
+private `CLAUDEX_PROXY` service binding. Qualifying coding work and explicit
+coding-mode selections do not fall back to AG-UI.
 
 ## Deploy
 
@@ -128,6 +135,8 @@ Deployment is always an explicit operator action:
 
 ```bash
 npm run deploy:agent
+npm --prefix workers/claudex-proxy run deploy  # target before harness
+npm --prefix workers/sandbox run deploy        # target before bot
 npm run deploy:bot
 npm run deploy:research   # optional
 ```

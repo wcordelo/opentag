@@ -1,0 +1,19 @@
+{
+  "name": "opentag-claudex-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types --env-interface ClaudexBindings --include-runtime false",
+    "deploy": "wrangler deploy --config wrangler.jsonc"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260719.1",
+    "typescript": "5.6.3",
+    "wrangler": "4.110.0"
+  }
+}

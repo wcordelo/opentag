@@ -1,6 +1,7 @@
 /**
  * Access bundle types + resolver (no Workers runtime imports).
  */
+import { harnessModelMismatchError } from "../slack/overrides.js";
 export type AccessBundle = {
   id: string;
   tools: string[];
@@ -9,7 +10,7 @@ export type AccessBundle = {
 };
 
 export type ChannelRuntimeDefaults = {
-  harnessType?: "claudecode";
+  harnessType?: "claudecode" | "claudex";
   model?: string;
 };
 
@@ -102,6 +103,8 @@ export function normalizeChannelRuntimeDefaults(
     rawHarness === "claude-code" ||
     rawHarness === "claude"
       ? ("claudecode" as const)
+      : rawHarness === "claudex"
+        ? ("claudex" as const)
       : undefined;
   if (rawHarness && !harnessType) {
     throw new Error(`unsupported channel harness: ${rawHarness}`);
@@ -115,7 +118,11 @@ export function normalizeChannelRuntimeDefaults(
     throw new Error("invalid channel model id");
   }
   if (model && !harnessType) {
-    throw new Error("channel model requires harnessType=claudecode");
+    throw new Error("channel model requires harnessType");
+  }
+  const mismatch = harnessModelMismatchError(harnessType, model);
+  if (mismatch) {
+    throw new Error(mismatch);
   }
   if (!harnessType && !model) return undefined;
   return Object.freeze({

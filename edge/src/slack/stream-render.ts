@@ -9,6 +9,7 @@
  *   - `text` fallback field: 35,000 chars max
  */
 import type { ChatSDKStreamChunk } from "./chunk-types.js";
+import { markdownToMrkdwn } from "@copilotkit/channels-slack/render";
 
 export const MAX_BLOCK_CHARS = 3000;
 export const MAX_BLOCKS_PER_MESSAGE = 50;
@@ -58,7 +59,7 @@ export function buildMrkdwnBlocks(text: string): Array<{
   type: "section";
   text: { type: "mrkdwn"; text: string };
 }> {
-  const content = text.length > 0 ? text : "(empty)";
+  const content = markdownToMrkdwn(text.length > 0 ? text : "(empty)");
   const segments = splitIntoSegments(content, MAX_BLOCK_CHARS);
   const kept = segments.slice(0, MAX_BLOCKS_PER_MESSAGE);
   return kept.map((seg) => ({
@@ -85,7 +86,7 @@ export interface SlackMessagePage {
  * `client_msg_id`s and resume at the first unconfirmed continuation.
  */
 export function buildSlackMessagePages(text: string): SlackMessagePage[] {
-  const content = text.length > 0 ? text : "(empty)";
+  const content = markdownToMrkdwn(text.length > 0 ? text : "(empty)");
   const segments = splitIntoSegments(content, MAX_BLOCK_CHARS);
   const pages: SlackMessagePage[] = [];
   for (let offset = 0; offset < segments.length; offset += MAX_BLOCKS_PER_MESSAGE) {

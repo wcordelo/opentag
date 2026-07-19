@@ -211,9 +211,12 @@ Parsing lives in `edge/src/slack/overrides.ts`; persistence lives in
 - A coding request must not fall back to AG-UI after the authoritative harness
   fails.
 
-To add a second real harness, introduce a typed runtime adapter rather than
-branching throughout `agent-turn.ts`. Each adapter must implement exact
-execute/interrupt/event-terminal semantics.
+`claudecode` and `claudex` are provider modes of the same Claude Code harness,
+not separate tool runtimes. Add another translated provider mode only when it
+can preserve the same CLI, turn contract, interrupt behavior, egress boundary,
+and terminal postconditions. To add a genuinely different harness, introduce a
+typed runtime adapter rather than branching throughout `agent-turn.ts`; each
+adapter must implement exact execute/interrupt/event-terminal semantics.
 
 Channel defaults are stored in `WorkspaceConfigDO` as `runtimeDefaults` and
 resolved independently per field:
@@ -225,7 +228,8 @@ resolved independently per field:
 
 Using a channel default must never write `thread:overrides:*`. Configuration
 uses `/config runtime show`, `/config runtime set --harness claude-code
-[--model <id-or-alias>]`, and `/config runtime clear`. Only exact
+[--model <id-or-alias>]`, `/config runtime set --harness claudex
+[--model gpt-<id>]`, and `/config runtime clear`. Only exact
 `runtime show|set|clear` prefixes enter this parser; all other `/config` text
 continues to mean a system prompt.
 
@@ -298,7 +302,8 @@ node IDs to the approved repository.
 
 ## Add an outbound package/source host
 
-1. Add the hostname to `HARNESS_ALLOWED_HOSTS`.
+1. Add the hostname to the compile-time `HARNESS_ALLOWED_HOSTS` list in
+   `edge/workers/sandbox/src/container.ts`.
 2. Decide whether the host belongs in a specialized handler or the generic
    source-download handler.
 3. Default to `GET`/`HEAD` only.

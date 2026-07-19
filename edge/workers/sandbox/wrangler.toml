@@ -4,9 +4,18 @@ compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 
-# Real Claude Code harness image. This config is deployable, but deployment is
-# still gated operationally: the bot's HARNESS service binding remains
-# commented in edge/wrangler.bot.toml and no deploy is performed by this task.
+[vars]
+HARNESS_ALLOWED_REPO_HOSTS = "github.com"
+HARNESS_ALLOWED_REPO_ORGS = "wcordelo"
+CLAUDEX_PROXY_URL = "https://claudex.internal"
+CLAUDEX_MODEL = "gpt-5.6-sol"
+
+[[services]]
+binding = "CLAUDEX_PROXY"
+service = "opentag-claudex-proxy"
+
+# Real Claude Code harness image. Deploy this target before deploying the bot's
+# HARNESS service binding in edge/wrangler.bot.toml.
 [[containers]]
 class_name = "HarnessContainer"
 image = "../../../containers/harness/Dockerfile"
@@ -28,8 +37,10 @@ new_sqlite_classes = ["HarnessContainer"]
 
 # Worker-only secrets (set before deployment, never commit values). The
 # Container receives sentinels; outbound handlers inject these only for the
-# exact api.anthropic.com / GitHub upstream request:
+# exact api.anthropic.com, private Claudex service binding, or GitHub request:
 #   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+#   CLAUDEX_PROXY_URL is the synthetic https://claudex.internal origin
+#   CLAUDEX_MODEL defaults to gpt-5.6-sol
 #   GITHUB_TOKEN (optional, for private clone + approved push/PR)
 #   OPENTAG_TOOL_BIN (optional; enables the installed opentag-tool-host bridge)
 #   HARNESS_AUTH_TOKEN (required; shared only with the bot Worker)

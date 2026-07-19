@@ -20,6 +20,7 @@
   "exclude": [
     "node_modules",
     "wasm-core",
+    "workers/claudex-proxy",
     "workers/sandbox/Dockerfile",
     "test/**/*.workers.test.ts"
   ]

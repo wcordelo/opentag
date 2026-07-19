@@ -224,4 +224,25 @@ describe("resolveThreadOverrides", () => {
     expect(result.effectiveModel).toBe("claude-opus-4-8");
     expect(result.cleanedText).toBe("Hi");
   });
+
+  it("does not persist a sticky merge that would mismatch harness and model", async () => {
+    const store = memoryStore();
+    const key = "C1::1.0";
+
+    await store.kv.set(threadOverridesKey(key), {
+      harnessType: "claudex",
+      model: "gpt-5.6-sol",
+      updatedAt: Date.now(),
+    });
+
+    const result = await resolveThreadOverrides(store, key, "--claude hello");
+    expect(result.effectiveHarnessType).toBe("claudecode");
+    expect(result.effectiveModel).toBe("gpt-5.6-sol");
+
+    const persisted = await store.kv.get(threadOverridesKey(key));
+    expect(persisted).toMatchObject({
+      harnessType: "claudex",
+      model: "gpt-5.6-sol",
+    });
+  });
 });

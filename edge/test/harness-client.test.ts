@@ -338,6 +338,7 @@ describe("runHarnessTurn", () => {
     expect(body.threadKey).toBe("slack:C1:1.0");
     expect(body.executionId).toBe("slack:C1:1.4");
     expect(body.forwardedMessageId).toBe("slack:C1:1.4");
+    expect(body.harnessType).toBe("claudecode");
     expect(body.model).toBe("claude-sonnet-5");
     expect(body.inputLines).toEqual(["hello"]);
     expect(body.remoteGitApproved).toBe(false);

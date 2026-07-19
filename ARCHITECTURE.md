@@ -1,12 +1,12 @@
 # OpenTag architecture
 
 Status: **current implementation reference**
-Updated: **2026-07-13**
+Updated: **2026-07-18**
 
 OpenTag is a Slack-native agent system built on Cloudflare Workers, Durable
 Objects, service bindings, and Containers. The production Slack surface is one
 Worker (`opentag-bot`). It can route conversational turns to the AG-UI triage
-runtime, coding turns to an optional Claude Code harness, and long-running
+runtime, coding turns to the Claude Code harness, and long-running
 research to a separate task plane.
 
 This document describes what the current branch implements. For why the team
@@ -39,10 +39,11 @@ flowchart LR
       Triage["TriageContainer<br/>runtime.ts + MCP"]
     end
 
-    subgraph Harness["Coding plane · optional"]
+    subgraph Harness["Coding plane"]
       HarnessWorker["opentag-harness Worker<br/>auth + request validation"]
       HarnessContainer["HarnessContainer<br/>Claude Code + repo checkout"]
       Egress["Outbound interception<br/>allowlists + credential injection"]
+      Claudex["opentag-claudex-proxy<br/>CLIProxyAPI + Codex OAuth"]
     end
 
     subgraph Research["Task plane · optional"]
@@ -56,16 +57,17 @@ flowchart LR
     Lifecycle --> Config
     Tools --> Knowledge
     Lifecycle -->|"AGENT_RUNTIME + AGENT_URL path"| AgentWorker --> Triage
-    Lifecycle -.->|"HARNESS binding or HARNESS_URL"| HarnessWorker --> HarnessContainer --> Egress
+    Lifecycle -->|"HARNESS"| HarnessWorker --> HarnessContainer --> Egress
+    Egress -->|"claudex mode only"| Claudex
     Tools -.->|"RESEARCH_TASKS"| Orchestrator --> Actors
     Adapter --> Slack
     Actors --> Slack
 ```
 
-Solid paths are the default bot and triage flow. Dashed paths are optional
-planes. The harness code and deployment package are complete, but the bot's
-`HARNESS` binding remains commented until the harness Worker is explicitly
-deployed and configured.
+Solid paths are deployed production bindings; dashed paths are optional task
+planes. The coding path is enabled in `edge/wrangler.bot.toml`. Deployments must
+preserve dependency order: `opentag-claudex-proxy`, then `opentag-harness`, then
+`opentag-bot`.
 
 ## Request ownership
 
@@ -78,6 +80,7 @@ deployed and configured.
 | Replayable execution events and interrupts | `SessionEventDO` | `edge/src/store/session-event-do.ts` |
 | AG-UI conversation turns and MCP | `opentag-agent` | `runtime.ts`, `lib/triage-agent.ts` |
 | Claude Code repository turns | `opentag-harness` | `edge/workers/sandbox/`, `containers/harness/` |
+| Claudex model translation and OAuth refresh | `opentag-claudex-proxy` | `edge/workers/claudex-proxy/`, `containers/claudex-proxy/` |
 | Research tasks | `opentag-orchestrator` | `edge/workers/orchestrator/`, `lib/research/` |
 | Channel configuration and tool policy | `WorkspaceConfigDO` | `edge/src/config/` |
 | Channel knowledge | `KnowledgeDO` | `edge/src/memory/` |
@@ -301,23 +304,26 @@ response and atomically suppresses pending delivery work.
 Inline flags are stripped before the model sees the prompt:
 
 - `--claude` selects the Claude Code harness type.
+- `--claudex` selects the same Claude Code binary through the private
+  CLIProxyAPI/Codex backend.
 - `--model <id>` and model aliases select a sticky thread model.
 - `-rsn <effort>` is reserved syntax and currently fails visibly; no deployed
   OpenTag runtime accepts or persists reasoning effort.
 
-Sticky model and harness preferences live in DO-backed thread state. If the
-Claude Code harness is selected but not configured, every selected turn fails
-visibly, including ordinary non-coding turns. Explicit or sticky Claude
-selection is authoritative and never falls back to AG-UI; repository coding
-turns additionally require `HARNESS_REPO_URL`.
+Sticky model and harness preferences live in DO-backed thread state. GPT model
+IDs imply `claudex`; Claude aliases imply `claudecode`. Provider-qualified IDs
+remain unsupported. If the selected coding mode is not configured, every
+selected turn fails visibly, including ordinary non-coding turns. Explicit or
+sticky selection is authoritative and never falls back to AG-UI; repository
+coding turns additionally require `HARNESS_REPO_URL`.
 
 The AG-UI path injects the current Slack transcript on every run because agent
 message lists are isolate-local. The harness path re-feeds up to 24,000 recent
 characters when creating or restarting a session.
 
-## Claude Code harness
+## Claude Code harness and Claudex backend
 
-The coding plane has two processes:
+The coding plane has three components:
 
 1. A Cloudflare Worker validates and authenticates `/turn` and `/interrupt`,
    selects one durable container by `sessionId`, installs an exact approval
@@ -325,6 +331,11 @@ The coding plane has two processes:
 2. A Node server inside the Ubuntu container clones or reuses the allowlisted
    repository, starts Claude Code, maps `stream-json` output to OpenTag NDJSON,
    verifies postconditions, and emits `done` last.
+3. In `claudex` mode, the Harness Worker routes only the Anthropic-compatible
+   model endpoints through a private service binding to `opentag-claudex-proxy`.
+   That Worker imports bounded Codex OAuth JSON from private R2, starts
+   CLIProxyAPI in its own Container, strips caller credentials, and persists
+   refreshed OAuth state back to R2.
 
 ```mermaid
 flowchart TB
@@ -338,6 +349,7 @@ flowchart TB
     Stream --> Revoke["Revoke approval before<br/>terminal line is observable"]
 
     Claude -->|"Anthropic HTTPS"| Anthropic["Worker injects model credential"]
+    Claude -->|"Claudex synthetic origin"| Claudex["Private service binding<br/>CLIProxyAPI + Codex OAuth"]
     Claude -->|"Git smart HTTP / REST"| GitHub["Worker validates execution,<br/>repo, branch, method, PR attribution"]
     Claude -->|"GET/HEAD only"| Mirrors["Package/source mirrors"]
 ```
@@ -346,6 +358,8 @@ flowchart TB
 
 - The container runs non-root and receives sentinel credentials, not the real
   Anthropic, GitHub, or harness secrets.
+- Claudex OAuth never enters the harness Container. Only the private proxy
+  Container can read it, and only the model/message endpoints are forwarded.
 - `enableInternet = false`; `interceptHttps = true`; only declared hosts are
   reachable through outbound handlers.
 - Git clone reads require the exact execution ID and allowlisted repository.
@@ -442,7 +456,8 @@ become synthetic turns.
 | Bot Worker | `edge/wrangler.bot.toml` | Production surface |
 | Local bot Worker | `edge/wrangler.toml` | Development |
 | AG-UI agent Container | `edge/workers/agent-runtime/` | Production conversation runtime |
-| Claude Code harness | `edge/workers/sandbox/` + `containers/harness/` | Code-complete; opt-in deployment and bot binding |
+| Claude Code harness | `edge/workers/sandbox/` + `containers/harness/` | Production coding runtime |
+| Claudex proxy | `edge/workers/claudex-proxy/` + `containers/claudex-proxy/` | Private GPT backend for Claude Code |
 | Research Worker | `edge/wrangler.research.toml` | Optional internal task plane |
 | WASM dispatcher | `edge/workers/wasm-dispatch/` | Optional research/build path |
 
@@ -462,8 +477,9 @@ become synthetic turns.
    repository, execution, branch, and attribution match.
 8. A coding task cannot silently fall back to a non-coding runtime.
 9. All Block Kit and text output is bounded before it reaches Slack.
-10. Deployment remains an explicit operator action; tests and documentation do
-    not imply that the optional harness has been enabled in production.
+10. Deployment remains an explicit operator action; dependent services are
+    deployed target-before-caller, and self-hosters may remove the coding-plane
+    bindings if they do not configure it.
 
 ## Where to go next
 

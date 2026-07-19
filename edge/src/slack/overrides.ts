@@ -1,8 +1,10 @@
 /**
  * Inline message directives, restored from the v1 slackbot:
  *   --claude | --claude-code                         pick the harness for the thread
+ *   --claudex                                       run Claude Code through CLIProxyAPI/Codex
  *   --model <name> (or --model=<name>)              pick the model within that harness
- *   --codex / -rsn                                  rejected: no Codex runtime is installed
+ *   --codex                                         rejected: use the Claude Code `--claudex` mode
+ *   -rsn                                            rejected: reasoning is operator-controlled
  *   --fable | --opus | --sonnet | --haiku           model shortcuts (imply claude-code)
  *
  * Flags are stripped from the text before it reaches the agent. The harness
@@ -28,7 +30,8 @@ export type MessageOverrides = {
 const HARNESS_FLAGS: Record<string, string> = {
   claude: 'claudecode',
   'claude-code': 'claudecode',
-  claudecode: 'claudecode'
+  claudecode: 'claudecode',
+  claudex: 'claudex'
 }
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
@@ -92,7 +95,10 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   if (modelMatch) {
     const value = modelMatch[1]!
     model = CLAUDE_MODEL_ALIASES[value.toLowerCase()] ?? value
-    harnessType = 'claudecode'
+    if (value.includes('/')) {
+      errors.push(`provider-qualified model ${value} is unsupported; use --claudex with a GPT model or --claude with a Claude model`)
+    }
+    harnessType = /^gpt-/i.test(value) ? 'claudex' : 'claudecode'
     cleaned = stripMatch(cleaned, modelMatch)
   }
 
@@ -101,7 +107,7 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     const normalized = REASONING_EFFORTS[reasoningMatch[1]!.toLowerCase()]
     if (normalized) {
       reasoning = normalized
-      errors.push(`-rsn ${normalized} is unsupported because no Codex runtime is installed`)
+      errors.push(`-rsn ${normalized} is unsupported; Claudex reasoning effort is controlled by the proxy configuration`)
     } else {
       errors.push(`unsupported reasoning effort: ${reasoningMatch[1]!}`)
     }
@@ -110,7 +116,7 @@ export function extractMessageOverrides(text: string): MessageOverrides {
 
   const codexMatch = flagPattern('codex').exec(cleaned)
   if (codexMatch) {
-    errors.push('--codex is unsupported because no Codex runtime is installed')
+    errors.push('--codex is unsupported; use --claudex to run Claude Code with a Codex-backed model')
     cleaned = stripMatch(cleaned, codexMatch)
   }
 
@@ -129,6 +135,9 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     cleaned = stripMatch(cleaned, match)
   }
 
+  const mismatch = harnessModelMismatchError(harnessType, model)
+  if (mismatch) errors.push(mismatch)
+
   const result = {
     cleanedText: cleaned === text ? text : cleaned.trim(),
     harnessType,
@@ -137,6 +146,20 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   } as MessageOverrides
   Object.defineProperty(result, 'errors', { value: errors, enumerable: false })
   return result
+}
+
+export function harnessModelMismatchError(
+  harnessType: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (!harnessType || !model) return undefined
+  if (harnessType === 'claudex' && !/^gpt-/i.test(model)) {
+    return 'Claudex requires a GPT model (gpt-*); use --claude with a Claude model'
+  }
+  if (harnessType === 'claudecode' && /^gpt-/i.test(model)) {
+    return 'Claude Code requires a Claude model; use --claudex with a GPT model'
+  }
+  return undefined
 }
 
 function flagPattern(flag: string): RegExp {

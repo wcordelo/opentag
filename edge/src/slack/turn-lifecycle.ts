@@ -419,7 +419,8 @@ export async function runSlackTurnLifecycle(
       requestContext.actor.kind === "slack_user" &&
       env.HARNESS_REPO_URL &&
         (env.HARNESS || env.HARNESS_URL) &&
-        approvalOverrides.effectiveHarnessType === "claudecode" &&
+        (approvalOverrides.effectiveHarnessType === "claudecode" ||
+          approvalOverrides.effectiveHarnessType === "claudex") &&
         isRepositoryCodingIntent(approvalOverrides.cleanedText),
     );
 

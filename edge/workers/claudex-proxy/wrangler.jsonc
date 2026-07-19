@@ -1,0 +1,50 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "opentag-claudex-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": {
+    "CODEX_AUTH_OBJECT": "codex-primary.json"
+  },
+  "containers": [
+    {
+      "class_name": "ClaudexProxyContainer",
+      "image": "../../../containers/claudex-proxy/Dockerfile",
+      "image_build_context": "../../..",
+      "max_instances": 1,
+      "instance_type": "lite"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CLAUDEX_PROXY_CONTAINER",
+        "class_name": "ClaudexProxyContainer"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "AUTH_BUCKET",
+      "bucket_name": "opentag-claudex-auth"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ClaudexProxyContainer"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  }
+}

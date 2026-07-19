@@ -223,10 +223,17 @@ describe("harness zero-trust egress policy", () => {
     expect(entry).toContain('export { ContainerProxy } from "@cloudflare/containers"');
     expect(container).toContain("enableInternet = false");
     expect(container).toContain("interceptHttps = true");
-    expect(container).toContain("allowedHosts = [...HARNESS_ALLOWED_HOSTS]");
+    expect(container).toContain("allowedHosts = harnessAllowedHosts()");
     expect(
       container.match(/request = takeExecutionBinding\(request\)\.request;/g),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
+    expect(container).toContain("CLAUDEX_PROXY.fetch");
+    expect(container).not.toContain("CLAUDEX_AUTH_TOKEN");
+    expect(container).toContain("HarnessContainer.outboundByHost = {");
+    expect(container).toContain('"claudex.internal": claudexOutbound');
+    expect(container).toContain("HarnessContainer.outbound = harnessFallbackOutbound");
+    expect(container).toContain('headers.delete("content-length")');
+    expect(container).toContain("new FixedLengthStream(parsedLength)");
     expect(dockerfile).toContain("/etc/cloudflare/certs/cloudflare-containers-ca.crt");
     expect(dockerfile).toContain("NODE_EXTRA_CA_CERTS");
     expect(dockerfile).toContain('x-opentag-execution-id: ${OPENTAG_EXECUTION_ID:-}');

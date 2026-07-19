@@ -62,7 +62,7 @@ operating model.
 | Message/execution idempotency | `wire-id.ts`, pre-admission, SessionEventDO | Adapted and strengthened | Stable SHA-256 purpose-tagged IDs |
 | Stop command | `stop-command.ts` | Near-verbatim parser port | Integrated with exact cancellation lifecycle |
 | Runtime interrupt | `stop-routing.ts`, harness `/interrupt`, research cancel | New Cloudflare control path | Implemented with quiescence confirmation |
-| Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky Claude model/harness; reasoning flags rejected |
+| Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky `claudecode`/`claudex` mode and model; reasoning flags rejected |
 | Per-channel model/harness defaults | `WorkspaceConfigDO`, `thread-overrides.ts`, `/config runtime` | Adapted to Durable Objects | Implemented with explicit > sticky > channel > deployment provenance |
 | Redacted permission inspection | `permissions/*`, `show_permissions`, admin endpoint, harness CLI | Adapted without Rails/iron-proxy | Implemented as informational snapshots; authorization remains elsewhere |
 | Rich-payload bot mentions | `trusted-trigger.ts`, `rich-display-text.ts`, pre-admission | Stricter authorization adaptation | Disabled by default; exact actor + exact nested mention; non-human safe-tool ceiling |
@@ -95,19 +95,20 @@ every production Slack mutation behind an exact active-turn render fence.
 ### Override parsing
 
 The parsing and flag-stripping approach came directly from Centaur. OpenTag
-trimmed Amp and provider flags because those runtimes do not exist here.
+trimmed Amp and provider-qualified flags, then added `claudex` as a Codex-backed
+provider mode for the existing Claude Code CLI.
 
 Key behavioral decisions retained:
 
 - Flags are removed before thread memory, titles, transcripts, or models see
   the user text.
 - Model and harness choices are sticky to a thread.
-- Every `-rsn` reasoning value is visibly rejected because OpenTag has no
-  Codex runtime. Disconnected Claude/model choices also fail visibly and are
-  not saved as sticky preferences.
-- A flags-only Claude model/harness message saves the preference and returns a
-  confirmation without invoking a model. A reasoning/provider flag returns a
-  visible rejection and saves nothing.
+- Every `-rsn` reasoning value remains visibly rejected because no runtime
+  accepts user-selected effort. Disconnected coding-mode/model choices also
+  fail visibly and are not saved as sticky preferences.
+- A flags-only `claudecode` or `claudex` model/mode message saves the preference
+  and returns a confirmation without invoking a model. A reasoning or
+  provider-qualified model flag returns a visible rejection and saves nothing.
 
 ### Stop phrase recognition
 
@@ -270,7 +271,7 @@ Claude's own success claim is held until OpenTag verifies:
 | Node-local repo cache and hostPath mounts | No Cloudflare equivalent; clone/reuse per session |
 | Rails console | Replaced by a signed, read-only SessionEventDO JSON viewer |
 | Full `iron-proxy` protocol coverage | No arbitrary TCP/UDP NetworkPolicy equivalent |
-| Amp/Codex/multi-provider harness matrix | Claude Code is the first supported coding harness |
+| Amp/Codex/multi-tool harness matrix | Claude Code remains the sole tool harness; Claudex adds a Codex model backend without adding a second tool runtime |
 | Centaur observability stack | OpenTag uses structured Worker logs today |
 | Centaur tool catalog | Tool-host surface exists, but tools are added intentionally |
 | Multi-agent PM/implement/verify fleet | Still out of the public OpenTag task contract |
@@ -283,7 +284,7 @@ Claude's own success claim is held until OpenTag verifies:
 | Never-silent recovery | Postgres + leases + startup scan | DO SQLite + alarms | No startup sweep or external lease |
 | Session events | `api-rs` | SessionEventDO | Narrower, Slack-delivery focused |
 | Stop | Session API interrupt | Exact multi-plane cancellation | Includes research and process quiescence |
-| Model flags | Multi-harness session config | Sticky DO state | Only Claude Code is a real alternate harness |
+| Model flags | Multi-harness session config | Sticky DO state | `claudecode` and `claudex` select native Anthropic vs private Codex translation for the same Claude Code CLI |
 | Quick actions | Site-specific buttons | Generic synthetic turns | Artifact cards require `QUICK_BASE_DOMAIN`; research cards are final-delivery actions |
 | Repo access | Mounted cache | Clone/reuse per session | Higher cold-start cost, simpler ops |
 | Credentials | `iron-proxy` sidecar | Container outbound handlers | HTTP/HTTPS scope only |
@@ -292,9 +293,10 @@ Claude's own success claim is held until OpenTag verifies:
 
 ## Known limits and next expansions
 
-- The bot-to-harness service binding is not enabled by default; deployment and
-  secrets are operator actions. The harness `BLOBS` binding must name the same
-  bucket used by the bot's staged attachment writer.
+- The production bot-to-harness service binding is enabled. Deployment and
+  secrets remain explicit operator actions, and targets must be deployed in
+  Claudex proxy → harness → bot order. The harness `BLOBS` binding must name the
+  same bucket used by the bot's staged attachment writer.
 - Clone-per-session can be slow for large repositories. R2-backed snapshots or
   shallow-cache refresh are possible future optimizations.
 - The harness streams NDJSON into the event log, but Slack currently posts the

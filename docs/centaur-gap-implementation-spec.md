@@ -1,9 +1,17 @@
 # OpenTag — Centaur Gap Implementation SPEC
 
-Status: **Ready for `/goal` implementation**
+Status: **Implemented by PR #7; retained as the historical implementation contract**
 Date: **2026-07-15**
 Target repository: OpenTag repository root
 Source comparison: Centaur daily gap reviews through fork sync `14c6577`
+
+> **Current-runtime note (2026-07-18):** This spec intentionally scoped runtime
+> selection to `claudecode` and excluded Codex at the time it was written. The
+> current implementation also supports `claudex`, which runs the same Claude
+> Code CLI through the private CLIProxyAPI/Codex backend. Current behavior and
+> deployment guidance live in [`ARCHITECTURE.md`](../ARCHITECTURE.md) and
+> [`operations.md`](./operations.md); the original scope statements below are
+> preserved as historical acceptance criteria.
 
 ## Goal objective
 

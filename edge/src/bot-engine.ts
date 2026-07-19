@@ -135,6 +135,9 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   }
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
+    ...(trustedTriggerConfig.botUserId
+      ? { botUserId: trustedTriggerConfig.botUserId }
+      : {}),
     stateStore,
     slackScheduler,
     deliveryMetrics: env.DELIVERY_METRICS,

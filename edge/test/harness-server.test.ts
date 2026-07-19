@@ -28,6 +28,7 @@ import {
   hasValidBearerToken,
   loadAuthoritativeSystemPrompt,
   mapStreamJsonLine,
+  normalizeClaudexProxyUrl,
   materializeTurnAttachments,
   materializePermissionSnapshot,
   prepareExecutionHome,
@@ -784,6 +785,7 @@ describe("buildClaudeSpawnOptions", () => {
       cwd: "/work/session-1",
       env,
       detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
     expect(buildClaudeSpawnOptions("/work/session-1", env, "darwin").detached).toBe(false);
   });
@@ -902,6 +904,28 @@ describe("security validation", () => {
     expect(child.HOMEPATH).toBeUndefined();
   });
 
+  it("configures Claudex without exposing the real proxy credential", () => {
+    const child = buildClaudeEnv({
+      CLAUDEX_PROXY_URL: "https://claudex.internal",
+    }, "gpt-5.6-sol", false, undefined, "session-1", "exec-1", "/work/home", undefined, "claudex");
+    expect(child).toMatchObject({
+      ANTHROPIC_BASE_URL: "https://claudex.internal",
+      ANTHROPIC_AUTH_TOKEN: "opentag-egress-injected-not-a-secret",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.6-sol",
+      CLAUDE_CODE_SUBAGENT_MODEL: "gpt-5.6-sol",
+      CLAUDE_CODE_ALWAYS_ENABLE_EFFORT: "1",
+      CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY: "3",
+      ENABLE_TOOL_SEARCH: "false",
+    });
+  });
+
+  it("accepts only HTTPS or loopback HTTP Claudex proxy origins", () => {
+    expect(normalizeClaudexProxyUrl("https://proxy.example/")).toBe("https://proxy.example");
+    expect(normalizeClaudexProxyUrl("http://127.0.0.1:8317")).toBe("http://127.0.0.1:8317");
+    expect(normalizeClaudexProxyUrl("http://proxy.example")).toBeUndefined();
+    expect(normalizeClaudexProxyUrl("https://proxy.example/other")).toBeUndefined();
+  });
+
   it("keeps clone credentials in askpass and binds the exact execution outside argv", () => {
     const env = gitAuthenticationEnv({
       GITHUB_TOKEN: "private-token",
@@ -945,6 +969,13 @@ describe("security validation", () => {
     expect(validateTurnRequest({ ...validTurn, model: "opus; rm -rf /" }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_model",
+    });
+    expect(validateTurnRequest({ ...validTurn, harnessType: "codex" }, repoPolicy)).toMatchObject({
+      ok: false,
+      error: "invalid_harness_type",
+    });
+    expect(validateTurnRequest({ ...validTurn, harnessType: "claudex" }, repoPolicy)).toMatchObject({
+      ok: true,
     });
     expect(validateTurnRequest({ ...validTurn, inputLines: [42] }, repoPolicy)).toMatchObject({
       ok: false,

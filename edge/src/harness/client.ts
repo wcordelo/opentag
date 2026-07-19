@@ -43,6 +43,8 @@ export interface RunHarnessTurnArgs {
   prompt: string;
   /** Bounded inline/staged attachment envelope; never flattened to omission text. */
   attachments?: PreparedAttachment[];
+  /** Omitted only by legacy/internal callers; production selection is explicit. */
+  harnessType?: "claudecode" | "claudex";
   model?: string;
   /** `[Requester Context]` block (SPEC §5-A5 item 5) — built by the caller (agent-turn.ts). */
   requesterContext?: string;
@@ -325,6 +327,7 @@ export async function runHarnessTurn(
   env: Env,
   args: RunHarnessTurnArgs,
 ): Promise<RunHarnessTurnResult> {
+  const harnessType = args.harnessType ?? "claudecode";
   const fetcher = harnessFetcher(env);
   if (!fetcher || !env.SESSION_EVENTS || !env.HARNESS_AUTH_TOKEN) {
     return failed("unavailable", "harness_unavailable");
@@ -338,7 +341,7 @@ export async function runHarnessTurn(
   try {
     created = await sessionDo.create({
       threadKey: args.threadKey,
-      harnessType: "claudecode",
+      harnessType,
       model: args.model,
     });
   } catch (err) {
@@ -396,6 +399,7 @@ export async function runHarnessTurn(
     forwardedMessageId: args.forwardedMessageId,
     threadKey: args.threadKey,
     inputLines: [args.prompt],
+    harnessType,
     remoteGitApproved: args.remoteGitApproved === true,
   };
   if (args.attachments?.length) body.attachments = args.attachments;

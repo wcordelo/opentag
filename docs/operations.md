@@ -1,7 +1,7 @@
 # OpenTag operations guide
 
 Status: **current runbook**
-Updated: **2026-07-14**
+Updated: **2026-07-18**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
@@ -16,22 +16,25 @@ flowchart LR
     Bot["opentag-bot<br/>wrangler.bot.toml"]
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
+    Claudex["opentag-claudex-proxy<br/>workers/claudex-proxy"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
 
     Operator -->|"deploy:bot"| Bot
     Operator -->|"deploy:agent"| Agent
-    Operator -.->|"explicit opt-in deploy"| Harness
+    Operator -->|"explicit coding deploy"| Claudex
+    Operator -->|"explicit coding deploy"| Harness
     Operator -.->|"deploy:research"| Research
 
     Bot -->|"AGENT_RUNTIME"| Agent
-    Bot -.->|"HARNESS"| Harness
+    Bot -->|"HARNESS"| Harness
+    Harness -->|"CLAUDEX_PROXY"| Claudex
     Bot -.->|"RESEARCH_TASKS"| Research
 ```
 
-The bot and AG-UI agent are the normal production pair. Research is optional.
-The Claude Code harness is packaged and tested but remains opt-in; the bot's
-service binding is commented in both bot Wrangler configs until an operator
-deploys and connects it.
+The bot, AG-UI agent, and coding harness are deployed in the current production
+configuration. Research remains optional. The coding plane runs the Claude Code
+CLI with native Anthropic and Claudex/CLIProxyAPI modes. Its active service
+bindings require target-before-caller deploy order: Claudex proxy, harness, bot.
 
 ## Local prerequisites
 
@@ -80,6 +83,18 @@ docker build --platform linux/amd64 \
 The harness pins an `amd64` Ubuntu package and Cloudflare's deployment image
 target is `linux/amd64`. Apple Silicon Docker otherwise selects `arm64` and
 fails at `dpkg` before project code runs.
+
+### Claudex proxy package
+
+```bash
+cd edge/workers/claudex-proxy
+npm ci
+npm run typecheck
+```
+
+Its Container image is also `linux/amd64`. The Worker is private
+(`workers_dev = false`) and is reached from the harness only through the
+`CLAUDEX_PROXY` service binding.
 
 ### Root runtime and research
 
@@ -144,13 +159,17 @@ cd edge
 | `DELIVERY_METRICS` | Analytics Engine binding | Bot | Confirmed `streamed`, `answer_visible`, and `failed_size_limit` outcomes |
 | `INTERNAL_SECRET` | Secret | Bot + research | Internal research authentication |
 | `RESEARCH_TASKS` | Service binding | Bot | `opentag-orchestrator` |
-| `HARNESS` | Service binding | Bot | Optional `opentag-harness` call |
+| `HARNESS` | Service binding | Bot | Production `opentag-harness` call |
 | `HARNESS_URL` | Var/secret string | Bot | Harness base URL and path fallback |
 | `HARNESS_AUTH_TOKEN` | Secret | Bot + harness | `/turn` and `/interrupt` bearer |
 | `HARNESS_REPO_URL` | Var | Bot | Default repository for coding turns |
 | `HARNESS_ALLOWED_REPO_HOSTS` | Var | Harness | Allowed git hosts, default `github.com` |
 | `HARNESS_ALLOWED_REPO_ORGS` | Var | Harness | Required non-empty organization allowlist |
-| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Harness Worker | Injected at outbound boundary |
+| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Harness Worker | Native Claude Code credential, injected at the Anthropic boundary |
+| `CLAUDEX_PROXY_URL` | Var | Harness Worker | Synthetic `https://claudex.internal` origin routed through the private service binding |
+| `CLAUDEX_MODEL` | Var | Harness | Optional Claudex default, `gpt-5.6-sol` when omitted |
+| `CLIPROXY_CLIENT_KEY` | Secret | Claudex proxy Worker | Internal key shared only with the trusted CLIProxyAPI container |
+| `CLIPROXY_INTERNAL_KEY` | Secret | Claudex proxy Worker | Protects credential import/export between the Worker and its container |
 | `GITHUB_TOKEN` | Secret | Harness Worker | Private clone and approved remote writes |
 | `OPENTAG_TOOL_BIN` | Var | Harness | Optional tool-host executable |
 | `OPENAI_API_KEY` | Secret | Agent | Default AG-UI model |
@@ -208,45 +227,104 @@ token, not only in the manifest.
 
 ## Deploy and connect the harness
 
-This is an explicit operator action. Complete all steps before uncommenting the
-bot binding.
+This is an explicit operator action. The repository ships active production
+bindings, so deploy every target before its caller.
 
 1. Set a non-empty organization allowlist in
    `edge/workers/sandbox/wrangler.toml` or its deployment environment.
 2. Verify the harness `BLOBS` R2 binding names the same bucket as the bot
    binding. Staged references fail closed if the binding, object, size, or
    digest does not match.
-3. Configure harness Worker secrets:
+3. Configure harness Worker secrets. Native Claude needs one Anthropic
+   credential; Claudex-only operation does not:
 
 ```bash
 cd edge/workers/sandbox
 npx wrangler secret put HARNESS_AUTH_TOKEN
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put GITHUB_TOKEN
+```
+
+`CLAUDE_CODE_OAUTH_TOKEN` can replace `ANTHROPIC_API_KEY` for native Claude.
+For Claudex, complete `cliproxyapi --codex-login` on a trusted local machine,
+identify the resulting `codex-*.json` file, and upload only that JSON to the
+private R2 object named by `CODEX_AUTH_OBJECT` (default
+`codex-primary.json`). Never print the file contents:
+
+```bash
+cd edge/workers/claudex-proxy
+npx wrangler r2 object put \
+  opentag-claudex-auth/codex-primary.json \
+  --file /absolute/path/to/codex-account.json \
+  --remote
+```
+
+The proxy Worker loads that bounded object into its trusted Container and
+persists refreshed state back to R2. Generate two distinct random values of at
+least 32 characters and set them interactively:
+
+```bash
+cd edge/workers/claudex-proxy
+npx wrangler secret put CLIPROXY_CLIENT_KEY
+npx wrangler secret put CLIPROXY_INTERNAL_KEY
 npm run deploy
 ```
 
-`CLAUDE_CODE_OAUTH_TOKEN` can replace `ANTHROPIC_API_KEY` where appropriate.
+Do not mount `~/.cli-proxy-api` or ChatGPT/Codex OAuth state into the harness
+container. Claude and repository tools receive only a sentinel client token;
+the Harness Worker strips it and forwards only `/v1/messages`,
+`/v1/messages/count_tokens`, and `/v1/models` through `CLAUDEX_PROXY`.
 
-1. Add the `HARNESS` service binding to `edge/wrangler.bot.toml`:
+Select Claudex in Slack with either form:
+
+```text
+--claudex Fix the failing tests
+--claudex --model gpt-5.6-sol Review this change
+```
+
+Both modes run the same pinned Claude Code binary and preserve the same Stop,
+repository, egress, git-approval, and postcondition enforcement. The macOS
+`claudex` alias remains useful for direct local use, but its
+`http://127.0.0.1:8317` endpoint is not reachable from a Cloudflare container.
+
+4. Verify the already-shipped `CLAUDEX_PROXY` and `HARNESS` service bindings:
 
 ```toml
+# edge/workers/sandbox/wrangler.toml
+[[services]]
+binding = "CLAUDEX_PROXY"
+service = "opentag-claudex-proxy"
+
+# edge/wrangler.bot.toml
 [[services]]
 binding = "HARNESS"
 service = "opentag-harness"
 ```
 
-1. Set matching bot configuration:
+5. Deploy the harness, then set matching bot configuration and deploy the bot:
 
 ```bash
+cd edge/workers/sandbox
+npm run deploy
 cd ../..
 npx wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml
 # configure HARNESS_REPO_URL as a non-secret var or deployment-specific value
 npm run deploy:bot
 ```
 
-1. Verify `/health`, a read-only harness turn, Stop during a live turn, a local
-   commit-only coding turn, then a separately approved push/PR turn.
+6. Verify bot and proxy `/health`, a read-only Claudex turn, Stop during a live
+   turn, a local commit-only coding turn, then a separately approved push/PR
+   turn. The exact-response Slack smoke is:
+
+```text
+--claudex --model gpt-5.6-sol Reply with exactly: SLACK_CLAUDEX_OK
+```
+
+The accurate runtime description is: OpenTag launches the pinned Claude Code
+CLI directly in a session-scoped, recyclable Cloudflare Container. It does not
+embed the Claude Agent SDK. A session checkout may be reused; each execution
+receives a fresh writable `HOME` that is quarantined and removed before the
+terminal event.
 
 Do not place real Anthropic or GitHub tokens in the container image or bot turn
 body. The container receives sentinels; outbound handlers replace them.
@@ -276,6 +354,7 @@ the click identity, and then enter the ordinary synthetic-turn sink.
 | Agent | Agent Worker health route | Worker/Container reachable |
 | Harness Worker | `GET /health` | `{ok:true, worker:"opentag-harness"}` |
 | Harness container | Internal `GET /health` | Claude Code version |
+| Claudex proxy | Internal `GET /health` through `CLAUDEX_PROXY` | `{ok:true, proxy:"ready", auth:"configured"}` |
 | Research | `GET /health` | `role:"research-task"`, `slack:"demoted"` |
 
 The bot's `/debug/store` is admin-authenticated and exercises KV, list, lock,
@@ -323,7 +402,7 @@ and final render logs.
 - Agent turn: call the reserved `show_permissions` tool.
 - Operator: `GET /admin/permissions?teamId=<team>&channelId=<channel>` with the
   existing admin bearer. Responses are `Cache-Control: no-store`.
-- Claude harness: run `opentag permissions` during the active execution.
+- Coding harness: run `opentag permissions` during the active execution.
 
 These surfaces are informational. They never grant a tool, secret, network
 destination, git operation, or write. Automation snapshots deliberately omit
@@ -331,14 +410,14 @@ MCP endpoint and secret-reference names.
 
 ## Configure channel runtime defaults
 
-Use `/config runtime show`, `/config runtime set --harness claude-code
-[--model <id-or-alias>]`, and `/config runtime clear`. The authenticated
+Use `/config runtime show`, `/config runtime set --harness claudex
+--model gpt-5.6-sol`, and `/config runtime clear`. The authenticated
 `POST /admin/config` surface accepts the same `runtimeDefaults` object and
 validation. Effective precedence is explicit message flag, sticky thread
 choice, channel default, then deployment default. Existing sticky threads keep
 masking a changed channel default until overwritten or expired.
 
-If a channel selects Claude Code while the harness is disconnected, the turn
+If a channel selects a coding harness while the harness is disconnected, the turn
 fails visibly and never falls back to AG-UI. Reasoning defaults and unsupported
 harnesses are rejected.
 
@@ -480,7 +559,10 @@ must declare their compile-time packages in `edge/package.json`.
 
 ## Rollback and safety
 
-- Bot, agent, harness, and research deploy independently.
+- Bot, agent, Claudex proxy, harness, and research deploy independently, but
+  service-binding targets must exist before callers are deployed.
+- A Claudex proxy outage affects only `claudex` turns; native `claudecode`
+  remains available when its Anthropic credential is configured.
 - Disconnecting the `HARNESS` binding makes coding or explicitly harness-routed
   turns fail visibly. The bot must not silently reinterpret that intent as an
   AG-UI turn; restore the binding or deliberately select an AG-UI mode.
@@ -498,8 +580,8 @@ must declare their compile-time packages in `edge/package.json`.
 - [ ] Mention receives a streaming answer and status clears.
 - [ ] Thread follow-up works without a new mention.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
-- [ ] Supported `--model`/`--claude` flags are stripped and saved only when the
-  Claude harness is connected; `-rsn`/unsupported providers fail visibly.
+- [ ] Supported `--model`/`--claudex`/`--claude` flags are stripped and saved
+  only when the coding harness is connected; `-rsn`/unsupported harnesses fail visibly.
 - [ ] `stop` during AG-UI suppresses later output.
 - [ ] Create/Cancel HITL works across isolates.
 - [ ] Linear create defaults to requester profile email.

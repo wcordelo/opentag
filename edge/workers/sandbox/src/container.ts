@@ -150,6 +150,7 @@ export const claudexOutbound: OutboundHandler<Env> = async (request, workerEnv) 
         const fixed = new FixedLengthStream(parsedLength);
         body = fixed.readable;
         bodyPump = request.body.pipeTo(fixed.writable);
+        headers.set("content-length", String(parsedLength));
       } else {
         const bytes = await request.arrayBuffer();
         const length = bytes.byteLength;
@@ -161,6 +162,7 @@ export const claudexOutbound: OutboundHandler<Env> = async (request, workerEnv) 
             controller.close();
           },
         });
+        headers.set("content-length", String(length));
       }
     }
     const forwarded = new Request(request.url, {

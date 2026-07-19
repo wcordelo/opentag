@@ -118,7 +118,9 @@ export default {
     if (!hasAuth) return json({ ok: false, error: "codex_auth_missing" }, 503);
 
     const response = await container.fetch(withoutCallerCredentials(request));
-    scheduleAuthPersist(env, container, ctx);
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      scheduleAuthPersist(env, container, ctx);
+    }
     return response;
   },
 } satisfies ExportedHandler<ProxyEnv>;

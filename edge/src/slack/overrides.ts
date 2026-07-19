@@ -135,6 +135,9 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     cleaned = stripMatch(cleaned, match)
   }
 
+  const mismatch = harnessModelMismatchError(harnessType, model)
+  if (mismatch) errors.push(mismatch)
+
   const result = {
     cleanedText: cleaned === text ? text : cleaned.trim(),
     harnessType,
@@ -143,6 +146,20 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   } as MessageOverrides
   Object.defineProperty(result, 'errors', { value: errors, enumerable: false })
   return result
+}
+
+export function harnessModelMismatchError(
+  harnessType: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (!harnessType || !model) return undefined
+  if (harnessType === 'claudex' && !/^gpt-/i.test(model)) {
+    return 'Claudex requires a GPT model (gpt-*); use --claude with a Claude model'
+  }
+  if (harnessType === 'claudecode' && /^gpt-/i.test(model)) {
+    return 'Claude Code requires a Claude model; use --claudex with a GPT model'
+  }
+  return undefined
 }
 
 function flagPattern(flag: string): RegExp {

@@ -45,7 +45,7 @@ import {
   firstSlackTs,
   slackObligationThreadKey,
 } from "./slack/obligation-thread-key.js";
-import { extractMessageOverrides } from "./slack/overrides.js";
+import { extractMessageOverrides, harnessModelMismatchError } from "./slack/overrides.js";
 import {
   resolveThreadOverrides,
   type ResolvedThreadOverrides,
@@ -688,6 +688,16 @@ export async function runBundledAgentTurn(
     config.runtimeDefaults,
   );
   if (!(await exactTurnPending())) return { status: "interrupted" };
+  const effectiveMismatch = harnessModelMismatchError(
+    overrides.effectiveHarnessType,
+    overrides.effectiveModel,
+  );
+  if (effectiveMismatch) {
+    return postVisibleRuntimeRejection(
+      thread,
+      `${effectiveMismatch}. No preference was saved.`,
+    );
+  }
   let prompt = cleanedPrompt;
 
   if (overrides.hasMessageFlags && isEmptyAfterStrip(prompt)) {

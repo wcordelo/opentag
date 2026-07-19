@@ -324,7 +324,9 @@ export function RemoteGitApprovalCard({
       }),
       jsx(Context, {
         children:
-          "Approve only if you want these remote GitHub writes. Cancel keeps all remote-git actions disabled.",
+          "This turn pauses here until you choose Approve or Cancel. " +
+          "Follow-up messages in this thread are rejected while it waits. " +
+          "Cancel keeps remote Git writes disabled and continues the coding turn locally.",
       }),
       jsxs(Actions, {
         children: [

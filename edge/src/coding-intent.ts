@@ -10,6 +10,20 @@ export function isRepositoryCodingIntent(text: string): boolean {
     .trim();
   if (!normalized) return false;
 
+  // Questions and explicit inspection requests are planning/explanation, not
+  // authorization to mutate a checkout. Evaluate this before keyword pairs so
+  // phrases such as "edit what repository?" cannot accidentally open the
+  // remote-git approval gate merely because they contain both terms.
+  const confidentlyReadOnly =
+    /^(?:(?:please\s+)?(?:explain|describe|review|analy[sz]e|summari[sz]e|inspect|read|show|list|find|compare|audit)\b|(?:what|why|how|where|when|who|which)\b|can you\s+(?:explain|describe|review|analy[sz]e|summari[sz]e|inspect|read|show|list|find|compare|audit)\b)/i;
+  if (confidentlyReadOnly.test(normalized)) return false;
+
+  // A terse follow-up can put the interrogative after a mutation word. This
+  // is still asking about the previous claim, not directing a new edit.
+  const mutationQuestion =
+    /^(?:(?:please|can you|could you|would you)\s+)?(?:add|change|configure|create|delete|edit|fix|implement|modify|patch|refactor|remove|repair|replace|update|write)\s+(?:what|which|where|when|how|why|who)\b/i;
+  if (mutationQuestion.test(normalized)) return false;
+
   const remoteGitMutation =
     /\b(?:open|create|raise)\b.{0,24}\b(?:pull request|pr)\b|\bpush\b.{0,40}\b(?:branch|changes?|code|commit|pr|repository|repo)\b|\bcommit\b.{0,40}\b(?:changes?|code|files?|repository|repo)\b/i;
   if (remoteGitMutation.test(normalized)) return true;
@@ -27,11 +41,9 @@ export function isRepositoryCodingIntent(text: string): boolean {
     return true;
   }
 
-  const confidentlyReadOnly =
-    /^(?:(?:please\s+)?(?:explain|describe|review|analy[sz]e|summari[sz]e|inspect|read|show|list|find|compare|audit)\b|(?:what|why|how|where|when|who|which)\b|can you\s+(?:explain|describe|review|analy[sz]e|summari[sz]e|inspect|read|show|list|find|compare|audit)\b)/i;
-  if (confidentlyReadOnly.test(normalized)) return false;
-
-  // An imperative that names a repository/codebase is still coding even when
-  // its verb is vague (for example, "take care of the repository").
-  return /\b(?:codebase|repository|repo|source tree)\b/i.test(normalized);
+  // A vague imperative that names a repository/codebase is still coding (for
+  // example, "take care of the repository"). A bare mention is not.
+  return /^(?:(?:please|can you|could you|would you)\s+)?(?:take care of|work on|handle)\b.{0,40}\b(?:codebase|repository|repo|source tree)\b/i.test(
+    normalized,
+  );
 }

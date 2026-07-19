@@ -98,6 +98,10 @@ describe("remote git approval", () => {
     ["analyze why the tests fail", false],
     ["summarize the repository structure", false],
     ["inspect the deploy script", false],
+    ["edit what repository?", false],
+    ["can you edit which repository?", false],
+    ["what repository can you edit?", false],
+    ["I was asking which repository you meant", false],
     ["nice create a canva", false],
     ["create a Slack canvas", false],
     ["create a Linear ticket for me", false],
@@ -106,8 +110,9 @@ describe("remote git approval", () => {
     ["send a Slack message", false],
     ["create a reminder for tomorrow", false],
     ["react to my message", false],
-    ["what should we fix in the worker?", true],
+    ["what should we fix in the worker?", false],
     ["take care of the repository", true],
+    ["can you handle this codebase", true],
   ])("classifies %s consistently as coding=%s", (text, expected) => {
     expect(isRepositoryCodingIntent(text)).toBe(expected);
   });

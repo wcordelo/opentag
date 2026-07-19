@@ -227,6 +227,7 @@ vi.mock("../src/agent-turn.js", () => ({ runBundledAgentTurn }));
 
 const { getOrCreateBot, resetBotSingleton } = await import("../src/bot-engine.js");
 const { handleStopCommand } = await import("../src/slack/stop-routing.js");
+const { postTurnRejectedFeedback } = await import("../src/slack/turn-lifecycle.js");
 
 function findChoiceId(node: unknown): string | undefined {
   if (!node || typeof node !== "object") return undefined;
@@ -354,6 +355,32 @@ describe("production Slack remote-git ingress", () => {
     });
   });
 
+  it("explains that a concurrent turn may be waiting on approval", async () => {
+    const originalFetch = globalThis.fetch;
+    let postedText = "";
+    globalThis.fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      postedText = new URLSearchParams(String(init?.body ?? "")).get("text") ?? "";
+      return Response.json({ ok: true, ts: "222.333" });
+    });
+    try {
+      await postTurnRejectedFeedback(
+        { SLACK_BOT_TOKEN: "xoxb-test" } as never,
+        store as never,
+        {
+          reason: "concurrent",
+          channelId: "C1",
+          threadTs: "111.222",
+          threadKey: "slack:C1:111.222",
+        },
+      );
+      expect(postedText).toContain("active turn");
+      expect(postedText).toContain("waiting on an approval card");
+      expect(postedText).toContain("send *Stop*");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("terminalizes trivial reaction and post shortcuts without launching an agent", async () => {
     const reacted = await emitMention("thanks!");
     expect(reactMock).toHaveBeenCalledOnce();
@@ -441,6 +468,11 @@ describe("production Slack remote-git ingress", () => {
     expect(cardText).toContain("@requester");
     expect(cardText).toContain("Approve push + PR");
     expect(cardText).toContain("Cancel");
+    expect(cardText).toContain("This turn pauses here");
+    expect(cardText).toContain("Follow-up messages in this thread are rejected");
+    expect(thread.post).toHaveBeenCalledWith(
+      "✅ GitHub push + PR approved. Starting the coding turn…",
+    );
     expect(runBundledAgentTurn).toHaveBeenCalledTimes(1);
     expect(runBundledAgentTurn.mock.calls[0]![4]).toEqual({
       executionId: "slack:C1:111.333",
@@ -457,12 +489,16 @@ describe("production Slack remote-git ingress", () => {
       remoteGitApproved: false,
       createPullRequest: false,
     });
+    expect(thread.post).toHaveBeenCalledWith(
+      "ℹ️ Remote Git writes remain disabled. Continuing the coding turn locally…",
+    );
   });
 
   it.each([
     ["--claude explain the router", false],
     ["--claude review the API implementation", false],
     ["--claude inspect the deploy script", false],
+    ["--claude edit what repository?", false],
     ["--claude repair the router", true],
     ["--claude test the build", true],
     ["--claude take care of the repository", true],
@@ -651,8 +687,12 @@ describe("production Slack remote-git ingress", () => {
 
     expect(logs.some((line) => line.includes('"metric":"turn_failed"'))).toBe(true);
     expect(logs.some((line) => line.includes('"metric":"turn_completed"'))).toBe(false);
-    expect(thread.post).toHaveBeenCalledOnce();
-    expect(String(thread.post.mock.calls[0]![0])).toContain("workdir setup failed");
+    expect(thread.post).toHaveBeenCalledTimes(2);
+    expect(thread.post).toHaveBeenNthCalledWith(
+      1,
+      "✅ GitHub push + PR approved. Starting the coding turn…",
+    );
+    expect(String(thread.post.mock.calls[1]![0])).toContain("workdir setup failed");
     expect(store.obligation.clear).toHaveBeenCalledOnce();
     logSpy.mockRestore();
     errorSpy.mockRestore();

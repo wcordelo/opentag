@@ -125,7 +125,10 @@ export async function postTurnRejectedFeedback(
     }).postMessage({
       channel: args.channelId,
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
-      text: "⚠️ Another turn is already running in this thread. Send *Stop* to cancel it, then retry.",
+      text:
+        "⚠️ This thread still has an active turn. It may be running or waiting " +
+        "on an approval card. Use the card, wait for completion, or send *Stop* " +
+        "to cancel it before retrying.",
     });
   } catch (err) {
     console.warn(
@@ -533,6 +536,23 @@ export async function runSlackTurnLifecycle(
         executionId,
       });
       return;
+    }
+    if (needsRemoteGitApproval) {
+      try {
+        await thread.post(
+          remoteGit.remoteGitApproved
+            ? "✅ GitHub push + PR approved. Starting the coding turn…"
+            : "ℹ️ Remote Git writes remain disabled. Continuing the coding turn locally…",
+        );
+      } catch (err) {
+        // This acknowledgement is progress UX, not the authorization source.
+        // The durable choice receipt and exact active-turn fence remain
+        // authoritative even when Slack cannot render the progress message.
+        console.warn(
+          "[remote-git-approval] continuation acknowledgement failed",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
     const outcome = await runBundledAgentTurn(env, thread, prompt, requester, {
       executionId,

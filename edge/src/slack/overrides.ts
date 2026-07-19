@@ -3,7 +3,8 @@
  *   --claude | --claude-code                         pick the harness for the thread
  *   --claudex                                       run Claude Code through CLIProxyAPI/Codex
  *   --model <name> (or --model=<name>)              pick the model within that harness
- *   --codex / -rsn                                  rejected: no Codex runtime is installed
+ *   --codex                                         rejected: use the Claude Code `--claudex` mode
+ *   -rsn                                            rejected: reasoning is operator-controlled
  *   --fable | --opus | --sonnet | --haiku           model shortcuts (imply claude-code)
  *
  * Flags are stripped from the text before it reaches the agent. The harness
@@ -106,7 +107,7 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     const normalized = REASONING_EFFORTS[reasoningMatch[1]!.toLowerCase()]
     if (normalized) {
       reasoning = normalized
-      errors.push(`-rsn ${normalized} is unsupported because no Codex runtime is installed`)
+      errors.push(`-rsn ${normalized} is unsupported; Claudex reasoning effort is controlled by the proxy configuration`)
     } else {
       errors.push(`unsupported reasoning effort: ${reasoningMatch[1]!}`)
     }
@@ -115,7 +116,7 @@ export function extractMessageOverrides(text: string): MessageOverrides {
 
   const codexMatch = flagPattern('codex').exec(cleaned)
   if (codexMatch) {
-    errors.push('--codex is unsupported because no Codex runtime is installed')
+    errors.push('--codex is unsupported; use --claudex to run Claude Code with a Codex-backed model')
     cleaned = stripMatch(cleaned, codexMatch)
   }
 

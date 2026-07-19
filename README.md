@@ -35,10 +35,11 @@ flowchart LR
     Bot <--> Conversation["ConversationStateDO<br/>active turns, fences, obligations, HITL"]
     Bot <--> Session["SessionEventDO<br/>execute, events, replay, interrupt"]
     Bot --> Agent["opentag-agent<br/>AG-UI Container"]
-    Bot -. opt-in .-> Harness["opentag-harness<br/>Claude Code Container"]
+    Bot -->|"coding / explicit selector"| Harness["opentag-harness<br/>Claude Code Container"]
     Bot -. optional .-> Research["opentag-orchestrator<br/>research actors"]
     Agent --> MCP["LLM + MCP"]
     Harness --> Guard["Worker-enforced<br/>egress + git policy"]
+    Guard -->|"claudex mode"| Proxy["opentag-claudex-proxy<br/>CLIProxyAPI + Codex OAuth"]
 ```
 
 | Piece | Role |
@@ -47,7 +48,7 @@ flowchart LR
 | **Conversation state** (`ConversationStateDO`) | Active-turn/effect/render fences, obligations, HITL, Stop continuation, memory |
 | **Session log** (`SessionEventDO`) | Exact execution admission, dedup, append-only events, replay, interrupt tombstones |
 | **AG-UI agent** (`edge/workers/agent-runtime/`, `opentag-agent`) | LLM turns, MCP (Linear / Notion), system prompt — production `AGENT_URL` |
-| **Claude Code harness** (`edge/workers/sandbox/`, `opentag-harness`) | Optional repository coding with isolated HOME, outbound interception, git/PR HITL, and mechanical postconditions |
+| **Claude Code harness** (`edge/workers/sandbox/`, `opentag-harness`) | Repository coding with native Claude or Claudex GPT models, isolated HOME, outbound interception, git/PR HITL, and mechanical postconditions |
 | **Research task Worker** (optional) | Deep research fibers; posts verified summaries back to the thread |
 
 Local `pnpm runtime` is **dev-only** (iterate on prompts/MCP without rebuilding the Container image).
@@ -73,7 +74,7 @@ Local `pnpm runtime` is **dev-only** (iterate on prompts/MCP without rebuilding 
   render obligations, event replay, and crash-orphan recovery
 - **Durable Stop:** controls AG-UI, harness, research, and HITL before a
   fenced Slack acknowledgement; incomplete cancellation resumes by DO alarm
-- **Thread-scoped overrides:** sticky model/harness and per-turn reasoning;
+- **Thread-scoped overrides:** sticky model/harness; unsupported reasoning flags fail visibly;
   quick-action buttons re-enter the normal turn lifecycle
 
 ### Agent & tools (bot Worker)
@@ -108,9 +109,11 @@ Chart/diagram image tools are **not** available on the Workers bot (no Playwrigh
 - Orchestrator / Researcher / Verifier Durable Objects, OCC fibers, Slack delivery with retries
 - Not the product surface — a **task** behind `RESEARCH_TASKS` (see [docs/research-actors.md](./docs/research-actors.md))
 
-### Repository coding (optional harness plane)
+### Repository coding (Claude Code harness)
 
-- Selected only when the thread harness is `claudecode` and `HARNESS` is configured
+- Repository coding defaults to `claudecode`; `--claude` selects native Claude
+- `--claudex` or a `gpt-*` model selects Claude Code through the private CLIProxyAPI/Codex backend
+- Both modes require the configured `HARNESS` binding and share the same sandbox and lifecycle
 - Coding intent is authoritative: qualifying coding turns do not silently fall back to AG-UI
 - Remote push/PR requires durable per-turn approval bound to execution, repo, branch, operation, expiry, and requester
 - The outer Worker validates all `/turn`, `/interrupt`, Anthropic, Git smart-HTTP, and GitHub REST traffic
@@ -217,12 +220,12 @@ You only need a sibling [CopilotKit](https://github.com/CopilotKit/CopilotKit) c
 | [`edge/workers/agent-runtime/`](./edge/workers/agent-runtime/) | **`opentag-agent`** | **Production** AG-UI Container |
 | [`edge/wrangler.toml`](./edge/wrangler.toml) | `opentag-edge` | Local / legacy-dev bot |
 | [`edge/wrangler.research.toml`](./edge/wrangler.research.toml) | orchestrator | Research tasks (internal `/research`) |
-| [`edge/workers/sandbox/`](./edge/workers/sandbox/) | **`opentag-harness`** | Optional Claude Code Worker + Container |
+| [`edge/workers/sandbox/`](./edge/workers/sandbox/) | **`opentag-harness`** | Claude Code Worker + Container |
+| [`edge/workers/claudex-proxy/`](./edge/workers/claudex-proxy/) | **`opentag-claudex-proxy`** | Private CLIProxyAPI/Codex backend for Claudex |
 
 ```bash
 cd edge
 npm run deploy:agent         # AG-UI Container (Workers Paid)
-npm run deploy:bot           # production bot
 # wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
 # wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
 # wrangler secret put AGENT_URL --config wrangler.bot.toml
@@ -232,9 +235,14 @@ npm run deploy:bot           # production bot
 
 npm run deploy:research      # optional research plane
 
-# Optional harness: configure its secrets and allowlists first, then:
-cd workers/sandbox
-npm run deploy
+# Coding plane: configure secrets, OAuth R2 state, and allowlists first, then
+# deploy targets before callers (see docs/operations.md).
+cd workers/claudex-proxy
+npm ci && npm run deploy
+cd ../sandbox
+npm ci && npm run deploy
+cd ../..
+npm run deploy:bot           # production bot, after all service targets exist
 ```
 
 Production needs no laptop runtime or tunnel to `:8200`.
@@ -269,7 +277,8 @@ opentag/
 │   ├── src/                # Bot spine (worker, adapter, tools, store)
 │   ├── wrangler.bot.toml   # Production opentag-bot
 │   ├── workers/agent-runtime/  # Production AG-UI Container (opentag-agent)
-│   ├── workers/sandbox/        # Optional Claude Code harness Worker
+│   ├── workers/sandbox/        # Claude Code harness Worker
+│   ├── workers/claudex-proxy/  # Private CLIProxyAPI/Codex Worker
 │   ├── workers/orchestrator/
 │   └── vendor/             # Workers-safe @copilotkit/channels tarball
 ├── lib/research/           # Research domain (fibers, OCC, delivery)
@@ -297,8 +306,10 @@ npm run test:e2e         # StateStore on workerd
 pnpm check-types
 pnpm test
 
-# Optional harness Worker
+# Harness and Claudex proxy Workers
 cd edge/workers/sandbox
+npm run typecheck
+cd ../claudex-proxy
 npm run typecheck
 ```
 
@@ -322,9 +333,11 @@ Local Slack smoke helpers: `edge/scripts/e2e-local.sh`, `edge/scripts/e2e-smoke-
 | `LINEAR_API_KEY` / `NOTION_*` | agent secrets / root `.env` | Optional MCP |
 | `ADMIN_SECRET` | edge | Protect `/admin/*` |
 | `INTERNAL_SECRET` | bot + research | Service-to-service research kickoff |
-| `HARNESS_AUTH_TOKEN` | bot + harness | Authenticates the optional harness binding |
+| `HARNESS_AUTH_TOKEN` | bot + harness | Authenticates the harness binding |
 | `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | harness only | Injected only by outbound policy handlers; never sent to the process |
 | `HARNESS_ALLOWED_REPO_HOSTS` / `HARNESS_ALLOWED_REPO_ORGS` | harness | Canonical remote allowlists |
+| `CLAUDEX_PROXY` / `CLAUDEX_PROXY_URL` | harness binding / var | Private Claudex route and synthetic origin |
+| `CLIPROXY_CLIENT_KEY` / `CLIPROXY_INTERNAL_KEY` | Claudex proxy secrets | Separate model-proxy and OAuth import/export authentication |
 
 Full lists: [`.env.example`](./.env.example), [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 

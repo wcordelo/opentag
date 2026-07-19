@@ -88,8 +88,8 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET
 #
-# Harness container (Phase A5, gated — see the commented [[services]] block
-# above). Set only once the container Worker is deployed:
+# Harness container (Phase A5). The active HARNESS service binding above means
+# opentag-harness must be deployed before this bot config:
 # HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
 # HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
 # HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml`

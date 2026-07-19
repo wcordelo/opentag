@@ -12,7 +12,8 @@ flowchart LR
     Slack["Slack Events API"] --> Bot["opentag-bot<br/>verify, pre-admit, lifecycle"]
     Bot <--> State["BOT_STATE + SESSION_EVENTS"]
     Bot --> Agent["AGENT_RUNTIME<br/>opentag-agent"]
-    Bot -. opt-in .-> Harness["HARNESS<br/>opentag-harness"]
+    Bot -->|"coding / selected"| Harness["HARNESS<br/>opentag-harness"]
+    Harness -->|"claudex mode"| Proxy["CLAUDEX_PROXY<br/>opentag-claudex-proxy"]
     Bot -. optional .-> Research["RESEARCH_TASKS"]
 ```
 
@@ -34,7 +35,14 @@ npx wrangler secret put LINEAR_TEAM_KEY   # display name, e.g. Berendo — not a
 # optional: AGENT_MODEL, NOTION_TOKEN, NOTION_MCP_AUTH_TOKEN, AGENT_AUTH_HEADER
 npm run deploy
 
-# 2. Bot Worker
+# 2. If retaining the shipped coding-plane bindings, deploy the Claudex proxy
+#    and harness before the bot. Complete the secret/OAuth steps below first.
+cd ../claudex-proxy
+npm ci && npm run deploy
+cd ../sandbox
+npm ci && npm run deploy
+
+# 3. Bot Worker
 cd ../..
 printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run' \
   | npx wrangler secret put AGENT_URL --config wrangler.bot.toml
@@ -108,11 +116,14 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `Berendo`) |
 | `NOTION_*` | agent secrets / root `.env` | Optional Notion MCP sidecar |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |
-| `HARNESS` | `wrangler.bot.toml` service binding | Optional Claude Code Worker |
+| `HARNESS` | `wrangler.bot.toml` service binding | Claude Code Worker |
 | `HARNESS_AUTH_TOKEN` | bot + harness secrets | Exact service authentication |
 | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | harness secrets | Claude Code provider credential, injected at egress |
 | `GITHUB_TOKEN` | harness secret | Repo read and approved write operations, injected at egress |
 | `HARNESS_ALLOWED_REPO_HOSTS` / `HARNESS_ALLOWED_REPO_ORGS` | harness vars | Canonical repository allowlists |
+| `CLAUDEX_PROXY` / `CLAUDEX_PROXY_URL` | harness binding / var | Private CLIProxyAPI route and synthetic origin |
+| `CLAUDEX_MODEL` | harness var | Default Claudex model (`gpt-5.6-sol` when omitted) |
+| `CLIPROXY_CLIENT_KEY` / `CLIPROXY_INTERNAL_KEY` | Claudex proxy secrets | Separate model-proxy and OAuth import/export authentication |
 
 See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 
@@ -153,6 +164,7 @@ See [docs/research-actors.md](./docs/research-actors.md).
 cd edge && npm test && npm run test:e2e && npm run typecheck
 cd .. && pnpm check-types && pnpm test
 cd edge/workers/sandbox && npm run typecheck
+cd ../claudex-proxy && npm run typecheck
 ```
 
 The edge suite covers durable choice, active turns, render obligations, exact
@@ -163,22 +175,27 @@ egress, remote-git approval, coding postconditions, and research cancellation.
 
 See [docs/README.md](./docs/README.md).
 
-## Claude harness zero-trust egress
+## Claude Code and Claudex zero-trust egress
 
-The optional `edge/workers/sandbox` Claude Code harness uses Cloudflare
-Container outbound interception. Configure `ANTHROPIC_API_KEY` (or
-`CLAUDE_CODE_OAUTH_TOKEN`), `GITHUB_TOKEN`, and `HARNESS_AUTH_TOKEN` as secrets
-on the **harness Worker**, never as image variables. The Container receives
-only sentinel credential values. Set `HARNESS_ALLOWED_REPO_HOSTS=github.com`
-and a non-empty comma-separated `HARNESS_ALLOWED_REPO_ORGS` allowlist.
+The production `edge/workers/sandbox` harness always runs the pinned Claude
+Code CLI. `claudecode` sends model calls to Anthropic; `claudex` sends the same
+Anthropic-compatible calls through the private `CLAUDEX_PROXY` service binding
+to CLIProxyAPI and the Codex backend. Select them with `--claude` and
+`--claudex`; a `gpt-*` model also implies `claudex`.
 
-Internet access is deny-by-default. Anthropic and GitHub traffic crosses
-Worker handlers that inject credentials; Git clone reads are restricted to the
-configured orgs, and pushes/PR creation additionally require the short-lived
-per-turn HITL scope for the exact repository and `opentag/session-*` branch.
-Package/source mirrors are GET/HEAD-only. The runtime entrypoint installs
-Cloudflare's ephemeral `/etc/cloudflare/certs/cloudflare-containers-ca.crt`
-into Ubuntu's trust store and exposes it to Node via `NODE_EXTRA_CA_CERTS`.
+Configure `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`), `GITHUB_TOKEN`,
+and `HARNESS_AUTH_TOKEN` as **harness Worker** secrets, never as image
+variables. The harness Container receives only sentinel values. Set
+`HARNESS_ALLOWED_REPO_HOSTS=github.com` and a non-empty comma-separated
+`HARNESS_ALLOWED_REPO_ORGS` allowlist.
+
+Harness internet access is deny-by-default. Anthropic, the private Claudex
+origin, and GitHub cross exact Worker handlers; Git clone reads are restricted
+to configured orgs, and pushes/PR creation additionally require short-lived
+per-turn HITL for the exact repository and `opentag/session-*` branch.
+Package/source mirrors are GET/HEAD-only. Codex OAuth state exists only in the
+private `opentag-claudex-auth` R2 bucket and Claudex proxy Container, never in
+the harness or bot.
 
 Build for the deployment architecture (important on Apple Silicon):
 
@@ -188,17 +205,24 @@ docker build --platform linux/amd64 \
   -t opentag-harness:local .
 ```
 
-Enable remote git only after all of the following are configured:
+Configure and deploy the coding plane target-before-caller:
 
-1. Set a non-empty organization allowlist in
-   `edge/workers/sandbox/wrangler.toml` or deployment configuration.
-2. Put `HARNESS_AUTH_TOKEN`, the Anthropic credential, and `GITHUB_TOKEN` on
-   the harness Worker.
-3. Deploy from `edge/workers/sandbox` with `npm run deploy`.
-4. Add the `HARNESS` service binding to `edge/wrangler.bot.toml` and the
-   matching `HARNESS_AUTH_TOKEN` to the bot.
-5. Deploy the bot explicitly and test read-only, Stop, commit-only, and a
-   separately approved push/PR turn.
+1. Complete `cliproxyapi --codex-login` on a trusted local machine and upload
+   only the resulting `codex-*.json` object as
+   `opentag-claudex-auth/codex-primary.json` in R2.
+2. Generate distinct, random values of at least 32 characters for
+   `CLIPROXY_CLIENT_KEY` and `CLIPROXY_INTERNAL_KEY`; set them interactively on
+   `edge/workers/claudex-proxy`, then deploy that Worker.
+3. Set the non-empty repository allowlist and the harness secrets, then deploy
+   `edge/workers/sandbox`. Native Claude is optional when only Claudex is used;
+   `GITHUB_TOKEN` is optional until clone/push/PR access is required.
+4. Set the matching `HARNESS_AUTH_TOKEN` on the bot and deploy
+   `edge/wrangler.bot.toml`, whose active `HARNESS` binding targets the already
+   deployed harness.
+5. Test bot `/health`, proxy `/health`, a read-only Claudex turn, Stop during a
+   live turn, a commit-only turn, and a separately approved push/PR turn.
 
 Do not treat a successful package typecheck or image build as authorization to
-deploy. The harness remains opt-in until the binding and policies are reviewed.
+deploy. Self-hosters who do not configure the coding plane must remove its
+service bindings from their deployment configs; selected coding turns then
+fail visibly and never fall back to AG-UI.

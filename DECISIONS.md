@@ -36,13 +36,16 @@ Threads are rows keyed by `thread_key` inside the orchestrator, not separate DOs
 The production triage agent Container (`edge/workers/agent-runtime/`) receives
 its configured model/MCP secrets like laptop `pnpm runtime`.
 
-The optional Claude Code harness uses a stricter boundary in
+The Claude Code harness uses a stricter boundary in
 `edge/workers/sandbox/`: the Container has internet disabled and HTTPS
 intercepted; its process receives sentinel Anthropic/GitHub credentials. The
 outer Worker injects real credentials only after validating host, method,
 execution, repository, generated branch, request body, operation, expiry, and
 requester attribution. Package/source mirrors are GET/HEAD-only. GitHub GraphQL
-mutations are denied. There is no separate `edge/workers/egress-proxy` service.
+mutations are denied. Claudex model requests cross a private service binding to
+`opentag-claudex-proxy`; the harness never receives Codex OAuth state, and the
+proxy exposes only the model/message endpoints required by Claude Code. There
+is no separate generic `edge/workers/egress-proxy` service.
 
 ---
 
@@ -76,7 +79,7 @@ Cloudflare error 1042. Local `pnpm runtime` remains a dev-only shortcut.
 | Session execution/events | `SessionEventDO` (`SESSION_EVENTS`) |
 | Deep research | Optional research Worker (task flavor) |
 | LLM / MCP | `opentag-agent` Container (`AGENT_URL`) |
-| Repository coding | Optional `opentag-harness` Worker + Container |
+| Repository coding | `opentag-harness` Worker + Container, with native Claude and private Claudex modes |
 
 Discord / Telegram / WhatsApp are **out of scope** for this product track.
 Railway Socket Mode Slack has been **removed**.

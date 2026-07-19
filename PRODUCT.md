@@ -2,7 +2,7 @@
 
 Status: **ACTIVE and authoritative**
 
-Updated: **2026-07-13**
+Updated: **2026-07-18**
 
 ## North star
 
@@ -27,7 +27,8 @@ A user should experience:
 - thread-scoped model and harness preferences;
 - quick-action buttons that behave like ordinary user turns;
 - optional deep research delivered back to the originating thread;
-- optional Claude Code work with mechanical commit and PR verification.
+- Claude Code repository work with native Anthropic or Claudex/Codex model
+  execution and mechanical commit/PR verification.
 
 ## Product surfaces
 
@@ -40,10 +41,10 @@ A user should experience:
 | DMs and assistant threads | Implemented | Stable DM scope, status, title, Stop |
 | Durable HITL | Implemented | `choiceId` persistence and cross-isolate polling |
 | Linear create | Implemented | Structured approval, requester-email assignee, issue card |
-| Thread overrides | Implemented | Sticky model/harness; per-turn reasoning |
+| Thread overrides | Implemented | Sticky model/harness; unsupported reasoning flags fail visibly |
 | Quick actions | Implemented | Synthetic turn authored by clicking user |
 | Never-silent recovery | Implemented | Session events, render obligations, DO alarms |
-| Claude Code harness | Code-complete, opt-in | Deployment and bot binding remain explicitly gated |
+| Claude Code harness | Production-enabled | Native Claude and Claudex modes share the same sandbox, Stop, egress, and git postconditions |
 | Research actors | Optional | Internal task plane, never Slack ingress |
 | Multi-agent PM/implement/verify product | Deferred | Not in the public TaskRuntime API |
 
@@ -61,8 +62,10 @@ A user should experience:
    recovery; `SessionEventDO` owns execution, events, replay, and interrupts.
 6. **Conversation runtime:** `opentag-agent` runs Node `runtime.ts`, reached
    through the `AGENT_RUNTIME` service binding plus `AGENT_URL` path.
-7. **Coding runtime:** optional `opentag-harness` runs Claude Code in a
-   per-session Container with outbound interception and remote-git HITL.
+7. **Coding runtime:** `opentag-harness` runs Claude Code in a per-session
+   Container with outbound interception and remote-git HITL. It can call
+   Anthropic directly (`claudecode`) or the private `opentag-claudex-proxy`
+   service (`claudex`) for GPT models through CLIProxyAPI/Codex OAuth.
 8. **Tasks:** optional research starts through `RESEARCH_TASKS` and delivers
    back to the originating Slack thread.
 
@@ -85,11 +88,13 @@ the obligated execution.
 ## Security contract
 
 The default AG-UI Container receives its configured runtime secrets. The
-optional coding harness uses a stricter design:
+coding harness uses a stricter design:
 
 - internet disabled at the Container boundary and HTTPS intercepted;
 - sentinel Anthropic/GitHub credentials inside the process;
 - real credentials injected only after exact Worker policy validation;
+- Claudex caller credentials stripped at both Worker boundaries, with the
+  bounded Codex OAuth object loaded from and refreshed back to private R2;
 - remote git bound to execution, canonical repo, generated branch, method,
   operation, expiry, and requester attribution;
 - GraphQL mutations denied;

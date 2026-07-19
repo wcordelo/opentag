@@ -119,6 +119,9 @@ describe('overrides', () => {
       const result = extractMessageOverrides('-rsn max Ultimate')
       expect(result.reasoning).toBe('max')
       expect(result.cleanedText).toBe('Ultimate')
+      expect(result.errors).toEqual([
+        '-rsn max is unsupported; Claudex reasoning effort is controlled by the proxy configuration'
+      ])
     })
 
     it('-rsn none works', () => {
@@ -158,7 +161,9 @@ describe('overrides', () => {
       const result = extractMessageOverrides('--codex Message')
       expect(result.harnessType).toBeUndefined()
       expect(result.cleanedText).toBe('Message')
-      expect(result.errors).toEqual(['--codex is unsupported because no Codex runtime is installed'])
+      expect(result.errors).toEqual([
+        '--codex is unsupported; use --claudex to run Claude Code with a Codex-backed model'
+      ])
     })
   })
 

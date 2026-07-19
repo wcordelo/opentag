@@ -29,7 +29,8 @@ flowchart LR
 ```
 
 The bot and AG-UI agent are the normal production pair. Research is optional.
-The Claude Code harness is packaged and tested but remains opt-in; the bot's
+The OpenTag coding harness packages Claude Code with native Anthropic and
+Claudex/CLIProxyAPI modes, but remains opt-in; the bot's
 service binding is commented in both bot Wrangler configs until an operator
 deploys and connects it.
 
@@ -150,7 +151,11 @@ cd edge
 | `HARNESS_REPO_URL` | Var | Bot | Default repository for coding turns |
 | `HARNESS_ALLOWED_REPO_HOSTS` | Var | Harness | Allowed git hosts, default `github.com` |
 | `HARNESS_ALLOWED_REPO_ORGS` | Var | Harness | Required non-empty organization allowlist |
-| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Harness Worker | Injected at outbound boundary |
+| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Harness Worker | Native Claude Code credential, injected at the Anthropic boundary |
+| `CLAUDEX_PROXY_URL` | Var | Harness Worker | Synthetic `https://claudex.internal` origin routed through the private service binding |
+| `CLAUDEX_MODEL` | Var | Harness | Optional Claudex default, `gpt-5.6-sol` when omitted |
+| `CLIPROXY_CLIENT_KEY` | Secret | Claudex proxy Worker | Internal key shared only with the trusted CLIProxyAPI container |
+| `CLIPROXY_INTERNAL_KEY` | Secret | Claudex proxy Worker | Protects credential import/export between the Worker and its container |
 | `GITHUB_TOKEN` | Secret | Harness Worker | Private clone and approved remote writes |
 | `OPENTAG_TOOL_BIN` | Var | Harness | Optional tool-host executable |
 | `OPENAI_API_KEY` | Secret | Agent | Default AG-UI model |
@@ -226,7 +231,35 @@ npx wrangler secret put GITHUB_TOKEN
 npm run deploy
 ```
 
-`CLAUDE_CODE_OAUTH_TOKEN` can replace `ANTHROPIC_API_KEY` where appropriate.
+`CLAUDE_CODE_OAUTH_TOKEN` can replace `ANTHROPIC_API_KEY` for native Claude.
+For Claudex, deploy the private `opentag-claudex-proxy` service before the
+harness. Complete `--codex-login` locally, then upload only the resulting Codex
+auth JSON to the private `opentag-claudex-auth` R2 bucket. The proxy Worker
+loads that object into its trusted container and persists refreshed state back
+to R2. Set its internal secrets interactively:
+
+```bash
+cd edge/workers/claudex-proxy
+npx wrangler secret put CLIPROXY_CLIENT_KEY
+npx wrangler secret put CLIPROXY_INTERNAL_KEY
+```
+
+Do not mount `~/.cli-proxy-api` or ChatGPT/Codex OAuth state into the harness
+container. Claude and repository tools receive only a sentinel client token;
+the Harness Worker strips it and forwards only `/v1/messages`,
+`/v1/messages/count_tokens`, and `/v1/models` through `CLAUDEX_PROXY`.
+
+Select Claudex in Slack with either form:
+
+```text
+--claudex Fix the failing tests
+--claudex --model gpt-5.6-sol Review this change
+```
+
+Both modes run the same pinned Claude Code binary and preserve the same Stop,
+repository, egress, git-approval, and postcondition enforcement. The macOS
+`claudex` alias remains useful for direct local use, but its
+`http://127.0.0.1:8317` endpoint is not reachable from a Cloudflare container.
 
 1. Add the `HARNESS` service binding to `edge/wrangler.bot.toml`:
 
@@ -323,7 +356,7 @@ and final render logs.
 - Agent turn: call the reserved `show_permissions` tool.
 - Operator: `GET /admin/permissions?teamId=<team>&channelId=<channel>` with the
   existing admin bearer. Responses are `Cache-Control: no-store`.
-- Claude harness: run `opentag permissions` during the active execution.
+- Coding harness: run `opentag permissions` during the active execution.
 
 These surfaces are informational. They never grant a tool, secret, network
 destination, git operation, or write. Automation snapshots deliberately omit
@@ -331,14 +364,14 @@ MCP endpoint and secret-reference names.
 
 ## Configure channel runtime defaults
 
-Use `/config runtime show`, `/config runtime set --harness claude-code
-[--model <id-or-alias>]`, and `/config runtime clear`. The authenticated
+Use `/config runtime show`, `/config runtime set --harness claudex
+--model gpt-5.6-sol`, and `/config runtime clear`. The authenticated
 `POST /admin/config` surface accepts the same `runtimeDefaults` object and
 validation. Effective precedence is explicit message flag, sticky thread
 choice, channel default, then deployment default. Existing sticky threads keep
 masking a changed channel default until overwritten or expired.
 
-If a channel selects Claude Code while the harness is disconnected, the turn
+If a channel selects a coding harness while the harness is disconnected, the turn
 fails visibly and never falls back to AG-UI. Reasoning defaults and unsupported
 harnesses are rejected.
 
@@ -498,8 +531,8 @@ must declare their compile-time packages in `edge/package.json`.
 - [ ] Mention receives a streaming answer and status clears.
 - [ ] Thread follow-up works without a new mention.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
-- [ ] Supported `--model`/`--claude` flags are stripped and saved only when the
-  Claude harness is connected; `-rsn`/unsupported providers fail visibly.
+- [ ] Supported `--model`/`--claudex`/`--claude` flags are stripped and saved
+  only when the coding harness is connected; `-rsn`/unsupported harnesses fail visibly.
 - [ ] `stop` during AG-UI suppresses later output.
 - [ ] Create/Cancel HITL works across isolates.
 - [ ] Linear create defaults to requester profile email.

@@ -68,17 +68,15 @@ binding = "AGENT_RUNTIME"
 service = "opentag-agent"
 
 # Claude Code harness container (GOAL.md Phase A5, SPEC.md §3.6/§4.4). The
-# container Worker + image ship separately (edge/workers/sandbox/ +
-# containers/harness/, owned by a different build track) and deploy is
-# gated (GOAL.md house rule 6) — uncomment once that Worker is deployed.
-# Mirrors edge/workers/sandbox/wrangler.toml's commented [[containers]] block.
-#
-# [[services]]
-# binding = "HARNESS"
-# service = "opentag-harness"
+# target Worker + image deploy separately from edge/workers/sandbox/ and must
+# exist before this bot service binding is deployed.
+[[services]]
+binding = "HARNESS"
+service = "opentag-harness"
 
 [vars]
 ENVIRONMENT = "production"
+HARNESS_REPO_URL = "https://github.com/wcordelo/opentag"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
 SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"

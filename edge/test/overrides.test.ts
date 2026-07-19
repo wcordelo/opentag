@@ -2,6 +2,20 @@ import { describe, it, expect } from 'vitest'
 import { extractMessageOverrides } from '../src/slack/overrides'
 
 describe('overrides', () => {
+  describe('Claudex harness', () => {
+    it('--claudex selects Claude Code through CLIProxyAPI', () => {
+      const result = extractMessageOverrides('--claudex Use ChatGPT')
+      expect(result.harnessType).toBe('claudex')
+      expect(result.cleanedText).toBe('Use ChatGPT')
+    })
+
+    it('--model gpt-* implies Claudex', () => {
+      const result = extractMessageOverrides('--model gpt-5.6-sol Reply briefly')
+      expect(result.harnessType).toBe('claudex')
+      expect(result.model).toBe('gpt-5.6-sol')
+    })
+  })
+
   describe('model shortcuts', () => {
     it('--sonnet sets model claude-sonnet-5 + harnessType claudecode and strips the flag', () => {
       const result = extractMessageOverrides('--sonnet What is 2+2?')

@@ -9,6 +9,13 @@ import {
 import { parseRuntimeCommand } from "../src/commands/index.js";
 
 describe("channel runtime defaults", () => {
+  it("accepts Claudex with a GPT model", () => {
+    expect(normalizeChannelRuntimeDefaults({
+      harnessType: "claudex",
+      model: "gpt-5.6-sol",
+    })).toEqual({ harnessType: "claudex", model: "gpt-5.6-sol" });
+  });
+
   it("normalizes the supported harness and model aliases", () => {
     expect(normalizeChannelRuntimeDefaults({
       harnessType: "claude-code",

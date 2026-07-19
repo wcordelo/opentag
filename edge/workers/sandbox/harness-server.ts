@@ -47,6 +47,7 @@ import {
   type TurnRequestBody,
   type TurnAttachment,
   type TurnValidation,
+  type HarnessType,
 } from "./turn-contract.js";
 
 export {
@@ -1143,6 +1144,7 @@ export function buildClaudeEnv(
   executionId?: string,
   executionHome?: string,
   permissionsFile?: string,
+  harnessType: HarnessType = "claudecode",
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
   // Repository-controlled code receives only obvious sentinels. Real Anthropic,
@@ -1150,6 +1152,8 @@ export function buildClaudeEnv(
   // Worker outbound handlers and can never be read from /proc or child env.
   delete env.HARNESS_AUTH_TOKEN;
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.CLAUDEX_AUTH_TOKEN;
   delete env.OPENTAG_REMOTE_GIT_APPROVED;
   delete env.OPENTAG_EXECUTION_ID;
   for (const key of Object.keys(env)) {
@@ -1171,6 +1175,20 @@ export function buildClaudeEnv(
     env.XDG_DATA_HOME = path.join(executionHome, ".local", "share");
     env.CLAUDE_CONFIG_DIR = path.join(executionHome, ".claude");
   }
+  if (harnessType === "claudex") {
+    const baseUrl = normalizeClaudexProxyUrl(source.CLAUDEX_PROXY_URL);
+    if (!baseUrl) throw new Error("claudex requires a valid CLAUDEX_PROXY_URL");
+    const claudexModel = model || source.CLAUDEX_MODEL || "gpt-5.6-sol";
+    env.ANTHROPIC_BASE_URL = baseUrl;
+    env.ANTHROPIC_AUTH_TOKEN = "opentag-egress-injected-not-a-secret";
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = claudexModel;
+    env.CLAUDE_CODE_SUBAGENT_MODEL = claudexModel;
+    env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = "1";
+    env.CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = "3";
+    env.ENABLE_TOOL_SEARCH = "false";
+  } else {
+    delete env.ANTHROPIC_BASE_URL;
+  }
   if (repo) {
     const url = new URL(repo.url);
     env.OPENTAG_REPO_SLUG = url.pathname.replace(/^\//, "").replace(/\.git$/i, "");
@@ -1188,6 +1206,26 @@ export function buildClaudeEnv(
   if (permissionsFile) env.OPENTAG_PERMISSIONS_FILE = permissionsFile;
   else delete env.OPENTAG_PERMISSIONS_FILE;
   return env;
+}
+
+/** HTTPS in production; loopback HTTP is accepted only for local CLIProxyAPI development. */
+export function normalizeClaudexProxyUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value);
+    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+    if (
+      (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      (url.pathname !== "" && url.pathname !== "/")
+    ) return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,10 +1369,14 @@ export function buildClaudeSpawnOptions(
   workdir: string,
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
-): { cwd: string; env: NodeJS.ProcessEnv; detached: boolean } {
+): { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; stdio: ["ignore", "pipe", "pipe"] } {
   return {
     cwd: workdir,
     env,
+    // Both Claude modes receive their prompt as argv. Closing stdin prevents a
+    // headless CLI from waiting for piped input (the production Claude smoke
+    // test exposed this exact failure mode).
+    stdio: ["ignore", "pipe", "pipe"],
     // On Linux Claude leads a process group, allowing abort/timeout to reach
     // every tool descendant via a negative PGID.
     detached: platform === "linux",
@@ -1497,19 +1539,33 @@ export async function runTurnStreaming(
     inputLines: body.inputLines,
     attachmentPaths,
   });
-  const args = buildClaudeArgs({ prompt, model: body.model, systemPromptText });
+  const harnessType: HarnessType = body.harnessType ?? "claudecode";
+  const effectiveModel = harnessType === "claudex"
+    ? body.model || process.env.CLAUDEX_MODEL || "gpt-5.6-sol"
+    : body.model;
+  const agentLabel = harnessType === "claudex" ? "claudex" : "claude";
+  const args = buildClaudeArgs({ prompt, model: effectiveModel, systemPromptText });
 
-  const env = buildClaudeEnv(
-    process.env,
-    body.model,
-    body.remoteGitApproved === true,
-    body.repo,
-    body.sessionId,
-    body.executionId,
-    executionHome,
-    permissionsFile,
-  );
-  let claudeResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
+  let env: NodeJS.ProcessEnv;
+  try {
+    env = buildClaudeEnv(
+      process.env,
+      effectiveModel,
+      body.remoteGitApproved === true,
+      body.repo,
+      body.sessionId,
+      body.executionId,
+      executionHome,
+      permissionsFile,
+      harnessType,
+    );
+  } catch (err) {
+    try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* reported by setup next turn */ }
+    emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
+    emit({ kind: "done", payload: { ok: false, summary: "claudex setup failed" } });
+    return;
+  }
+  let agentResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 
   let child: ReturnType<typeof spawn>;
   try {
@@ -1521,10 +1577,10 @@ export async function runTurnStreaming(
     emit({
       kind: "error",
       payload: {
-        message: `failed to start claude: ${err instanceof Error ? err.message : String(err)}`,
+        message: `failed to start ${agentLabel}: ${err instanceof Error ? err.message : String(err)}`,
       },
     });
-    emit({ kind: "done", payload: { ok: false, summary: "failed to start claude" } });
+    emit({ kind: "done", payload: { ok: false, summary: `failed to start ${agentLabel}` } });
     return;
   }
   // Once repository-controlled code starts, hold the terminal frame until its
@@ -1563,7 +1619,7 @@ export async function runTurnStreaming(
     rl.on("line", (line) => {
       for (const event of mapStreamJsonLine(line)) {
         // A successful terminal event is held until git/PR postconditions pass.
-        if (event.kind === "done") claudeResult = event;
+        if (event.kind === "done") agentResult = event;
         else emit(event);
       }
     });
@@ -1581,8 +1637,8 @@ export async function runTurnStreaming(
       terminator.terminate();
       await terminator.waitForCleanup();
       signal.removeEventListener("abort", abortChild);
-      emit({ kind: "error", payload: { message: `claude process error: ${err.message}` } });
-      emit({ kind: "done", payload: { ok: false, summary: "claude process error" } });
+      emit({ kind: "error", payload: { message: `${agentLabel} process error: ${err.message}` } });
+      emit({ kind: "done", payload: { ok: false, summary: `${agentLabel} process error` } });
       resolve();
     });
     child.on("close", async (code) => {
@@ -1598,11 +1654,11 @@ export async function runTurnStreaming(
           emit({
             kind: "error",
             payload: {
-              message: `claude exited with code ${code}: ${truncateSummary(stderrTail, 500)}`,
+              message: `${agentLabel} exited with code ${code}: ${truncateSummary(stderrTail, 500)}`,
             },
           });
         }
-        if (!terminalFailure && !signal.aborted && code === 0 && claudeResult?.payload.ok !== false) {
+        if (!terminalFailure && !signal.aborted && code === 0 && agentResult?.payload.ok !== false) {
           let outcome: TurnOutcome;
           try {
             outcome = await verifyTurnOutcome(
@@ -1628,14 +1684,14 @@ export async function runTurnStreaming(
           }
           for (const event of outcomeTerminalEvents(
             outcome,
-            claudeResult?.payload.summary ?? "completed without an explicit result event",
+            agentResult?.payload.summary ?? "completed without an explicit result event",
           )) emit(event);
         } else if (!terminalFailure) {
           emit({
             kind: "done",
             payload: {
               ok: false,
-              summary: claudeResult?.payload.summary ?? `process exited with code ${code}`,
+              summary: agentResult?.payload.summary ?? `process exited with code ${code}`,
             },
           });
         }

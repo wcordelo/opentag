@@ -26,7 +26,7 @@ export type PermissionSnapshotV1 = Readonly<{
     secretRefs: readonly string[];
   }>;
   runtime: Readonly<{
-    harnessType?: "claudecode";
+    harnessType?: "claudecode" | "claudex";
     model?: string;
     harnessSource: RuntimeSelectionSource;
     modelSource: RuntimeSelectionSource;

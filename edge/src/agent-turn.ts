@@ -543,7 +543,7 @@ function promptOverrideText(prompt: string | AgentContentPart[]): string {
 
 function harnessCapability(env: Env): { ok: true } | { ok: false; reason: string } {
   if (!env.HARNESS && !env.HARNESS_URL) {
-    return { ok: false, reason: "the Claude Code harness is not connected" };
+    return { ok: false, reason: "the coding harness is not connected" };
   }
   return { ok: true };
 }
@@ -660,7 +660,7 @@ export async function runBundledAgentTurn(
       `${requestedOverrides.errors.join("; ")}. No preference was saved.`,
     );
   }
-  if (requestedOverrides.harnessType === "claudecode") {
+  if (requestedOverrides.harnessType === "claudecode" || requestedOverrides.harnessType === "claudex") {
     const capability = harnessCapability(env);
     if (!capability.ok) {
       return postVisibleRuntimeRejection(
@@ -732,8 +732,8 @@ export async function runBundledAgentTurn(
     allToolNames: ALL_EDGE_TOOL_NAMES,
     allowedTools: allowed,
     runtime: {
-      ...(overrides.effectiveHarnessType === "claudecode"
-        ? { harnessType: "claudecode" as const }
+      ...(overrides.effectiveHarnessType === "claudecode" || overrides.effectiveHarnessType === "claudex"
+        ? { harnessType: overrides.effectiveHarnessType }
         : {}),
       ...(overrides.effectiveModel ? { model: overrides.effectiveModel } : {}),
       harnessSource: overrides.harnessSource,
@@ -771,8 +771,15 @@ export async function runBundledAgentTurn(
     humanActor &&
     (executionIdentity?.createPullRequest === true ||
       isRepositoryCodingIntent(promptText));
-  const selectedClaudeHarness = overrides.effectiveHarnessType === "claudecode";
-  const useHarness = selectedClaudeHarness || repositoryCodingIntent;
+  // Repository coding uses Claude Code by default. Claudex is the same CLI
+  // pointed at an operator-managed CLIProxyAPI/Codex backend.
+  const selectedHarness =
+    overrides.effectiveHarnessType === "claudecode" || overrides.effectiveHarnessType === "claudex"
+      ? overrides.effectiveHarnessType
+      : repositoryCodingIntent
+        ? "claudecode"
+        : undefined;
+  const useHarness = selectedHarness !== undefined;
   if (useHarness) {
     const capability = harnessCapability(env);
     if (!capability.ok) {
@@ -1073,7 +1080,7 @@ export async function runBundledAgentTurn(
       value: useHarness
         ? [
             `The user requested ${requested.join(" / ")} for this thread.`,
-            "This turn is running on the Claude Code harness container as",
+            `This turn is running on the ${selectedHarness} harness engine as`,
             "requested.",
           ].join(" ")
         : [
@@ -1147,6 +1154,7 @@ export async function runBundledAgentTurn(
       forwardedMessageId: identity.forwardedMessageId,
       prompt: harnessPromptText(prompt),
       attachments: harnessAttachments(prompt),
+      harnessType: selectedHarness!,
       model: overrides.effectiveModel,
       requesterContext: requesterContextBlock,
       transcript: buildHarnessTranscript(history),
@@ -1188,7 +1196,7 @@ export async function runBundledAgentTurn(
         try {
           markThreadNextRenderFinal(thread);
           await thread.post(
-            text || "_(Claude Code harness turn completed with no output.)_",
+            text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
           );
         } catch (err) {
           if (err instanceof Error && err.message === "active_turn_render_suppressed") {
@@ -1204,7 +1212,7 @@ export async function runBundledAgentTurn(
           { threadKey: harnessThreadKey, executionId: identity.executionId },
           async () => {
             await thread.post(
-              text || "_(Claude Code harness turn completed with no output.)_",
+              text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
             );
           },
         );

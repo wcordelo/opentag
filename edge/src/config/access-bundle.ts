@@ -9,7 +9,7 @@ export type AccessBundle = {
 };
 
 export type ChannelRuntimeDefaults = {
-  harnessType?: "claudecode";
+  harnessType?: "claudecode" | "claudex";
   model?: string;
 };
 
@@ -102,6 +102,8 @@ export function normalizeChannelRuntimeDefaults(
     rawHarness === "claude-code" ||
     rawHarness === "claude"
       ? ("claudecode" as const)
+      : rawHarness === "claudex"
+        ? ("claudex" as const)
       : undefined;
   if (rawHarness && !harnessType) {
     throw new Error(`unsupported channel harness: ${rawHarness}`);
@@ -115,7 +117,7 @@ export function normalizeChannelRuntimeDefaults(
     throw new Error("invalid channel model id");
   }
   if (model && !harnessType) {
-    throw new Error("channel model requires harnessType=claudecode");
+    throw new Error("channel model requires harnessType");
   }
   if (!harnessType && !model) return undefined;
   return Object.freeze({

@@ -26,6 +26,8 @@ export interface RepoSpec {
   branch?: string;
 }
 
+export type HarnessType = "claudecode" | "claudex";
+
 export type TurnAttachment = {
   id: string;
   name: string;
@@ -43,6 +45,7 @@ export interface TurnRequestBody {
   threadKey: string;
   inputLines: string[];
   attachments?: TurnAttachment[];
+  harnessType?: HarnessType;
   model?: string;
   repo?: RepoSpec;
   requesterContext?: string;
@@ -72,7 +75,7 @@ export interface PermissionSnapshotV1 {
     secretRefs: string[];
   };
   runtime: {
-    harnessType?: "claudecode";
+    harnessType?: HarnessType;
     model?: string;
     harnessSource: "explicit" | "sticky" | "channel" | "deployment";
     modelSource: "explicit" | "sticky" | "channel" | "deployment";
@@ -240,7 +243,9 @@ export function validatePermissionSnapshot(
     typeof (access.policies as Record<string, unknown>).allowTasks !== "boolean" ||
     !Array.isArray(access.mcpEndpoints) ||
     access.mcpEndpoints.length > 200 ||
-    (runtime.harnessType !== undefined && runtime.harnessType !== "claudecode") ||
+    (runtime.harnessType !== undefined &&
+      runtime.harnessType !== "claudecode" &&
+      runtime.harnessType !== "claudex") ||
     (runtime.model !== undefined &&
       (typeof runtime.model !== "string" ||
         runtime.model.length > 256 ||
@@ -414,6 +419,10 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       (typeof record.model !== "string" || !MODEL_RE.test(record.model))) {
     return { ok: false, error: "invalid_model" };
   }
+  if (record.harnessType !== undefined &&
+      record.harnessType !== "claudecode" && record.harnessType !== "claudex") {
+    return { ok: false, error: "invalid_harness_type" };
+  }
   if ((record.requesterContext !== undefined &&
        (typeof record.requesterContext !== "string" || record.requesterContext.length > 16_384)) ||
       (record.transcript !== undefined &&
@@ -459,6 +468,7 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       threadKey: record.threadKey,
       inputLines: record.inputLines as string[],
       ...(attachments ? { attachments } : {}),
+      ...(record.harnessType === undefined ? {} : { harnessType: record.harnessType as HarnessType }),
       ...(record.model === undefined ? {} : { model: record.model as string }),
       ...(normalizedRepo ? { repo: normalizedRepo } : {}),
       ...(record.requesterContext === undefined ? {} : { requesterContext: record.requesterContext as string }),

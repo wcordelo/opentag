@@ -1,6 +1,7 @@
 /**
  * Inline message directives, restored from the v1 slackbot:
  *   --claude | --claude-code                         pick the harness for the thread
+ *   --claudex                                       run Claude Code through CLIProxyAPI/Codex
  *   --model <name> (or --model=<name>)              pick the model within that harness
  *   --codex / -rsn                                  rejected: no Codex runtime is installed
  *   --fable | --opus | --sonnet | --haiku           model shortcuts (imply claude-code)
@@ -28,7 +29,8 @@ export type MessageOverrides = {
 const HARNESS_FLAGS: Record<string, string> = {
   claude: 'claudecode',
   'claude-code': 'claudecode',
-  claudecode: 'claudecode'
+  claudecode: 'claudecode',
+  claudex: 'claudex'
 }
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
@@ -92,7 +94,10 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   if (modelMatch) {
     const value = modelMatch[1]!
     model = CLAUDE_MODEL_ALIASES[value.toLowerCase()] ?? value
-    harnessType = 'claudecode'
+    if (value.includes('/')) {
+      errors.push(`provider-qualified model ${value} is unsupported; use --claudex with a GPT model or --claude with a Claude model`)
+    }
+    harnessType = /^gpt-/i.test(value) ? 'claudex' : 'claudecode'
     cleaned = stripMatch(cleaned, modelMatch)
   }
 

@@ -31,6 +31,8 @@ describe("channel runtime defaults", () => {
     [{ model: "claude-sonnet-5" }, /requires harnessType/],
     [{ harnessType: "claudecode", model: "bad model" }, /invalid channel model/],
     [{ harnessType: "claudecode", reasoning: "high" }, /unknown runtimeDefaults field/],
+    [{ harnessType: "claudex", model: "claude-opus-4-8" }, /Claudex requires a GPT model/],
+    [{ harnessType: "claudecode", model: "gpt-5.6-sol" }, /Claude Code requires a Claude model/],
   ])("rejects invalid configuration atomically", (value, error) => {
     expect(() => normalizeChannelRuntimeDefaults(value)).toThrow(error);
   });

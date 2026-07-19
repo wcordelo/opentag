@@ -11,7 +11,10 @@
  * recognizes it only to strip and visibly reject it before this resolver is
  * called; it is never persisted or presented as active.
  */
-import { extractMessageOverrides } from "../slack/overrides.js";
+import {
+  extractMessageOverrides,
+  harnessModelMismatchError,
+} from "../slack/overrides.js";
 import type { ChannelRuntimeDefaults } from "../config/access-bundle.js";
 import type { RuntimeSelectionSource } from "../permissions/contract.js";
 import type { StateStore } from "./state-store-contract.js";
@@ -85,18 +88,20 @@ export async function resolveThreadOverrides(
       harnessType: messageOverride.harnessType ?? sticky?.harnessType,
       updatedAt: Date.now(),
     };
-    try {
-      await store.kv.set(
-        threadOverridesKey(conversationKey),
-        merged,
-        STICKY_TTL_MS,
-      );
-      sticky = merged;
-    } catch (err) {
-      console.warn(
-        "[thread-overrides] kv.set failed",
-        err instanceof Error ? err.message : err,
-      );
+    if (!harnessModelMismatchError(merged.harnessType, merged.model)) {
+      try {
+        await store.kv.set(
+          threadOverridesKey(conversationKey),
+          merged,
+          STICKY_TTL_MS,
+        );
+        sticky = merged;
+      } catch (err) {
+        console.warn(
+          "[thread-overrides] kv.set failed",
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 

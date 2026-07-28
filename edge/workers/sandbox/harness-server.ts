@@ -50,6 +50,7 @@ import {
   type HarnessType,
 } from "./turn-contract.js";
 import { normalizeImageFile, isImageMime, sha256Hex } from "./image-normalization.js";
+import { redactJsonValue } from "./output-redaction.js";
 
 export {
   EXECUTION_BINDING_HEADER,
@@ -311,6 +312,10 @@ interface ClaudeContentBlock {
   text?: string;
   name?: string;
   input?: unknown;
+  id?: string;
+  tool_use_id?: string;
+  content?: unknown;
+  is_error?: boolean;
 }
 
 interface ClaudeStreamLine {
@@ -318,33 +323,32 @@ interface ClaudeStreamLine {
   subtype?: string;
   is_error?: boolean;
   result?: string;
+  model?: string;
   message?: {
     content?: ClaudeContentBlock[];
+    model?: string;
   };
 }
 
+export type MapStreamStats = {
+  unknownEventCount: number;
+};
+
 /**
  * Maps ONE line of `claude -p --output-format stream-json --verbose` output
- * to zero or more NDJSON events. Deviation from a literal token-by-token
- * "delta": without `--include-partial-messages` (not requested by the pinned
- * claude invocation), `assistant` events carry whole content blocks, so each
- * text block becomes one output event rather than a token stream — still
- * incremental (block-by-block), just coarser. See mission report.
- *
- * Malformed JSON and event types we don't surface (`system` init, `user`
- * tool-result echoes) both map to `[]` — never throws, so one bad line never
- * takes down a turn.
+ * to zero or more NDJSON events. Tool completion is emitted only from
+ * provider tool_result lifecycle events — never guessed from tool_use start.
  */
-export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
+export function mapStreamJsonLine(
+  rawLine: string,
+  stats?: MapStreamStats,
+): NdjsonEvent[] {
   const line = rawLine.trim();
   if (!line) return [];
 
-  let parsed: ClaudeStreamLine & {
-    message?: { content?: ClaudeContentBlock[]; model?: string };
-    tool_use_id?: string;
-  };
+  let parsed: ClaudeStreamLine;
   try {
-    parsed = JSON.parse(line) as typeof parsed;
+    parsed = JSON.parse(line) as ClaudeStreamLine;
   } catch {
     return [];
   }
@@ -357,17 +361,15 @@ export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
       let toolSeq = 0;
       for (const block of blocks) {
         if (block.type === "thinking") {
-          // Never surface thinking/reasoning blocks.
           continue;
         }
         if (block.type === "text" && typeof block.text === "string" && block.text) {
-          // Final-answer / visible text stays in output only — never concatenated from progress.
           events.push({ kind: "output", payload: { text: block.text } });
         } else if (block.type === "tool_use" && typeof block.name === "string") {
           toolSeq += 1;
           const progressId =
-            typeof (block as { id?: unknown }).id === "string"
-              ? `tool-${(block as { id: string }).id}`
+            typeof block.id === "string"
+              ? `tool-${block.id}`
               : `tool-${block.name}-${toolSeq}`;
           const summary = summarizeToolInput(block.name, block.input);
           events.push({
@@ -389,20 +391,54 @@ export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
               summary: truncateSummary(summary, 500),
             },
           });
-          events.push({
-            kind: "progress",
-            payload: {
-              version: 1,
-              progressId,
-              sequence: 2,
-              category: "tool",
-              state: "completed",
-              title: truncateSummary(block.name, 120),
-            },
-          });
         }
       }
       return events;
+    }
+    case "user": {
+      const blocks = parsed.message?.content ?? [];
+      const events: NdjsonEvent[] = [];
+      for (const block of blocks) {
+        if (block.type !== "tool_result") continue;
+        const toolUseId =
+          typeof block.tool_use_id === "string" ? block.tool_use_id : undefined;
+        if (!toolUseId) continue;
+        const failed = block.is_error === true;
+        events.push({
+          kind: "progress",
+          payload: {
+            version: 1,
+            progressId: `tool-${toolUseId}`,
+            sequence: 2,
+            category: "tool",
+            state: failed ? "failed" : "completed",
+            title: "Tool",
+          },
+        });
+      }
+      return events;
+    }
+    case "system": {
+      // Provider init may report the actual model.
+      const model =
+        (typeof parsed.model === "string" && parsed.model) ||
+        (typeof parsed.message?.model === "string" && parsed.message.model) ||
+        undefined;
+      if (model && (parsed.subtype === "init" || parsed.subtype === undefined)) {
+        return [
+          {
+            kind: "context",
+            payload: {
+              version: 1,
+              harnessType: "claudecode",
+              model,
+              modelEvidence: "provider_reported",
+            },
+          },
+        ];
+      }
+      if (stats) stats.unknownEventCount += 1;
+      return [];
     }
     case "result": {
       const ok = parsed.is_error !== true;
@@ -412,9 +448,8 @@ export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
           : (parsed.subtype ?? (ok ? "completed" : "failed"));
       return [{ kind: "done", payload: { ok, summary: truncateSummary(summary, 500) } }];
     }
-    case "system":
-    case "user":
     default:
+      if (stats) stats.unknownEventCount += 1;
       return [];
   }
 }
@@ -1380,7 +1415,11 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
 }
 
 function writeNdjson(res: http.ServerResponse, event: NdjsonEvent): void {
-  res.write(`${JSON.stringify(event)}\n`);
+  const sanitized: NdjsonEvent = {
+    ...event,
+    payload: redactJsonValue(event.payload) as NdjsonEvent["payload"],
+  };
+  res.write(`${JSON.stringify(sanitized)}\n`);
 }
 
 export function hasValidBearerToken(header: string | undefined, secret: string | undefined): boolean {

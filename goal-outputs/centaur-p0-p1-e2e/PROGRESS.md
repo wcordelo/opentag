@@ -9,26 +9,36 @@
 
 ## Slice status
 - Slice 0: complete
-- Slice 1 (redaction): complete — `edge/src/harness/redaction.ts` + client wiring; 727 unit tests green
-- Slice 2 (images): complete — `image-normalization.ts`, sharp direct deps, Dockerfile packaging; **Container smoke blocked (Docker unavailable)**
-- Slice 3 (aliases + context): complete — shared `model-aliases.ts`, opus-5 shortcuts, context events + Slack line
-- Slice 4 (config authority): complete — channelContext / systemPromptOverlay split mutations
-- Slice 5 (prompt overlay): complete — contract v2 + Container composition
-- Slice 6 (progress): complete — provider mapping, SessionEventDO dedup, harness-progress renderer
-- Slice 7 (hardening): complete — CI-equivalent green; Container smoke blocked; draft PR #13; Notion Progress updated; deploy unapproved
+- Slice 1 (redaction): complete — `edge/src/harness/redaction.ts` + client wiring; expanded exact-secret collection
+- Slice 2 (images): complete — `image-normalization.ts`, sharp direct deps, Dockerfile packaging; staged→inline preserves `sha256`; **Container smoke blocked (Docker unavailable)**
+- Slice 3 (aliases + context): complete — shared `model-aliases.ts`, opus-5 shortcuts, context events + Slack evidence line; SessionEventDO context singleton + evidence upgrade; provider_reported from system init
+- Slice 4 (config authority): complete — channelContext / systemPromptOverlay split; legacy `/putConfig` rejects policies/bundle/overlay
+- Slice 5 (prompt overlay): complete — contract v2 + turn-contract digest verify + Container composition
+- Slice 6 (progress): complete — honest tool lifecycle (started on tool_use, completed on tool_result); live progress message (`harness-progress-live.ts`) separate from final answer; recovery rebuilds context without progress-in-answer
+- Slice 7 (hardening): complete — Container `output-redaction.ts` defense-in-depth; adversarial unit/e2e coverage; CI-equivalent validation; draft PR #13; deploy unapproved
 
+## Gap closure (post Slice 7 adversarial)
+- [x] Live progress under render fence; final answer without progress markdown
+- [x] Recovery `reconstructRecoveryContent` (context + answer; progress excluded from body)
+- [x] Honest tool lifecycle + provider_reported model evidence
+- [x] Overlay digest in turn-contract; staged sha256 preserved
+- [x] SessionEventDO context singleton; putConfig hardened
+- [x] Adversarial tests (progress live, recovery, overlay digest, sha256, config, redaction)
+- [x] Container redaction defense-in-depth + docs/rollback notes
 
 ## Validation
-- `cd edge && npm run typecheck` — pass
-- `cd edge && npm test` — 727 passed
-- `cd edge && npm run test:e2e` — 25 passed
-- `cd edge/workers/sandbox && npm run typecheck` — pass
+- `cd edge && npm run typecheck` — (re-run after gap closure)
+- `cd edge && npm test` — (re-run)
+- `cd edge && npm run test:e2e` — (re-run)
+- `cd edge/workers/sandbox && npm run typecheck` — (re-run)
 - Container Docker build/smoke — **blocked** (no Docker in Cloud env)
 - Deploy — not authorized
 
 ## Adversarial review notes
-- Secrets: redacted before appendEvent; malformed NDJSON logs digest only
-- Prompt authority: Slack `/config` cannot set overlay; legacy system_prompt → channel_context only
-- Progress: not concatenated into reconstructMarkdown final text
-- Image path: exclusive create under execution home; digest before transform
+- Secrets: redacted before appendEvent; Container also redacts NDJSON; malformed NDJSON logs digest only
+- Prompt authority: Slack `/config` cannot set overlay/policies; legacy putConfig rejects elevation
+- Progress: one live message; never in final `thread.post` or obligation recovery body
+- Tool completion: only from `tool_result`; no invented success from `tool_use`
+- Model evidence: upgrade path to `provider_reported` from provider init
+- Image path: exclusive create under execution home; digest before transform; sha256 survives staged resolve
 - Remaining blocker: native sharp runtime packaging unproven without Container build

@@ -151,6 +151,8 @@ vi.mock("../src/slack/web-api.js", async (importOriginal) => {
     createSlackWebClient: () => ({
       setTitle: setTitleMock,
       resolveUser: resolveUserMock,
+      postMessage: vi.fn(async () => ({ ts: "progress.ts" })),
+      updateMessage: vi.fn(async () => undefined),
     }),
   };
 });

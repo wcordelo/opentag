@@ -209,13 +209,28 @@ export function collectExactSecretsFromEnv(
     "SLACK_SIGNING_SECRET",
     "HARNESS_AUTH_TOKEN",
     "GITHUB_TOKEN",
+    "GH_TOKEN",
     "LINEAR_API_KEY",
     "ADMIN_SECRET",
+    "INTERNAL_SECRET",
+    "AGENT_AUTH_HEADER",
+    "CLOUDFLARE_API_TOKEN",
+    "CF_API_TOKEN",
+    "NOTION_API_KEY",
+    "DATABASE_URL",
   ];
   const out: string[] = [];
   for (const key of keys) {
     const value = env[key];
     if (typeof value === "string" && value.length >= 8) out.push(value);
+  }
+  // Also redact any other env string whose key looks like a secret and is long enough.
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== "string" || value.length < 12) continue;
+    if (keys.includes(key)) continue;
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|COOKIE|AUTH|PRIVATE)/i.test(key)) {
+      out.push(value);
+    }
   }
   return out;
 }

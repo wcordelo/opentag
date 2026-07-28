@@ -61,11 +61,9 @@ export async function resolveStagedTurnAttachments(
     if (bytes.byteLength !== attachment.size) {
       throw new Error(`staged_attachment_size_mismatch:${attachment.id}`);
     }
-    if (attachment.sha256) {
-      const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
-      if (digest !== attachment.sha256) {
-        throw new Error(`staged_attachment_digest_mismatch:${attachment.id}`);
-      }
+    const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    if (attachment.sha256 && digest !== attachment.sha256) {
+      throw new Error(`staged_attachment_digest_mismatch:${attachment.id}`);
     }
     attachments.push({
       kind: "inline",
@@ -74,6 +72,7 @@ export async function resolveStagedTurnAttachments(
       mimeType: attachment.mimeType,
       size: attachment.size,
       dataBase64: bytesToBase64(bytes),
+      sha256: digest,
     });
   }
   return { ...body, attachments };

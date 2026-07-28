@@ -152,7 +152,11 @@ describe("harness Container frontend", () => {
       const containerFetch = vi.fn(async (request: Request) => {
         const forwarded = await request.json() as { attachments: Parameters<typeof materializeTurnAttachments>[1] };
         expect(forwarded.attachments).toEqual([
-          expect.objectContaining({ kind: "inline", size: bytes.byteLength }),
+          expect.objectContaining({
+            kind: "inline",
+            size: bytes.byteLength,
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          }),
         ]);
         const paths = await materializeTurnAttachments(home, forwarded.attachments);
         const filePath = paths[0]!.replace(/ \([^)]*\)$/, "");

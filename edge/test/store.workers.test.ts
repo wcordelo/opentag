@@ -24,30 +24,46 @@ describe("Durable Object integration", () => {
     const stub = env.WORKSPACE_CONFIG.get(
       env.WORKSPACE_CONFIG.idFromName(teamId),
     );
-    const base = {
-      teamId,
-      channelId,
-      systemPrompt: "keep this prompt",
-      policies: { allowMemoryWrite: true, allowTasks: false },
-      accessBundleId: "default",
-      updatedAt: new Date().toISOString(),
-    };
-    expect((await stub.fetch("https://do/putConfig", {
+    expect((await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
-      body: JSON.stringify(base),
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        policies: { allowMemoryWrite: true, allowTasks: false },
+        accessBundleId: "default",
+        updatedAt: new Date().toISOString(),
+      }),
+    })).status).toBe(200);
+    expect((await stub.fetch("https://do/putChannelContext", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        channelContext: "keep this prompt",
+        updatedAt: new Date().toISOString(),
+      }),
     })).status).toBe(200);
     const withoutDefaults = await stub.fetch("https://do/getConfig", {
       method: "POST",
       body: JSON.stringify({ teamId, channelId }),
-    }).then((response) => response.json()) as typeof base & {
+    }).then((response) => response.json()) as {
+      systemPrompt: string;
+      policies: { allowMemoryWrite: boolean; allowTasks: boolean };
       runtimeDefaults?: unknown;
     };
     expect(withoutDefaults.runtimeDefaults).toBeUndefined();
+    expect(withoutDefaults.systemPrompt).toBe("keep this prompt");
+    expect(withoutDefaults.policies).toEqual({
+      allowMemoryWrite: true,
+      allowTasks: false,
+    });
 
-    expect((await stub.fetch("https://do/putConfig", {
+    expect((await stub.fetch("https://do/putChannelContext", {
       method: "POST",
       body: JSON.stringify({
-        ...base,
+        teamId,
+        channelId,
+        channelContext: "keep this prompt",
         runtimeDefaults: {
           harnessType: "claudecode",
           model: "claude-sonnet-5",
@@ -57,7 +73,9 @@ describe("Durable Object integration", () => {
     const configured = await stub.fetch("https://do/getConfig", {
       method: "POST",
       body: JSON.stringify({ teamId, channelId }),
-    }).then((response) => response.json()) as typeof base & {
+    }).then((response) => response.json()) as {
+      systemPrompt: string;
+      policies: { allowMemoryWrite: boolean; allowTasks: boolean };
       runtimeDefaults?: unknown;
     };
     expect(configured).toMatchObject({
@@ -69,17 +87,55 @@ describe("Durable Object integration", () => {
       },
     });
 
-    expect((await stub.fetch("https://do/putConfig", {
+    expect((await stub.fetch("https://do/putChannelContext", {
       method: "POST",
-      body: JSON.stringify({ ...base, runtimeDefaults: undefined }),
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        channelContext: "keep this prompt",
+        runtimeDefaults: undefined,
+      }),
     })).status).toBe(200);
     const cleared = await stub.fetch("https://do/getConfig", {
       method: "POST",
       body: JSON.stringify({ teamId, channelId }),
-    }).then((response) => response.json()) as typeof base & {
+    }).then((response) => response.json()) as {
       runtimeDefaults?: unknown;
     };
     expect(cleared.runtimeDefaults).toBeUndefined();
+  });
+
+  it("rejects policy and overlay writes on legacy putConfig", async () => {
+    const teamId = `legacy-${crypto.randomUUID()}`;
+    const stub = env.WORKSPACE_CONFIG.get(
+      env.WORKSPACE_CONFIG.idFromName(teamId),
+    );
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId: "C1",
+        systemPrompt: "channel only",
+        policies: { allowMemoryWrite: false, allowTasks: false },
+      }),
+    })).status).toBe(400);
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId: "C1",
+        systemPrompt: "channel only",
+        systemPromptOverlay: { version: 1, text: "nope", digest: "x", revision: 0, source: "workspace_admin" },
+      }),
+    })).status).toBe(400);
+    expect((await stub.fetch("https://do/putConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId: "C1",
+        systemPrompt: "channel only",
+      }),
+    })).status).toBe(200);
   });
 
   it("isolates state across partitioned instances", async () => {

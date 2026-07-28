@@ -73,6 +73,18 @@ function migrateEvents(sql: SqlExecutor): void {
 
 type EventKind = "input" | "output" | "error" | "done" | "context" | "progress";
 
+const MODEL_EVIDENCE_RANK: Record<string, number> = {
+  unknown: 0,
+  requested: 1,
+  container_argument: 2,
+  provider_reported: 3,
+};
+
+function modelEvidenceRank(value: unknown): number {
+  if (typeof value !== "string") return MODEL_EVIDENCE_RANK.unknown;
+  return MODEL_EVIDENCE_RANK[value] ?? MODEL_EVIDENCE_RANK.unknown;
+}
+
 interface CreatedSlot {
   sessionId: string;
   harnessType: string;
@@ -319,6 +331,33 @@ export class SessionEventEngine {
     const executing = this.activeExecution();
     if (executing?.executionId !== args.executionId) {
       throw new Error(`execution_not_active:${args.executionId}`);
+    }
+
+    // Context singleton: at most one effective context row per execution.
+    // Monotonic evidence upgrades (e.g. container_argument → provider_reported)
+    // append; equal/lower evidence is a no-op.
+    if (args.kind === "context" && args.payload && typeof args.payload === "object") {
+      const incoming = args.payload as Record<string, unknown>;
+      const prior = this.sql
+        .exec<{ payload: string }>(
+          `SELECT payload FROM events WHERE execution_id = ? AND kind = 'context'
+           ORDER BY id DESC LIMIT 1`,
+          args.executionId,
+        )
+        .toArray()[0];
+      if (prior) {
+        let existing: Record<string, unknown> = {};
+        try {
+          existing = JSON.parse(prior.payload) as Record<string, unknown>;
+        } catch {
+          existing = {};
+        }
+        const nextRank = modelEvidenceRank(incoming.modelEvidence);
+        const prevRank = modelEvidenceRank(existing.modelEvidence);
+        if (nextRank <= prevRank) {
+          return { id: 0 };
+        }
+      }
     }
 
     // Progress idempotency: duplicate (progressId, sequence) is a no-op;

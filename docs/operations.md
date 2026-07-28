@@ -413,10 +413,25 @@ MCP endpoint and secret-reference names.
 Use `/config runtime show`, `/config runtime set --harness claudex
 --model gpt-5.6-sol`, and `/config runtime clear`. Slack `/config` edits
 channel context and runtime defaults only — never the trusted system prompt
-overlay. The authenticated `POST /admin/config` surface owns
-`systemPromptOverlay` (with optimistic `expectedRevision`), policies, bundle,
-and the same `runtimeDefaults` object and
-validation. Effective precedence is explicit message flag, sticky thread
+overlay, policies, or access bundle. The authenticated `POST /admin/config`
+surface owns `systemPromptOverlay` (with optimistic `expectedRevision`),
+policies, bundle, and the same `runtimeDefaults` object and validation.
+Legacy DO `/putConfig` rejects policy/bundle/overlay elevation
+(`use_putAdminConfig_for_policies` / `use_putAdminConfig_for_overlay`).
+
+### Rollback notes (P0/P1 progress + config)
+
+- Progress UX: disable live progress by not wiring `onHarnessEvent` / omitting
+  `SLACK_BOT_TOKEN` locally; final answer remains never-silent without progress.
+- Overlay: omit `contractVersion: 2` / `systemPromptOverlay` to fall back to
+  base-only prompts; Container and turn-contract both reject digest mismatches.
+- Config authority: channel managers keep `/putChannelContext`; restore
+  policies only via `/putAdminConfig`. Do not re-enable policy writes on
+  `/putConfig`.
+- Redaction: Worker boundary remains authoritative; Container
+  `output-redaction.ts` is defense-in-depth and safe to leave enabled.
+
+Effective precedence is explicit message flag, sticky thread
 choice, channel default, then deployment default. Existing sticky threads keep
 masking a changed channel default until overwritten or expired.
 

@@ -78,7 +78,7 @@ export interface RunHarnessTurnArgs {
   onHarnessEvent?: (event: {
     kind: "context" | "progress";
     payload: unknown;
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 export type HarnessFailureKind =
@@ -550,7 +550,7 @@ export async function runHarnessTurn(
         parsed.payload ?? {},
         exactSecrets,
       );
-      args.onHarnessEvent?.({ kind: parsed.kind, payload: sanitized });
+      await args.onHarnessEvent?.({ kind: parsed.kind, payload: sanitized });
     } else if (parsed.kind === "done") {
       const sanitized = (await sanitizeAndAppend(
         sessionDo,

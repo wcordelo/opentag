@@ -1,6 +1,12 @@
 /** Pure, runtime-neutral validation for the pinned harness /turn envelope. */
 
+import { createHash } from "node:crypto";
+
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function sha256HexUtf8(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
 // Production turn IDs are fixed-length, purpose-tagged SHA-256 base64url
 // values emitted by edge/src/harness/wire-id.ts. Keep execution and message
 // identities distinct so neither can be substituted for the other.
@@ -34,7 +40,7 @@ export type TurnAttachment = {
   mimeType: string;
   size: number;
 } & (
-  | { kind: "inline"; dataBase64: string }
+  | { kind: "inline"; dataBase64: string; sha256?: string }
   | { kind: "staged"; stageKey: string; sha256?: string }
 );
 
@@ -407,6 +413,12 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
             !/^[A-Za-z0-9+/]*={0,2}$/.test(item.dataBase64)) {
           return { ok: false, error: "invalid_attachments" };
         }
+        if (
+          item.sha256 !== undefined &&
+          (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256))
+        ) {
+          return { ok: false, error: "invalid_attachments" };
+        }
         inlineBytes += Math.floor(item.dataBase64.length * 3 / 4) -
           (item.dataBase64.endsWith("==") ? 2 : item.dataBase64.endsWith("=") ? 1 : 0);
       } else if (item.kind === "staged") {
@@ -512,10 +524,17 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
     if (encoded.byteLength > 64 * 1024) {
       return { ok: false, error: "invalid_system_prompt_overlay" };
     }
+    const digestHex = sha256HexUtf8(text);
+    const expected = overlay.digest.startsWith("sha256:")
+      ? overlay.digest.slice("sha256:".length)
+      : overlay.digest;
+    if (expected !== digestHex) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
     systemPromptOverlay = {
       version: 1,
       revision: overlay.revision,
-      digest: overlay.digest,
+      digest: `sha256:${digestHex}`,
       text,
       source: "workspace_admin",
     };

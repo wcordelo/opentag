@@ -63,6 +63,7 @@ import {
 import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
 import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
 import { reconstructSessionHistory } from "./slack/session-history.js";
+import { createHarnessProgressLiveRenderer } from "./slack/harness-progress-live.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 import { bindPermissionSnapshot } from "./permissions/context.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
@@ -1181,13 +1182,24 @@ export async function runBundledAgentTurn(
     );
     const codingTask = repositoryCodingIntent;
     if (!(await exactTurnPending())) return { status: "interrupted" };
-    let contextLine = "";
-    const progressItems = new Map<
-      string,
-      import("./slack/harness-progress.js").ProgressItem
-    >();
-    const { formatContextLine, applyProgressEvent, renderProgressMarkdown } =
-      await import("./slack/harness-progress.js");
+    let progressLive:
+      | ReturnType<typeof createHarnessProgressLiveRenderer>
+      | undefined;
+    if (env.SLACK_BOT_TOKEN) {
+      const inbound = requireRequestContext(thread).inbound;
+      progressLive = createHarnessProgressLiveRenderer({
+        store,
+        client: createSlackWebClient(env.SLACK_BOT_TOKEN, {
+          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+        }),
+        channelId,
+        ...(inbound?.threadTs || inbound?.ts
+          ? { threadTs: inbound.threadTs ?? inbound.ts }
+          : {}),
+        threadKey: harnessThreadKey,
+        executionId: identity.executionId,
+      });
+    }
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
       conversationKey,
@@ -1216,56 +1228,15 @@ export async function runBundledAgentTurn(
             },
           }
         : {}),
-      onHarnessEvent: (event) => {
-        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
-          const p = event.payload as Record<string, unknown>;
-          contextLine = formatContextLine({
-            harnessType:
-              typeof p.harnessType === "string" ? p.harnessType : selectedHarness!,
-            model: typeof p.model === "string" ? p.model : undefined,
-            modelEvidence:
-              p.modelEvidence === "requested" ||
-              p.modelEvidence === "container_argument" ||
-              p.modelEvidence === "provider_reported" ||
-              p.modelEvidence === "unknown"
-                ? p.modelEvidence
-                : "unknown",
-          });
-        }
-        if (event.kind === "progress" && event.payload && typeof event.payload === "object") {
-          const p = event.payload as Record<string, unknown>;
-          if (
-            typeof p.progressId === "string" &&
-            typeof p.sequence === "number" &&
-            typeof p.title === "string"
-          ) {
-            const applied = applyProgressEvent(progressItems, {
-              progressId: p.progressId,
-              sequence: p.sequence,
-              category:
-                p.category === "commentary" || p.category === "task" || p.category === "tool"
-                  ? p.category
-                  : "task",
-              state:
-                p.state === "started" ||
-                p.state === "updated" ||
-                p.state === "completed" ||
-                p.state === "failed"
-                  ? p.state
-                  : "updated",
-              title: p.title,
-              ...(typeof p.summary === "string" ? { summary: p.summary } : {}),
-            });
-            progressItems.clear();
-            for (const [k, v] of applied.items) progressItems.set(k, v);
-          }
-        }
+      onHarnessEvent: async (event) => {
+        await progressLive?.handleEvent(event);
       },
     });
 
     // Stop owns the sole durable terminal transition. Never fall back to
     // AG-UI and never post accumulated text after an interrupt.
     if (!harnessResult.ok && harnessResult.failureKind === "interrupted") {
+      await progressLive?.markTerminal({ ok: false, interrupted: true });
       return { status: "interrupted" };
     }
 
@@ -1278,18 +1249,17 @@ export async function runBundledAgentTurn(
       (harnessResult.failureKind === "duplicate" ||
         harnessResult.failureKind === "concurrent")
     ) {
+      await progressLive?.markTerminal({ ok: false });
       return { status: "rejected", reason: harnessResult.failureKind };
     }
 
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();
-      const progressBlock =
-        progressItems.size > 0
-          ? `${renderProgressMarkdown(progressItems.values(), { done: true })}\n\n`
-          : "";
-      const prefix = contextLine ? `${contextLine}\n\n` : "";
+      // Final answer is separate from the live progress message.
+      const prefix = progressLive?.finalAnswerPrefix() ?? "";
       const body =
-        `${prefix}${progressBlock}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
+        `${prefix}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
+      await progressLive?.markTerminal({ ok: true });
       // Never-silent guarantee: even a nominally "ok" turn must not post
       // nothing (GOAL.md house rule / SPEC §3.1 taxonomy — error_visible /
       // answer_visible, never silent).
@@ -1324,6 +1294,7 @@ export async function runBundledAgentTurn(
       };
     }
 
+    await progressLive?.markTerminal({ ok: false });
     // A selected/authoritative harness is never allowed to fall through to a
     // different runtime after any harness-side failure.
     throw new AuthoritativeHarnessError(

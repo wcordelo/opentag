@@ -530,16 +530,23 @@ export class WorkspaceConfigDO extends DurableObject {
       });
     }
 
-    // Internal-only legacy path: preserves historical putConfig behavior for
-    // channel context + policies/bundle/runtimeDefaults, but never accepts
-    // overlay elevation through a broad object spread.
+    // Internal-only legacy path: channel context + runtime defaults only.
+    // Policies, bundles, and overlays must use /putAdminConfig.
     if (url.pathname === "/putConfig" && request.method === "POST") {
       const cfg = (await request.json()) as WorkspaceChannelConfig & {
         systemPromptOverlay?: unknown;
+        policies?: unknown;
+        accessBundleId?: unknown;
       };
       if (cfg.systemPromptOverlay) {
         return Response.json(
           { error: "use_putAdminConfig_for_overlay" },
+          { status: 400 },
+        );
+      }
+      if (cfg.policies !== undefined || cfg.accessBundleId !== undefined) {
+        return Response.json(
+          { error: "use_putAdminConfig_for_policies" },
           { status: 400 },
         );
       }
@@ -568,8 +575,6 @@ export class WorkspaceConfigDO extends DurableObject {
          ON CONFLICT(team_id, channel_id) DO UPDATE SET
            system_prompt = excluded.system_prompt,
            channel_context = excluded.channel_context,
-           policies_json = excluded.policies_json,
-           access_bundle_id = excluded.access_bundle_id,
            default_harness_type = excluded.default_harness_type,
            default_model = excluded.default_model,
            updated_at = excluded.updated_at`,
@@ -577,8 +582,8 @@ export class WorkspaceConfigDO extends DurableObject {
         channelKey,
         channelContext,
         channelContext,
-        JSON.stringify(cfg.policies ?? {}),
-        cfg.accessBundleId || DEFAULT_BUNDLE.id,
+        existing?.policies_json ?? "{}",
+        existing?.access_bundle_id ?? DEFAULT_BUNDLE.id,
         runtimeDefaults?.harnessType ?? null,
         runtimeDefaults?.model ?? null,
         updatedAt,

@@ -30,6 +30,29 @@ describe("harness progress renderer", () => {
     ).toBe("_Claude Code · claude-opus-5 · container argument_");
   });
 
+  it("preserves tool titles when completion events only say Tool", () => {
+    const started = applyProgressEvent(new Map(), {
+      progressId: "tool-1",
+      sequence: 1,
+      category: "tool",
+      state: "started",
+      title: "Bash",
+      summary: "npm test",
+    });
+    const completed = applyProgressEvent(started.items, {
+      progressId: "tool-1",
+      sequence: 2,
+      category: "tool",
+      state: "completed",
+      title: "Tool",
+    });
+    expect(completed.items.get("tool-1")).toMatchObject({
+      title: "Bash",
+      state: "completed",
+      summary: "npm test",
+    });
+  });
+
   it("dedups progress sequences and freezes completed items", () => {
     const empty = new Map();
     const started = applyProgressEvent(empty, {

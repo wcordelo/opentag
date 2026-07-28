@@ -60,7 +60,7 @@ export function applyProgressEvent(
   raw: ProgressItem,
 ): { changed: boolean; items: Map<string, ProgressItem> } {
   const next = new Map(items);
-  const event = clampProgressItem(raw);
+  let event = clampProgressItem(raw);
   const existing = next.get(event.progressId);
   if (existing) {
     if (
@@ -76,6 +76,19 @@ export function applyProgressEvent(
     }
     if (event.sequence < existing.sequence) {
       return { changed: false, items };
+    }
+    // Completion/failure from tool_result may not know the tool display name.
+    if (
+      (event.state === "completed" || event.state === "failed") &&
+      (event.title === "Tool" || event.title === existing.title)
+    ) {
+      event = {
+        ...event,
+        title: existing.title,
+        ...(event.summary === undefined && existing.summary !== undefined
+          ? { summary: existing.summary }
+          : {}),
+      };
     }
   }
   next.set(event.progressId, event);
@@ -121,10 +134,16 @@ export function rebuildProgressFromEvents(
 } {
   let context: HarnessContextLine | undefined;
   const items = new Map<string, ProgressItem>();
+  const evidenceRank: Record<HarnessContextLine["modelEvidence"], number> = {
+    unknown: 0,
+    requested: 1,
+    container_argument: 2,
+    provider_reported: 3,
+  };
   for (const event of events) {
     if (event.kind === "context" && event.payload && typeof event.payload === "object") {
       const p = event.payload as Record<string, unknown>;
-      context = {
+      const next: HarnessContextLine = {
         harnessType: typeof p.harnessType === "string" ? p.harnessType : "claudecode",
         model: typeof p.model === "string" ? p.model : undefined,
         modelEvidence:
@@ -135,6 +154,12 @@ export function rebuildProgressFromEvents(
             ? p.modelEvidence
             : "unknown",
       };
+      if (
+        !context ||
+        evidenceRank[next.modelEvidence] >= evidenceRank[context.modelEvidence]
+      ) {
+        context = next;
+      }
     }
     if (event.kind === "progress" && event.payload && typeof event.payload === "object") {
       const p = event.payload as Record<string, unknown>;

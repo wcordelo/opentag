@@ -300,17 +300,24 @@ Claude's own success claim is held until OpenTag verifies:
 - Clone-per-session can be slow for large repositories. R2-backed snapshots or
   shallow-cache refresh are possible future optimizations.
 - The harness streams NDJSON into the event log (`output`, `error`, `done`,
-  plus additive `context` and `progress`). Slack shows one compact
-  evidence-labeled context line and a coalesced progress block with the final
-  answer. `onText` / `onHarnessEvent` remain the live-rendering hooks.
+  plus additive `context` and `progress`). Slack uses one stable live progress
+  message under the render fence; the final answer is a separate terminal post
+  (context line only — never progress markdown). Recovery rebuilds context from
+  durable events without concatenating progress into the answer. `onHarnessEvent`
+  drives the live renderer; Container also applies defense-in-depth output redaction.
 - AG-UI text uses the Channels incremental renderer; the bespoke conflation
   helper remains the adapter `stream()` path.
 - Harness output is sanitized at the Worker boundary (`edge/src/harness/redaction.ts`)
   before SessionEventDO persistence, callbacks, and Slack delivery.
 - Image attachments are normalized in the Container after digest verification
   (long edge ≤1568, encoded ≤4 MiB) via `sharp`; already-safe images stay byte-identical.
+  Staged→inline resolution preserves `sha256` on the wire.
 - Channel config splits user-editable `channelContext` from admin-owned
-  `systemPromptOverlay` (`/putChannelContext` vs `/putAdminConfig`).
+  `systemPromptOverlay` (`/putChannelContext` vs `/putAdminConfig`). Legacy
+  `/putConfig` rejects policies/bundle/overlay writes (`use_putAdminConfig_*`).
+- Overlay digests are verified in turn-contract and again in the Container
+  (SHA-256 of UTF-8 text). Context events are a per-execution singleton with
+  monotonic evidence upgrades (`container_argument` → `provider_reported`).
 - Opus shortcuts: `--opus` → `claude-opus-4-8`; `--opus-5` / `--opus-5-fast`
   → `claude-opus-5` / `claude-opus-5-fast`.
 - Set `SESSION_VIEWER_BASE_URL` with `ADMIN_SECRET` to append a signed,

@@ -634,3 +634,78 @@ describe("SessionEventDO (RPC wrapper smoke test)", () => {
     db.close();
   });
 });
+
+describe("SessionEventEngine context/progress", () => {
+  it("allows monotonic context evidence upgrades and rejects downgrades", async () => {
+    const { engine } = makeEngine();
+    await engine.create({ threadKey: "thread-ctx", harnessType: "claudecode" });
+    await engine.execute({ executionId: "exec-ctx", inputLines: ["hi"] });
+    const first = await engine.appendEvent({
+      executionId: "exec-ctx",
+      kind: "context",
+      payload: {
+        version: 1,
+        harnessType: "claudecode",
+        model: "claude-opus-4-8",
+        modelEvidence: "container_argument",
+      },
+    });
+    expect(first.id).toBeGreaterThan(0);
+    const downgrade = await engine.appendEvent({
+      executionId: "exec-ctx",
+      kind: "context",
+      payload: {
+        version: 1,
+        harnessType: "claudecode",
+        model: "claude-opus-4-8",
+        modelEvidence: "unknown",
+      },
+    });
+    expect(downgrade).toEqual({ id: 0 });
+    const upgrade = await engine.appendEvent({
+      executionId: "exec-ctx",
+      kind: "context",
+      payload: {
+        version: 1,
+        harnessType: "claudecode",
+        model: "claude-opus-4-8-20250918",
+        modelEvidence: "provider_reported",
+      },
+    });
+    expect(upgrade.id).toBeGreaterThan(0);
+    const events = await engine.replay();
+    expect(events.filter((e) => e.kind === "context")).toHaveLength(2);
+  });
+
+  it("dedups identical progress sequences", async () => {
+    const { engine } = makeEngine();
+    await engine.create({ threadKey: "thread-prog", harnessType: "claudecode" });
+    await engine.execute({ executionId: "exec-prog", inputLines: ["hi"] });
+    const started = await engine.appendEvent({
+      executionId: "exec-prog",
+      kind: "progress",
+      payload: {
+        version: 1,
+        progressId: "tool-1",
+        sequence: 1,
+        category: "tool",
+        state: "started",
+        title: "Read",
+      },
+    });
+    expect(started.id).toBeGreaterThan(0);
+    const dup = await engine.appendEvent({
+      executionId: "exec-prog",
+      kind: "progress",
+      payload: {
+        version: 1,
+        progressId: "tool-1",
+        sequence: 1,
+        category: "tool",
+        state: "started",
+        title: "Read",
+      },
+    });
+    expect(dup).toEqual({ id: 0 });
+  });
+});

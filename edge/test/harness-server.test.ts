@@ -467,7 +467,7 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     ]);
   });
 
-  it("maps an assistant tool_use block to an output tool summary event", () => {
+  it("maps an assistant tool_use block to started progress only", () => {
     const line = JSON.stringify({
       type: "assistant",
       message: {
@@ -490,6 +490,20 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
           summary: "Bash: npm test",
         },
       },
+    ]);
+  });
+
+  it("maps tool_result user events to completed/failed progress", () => {
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
+          },
+        }),
+      ),
+    ).toEqual([
       {
         kind: "progress",
         payload: {
@@ -498,7 +512,36 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
           sequence: 2,
           category: "tool",
           state: "completed",
-          title: "Bash",
+          title: "Tool",
+        },
+      },
+    ]);
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_2",
+                is_error: true,
+                content: "boom",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_2",
+          sequence: 2,
+          category: "tool",
+          state: "failed",
+          title: "Tool",
         },
       },
     ]);
@@ -529,15 +572,26 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
           summary: "Read: a.ts",
         },
       },
+    ]);
+  });
+
+  it("maps provider init system events to provider_reported context", () => {
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "system",
+          subtype: "init",
+          model: "claude-opus-4-8-20250918",
+        }),
+      ),
+    ).toEqual([
       {
-        kind: "progress",
+        kind: "context",
         payload: {
           version: 1,
-          progressId: "tool-toolu_1",
-          sequence: 2,
-          category: "tool",
-          state: "completed",
-          title: "Read",
+          harnessType: "claudecode",
+          model: "claude-opus-4-8-20250918",
+          modelEvidence: "provider_reported",
         },
       },
     ]);
@@ -577,7 +631,7 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     expect(done.payload.summary.endsWith("…")).toBe(true);
   });
 
-  it("ignores system and user event types", () => {
+  it("ignores blank system init without model and empty user content", () => {
     expect(mapStreamJsonLine(JSON.stringify({ type: "system", subtype: "init" }))).toEqual([]);
     expect(
       mapStreamJsonLine(JSON.stringify({ type: "user", message: { content: [] } })),

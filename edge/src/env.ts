@@ -90,6 +90,12 @@ export interface Env {
   SUPERMEMORY_URL?: string;
   /** Local bearer credential; never logged or accepted from tool callers. */
   SUPERMEMORY_API_KEY?: string;
+  /**
+   * Exact gate for Local document update/delete. Only the string `verified`
+   * enables mutations; unset/any other value keeps fail-closed unsupported_* paths.
+   * SDK shapes are known; Local server-v0.0.5 live behavior remains unproven until R1 smoke.
+   */
+  SUPERMEMORY_MUTATION_CONTRACT?: string;
   /** Installed OpenTag bot user id, required for trusted rich-payload mentions. */
   SLACK_BOT_USER_ID?: string;
   /** Exact comma/whitespace-separated `bot:B...` / `app:A...` trigger actors. */

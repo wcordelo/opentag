@@ -821,3 +821,14 @@ remain R1 runtime proofs rather than current operational facts.
 - [ ] Approved coding turn creates a new commit and attributed PR.
 - [ ] Unapproved coding turn cannot push or create a PR.
 - [ ] Alarm recovery produces one visible terminal outcome, never two.
+
+## Knowledge base K2 (file-only until gates)
+
+Slack B0–B4 remains behind R1/C1/S1/P1. K2 adds wiki/code/custom connectors, distillation libraries, RRF unified search, MCP (`POST /mcp/knowledge`), and project scope helpers without enabling production ingestion.
+
+Operator checklist (still inert without approvals):
+
+- [ ] `SUPERMEMORY_MUTATION_CONTRACT=verified` only after R1 Local update/delete smoke.
+- [ ] Grant `search_*` / `search` tools via workspace access bundles (not default).
+- [ ] MCP callers use `ADMIN_SECRET` bearer; never accept caller-supplied `containerTag` / `customId`.
+- [ ] Project isolation `tag_fanout` / `tag_duplicate` only after Local project-tag contract proof.

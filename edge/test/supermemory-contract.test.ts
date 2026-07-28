@@ -24,6 +24,12 @@ describe("supermemory@4.24.12 SDK contract", () => {
         if (path === "/v3/documents/local-doc-1" && init?.method === "GET") {
           return Response.json({ id: "local-doc-1", status: "done", customId: "slack:T1:C1:1.0", metadata: {} });
         }
+        if (path === "/v3/documents/local-doc-1" && init?.method === "PATCH") {
+          return Response.json({ id: "local-doc-1", status: "queued" });
+        }
+        if (path === "/v3/documents/local-doc-1" && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
         if (path === "/v4/search" && init?.method === "POST") {
           return Response.json({ results: [], timing: 1, total: 0 });
         }
@@ -35,6 +41,13 @@ describe("supermemory@4.24.12 SDK contract", () => {
     await client.add({ content: "fixture", containerTag: tag, customId, metadata: { projectId: "P1" } });
     await client.documents.add({ content: "fixture document surface", containerTag: tag, customId, metadata: { projectId: "P1" } });
     await client.documents.get("local-doc-1");
+    await client.documents.update("local-doc-1", {
+      content: "revised fixture",
+      containerTag: tag,
+      customId,
+      metadata: { projectId: "P1" },
+    });
+    await client.documents.delete("local-doc-1");
     await client.search.memories({
       q: "fixture",
       containerTag: tag,
@@ -56,6 +69,16 @@ describe("supermemory@4.24.12 SDK contract", () => {
         body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1.0" }),
       }),
       expect.objectContaining({ url: "https://local.example/v3/documents/local-doc-1", method: "GET" }),
+      expect.objectContaining({
+        url: "https://local.example/v3/documents/local-doc-1",
+        method: "PATCH",
+        body: expect.objectContaining({
+          content: "revised fixture",
+          containerTag: "workspace:T1",
+          customId: "slack:T1:C1:1.0",
+        }),
+      }),
+      expect.objectContaining({ url: "https://local.example/v3/documents/local-doc-1", method: "DELETE" }),
       expect.objectContaining({
         url: "https://local.example/v4/search",
         method: "POST",

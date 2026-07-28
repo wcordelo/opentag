@@ -441,12 +441,13 @@ export type KnowledgeOutcome =
   | { status: "normalized"; desiredRevision: string }
   | { status: "indexed"; desiredRevision: string; indexedRevision: string; localDocumentId: string; workflowStatus: "done"; pollCount: number }
   | { status: "processing_unconfirmed"; desiredRevision: string; localDocumentId: string; workflowStatus: string; pollDeadlineAt: number; nextPollAt: number; pollCount: number }
-  | { status: "tombstoned"; tombstonedAt: string; errorCode: "unsupported_delete_contract" }
+  | { status: "tombstoned"; tombstonedAt: string; errorCode?: "unsupported_delete_contract" | "deleted" }
   | { status: "retryable_failure"; errorClass: string; errorCode?: string; incompleteReason?: string }
   | { status: "permanent_failure"; errorClass: string; errorCode?: string };
 
 export type PrepareRevisionResult =
   | { decision: "add" }
+  | { decision: "update"; localDocumentId: string }
   | { decision: "poll"; localDocumentId: string; pollDeadlineAt?: number }
   | { decision: "noop"; reason: "already_indexed" }
   | { decision: "blocked"; reason: "tombstoned" | "unsupported_update_contract" | "ambiguous_add_contract" };
@@ -1062,12 +1063,19 @@ export class KnowledgeLedger {
           outcome.pollDeadlineAt, outcome.nextPollAt, outcome.pollCount, now, sourceKey, leaseToken,
         );
       } else if (outcome.status === "tombstoned") {
+        const tombstoneCode = outcome.errorCode ?? "unsupported_delete_contract";
         this.sql.exec(
           `UPDATE knowledge_ledger SET status = 'tombstoned', tombstoned_at = ?,
-           lease_token = NULL, lease_expires_at = NULL, last_error_class = 'unsupported_capability',
+           lease_token = NULL, lease_expires_at = NULL,
+           last_error_class = ?,
            last_error_code = ?, last_local_operation = 'tombstone', updated_at = ?
            WHERE source_key = ? AND lease_token = ?`,
-          outcome.tombstonedAt, outcome.errorCode, now, sourceKey, leaseToken,
+          outcome.tombstonedAt,
+          tombstoneCode === "deleted" ? "local_delete" : "unsupported_capability",
+          tombstoneCode,
+          now,
+          sourceKey,
+          leaseToken,
         );
       } else {
         this.sql.exec(
@@ -1090,7 +1098,13 @@ export class KnowledgeLedger {
     });
   }
 
-  prepareRevision(sourceKey: string, leaseToken: string, desiredRevision: string, nowMs: number): PrepareRevisionResult {
+  prepareRevision(
+    sourceKey: string,
+    leaseToken: string,
+    desiredRevision: string,
+    nowMs: number,
+    options?: { mutationsVerified?: boolean },
+  ): PrepareRevisionResult {
     return this.tx(() => {
       const current = this.get(sourceKey);
       if (!current || current.leaseToken !== leaseToken) throw new Error("knowledge lease is not current");
@@ -1109,11 +1123,28 @@ export class KnowledgeLedger {
         );
         return { decision: "noop", reason: "already_indexed" };
       }
+      const mutationsVerified = options?.mutationsVerified === true;
       if (current.indexedRevision && current.indexedRevision !== desiredRevision) {
+        if (mutationsVerified && current.localDocumentId) {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET status = 'writing', desired_revision = ?,
+             last_local_operation = 'update_started', updated_at = ? WHERE source_key = ? AND lease_token = ?`,
+            desiredRevision, new Date(nowMs).toISOString(), sourceKey, leaseToken,
+          );
+          return { decision: "update", localDocumentId: current.localDocumentId };
+        }
         return { decision: "blocked", reason: "unsupported_update_contract" };
       }
       if (current.localDocumentId) {
         if (!current.localDocumentRevision || current.localDocumentRevision !== desiredRevision) {
+          if (mutationsVerified) {
+            this.sql.exec(
+              `UPDATE knowledge_ledger SET status = 'writing', desired_revision = ?,
+               last_local_operation = 'update_started', updated_at = ? WHERE source_key = ? AND lease_token = ?`,
+              desiredRevision, new Date(nowMs).toISOString(), sourceKey, leaseToken,
+            );
+            return { decision: "update", localDocumentId: current.localDocumentId };
+          }
           return { decision: "blocked", reason: "unsupported_update_contract" };
         }
         this.sql.exec(

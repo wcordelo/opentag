@@ -19,6 +19,7 @@ import {
 import { sharedSlackRateScheduler } from "../slack/web-api.js";
 import { normalizeSlackThread } from "./normalize-slack-thread.js";
 import type { KnowledgeDispatch, KnowledgeQueueEnv } from "./knowledge-jobs.js";
+import { isLocalMutationContractVerified } from "./local-mutation-contract.js";
 
 export const SUPERMEMORY_POLL = Object.freeze({
   deadlineMs: KNOWLEDGE_EXECUTION_BUDGETS.localPollWindowMs,
@@ -134,6 +135,7 @@ function citationFromResult(
   }
   return {
     sourceKey,
+    sourceType: "slack",
     projectId,
     channelId,
     threadTs,
@@ -182,6 +184,54 @@ export class SupermemoryAdapter {
       }
       if (status !== "queued") throw new SupermemoryAdapterError("local_malformed_response", false);
       return { localDocumentId: response.id, status };
+    } catch (error) {
+      throw retryableError(error);
+    }
+  }
+
+  async updateSlackDocument(input: {
+    teamId: string;
+    localDocumentId: string;
+    content: string;
+    metadata: SlackKnowledgeMetadata;
+  }): Promise<{ localDocumentId: string; status: LocalDocumentStatus }> {
+    const metadata = slackKnowledgeMetadataAsFlat(input.metadata);
+    if (input.metadata.workspaceId !== input.teamId) throw new Error("metadata workspace does not match team");
+    if (!input.localDocumentId) throw new SupermemoryAdapterError("local_rejected", false);
+    const sourceKey = slackSourceKey(input.teamId, input.metadata.channelId, input.metadata.threadTs);
+    try {
+      const response = await this.client.documents.update(input.localDocumentId, {
+        content: input.content,
+        customId: sourceKey,
+        containerTag: workspaceTag(input.teamId),
+        metadata,
+      });
+      if (!response || typeof response.id !== "string" || !response.id) {
+        throw new SupermemoryAdapterError("local_malformed_response", false);
+      }
+      let status: LocalDocumentStatus;
+      try {
+        status = parseLocalDocumentStatus(response.status);
+      } catch {
+        throw new SupermemoryAdapterError("local_malformed_response", false);
+      }
+      if (status !== "queued") throw new SupermemoryAdapterError("local_malformed_response", false);
+      return { localDocumentId: response.id, status };
+    } catch (error) {
+      throw retryableError(error);
+    }
+  }
+
+  async deleteSlackDocument(input: {
+    localDocumentId: string;
+    sourceKey: string;
+  }): Promise<{ deleted: true }> {
+    if (!input.localDocumentId || !input.sourceKey) {
+      throw new SupermemoryAdapterError("local_rejected", false);
+    }
+    try {
+      await this.client.documents.delete(input.localDocumentId);
+      return { deleted: true };
     } catch (error) {
       throw retryableError(error);
     }
@@ -286,7 +336,10 @@ async function recordOutcome(
   if (!result.recorded) throw new Error("knowledge_outcome_not_recorded");
 }
 
-type IngestionAdapter = Pick<SupermemoryAdapter, "addSlackDocument" | "pollDocument">;
+type IngestionAdapter = Pick<
+  SupermemoryAdapter,
+  "addSlackDocument" | "updateSlackDocument" | "deleteSlackDocument" | "pollDocument"
+>;
 
 export type KnowledgeDispatchDependencies = {
   createAdapter?: (env: KnowledgeQueueEnv) => IngestionAdapter;
@@ -296,21 +349,105 @@ export type KnowledgeDispatchDependencies = {
   ) => Promise<KnowledgeThreadFetchOutcome>;
 };
 
+function slackDocumentMetadata(input: {
+  teamId: string;
+  projectId: string;
+  channelId: string;
+  threadTs: string;
+  sourceKey: string;
+  revision: string;
+  rootAuthorId?: string;
+  observedAt: string;
+  indexedAt: string;
+  aclPolicyRef: string;
+}): SlackKnowledgeMetadata {
+  return {
+    schemaVersion: 1,
+    workspaceId: input.teamId,
+    projectId: input.projectId,
+    channelId: input.channelId,
+    threadTs: input.threadTs,
+    sourceKey: input.sourceKey,
+    contentRevision: input.revision,
+    ...(input.rootAuthorId ? { rootAuthorId: input.rootAuthorId } : {}),
+    rootTs: input.threadTs,
+    observedAt: input.observedAt,
+    indexedAt: input.indexedAt,
+    aclPolicyRef: input.aclPolicyRef,
+    status: "active",
+  };
+}
+
 /** Production Queue dispatch. This is never imported by an ordinary turn path. */
 export function createKnowledgeSupermemoryDispatch(
   dependencies: KnowledgeDispatchDependencies = {},
 ): KnowledgeDispatch {
   return async (job, env, context) => {
   const now = () => Date.now();
+  const mutationsVerified = isLocalMutationContractVerified(env);
   const recordFencedOutcome = async (outcome: unknown): Promise<void> => {
     await context.validateSource();
     await recordOutcome(env, job.teamId, job.sourceKey, context.leaseToken, outcome);
   };
   if (job.reason === "delete" || !context.source.enabled) {
+    if (!mutationsVerified) {
+      await recordFencedOutcome({
+        status: "tombstoned",
+        tombstonedAt: new Date(now()).toISOString(),
+        errorCode: "unsupported_delete_contract",
+      });
+      return { status: "recorded_permanent" };
+    }
+    const state = await knowledgeDoCall<{
+      ledger: { localDocumentId?: string } | null;
+    }>(env, job.teamId, "/state", { sourceKey: job.sourceKey });
+    const localDocumentId = state.ledger?.localDocumentId;
+    if (localDocumentId) {
+      if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
+        await recordFencedOutcome({
+          status: "retryable_failure",
+          errorClass: "dependency_unavailable",
+          errorCode: "knowledge_dependency_unconfigured",
+        });
+        return { status: "recorded_retry" };
+      }
+      let adapter: IngestionAdapter;
+      try {
+        adapter = dependencies.createAdapter
+          ? dependencies.createAdapter(env)
+          : new SupermemoryAdapter(createSupermemoryClient({
+              baseURL: env.SUPERMEMORY_URL,
+              apiKey: env.SUPERMEMORY_API_KEY,
+            }));
+      } catch {
+        await recordFencedOutcome({
+          status: "retryable_failure",
+          errorClass: "dependency_unavailable",
+          errorCode: "knowledge_local_unavailable",
+        });
+        return { status: "recorded_retry" };
+      }
+      try {
+        await adapter.deleteSlackDocument({
+          localDocumentId,
+          sourceKey: job.sourceKey,
+        });
+      } catch (error) {
+        const classified = error instanceof SupermemoryAdapterError
+          ? error
+          : new SupermemoryAdapterError("knowledge_unavailable", true);
+        await recordFencedOutcome({
+          status: classified.retryable ? "retryable_failure" : "permanent_failure",
+          errorClass: "local_delete",
+          errorCode: classified.code,
+        });
+        return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
+      }
+    }
     await recordFencedOutcome({
       status: "tombstoned",
       tombstonedAt: new Date(now()).toISOString(),
-      errorCode: "unsupported_delete_contract",
+      errorCode: "deleted",
     });
     return { status: "recorded_permanent" };
   }
@@ -366,6 +503,7 @@ export function createKnowledgeSupermemoryDispatch(
   await context.validateSource();
   const prepared = await knowledgeDoCall<
     | { decision: "add" }
+    | { decision: "update"; localDocumentId: string }
     | { decision: "poll"; localDocumentId: string }
     | { decision: "noop" }
     | { decision: "blocked"; reason: string }
@@ -373,6 +511,7 @@ export function createKnowledgeSupermemoryDispatch(
     sourceKey: job.sourceKey,
     leaseToken: context.leaseToken,
     desiredRevision: normalized.revision,
+    mutationsVerified,
   });
   if (prepared.decision === "blocked") {
     await recordFencedOutcome({
@@ -395,41 +534,46 @@ export function createKnowledgeSupermemoryDispatch(
     // The durable configuration effect prevents a disable/policy update from
     // committing between this check and the Local effect.
     await context.validateSource();
+    const metadata = slackDocumentMetadata({
+      teamId: job.teamId,
+      projectId: job.projectId,
+      channelId: job.channelId,
+      threadTs: job.threadTs,
+      sourceKey: job.sourceKey,
+      revision: normalized.revision,
+      rootAuthorId: normalized.canonical.messages[0]?.authorId,
+      observedAt: job.requestedAt,
+      indexedAt: new Date(now()).toISOString(),
+      aclPolicyRef: context.source.readerPolicyRef,
+    });
     let accepted: { localDocumentId: string; status: LocalDocumentStatus };
     try {
-      accepted = await adapter.addSlackDocument({
-        teamId: job.teamId,
-        content: normalized.content,
-        metadata: {
-          schemaVersion: 1,
-          workspaceId: job.teamId,
-          projectId: job.projectId,
-          channelId: job.channelId,
-          threadTs: job.threadTs,
-          sourceKey: job.sourceKey,
-          contentRevision: normalized.revision,
-          ...(normalized.canonical.messages[0]?.authorId
-            ? { rootAuthorId: normalized.canonical.messages[0].authorId }
-            : {}),
-          rootTs: job.threadTs,
-          observedAt: job.requestedAt,
-          indexedAt: new Date(now()).toISOString(),
-          aclPolicyRef: context.source.readerPolicyRef,
-          status: "active",
-        },
-      });
+      if (prepared.decision === "update") {
+        accepted = await adapter.updateSlackDocument({
+          teamId: job.teamId,
+          localDocumentId: prepared.localDocumentId,
+          content: normalized.content,
+          metadata,
+        });
+      } else {
+        accepted = await adapter.addSlackDocument({
+          teamId: job.teamId,
+          content: normalized.content,
+          metadata,
+        });
+      }
     } catch (error) {
       const classified = error instanceof SupermemoryAdapterError ? error : new SupermemoryAdapterError("knowledge_unavailable", true);
       await recordFencedOutcome({
         status: classified.retryable ? "retryable_failure" : "permanent_failure",
-        errorClass: "local_add",
+        errorClass: prepared.decision === "update" ? "local_update" : "local_add",
         errorCode: classified.code,
       });
       return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
     }
     localDocumentId = accepted.localDocumentId;
     // Fail closed if the bounded config fence expired while Local accepted.
-    // The durable add_started marker then prevents a duplicate external add.
+    // The durable add_started / update_started marker then prevents a duplicate external write.
     await context.validateSource();
     const pollDeadlineAt = now() + SUPERMEMORY_POLL.deadlineMs;
     const persisted = await knowledgeDoCall<{ recorded: boolean }>(env, job.teamId, "/localAccepted", {

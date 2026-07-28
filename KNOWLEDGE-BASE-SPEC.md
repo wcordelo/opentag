@@ -353,3 +353,37 @@ It exits nonzero on missing/small artifacts, required headings/terms, obsolete-c
 Before execution, the operator must explicitly approve, in order: architecture reconciliation with the Cloudflare-only product contract; B0–B4 implementation; the distinct OpenAI project/key owner, provider data-egress/retention and budget policy; Railway R1 exact new project/service/volume/domain/region/sizing/release/key plan; R2 native same-service backup/restore and rotation rehearsal; C1 Cloudflare deployment/secrets; S1 Slack staging scope/subscription changes; P1 exact production canary and each backfill manifest; and D1 any cleanup IDs. Approval for one gate does not authorize later gates.
 
 Resume by reading this document, `PROGRESS.md`, `RAILWAY-READINESS.md`, current `git status --short`, `AGENTS.md`, and the current Local `server-v0.0.5` documentation/checksum. Revalidate drift-prone facts (Railway identity/inventory/permissions, Local release/API/SDK/document-status/key path, OpenAI provider/model/egress terms, Slack API pagination behavior, and Cloudflare Queue configuration) before any external step. Run `python3 goal-outputs/supermemory-railway-knowledge-base/validate.py` at B0 completion and before every handoff. Update the progress ledger with release IDs, approval references, verification evidence, blocked state, and next safe action—never secret values. If a contract cannot be proven, leave the source disabled and stop for a decision rather than introducing a fallback architecture.
+
+## K2 — Multi-source connector addendum
+
+B1 invariants still hold for every knowledge source: one exact `workspace:{teamId}` tag, the Cloudflare Queue spine as the only ingestion path outside acknowledgement/turn, and **no second corpus**. Wiki, code, and custom database connectors share the existing ledger, Queue descriptors, Local adapter, and ACL policy references; they do not fork a parallel memory store or rewrite `knowledge-ledger.ts` wholesale.
+
+### Source identity
+
+| `sourceType` | Stable `sourceKey` shape |
+| --- | --- |
+| `slack` | `slack:{teamId}:{channelId}:{threadTs}` (existing) |
+| `wiki` | `wiki:{teamId}:{spaceId}:{pageId}` |
+| `code` | `code:{teamId}:{repoId}:{chunkId}` |
+| `custom_db` | `custom_db:{teamId}:{connectorId}:{rowId}` |
+
+`customId` remains the stable `sourceKey`. Segment validation matches Slack: team/scope identifiers reject `:` and control characters; the final document id segment may contain dots (and other non-control characters) like Slack thread timestamps.
+
+Tracked sources may carry optional `sourceType` (default `slack` when absent). For non-Slack sources, `channelId` on `KnowledgeSourceScope` is a **synthetic stable scope id within the project** (not a Slack channel). Exactly **one enabled project per source identity** (team + project + scope + sourceType) remains the conflict rule.
+
+### Connector contract
+
+Each connector implements: **fetch → normalize → optional distill → adapter.add / update / delete / search**. The same Queue consumer routes work by `sourceType`. Slack dispatch remains the production reference path; wiki/code/custom_db expose normalize + Local hybrid search modules under `edge/src/memory/connectors/` and bot tools `search_wiki` / `search_code` / `search_custom` (not in `DEFAULT_BUNDLE` — explicit grant required).
+
+### Distillation, fusion, and surfaces (Phases 3–6)
+
+- **Distillation / bursts:** Queue-consumer-only enrichment in `edge/src/memory/distill/` and `connectors/slack-enrichment.ts`. Never on Slack acknowledgement.
+- **RRF + unified search:** OpenTag-side RRF (k=60) in `edge/src/memory/retrieval/`; bot tool `search` fans out allowed source lists.
+- **MCP:** `POST /mcp/knowledge` — bearer `ADMIN_SECRET`, raw citations, no ingestion.
+- **Web UI pipeline:** `edge/src/web-ui/knowledge-query.ts` — planner → executor → synthesis over the same primitives.
+- **Projects:** `edge/src/knowledge/projects.ts` — named source bundles with `metadata_filter` | `tag_fanout` | `tag_duplicate` isolation modes. Metadata filters remain not a tenant boundary.
+- **who_knows / recent_prs:** Evidence-derived stubs in `edge/src/memory/retrieval/who-knows.ts` until authorship/PR connectors fill metadata.
+
+### Deploy gate
+
+**No deploy without gates.** File-only K2 work does not authorize Worker, Queue, secret, Railway, or Slack configuration changes. Staging/production enablement still requires the B7–B8 / C1 / S1 / P1 stop gates in §§9–11. Local update/delete remain gated by `SUPERMEMORY_MUTATION_CONTRACT=verified` after R1 smoke proves the pinned Local contract.

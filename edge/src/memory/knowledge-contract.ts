@@ -1,6 +1,9 @@
 /** Pure, server-derived contracts shared by future knowledge ingestion/search. */
 
 import type { KnowledgeSourceScope } from "../config/knowledge-config.js";
+import type { KnowledgeSourceType } from "./knowledge-source-types.js";
+
+export type { KnowledgeSourceType } from "./knowledge-source-types.js";
 
 export const KNOWLEDGE_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_LIMITS = Object.freeze({
@@ -48,8 +51,42 @@ export type MetadataFilter = { AND: Array<{ key: string; value: string }> } | {
   OR: Array<{ key: string; value: string }>;
 };
 
+/**
+ * Shared Local document metadata fields for every sourceType.
+ * Source-specific ids (channel/thread, space/page, repo/path, connector/row)
+ * are optional on the union base and required on typed variants.
+ */
+export type KnowledgeDocumentMetadataBase = {
+  schemaVersion: typeof KNOWLEDGE_SCHEMA_VERSION;
+  sourceType: KnowledgeSourceType;
+  workspaceId: string;
+  projectId: string;
+  sourceKey: string;
+  contentRevision: string;
+  aclPolicyRef: string;
+  status: "active" | "deleted";
+  observedAt: string;
+  indexedAt: string;
+};
+
+export type KnowledgeDocumentMetadata = KnowledgeDocumentMetadataBase & {
+  channelId?: string;
+  threadTs?: string;
+  spaceId?: string;
+  pageId?: string;
+  repoId?: string;
+  path?: string;
+  connectorId?: string;
+  rowId?: string;
+  slackPermalink?: string;
+  rootAuthorId?: string;
+  rootTs?: string;
+};
+
+/** Slack corpus metadata. `sourceType` defaults to slack when omitted (legacy). */
 export type SlackKnowledgeMetadata = {
   schemaVersion: typeof KNOWLEDGE_SCHEMA_VERSION;
+  sourceType?: "slack";
   workspaceId: string;
   projectId: string;
   channelId: string;
@@ -65,17 +102,35 @@ export type SlackKnowledgeMetadata = {
   status: "active" | "deleted";
 };
 
-export type KnowledgeCitation = {
+/**
+ * Citation shape shared across sourceTypes.
+ * Slack search_slack keeps channelId/threadTs required via KnowledgeCitation.
+ */
+export type KnowledgeCitationBase = {
   sourceKey: string;
+  /** Defaults to slack for legacy search_slack consumers; always set by citationFromResult. */
+  sourceType?: KnowledgeSourceType;
   projectId: string;
-  channelId: string;
-  threadTs: string;
-  permalink?: string;
   contentRevision: string;
   excerpt: string;
   score?: number;
   aclPolicyRef: string;
   retrievedAt: string;
+  permalink?: string;
+  channelId?: string;
+  threadTs?: string;
+  spaceId?: string;
+  pageId?: string;
+  repoId?: string;
+  path?: string;
+  connectorId?: string;
+  rowId?: string;
+};
+
+/** Slack citation — channelId and threadTs remain required for search_slack. */
+export type KnowledgeCitation = KnowledgeCitationBase & {
+  channelId: string;
+  threadTs: string;
 };
 
 export type KnowledgeJob = {

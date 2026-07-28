@@ -39,6 +39,7 @@ import { postTurnRejectedFeedback } from "./slack/turn-lifecycle.js";
 import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
+import { handleKnowledgeMcp } from "./mcp/knowledge-mcp.js";
 import {
   hydrateLateFileRefs,
   lateFileRepairDedupeKey,
@@ -741,6 +742,12 @@ app.post("/admin/knowledge/backfill/:manifestId/execute", requireAdminAuth(), as
     );
   }
 });
+
+/**
+ * MCP-style knowledge retrieval primitives (K2 Phase 5).
+ * Bearer ADMIN_SECRET; LLM-light raw citations; no ingestion.
+ */
+app.post("/mcp/knowledge", async (c) => handleKnowledgeMcp(c.req.raw, c.env));
 
 /** Seed a pending HITL action snapshot key (admin/debug). */
 app.post("/debug/hitl", requireAdminAuth(), async (c) => {

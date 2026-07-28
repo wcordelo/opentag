@@ -45,7 +45,12 @@ export type KnowledgeScheduleEnv = {
 };
 
 export type KnowledgeQueueEnv = KnowledgeScheduleEnv & Pick<Env,
-  "SLACK_BOT_TOKEN" | "SUPERMEMORY_URL" | "SUPERMEMORY_API_KEY" | "SLACK_RATE_LIMIT" | "ENVIRONMENT"
+  | "SLACK_BOT_TOKEN"
+  | "SUPERMEMORY_URL"
+  | "SUPERMEMORY_API_KEY"
+  | "SUPERMEMORY_MUTATION_CONTRACT"
+  | "SLACK_RATE_LIMIT"
+  | "ENVIRONMENT"
 >;
 
 export type KnowledgeDispatchResult =

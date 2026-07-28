@@ -205,9 +205,20 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
 
     if (url.pathname === "/prepareRevision" && request.method === "POST") {
       try {
-        const body = await request.json() as { sourceKey?: string; leaseToken?: string; desiredRevision?: string };
+        const body = await request.json() as {
+          sourceKey?: string;
+          leaseToken?: string;
+          desiredRevision?: string;
+          mutationsVerified?: boolean;
+        };
         if (!body.sourceKey || !body.leaseToken || !body.desiredRevision) throw new Error("invalid revision preparation");
-        return Response.json(this.ledger.prepareRevision(body.sourceKey, body.leaseToken, body.desiredRevision, Date.now()));
+        return Response.json(this.ledger.prepareRevision(
+          body.sourceKey,
+          body.leaseToken,
+          body.desiredRevision,
+          Date.now(),
+          { mutationsVerified: body.mutationsVerified === true },
+        ));
       } catch (error) {
         return Response.json({ error: error instanceof Error ? error.message : "invalid revision preparation" }, { status: 400 });
       }

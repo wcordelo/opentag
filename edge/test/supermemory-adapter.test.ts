@@ -31,6 +31,8 @@ function client(overrides: Partial<SupermemoryClient> = {}): SupermemoryClient {
     add: vi.fn(async () => ({ id: "doc-1", status: "queued" })),
     documents: {
       get: vi.fn(async () => ({ id: "doc-1", customId: "slack:T1:C1:1.0", status: "done" })),
+      update: vi.fn(async () => ({ id: "doc-1", status: "queued" })),
+      delete: vi.fn(async () => undefined),
     },
     search: { memories: vi.fn(async () => ({ results: [], timing: 1, total: 0 })) },
     ...overrides,
@@ -87,6 +89,34 @@ describe("SupermemoryAdapter", () => {
     })).rejects.toBeInstanceOf(SupermemoryAdapterError);
   });
 
+  it("updates via documents.update and deletes via documents.delete", async () => {
+    const update = vi.fn(async () => ({ id: "doc-1", status: "queued" as const }));
+    const del = vi.fn(async () => undefined);
+    const adapter = new SupermemoryAdapter(client({
+      documents: {
+        get: vi.fn(),
+        update,
+        delete: del,
+      } as unknown as SupermemoryClient["documents"],
+    }));
+    expect(await adapter.updateSlackDocument({
+      teamId: "T1",
+      localDocumentId: "doc-1",
+      content: "revised",
+      metadata: metadata({ contentRevision: "sha256:two" }),
+    })).toEqual({ localDocumentId: "doc-1", status: "queued" });
+    expect(update).toHaveBeenCalledWith("doc-1", expect.objectContaining({
+      content: "revised",
+      customId: "slack:T1:C1:1.0",
+      containerTag: "workspace:T1",
+    }));
+    expect(await adapter.deleteSlackDocument({
+      localDocumentId: "doc-1",
+      sourceKey: "slack:T1:C1:1.0",
+    })).toEqual({ deleted: true });
+    expect(del).toHaveBeenCalledWith("doc-1");
+  });
+
   it.each([
     ["missing id", { status: "queued" }],
     ["undocumented status", { id: "doc-1", status: "processing" }],
@@ -132,7 +162,10 @@ describe("SupermemoryAdapter", () => {
       limit: 3,
     });
     expect(citations).toEqual([expect.objectContaining({
-      sourceKey: "slack:T1:C1:1.0", contentRevision: "sha256:one", excerpt: "useful excerpt",
+      sourceKey: "slack:T1:C1:1.0",
+      sourceType: "slack",
+      contentRevision: "sha256:one",
+      excerpt: "useful excerpt",
     })]);
     expect(citations[0]).not.toHaveProperty("permalink");
   });
@@ -184,9 +217,179 @@ describe("Supermemory Queue dispatch configuration fence", () => {
     expect(fetchThread).not.toHaveBeenCalled();
     expect(outcomes).toEqual([
       expect.objectContaining({
-        outcome: expect.objectContaining({ status: "tombstoned" }),
+        outcome: expect.objectContaining({
+          status: "tombstoned",
+          errorCode: "unsupported_delete_contract",
+        }),
       }),
     ]);
+  });
+
+  it("deletes the Local document then tombstones when mutation contract is verified", async () => {
+    const job = createKnowledgeJob({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "1.0",
+      messageTs: "1.0",
+      configVersion: 3,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "delete",
+    });
+    const outcomes: unknown[] = [];
+    const deleteSlackDocument = vi.fn(async () => ({ deleted: true as const }));
+    const updateSlackDocument = vi.fn();
+    const addSlackDocument = vi.fn();
+    const pollDocument = vi.fn();
+    const fetchThread = vi.fn();
+    const dispatch = createKnowledgeSupermemoryDispatch({
+      fetchThread,
+      createAdapter: () => ({
+        addSlackDocument,
+        updateSlackDocument,
+        deleteSlackDocument,
+        pollDocument,
+      }),
+    });
+    const env = {
+      SUPERMEMORY_URL: "https://supermemory.example",
+      SUPERMEMORY_API_KEY: "sm_fixture",
+      SUPERMEMORY_MUTATION_CONTRACT: "verified",
+      KNOWLEDGE: {
+        idFromName: vi.fn(),
+        get: () => ({
+          fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/state") {
+              return Response.json({ ledger: { localDocumentId: "doc-1" }, outbox: null });
+            }
+            if (path === "/outcome") {
+              outcomes.push(JSON.parse(String(init?.body ?? "{}")));
+              return Response.json({ recorded: true });
+            }
+            return Response.json({ error: "not_found" }, { status: 404 });
+          }),
+        }),
+      },
+    } as unknown as KnowledgeQueueEnv;
+    await expect(dispatch(job, env, {
+      leaseToken: "lease-root",
+      effectToken: "effect-root",
+      source: {
+        schemaVersion: 1,
+        teamId: "T1",
+        projectId: "P1",
+        channelId: "C1",
+        enabled: true,
+        everEnabled: true,
+        readerPolicyRef: "bundle:readers",
+        retentionDays: null,
+        configVersion: 3,
+        updatedAt: "2026-07-19T00:00:00.000Z",
+      },
+      validateSource: vi.fn(async () => ({} as never)),
+    })).resolves.toEqual({ status: "recorded_permanent" });
+    expect(fetchThread).not.toHaveBeenCalled();
+    expect(deleteSlackDocument).toHaveBeenCalledWith({
+      localDocumentId: "doc-1",
+      sourceKey: "slack:T1:C1:1.0",
+    });
+    expect(addSlackDocument).not.toHaveBeenCalled();
+    expect(updateSlackDocument).not.toHaveBeenCalled();
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        outcome: expect.objectContaining({
+          status: "tombstoned",
+          errorCode: "deleted",
+        }),
+      }),
+    ]);
+  });
+
+  it("updates an indexed revision when mutation contract is verified", async () => {
+    const job = createKnowledgeJob({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "1.0",
+      configVersion: 3,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    });
+    const source = {
+      schemaVersion: 1 as const,
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      enabled: true,
+      everEnabled: true,
+      readerPolicyRef: "bundle:readers",
+      retentionDays: null,
+      configVersion: 3,
+      updatedAt: "2026-07-19T00:00:00.000Z",
+    };
+    const prepareBodies: unknown[] = [];
+    const env = {
+      SLACK_BOT_TOKEN: "xoxb-fixture",
+      SUPERMEMORY_URL: "https://supermemory.example",
+      SUPERMEMORY_API_KEY: "sm_fixture",
+      SUPERMEMORY_MUTATION_CONTRACT: "verified",
+      KNOWLEDGE: {
+        idFromName: vi.fn(),
+        get: () => ({
+          fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/prepareRevision") {
+              prepareBodies.push(JSON.parse(String(init?.body ?? "{}")));
+              return Response.json({ decision: "update", localDocumentId: "doc-1" });
+            }
+            if (path === "/localAccepted") return Response.json({ recorded: true });
+            if (path === "/outcome") return Response.json({ recorded: true });
+            return Response.json({ error: "not_found" }, { status: 404 });
+          }),
+        }),
+      },
+    } as unknown as KnowledgeQueueEnv;
+    const updateSlackDocument = vi.fn(async () => ({
+      localDocumentId: "doc-1",
+      status: "queued" as const,
+    }));
+    const addSlackDocument = vi.fn();
+    const deleteSlackDocument = vi.fn();
+    const pollDocument = vi.fn(async () => ({
+      status: "done" as const,
+      localDocumentId: "doc-1",
+      polls: 1,
+    }));
+    const dispatch = createKnowledgeSupermemoryDispatch({
+      createAdapter: () => ({
+        addSlackDocument,
+        updateSlackDocument,
+        deleteSlackDocument,
+        pollDocument,
+      }),
+      fetchThread: async () => ({
+        status: "complete",
+        messages: [{ ts: "1.0", user: "U1", text: "revised fixture" }],
+        pages: 1,
+        bytes: 32,
+      }),
+    });
+    await expect(dispatch(job, env, {
+      leaseToken: "lease-1",
+      source,
+      effectToken: "effect-1",
+      validateSource: vi.fn(async () => source),
+    })).resolves.toEqual({ status: "recorded_success" });
+    expect(prepareBodies).toEqual([
+      expect.objectContaining({ mutationsVerified: true }),
+    ]);
+    expect(updateSlackDocument).toHaveBeenCalledTimes(1);
+    expect(addSlackDocument).not.toHaveBeenCalled();
+    expect(pollDocument).toHaveBeenCalledWith({
+      localDocumentId: "doc-1",
+      sourceKey: "slack:T1:C1:1.0",
+    });
   });
 
   it("refetches a reply deletion and halts an indexed mutation without tombstoning", async () => {
@@ -318,13 +521,20 @@ describe("Supermemory Queue dispatch configuration fence", () => {
         localDocumentId: "doc-1",
         status: "queued" as const,
       }));
+      const updateSlackDocument = vi.fn();
+      const deleteSlackDocument = vi.fn();
       const pollDocument = vi.fn(async () => ({
         status: "done" as const,
         localDocumentId: "doc-1",
         polls: 1,
       }));
       const dispatch = createKnowledgeSupermemoryDispatch({
-        createAdapter: () => ({ addSlackDocument, pollDocument }),
+        createAdapter: () => ({
+          addSlackDocument,
+          updateSlackDocument,
+          deleteSlackDocument,
+          pollDocument,
+        }),
         fetchThread: async () => ({
           status: "complete",
           messages: [{ ts: "1.0", user: "U1", text: "fixture" }],

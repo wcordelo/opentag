@@ -4,7 +4,18 @@
  * This is intentionally separate from WorkspaceChannelConfig. That older
  * configuration has a useful empty-channel fallback for turn settings; an
  * ingestion source must never inherit it.
+ *
+ * K2: optional `sourceType` defaults to `slack`. For non-Slack sources,
+ * `channelId` is a synthetic stable scope id within the project (not a
+ * Slack channel).
  */
+
+import {
+  parseKnowledgeSourceType,
+  type KnowledgeSourceType,
+} from "../memory/knowledge-source-types.js";
+
+export type { KnowledgeSourceType };
 
 export const KNOWLEDGE_CONFIG_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_RUNTIME = Object.freeze({
@@ -20,7 +31,13 @@ export const KNOWLEDGE_RUNTIME = Object.freeze({
 export type KnowledgeSourceScope = {
   teamId: string;
   projectId: string;
+  /**
+   * Slack: channel id. Other sourceTypes: stable scope id within the project
+   * (synthetic; not a Slack channel).
+   */
   channelId: string;
+  /** Defaults to `slack` when absent for back-compat. */
+  sourceType?: KnowledgeSourceType;
 };
 
 export type TrackedKnowledgeSource = KnowledgeSourceScope & {
@@ -110,11 +127,15 @@ function retentionDays(value: unknown): number | null {
 
 export function parseKnowledgeSourceScope(value: unknown): KnowledgeSourceScope {
   const input = record(value, "knowledge source scope");
-  return {
+  const scope: KnowledgeSourceScope = {
     teamId: identifier(input.teamId, "teamId"),
     projectId: identifier(input.projectId, "projectId"),
     channelId: identifier(input.channelId, "channelId"),
   };
+  if (input.sourceType !== undefined) {
+    scope.sourceType = parseKnowledgeSourceType(input.sourceType);
+  }
+  return scope;
 }
 
 export function parsePutTrackedKnowledgeSource(value: unknown): PutTrackedKnowledgeSource {

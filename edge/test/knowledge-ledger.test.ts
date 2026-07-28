@@ -793,6 +793,14 @@ describe("KnowledgeLedger", () => {
     ledger.acquireLease(edit, 3, "lease-2", 5_000, 60_000);
     expect(ledger.prepareRevision(edit.sourceKey, "lease-2", "sha256:new", 5_001))
       .toEqual({ decision: "blocked", reason: "unsupported_update_contract" });
+    expect(ledger.prepareRevision(edit.sourceKey, "lease-2", "sha256:new", 5_002, {
+      mutationsVerified: true,
+    })).toEqual({ decision: "update", localDocumentId: "doc-1" });
+    expect(ledger.get(edit.sourceKey)).toMatchObject({
+      status: "writing",
+      lastLocalOperation: "update_started",
+      desiredRevision: "sha256:new",
+    });
   });
 
   it("releases the lease and restores indexed state for an unchanged newer event", () => {

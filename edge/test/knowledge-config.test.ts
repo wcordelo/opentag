@@ -4,6 +4,7 @@ import {
   bundleIdFromReaderPolicyRef,
   disabledTrackedKnowledgeSource,
   isTrackedKnowledgeSourceEnabled,
+  parseKnowledgeSourceScope,
   parsePutTrackedKnowledgeSource,
   readerPolicyRefForBundle,
 } from "../src/config/knowledge-config.js";
@@ -46,6 +47,41 @@ describe("knowledge configuration foundation", () => {
         readerPolicyRef,
       })).toThrow("readerPolicyRef");
     }
+  });
+
+  it("defaults sourceType to absent/slack and accepts optional non-slack sourceType", () => {
+    expect(parseKnowledgeSourceScope(scope)).toEqual(scope);
+    expect(parseKnowledgeSourceScope(scope).sourceType).toBeUndefined();
+    expect(parsePutTrackedKnowledgeSource({
+      ...scope,
+      enabled: false,
+      readerPolicyRef: "",
+    }).sourceType).toBeUndefined();
+    expect(parsePutTrackedKnowledgeSource({
+      ...scope,
+      sourceType: "wiki",
+      enabled: false,
+      readerPolicyRef: "",
+    })).toMatchObject({
+      ...scope,
+      sourceType: "wiki",
+      enabled: false,
+    });
+    expect(parseKnowledgeSourceScope({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "scope-docs",
+      sourceType: "code",
+    })).toEqual({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "scope-docs",
+      sourceType: "code",
+    });
+    expect(() => parseKnowledgeSourceScope({
+      ...scope,
+      sourceType: "notion",
+    })).toThrow("sourceType");
   });
 
   it("pins the complete Local runtime tuple without a database URL", () => {

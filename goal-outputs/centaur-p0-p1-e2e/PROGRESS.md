@@ -15,7 +15,8 @@
 - Slice 4 (config authority): complete — channelContext / systemPromptOverlay split mutations
 - Slice 5 (prompt overlay): complete — contract v2 + Container composition
 - Slice 6 (progress): complete — provider mapping, SessionEventDO dedup, harness-progress renderer
-- Slice 7 (hardening): in progress
+- Slice 7 (hardening): complete — CI-equivalent green; Container smoke blocked; draft PR #13; Notion Progress updated; deploy unapproved
+
 
 ## Validation
 - `cd edge && npm run typecheck` — pass

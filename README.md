@@ -1,263 +1,400 @@
-# OpenTag: an open-source alternative to Claude in Slack
+# OpenTag
 
-Run your own AI agent inside Slack: it reads a thread, answers, calls your tools, and
-renders rich results right in the conversation. Think of it as having Claude in your
-workspace, except **open-source and self-hosted**: you own the runtime, bring your own
-model, and wire it to your own tools. No per-seat pricing, no lock-in.
+**Self-hosted Claude-in-Slack on Cloudflare.**
 
-It's built on **[`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)** —
-CopilotKit's open SDK for chat-platform agents — hosted on **Cloudflare Workers**, with the
-LLM/MCP brain in a **Cloudflare Container** (`opentag-agent`).
+OpenTag is an open-source Slack agent you run yourself. A workspace gets
+conversational turns, human-approved tool writes, optional deep research, and
+optional repository coding — with runtime and state on Cloudflare Workers,
+Durable Objects, and Containers. Slack is the product surface; everything else
+stays behind the bot.
 
-> **Current references:** [PRODUCT.md](./PRODUCT.md) ·
-> [ARCHITECTURE.md](./ARCHITECTURE.md) · [setup.md](./setup.md) ·
-> [docs/README.md](./docs/README.md)
+Built with [`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)
+and hosted on Cloudflare. No Socket Mode. No Railway bot. Events API only.
 
----
-
-## See it in action
-
-▶️ **[Watch the demo](https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135)** (~50s) — an OpenTag agent working a Slack thread: it renders a breakdown, a table, and a bar chart inline (**generative UI**) and files a ticket only after an **Approve** gate (**human-in-the-loop**).
-
-> **Two ways to run it:** **host it on your own** with the open-source stack below — or skip the ops and **[sign up for the managed service →](https://go.copilotkit.ai/opentag-managed-gh)** coming soon from CopilotKit.
+> **Canonical docs:** [PRODUCT.md](./PRODUCT.md) ·
+> [ARCHITECTURE.md](./ARCHITECTURE.md) · [DECISIONS.md](./DECISIONS.md) ·
+> [setup.md](./setup.md) · [docs/](./docs/README.md)
 
 ---
 
-## What’s in the box (current architecture)
+## What you get
 
-OpenTag is a **Slack-native Claude Tag alternative** on Cloudflare. Slack ingress is
-**Events API only** (no Socket Mode). The bot Worker owns mentions, slash commands, and
-interactions; a Cloudflare Container hosts the LLM; optional research runs as a task Worker.
+| Experience | Behavior |
+| --- | --- |
+| Mentions, thread replies, `/agent`, DMs | Same exact turn lifecycle: admit → run → fence → deliver |
+| Incremental Slack rendering | Status, titles, streamed Markdown, Block Kit cards |
+| Durable thread continuity | Survives Worker isolate hops; sticky model/harness per thread |
+| Never-silent outcomes | Live answer, recovered answer, explicit error, or confirmed Stop |
+| Human-in-the-loop | Create/Cancel and remote-git approval survive cross-isolate clicks |
+| Linear create-from-Slack | Structured confirm card; assignee defaults to Slack profile email |
+| Deep research | Optional task plane; results return to the originating thread |
+| Repository coding | Claude Code in an isolated Container with Worker-enforced egress and git postconditions |
+
+▶️ **[Watch the demo](https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135)** (~50s) — generative UI in a Slack thread plus an Approve gate before writing out.
+
+Self-host with the stack below, or **[join the managed waitlist →](https://go.copilotkit.ai/opentag-managed-gh)**.
+
+---
+
+## Architecture at a glance
+
+OpenTag is three planes behind one Slack ingress Worker:
+
+1. **Conversation** — AG-UI triage runtime (`opentag-agent`) for ordinary agent turns and MCP tools.
+2. **Coding** — Claude Code harness (`opentag-harness`) with native Anthropic or Claudex/Codex models.
+3. **Research** — optional orchestrator/researcher/verifier Durable Objects; never Slack ingress.
 
 ```mermaid
 flowchart LR
-    Slack["Slack<br/>events, commands, interactions"] --> Bot["opentag-bot<br/>verify, pre-admit, ack"]
-    Bot <--> Conversation["ConversationStateDO<br/>active turns, fences, obligations, HITL"]
-    Bot <--> Session["SessionEventDO<br/>execute, events, replay, interrupt"]
-    Bot --> Agent["opentag-agent<br/>AG-UI Container"]
-    Bot -->|"coding / explicit selector"| Harness["opentag-harness<br/>Claude Code Container"]
-    Bot -. optional .-> Research["opentag-orchestrator<br/>research actors"]
-    Agent --> MCP["LLM + MCP"]
-    Harness --> Guard["Worker-enforced<br/>egress + git policy"]
-    Guard -->|"claudex mode"| Proxy["opentag-claudex-proxy<br/>CLIProxyAPI + Codex OAuth"]
+    Slack["Slack<br/>Events · commands · interactions"]
+
+    subgraph Bot["opentag-bot · Cloudflare Worker"]
+      Verify["HMAC verify + ack"]
+      Pre["Stable IDs + pre-admission"]
+      Life["Exact turn lifecycle<br/>dedup · fences · HITL · Stop"]
+    end
+
+    subgraph State["Durable state"]
+      Conv["ConversationStateDO<br/>active turns · obligations · HITL"]
+      Sess["SessionEventDO<br/>execute · events · replay · interrupt"]
+      Cfg["WorkspaceConfigDO · KnowledgeDO"]
+    end
+
+    subgraph Planes["Runtime planes"]
+      Agent["opentag-agent<br/>AG-UI Container"]
+      Harness["opentag-harness<br/>Claude Code Container"]
+      Proxy["opentag-claudex-proxy<br/>CLIProxyAPI + Codex OAuth"]
+      Research["opentag-orchestrator<br/>optional research actors"]
+    end
+
+    Slack --> Verify --> Pre --> Life
+    Life <--> Conv
+    Life <--> Sess
+    Life --> Cfg
+    Life -->|"AGENT_RUNTIME"| Agent
+    Life -->|"HARNESS"| Harness
+    Harness -->|"claudex mode"| Proxy
+    Life -. RESEARCH_TASKS .-> Research
+    Life --> Slack
+    Research --> Slack
 ```
 
-| Piece | Role |
-| --- | --- |
-| **Bot Worker** (`edge/`, `opentag-bot`) | Slack Events API, stable pre-admission, lifecycle, tools, cards, Stop |
-| **Conversation state** (`ConversationStateDO`) | Active-turn/effect/render fences, obligations, HITL, Stop continuation, memory |
-| **Session log** (`SessionEventDO`) | Exact execution admission, dedup, append-only events, replay, interrupt tombstones |
-| **AG-UI agent** (`edge/workers/agent-runtime/`, `opentag-agent`) | LLM turns, MCP (Linear / Notion), system prompt — production `AGENT_URL` |
-| **Claude Code harness** (`edge/workers/sandbox/`, `opentag-harness`) | Repository coding with native Claude or Claudex GPT models, isolated HOME, outbound interception, git/PR HITL, and mechanical postconditions |
-| **Research task Worker** (optional) | Deep research fibers; posts verified summaries back to the thread |
+Solid edges are production bindings. Dashed edges are optional. Deploy coding
+targets before callers: **Claudex proxy → harness → bot**.
 
-Local `pnpm runtime` is **dev-only** (iterate on prompts/MCP without rebuilding the Container image).
+| Unit | Package / config | Role |
+| --- | --- | --- |
+| **`opentag-bot`** | `edge/wrangler.bot.toml` | Sole Slack HTTP owner |
+| **`opentag-agent`** | `edge/workers/agent-runtime/` | Conversation AG-UI Container |
+| **`opentag-harness`** | `edge/workers/sandbox/` + `containers/harness/` | Coding sandbox |
+| **`opentag-claudex-proxy`** | `edge/workers/claudex-proxy/` | Private GPT backend for Claude Code |
+| **`opentag-orchestrator`** | `edge/wrangler.research.toml` | Optional research task plane |
+
+Full topology, sequence diagrams, and state machines:
+[ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ---
 
-## Features
+## Core concepts
 
-### Slack UX
+These are the ideas that distinguish the current system from a simple
+“Slack → LLM → reply” bot. Reading them once makes the rest of the codebase
+legible.
 
-- **@mentions** and **thread continuity** (follow-ups without re-@mentioning via `message.channels` / groups / IM events)
-- **Slash commands:** `/agent`, `/config`, `/research`
-- **DMs** and assistant-pane hooks (manifest includes App Home Messages + assistant view)
-- **Reactions over chat spam:** thanks / ok → ❤️ or 👍; long turns get a brief hourglass reaction; explicit “react to my message” / “react with heart” handled without an LLM round-trip
-- **`react_message` tool** for the agent when a reaction is better than a text reply
-- **HITL** via Block Kit (`confirm_write`) with **durable cross-isolate** Create/Cancel
-  (`choiceId` in `BOT_STATE` — clicks work even when a different Worker isolate handles the button)
-- **Linear create-from-Slack:** structured confirm card (title / description / team / assignee);
-  default assignee is the requester’s **Slack profile email** (`users:read.email`); fuzzy
-  repair of typo’d field labels before the card posts; after Create, immediate
-  `⏳ Creating…` then `save_issue` + issue URL card
-- **Never-silent delivery:** stable `ot1e_`/`ot1m_` identities, durable
-  render obligations, event replay, and crash-orphan recovery
-- **Durable Stop:** controls AG-UI, harness, research, and HITL before a
-  fenced Slack acknowledgement; incomplete cancellation resumes by DO alarm
-- **Thread-scoped overrides:** sticky model/harness; unsupported reasoning flags fail visibly;
-  quick-action buttons re-enter the normal turn lifecycle
+### One Slack owner
 
-### Agent & tools (bot Worker)
+Slack Events, slash commands, and interactions terminate only on
+**`opentag-bot`**. Research and harness Workers reject `/slack/*`. There is no
+Socket Mode path and no laptop process required in production.
 
-Client tools available to the model (gated by **access bundles**):
+The bot reaches the agent through the **`AGENT_RUNTIME` service binding** plus
+an `AGENT_URL` path. Same-zone `workers.dev` fetch fails with Cloudflare error
+1042 — service bindings are mandatory in production.
+
+### Stable identities and pre-admission
+
+Every production turn derives purpose-tagged SHA-256 IDs from Slack identity:
+
+- `ot1e_…` — execution ID
+- `ot1m_…` — forwarded message ID
+
+Ingress **pre-admits** the active turn and an initial render obligation
+*before* the first profile, config, task, or model await. That closes the race
+where Stop could arrive before the turn registered itself.
+
+Conversation scope is surface-aware:
+
+| Slack input | Scope |
+| --- | --- |
+| DM (event or slash) | `DM_SCOPE` (`<channel>::dm`) |
+| Thread reply / command with `thread_ts` | Root `thread_ts` |
+| Top-level channel mention | The mention’s own `ts` (becomes reply-thread root) |
+| Top-level channel slash command | Channel ID (Slack supplies no message `ts`) |
+
+### Two kinds of durable truth
+
+| Store | Answers |
+| --- | --- |
+| **`ConversationStateDO`** (`BOT_STATE`) | May this exact execution still render or mutate? Active-turn / effect / render fences, obligations, HITL, Stop continuation, thread memory |
+| **`SessionEventDO`** (`SESSION_EVENTS`) | Was this execution admitted, interrupted, or terminal? Append-only event log for replay and recovery |
+
+The model runtime is never the only source of delivery truth.
+
+### Exact fences
+
+Every Slack mutation and every non-Slack side effect must **claim** the exact
+active turn before crossing its external boundary, then confirm or fail
+definitively:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: pre-admit
+    pending --> render_in_flight: claim render
+    render_in_flight --> delivered: confirm final Slack write
+    pending --> effect_in_flight: claim effect
+    effect_in_flight --> pending: effect done, turn continues
+    pending --> cancelled: Stop claims exact turn
+    cancelled --> cancel_confirmed: runtime quiescent + "Stopped" visible
+    delivered --> [*]
+    cancel_confirmed --> [*]
+```
+
+Duplicates (Slack redelivery) stay silent. A genuinely concurrent ask gets at
+most one durable-deduped busy note per thread per minute — that note never
+claims the live turn’s render token.
+
+### Never-silent delivery
+
+Before execution, the bot writes a **render obligation** (execution ID, event
+cursor, Slack destination). `ConversationStateDO` alarms recover owed work:
+
+1. Live execution still named by the active-turn row → defer (don’t double-post).
+2. Terminal with confirmed output → clear silently.
+3. Interrupted → clear without stale output.
+4. Otherwise → replay events from `afterEventId`, claim the same render fence,
+   post the recovered answer or an explicit error/retry card.
+
+Obligations clear only after confirmed visibility or exact cancellation —
+never merely because application code returned.
+
+### Durable Stop
+
+Stop (natural stop/cancel phrases; top-level channel stops must @mention the
+bot) is a continuation, not a fire-and-forget:
+
+1. Claim cancellation; cancel registered HITL choices.
+2. Interrupt the exact runtime (AG-UI abort, harness process group, or research
+   cancel with quiescence).
+3. Claim and post the Slack “Stopped” acknowledgement.
+4. Confirm visibility; clear the active turn and obligation.
+
+Ambiguous intermediate work retries via DO alarm for up to 24 hours. Stop never
+reports success ahead of the underlying work.
+
+### Cross-isolate HITL
+
+`@copilotkit/channels` keeps `awaitChoice` waiters in isolate memory. Slack
+button clicks often land on a different isolate. OpenTag embeds a stable
+`choiceId` in every Create/Cancel (and remote-git) button, persists the click
+in `BOT_STATE`, and races the in-memory waiter against a Durable Object poll
+(`edge/src/hitl/durable-choice.ts`).
+
+### Runtime selection is authoritative
+
+Inline flags are stripped before the model sees the prompt:
+
+| Flag | Effect |
+| --- | --- |
+| `--claude` | Claude Code harness (native Anthropic) |
+| `--claudex` | Same Claude Code binary via private CLIProxyAPI/Codex |
+| `--model <id>` | Sticky thread model (GPT IDs imply `claudex`) |
+| `-rsn <effort>` | Reserved; fails visibly (no runtime accepts it yet) |
+
+Sticky preferences live in DO-backed thread state. Explicit or sticky coding
+selection **never** silently falls back to AG-UI. If the selected harness is
+unconfigured, the turn fails visibly.
+
+### Coding plane security
+
+The harness is deliberately stricter than the triage Container:
+
+```mermaid
+flowchart TB
+    Turn["Bot POST /turn"] --> HW["Harness Worker<br/>auth · schema · allowlists"]
+    HW --> Scope["Execution-scoped<br/>repo / branch approval"]
+    Scope --> Box["HarnessContainer<br/>internet off · HTTPS intercepted"]
+    Box --> Claude["Claude Code · non-root · disposable HOME"]
+    Claude --> Post["Postconditions:<br/>new commit · optional branch + PR"]
+    Claude -->|"Anthropic HTTPS"| Inj["Worker injects real credential"]
+    Claude -->|"Claudex origin"| Px["Private CLAUDEX_PROXY"]
+    Claude -->|"Git / GitHub REST"| Git["Validated execution · repo · branch · attribution"]
+```
+
+- Container receives **sentinel** credentials, not real Anthropic/GitHub secrets.
+- Real credentials are injected only after exact Worker policy validation.
+- Remote push/PR requires durable per-turn Slack HITL bound to execution, repo,
+  generated `opentag/session-*` branch, operation, expiry, and `Prompted by:`
+  attribution.
+- GraphQL mutations denied; package mirrors are GET/HEAD-only.
+- Success requires a verified new commit/tree; approved remote success also
+  requires the expected branch and an open attributed PR.
+- Claudex OAuth lives only in the private proxy Container (R2-backed); the
+  harness never sees it.
+
+### Research is a task, not ingress
+
+`/research`, `@bot research: …`, and `start_task` start an effect-fenced task
+via `RESEARCH_TASKS`. Orchestrator / Researcher / Verifier DOs run fibers and
+deliver back to the originating Slack thread. Cancellation requires
+`{cancelled:true, quiescent:true}` so late results cannot revive a stopped task.
+
+---
+
+## Product surfaces
+
+| Surface | Status | Notes |
+| --- | --- | --- |
+| Mentions & thread replies | Implemented | Events API; incremental render |
+| `/agent` | Implemented | Same lifecycle as a mention |
+| `/config` | Implemented | Channel prompt; preserves bundles/policy |
+| `/research` | Implemented | Effect-fenced task start |
+| DMs & assistant threads | Implemented | Stable `DM_SCOPE`, status, title, Stop |
+| Durable HITL | Implemented | `choiceId` persistence + poll |
+| Linear create | Implemented | Structured card; Slack-email assignee |
+| Thread overrides | Implemented | Sticky model/harness |
+| Quick actions | Implemented | Synthetic turns authored by the clicker |
+| Never-silent recovery | Implemented | Obligations + SessionEventDO + DO alarms |
+| Claude Code harness | Production-enabled | Native + Claudex share sandbox, Stop, egress, postconditions |
+| Research actors | Optional | Internal task plane only |
+| Multi-agent PM product | Deferred | Not in the public TaskRuntime API |
+
+---
+
+## Features by plane
+
+### Slack UX (bot Worker)
+
+- @mentions and thread continuity without re-mentioning
+- Slash commands: `/agent`, `/config`, `/research`
+- Reactions over chat spam (thanks → ❤️; long turns → hourglass)
+- `react_message` tool when an emoji is better than text
+- Generative UI cards: issues, lists, status, links, incidents
+- Streaming conflation (Markdown concatenate; tasks newest-wins; one live plan)
+- Bounded Block Kit (50 blocks, 3k chars/section, ~800 ms update cadence)
+
+### Conversation runtime (`opentag-agent`)
+
+- TanStack AI + OpenAI adapter (`runtime.ts` / `lib/triage-agent.ts`)
+- Linear and Notion MCP when credentials are present
+- Thread transcript, requester timezone, and Slack profile email injected every turn
+- Local `pnpm runtime` on `:8200` is **dev-only** (iterate without rebuilding the Container)
+
+### Client tools (access-bundle gated)
 
 | Tool | Purpose |
 | --- | --- |
-| `lookup_slack_user` | Resolve people in the workspace |
+| `lookup_slack_user` | Resolve people |
 | `read_thread` | Fetch thread history |
-| `confirm_write` | Human-in-the-loop approve-before-write (structured title/description/assignee/team) |
+| `confirm_write` | HITL approve-before-write |
 | `issue_card` / `issue_list` | Linear-style issue UI |
-| `page_list` | Notion-style page lists |
-| `show_status` / `show_links` / `show_incident` | Status / links / incident cards |
-| `memory_search` / `memory_write` | Channel knowledge (`remember: …` shortcut) |
-| `start_task` / `research_progress` | Kick off / poll deep research |
-| `react_message` | Add a Slack emoji reaction |
+| `page_list` | Notion-style lists |
+| `show_status` / `show_links` / `show_incident` | Ops cards |
+| `memory_search` / `memory_write` | Channel knowledge |
+| `start_task` / `research_progress` | Deep research |
+| `react_message` | Emoji reaction |
 
-Chart/diagram image tools are **not** available on the Workers bot (no Playwright in isolate).
+Chart/diagram image tools are not available on the Workers bot (no Playwright
+in the isolate).
 
-### Runtime (Node / Container)
+### Coding (`opentag-harness`)
 
-- TanStack AI + OpenAI / Anthropic (and optional Google) via `runtime.ts` / `lib/triage-agent.ts`
-- **Linear** and **Notion** MCP when credentials are present
-- Thread transcript + requester timezone + Slack profile email injected every turn
-- Null-safe Linear tool args middleware for MCP quirks
-- Production brain: Cloudflare Container (`opentag-agent`); local `pnpm runtime` is dev-only
+- `--claude` / `--claudex` / `gpt-*` model selection
+- Per-session Container, disposable HOME, process-group cancellation
+- Worker-enforced outbound interception and remote-git HITL
+- Mechanical commit / branch / PR postconditions before `done`
 
-### Research (optional task plane)
+### Research (optional)
 
-- Start with `/research <topic>`, `@bot research: …`, or `start_task`
-- Orchestrator / Researcher / Verifier Durable Objects, OCC fibers, Slack delivery with retries
-- Not the product surface — a **task** behind `RESEARCH_TASKS` (see [docs/research-actors.md](./docs/research-actors.md))
-
-### Repository coding (Claude Code harness)
-
-- Repository coding defaults to `claudecode`; `--claude` selects native Claude
-- `--claudex` or a `gpt-*` model selects Claude Code through the private CLIProxyAPI/Codex backend
-- Both modes require the configured `HARNESS` binding and share the same sandbox and lifecycle
-- Coding intent is authoritative: qualifying coding turns do not silently fall back to AG-UI
-- Remote push/PR requires durable per-turn approval bound to execution, repo, branch, operation, expiry, and requester
-- The outer Worker validates all `/turn`, `/interrupt`, Anthropic, Git smart-HTTP, and GitHub REST traffic
-- Success requires a new commit/tree; approved remote success additionally requires the expected branch and attributed open PR
-
-See [docs/centaur-port.md](./docs/centaur-port.md) for what was ported from
-Centaur and [docs/extending.md](./docs/extending.md) before adding a new surface.
+- Orchestrator / Researcher / Verifier Durable Objects
+- Adapter-backed domain in `lib/research/` (DO / memory / Postgres)
+- See [docs/research-actors.md](./docs/research-actors.md)
 
 ### Config & tenancy
 
-- Per-channel **system prompts** (`/config`)
-- **Access bundles** — tool allowlists + secret refs + MCP endpoint refs
+- Per-channel system prompts (`/config`)
+- Access bundles: tool allowlists + secret refs + MCP endpoint refs
 - Workspace keying by Slack `teamId` with channel overrides
 
 ---
 
-## Quick start (self-hosted)
+## Quick start
 
-**Production:** deploy `opentag-agent` (Container) + `opentag-bot` — no laptop processes.
-See [setup.md](./setup.md).
+### Production shape
 
-**Local iterate:** run the agent on `:8200` and the bot Worker with wrangler; for live Slack
-inbound, expose the Worker (or deploy it) and point Slack Request URLs at it.
+Deploy Containers + Workers. No laptop runtime or tunnel is required for Slack
+once Request URLs point at `opentag-bot`. Full walkthrough: [setup.md](./setup.md).
 
-### 1. Create a Slack app
+Requires **Workers Paid** (Cloudflare Containers).
 
-1. [api.slack.com/apps](https://api.slack.com/apps?new_app=1) → **From a manifest** → paste [`slack-app-manifest.yaml`](./slack-app-manifest.yaml).
-2. Install the app → copy **Bot User OAuth Token** (`xoxb-…`) and **Signing Secret**.
-3. Set Request URLs to your bot Worker (not Socket Mode):
+```bash
+# 1. Conversation runtime
+cd edge/workers/agent-runtime && npm ci
+npx wrangler secret put OPENAI_API_KEY
+# optional: LINEAR_API_KEY, LINEAR_TEAM_KEY (display name, e.g. Berendo), NOTION_*
+npm run deploy
+
+# 2. Coding plane (if you keep the shipped bindings) — targets before callers
+cd ../claudex-proxy && npm ci && npm run deploy
+cd ../sandbox && npm ci && npm run deploy
+
+# 3. Bot
+cd ../..
+npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
+npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
+printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run' \
+  | npx wrangler secret put AGENT_URL --config wrangler.bot.toml
+npm run deploy:bot
+```
+
+### Slack app
+
+1. [Create an app from a manifest](https://api.slack.com/apps?new_app=1) → paste
+   [`slack-app-manifest.yaml`](./slack-app-manifest.yaml).
+2. Install → copy **Bot User OAuth Token** and **Signing Secret**.
+3. Point Request URLs at the bot Worker (not Socket Mode):
    - `https://<worker>/slack/events`
    - `https://<worker>/slack/commands`
    - `https://<worker>/slack/interactions`
-4. Reinstall / refresh scopes if you change the manifest (must include
-   `users:read.email` for Linear assignee-from-Slack, plus `reactions:write`,
-   `files:read`, etc.). Update `SLACK_BOT_TOKEN` on the bot Worker after reinstall.
-   Verify with `x-oauth-scopes` on `auth.test` — see [setup.md](./setup.md).
+4. After scope changes, **reinstall** and refresh `SLACK_BOT_TOKEN`. The token
+   must include `users:read.email` for Linear assignee-from-Slack.
 
-Production example in this repo’s manifest: `https://opentag-bot.williamlopezc.workers.dev`.
-
-### 2. Secrets
-
-**Agent** (Container secrets, or root `.env` for local `pnpm runtime`):
+### Local iterate (dev)
 
 ```bash
-cp .env.example .env
-# OPENAI_API_KEY=...
-# LINEAR_API_KEY=...   # optional but needed for Linear create/list
-# LINEAR_TEAM_KEY=Berendo   # team display name (not a bare key like CPK)
-# NOTION_TOKEN=...     # optional
-```
-
-**Bot Worker** (`edge/`):
-
-```bash
-cd edge
-cp .dev.vars.example .dev.vars
-# SLACK_BOT_TOKEN=xoxb-...
-# SLACK_SIGNING_SECRET=...
-# AGENT_URL=https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
-#   (or http://localhost:8200/... for local pnpm runtime)
-# ADMIN_SECRET=...
-# INTERNAL_SECRET=...   # must match research Worker if you run research
-```
-
-### 3. Install & run (local / dev)
-
-```bash
-# Agent (repo root) — skip if AGENT_URL already points at opentag-agent
-pnpm install
-pnpm runtime                 # AG-UI on :8200
+# Agent brain (optional when iterating on prompts)
+cp .env.example .env          # OPENAI_API_KEY, optional LINEAR_*, NOTION_*
+pnpm install && pnpm runtime  # http://127.0.0.1:8200
 
 # Bot Worker
 cd edge
-npm ci                       # uses vendored Workers-safe @copilotkit/channels
-npm run dev                  # wrangler → usually :8787
+cp .dev.vars.example .dev.vars
+npm ci && npm run dev         # usually :8787
 ```
 
-Expose `:8787` to Slack (cloudflared, ngrok, or deploy — see below). Then @mention the bot in a channel thread.
-
-**Optional research Worker:**
+Smoke without live Slack credentials:
 
 ```bash
-cd edge
-# merge .dev.vars.research.example secrets; same INTERNAL_SECRET as the bot
-npm run dev:research
+# AG-UI turn (needs funded OPENAI_API_KEY)
+curl -sN -X POST http://127.0.0.1:8200/api/copilotkit/agent/triage/run \
+  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
+  -d '{"threadId":"t1","runId":"r1","messages":[{"id":"m1","role":"user","content":"ping"}],"tools":[],"context":[]}'
+
+# Bot health (DO/SQLite spine)
+curl -s http://127.0.0.1:8787/health
 ```
 
-### 4. CopilotKit channels packages
-
-CI and normal local installs use npm + a **Workers-safe vendored tarball**
-(`edge/vendor/copilotkit-channels-0.1.1.tgz`) so workerd doesn’t hit `createRequire`.
-
-You only need a sibling [CopilotKit](https://github.com/CopilotKit/CopilotKit) checkout when
-**refreshing** that vendor package — see [`edge/vendor/README.md`](./edge/vendor/README.md) and
-[`edge/README.md`](./edge/README.md).
-
----
-
-## Deploy (Cloudflare)
-
-| Config | Worker | Role |
-| --- | --- | --- |
-| [`edge/wrangler.bot.toml`](./edge/wrangler.bot.toml) | **`opentag-bot`** | **Production** Claude Tag bot |
-| [`edge/workers/agent-runtime/`](./edge/workers/agent-runtime/) | **`opentag-agent`** | **Production** AG-UI Container |
-| [`edge/wrangler.toml`](./edge/wrangler.toml) | `opentag-edge` | Local / legacy-dev bot |
-| [`edge/wrangler.research.toml`](./edge/wrangler.research.toml) | orchestrator | Research tasks (internal `/research`) |
-| [`edge/workers/sandbox/`](./edge/workers/sandbox/) | **`opentag-harness`** | Claude Code Worker + Container |
-| [`edge/workers/claudex-proxy/`](./edge/workers/claudex-proxy/) | **`opentag-claudex-proxy`** | Private CLIProxyAPI/Codex backend for Claudex |
-
-```bash
-cd edge
-npm run deploy:agent         # AG-UI Container (Workers Paid)
-# wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
-# wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
-# wrangler secret put AGENT_URL --config wrangler.bot.toml
-#   → https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
-# wrangler secret put INTERNAL_SECRET --config wrangler.bot.toml
-# wrangler secret put ADMIN_SECRET --config wrangler.bot.toml
-
-npm run deploy:research      # optional research plane
-
-# Coding plane: configure secrets, OAuth R2 state, and allowlists first, then
-# deploy targets before callers (see docs/operations.md).
-cd workers/claudex-proxy
-npm ci && npm run deploy
-cd ../sandbox
-npm ci && npm run deploy
-cd ../..
-npm run deploy:bot           # production bot, after all service targets exist
-```
-
-Production needs no laptop runtime or tunnel to `:8200`.
-
----
-
-## Make it your own
-
-- **Change behavior** — edit the system prompt and tooling in [`lib/triage-agent.ts`](./lib/triage-agent.ts) (redeploy `opentag-agent` for prod).
-- **Edge Slack surface** — tools, commands, reactions, and ingress live under [`edge/src/`](./edge/src/) (`bot-engine.ts`, `tools/`, `commands/`, `slack/`).
-- **Access control** — channel bundles in `WorkspaceConfigDO` / [`edge/src/config/`](./edge/src/config/).
-- **Bring your own model + MCP** — OpenAI / Anthropic / Google keys; Linear & Notion when configured.
-- **Deep research** — [`lib/research/`](./lib/research/) + [`edge/workers/orchestrator/`](./edge/workers/orchestrator/).
-- **New lifecycle behavior** — follow [`docs/extending.md`](./docs/extending.md),
-  including identity parity, effect/render fences, Stop, recovery, and tests.
+A full Slack round-trip needs real `SLACK_BOT_TOKEN` + `SLACK_SIGNING_SECRET`
+and a tunnel (or a deployed Worker) for Request URLs.
 
 ---
 
@@ -265,122 +402,166 @@ Production needs no laptop runtime or tunnel to `:8200`.
 
 ```text
 opentag/
-├── runtime.ts              # Node AG-UI entry (local + Container)
-├── lib/triage-agent.ts     # Shared triage BuiltInAgent factory
-├── runtime-research.ts     # Optional research AG-UI agent
-├── slack-app-manifest.yaml # Slack app (Events API, scopes, slash commands)
-├── PRODUCT.md              # Authoritative product / architecture
-├── ARCHITECTURE.md         # Current implementation and state-flow diagrams
-├── DECISIONS.md            # Technical decisions
-├── setup.md                # Setup & env reference
-├── edge/                   # Cloudflare bot + agent + research Workers
-│   ├── src/                # Bot spine (worker, adapter, tools, store)
-│   ├── wrangler.bot.toml   # Production opentag-bot
-│   ├── workers/agent-runtime/  # Production AG-UI Container (opentag-agent)
-│   ├── workers/sandbox/        # Claude Code harness Worker
-│   ├── workers/claudex-proxy/  # Private CLIProxyAPI/Codex Worker
-│   ├── workers/orchestrator/
-│   └── vendor/             # Workers-safe @copilotkit/channels tarball
-├── lib/research/           # Research domain (fibers, OCC, delivery)
-├── docs/                   # Research actors, evaluation notes
-├── e2e/                    # Live / loop probes
-├── scripts/                # Notion MCP helper, etc.
-└── app/                    # Shared app helpers (not the Slack ingress path)
+├── PRODUCT.md                 # Authoritative product contract
+├── ARCHITECTURE.md            # Topology, lifecycles, state machines
+├── DECISIONS.md               # Locked technical invariants
+├── setup.md                   # Slack / Cloudflare / harness setup
+├── AGENTS.md                  # Instructions for coding agents
+├── slack-app-manifest.yaml    # Events API app (no Socket Mode)
+├── runtime.ts                 # Node AG-UI entry (local + Container)
+├── lib/triage-agent.ts        # Shared triage agent factory
+├── lib/research/              # Research domain (adapters, fibers, OCC)
+├── containers/
+│   ├── harness/               # Claude Code sandbox image
+│   └── claudex-proxy/         # CLIProxyAPI + Codex OAuth image
+├── edge/                      # Cloudflare product surface
+│   ├── wrangler.bot.toml      # Production opentag-bot
+│   ├── wrangler.toml          # Local / legacy-dev bot
+│   ├── wrangler.research.toml # Optional research Worker
+│   ├── src/                   # Bot spine
+│   │   ├── worker.ts          # Slack HTTP entry
+│   │   ├── slack/             # Adapter, lifecycle, Stop, rendering
+│   │   ├── store/             # ConversationStateDO, SessionEventDO
+│   │   ├── hitl/              # Durable choiceId polling
+│   │   ├── tools/             # Client tools + cards
+│   │   ├── harness/           # Coding client + approval
+│   │   └── commands/          # /agent, /config, /research
+│   ├── workers/
+│   │   ├── agent-runtime/     # opentag-agent Container
+│   │   ├── sandbox/           # opentag-harness Worker
+│   │   ├── claudex-proxy/     # Private Claudex backend
+│   │   └── orchestrator/      # Research actors
+│   └── vendor/                # Workers-safe @copilotkit/channels tarball
+└── docs/                      # Operations, extending, Centaur port ledger
 ```
 
-The old Railway / Socket Mode Node bot path has been **removed**. Slack ingress is
-Cloudflare-only.
+Root `pnpm start` / `pnpm dev` are **not** the Slack bot — they exit with a
+pointer to `cd edge && npm run dev`.
 
 ---
 
-## Tests & CI
+## Validate
+
+Exact CI sequence for the bot spine:
 
 ```bash
-# Edge bot spine (what edge-ci runs)
 cd edge
+npm ci
 npm run typecheck
-npm test                 # unit
+npm test                 # unit (lifecycle, fences, HITL, memory, …)
 npm run test:e2e         # StateStore on workerd
-
-# Root research / runtime unit tests
-pnpm check-types
-pnpm test
-
-# Harness and Claudex proxy Workers
-cd edge/workers/sandbox
-npm run typecheck
-cd ../claudex-proxy
-npm run typecheck
 ```
 
-GitHub Actions: [`.github/workflows/edge-ci.yml`](./.github/workflows/edge-ci.yml) —
-typecheck + unit + StateStore e2e on `edge/**` changes.
+Harness / Claudex packages:
 
-Local Slack smoke helpers: `edge/scripts/e2e-local.sh`, `edge/scripts/e2e-smoke-local.sh`
-(see [edge/README.md](./edge/README.md)).
+```bash
+cd edge/workers/sandbox && npm ci && npm run typecheck
+cd ../claudex-proxy && npm ci && npm run typecheck
+```
+
+Optional root runtime/research tests: `pnpm test`.
+
+Operations, deploy order, metrics, and troubleshooting:
+[docs/operations.md](./docs/operations.md).
 
 ---
 
-## Environment reference (high level)
+## Environment (high level)
 
 | Variable | Where | Purpose |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | `edge/.dev.vars` / secrets | Bot Web API (needs `reactions:write` for emoji acks) |
-| `SLACK_SIGNING_SECRET` | edge | Events / commands HMAC |
-| `AGENT_URL` | bot secrets / `.dev.vars` | AG-UI triage run URL (`opentag-agent` in prod) |
-| `AGENT_AUTH_HEADER` | bot + agent (optional) | Auth to the runtime |
-| `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
-| `LINEAR_API_KEY` / `NOTION_*` | agent secrets / root `.env` | Optional MCP |
-| `ADMIN_SECRET` | edge | Protect `/admin/*` |
-| `INTERNAL_SECRET` | bot + research | Service-to-service research kickoff |
-| `HARNESS_AUTH_TOKEN` | bot + harness | Authenticates the harness binding |
-| `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | harness only | Injected only by outbound policy handlers; never sent to the process |
-| `HARNESS_ALLOWED_REPO_HOSTS` / `HARNESS_ALLOWED_REPO_ORGS` | harness | Canonical remote allowlists |
-| `CLAUDEX_PROXY` / `CLAUDEX_PROXY_URL` | harness binding / var | Private Claudex route and synthetic origin |
-| `CLIPROXY_CLIENT_KEY` / `CLIPROXY_INTERNAL_KEY` | Claudex proxy secrets | Separate model-proxy and OAuth import/export authentication |
+| `SLACK_BOT_TOKEN` | bot | Web API (`users:read.email` for Linear assignee) |
+| `SLACK_SIGNING_SECRET` | bot | Events / commands HMAC |
+| `AGENT_URL` | bot | AG-UI triage path |
+| `AGENT_RUNTIME` | bot binding | Service binding to `opentag-agent` |
+| `OPENAI_API_KEY` | agent | Triage model |
+| `LINEAR_API_KEY` / `LINEAR_TEAM_KEY` | agent | Linear MCP (team = **display name**) |
+| `NOTION_*` | agent | Optional Notion MCP |
+| `ADMIN_SECRET` / `INTERNAL_SECRET` | bot (+ research) | Admin routes / research forward |
+| `HARNESS` / `HARNESS_AUTH_TOKEN` | bot ↔ harness | Coding plane auth |
+| `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` | harness | Injected at egress only — never in the process env as live secrets |
+| `HARNESS_ALLOWED_REPO_HOSTS` / `_ORGS` | harness | Canonical remote allowlists |
+| `CLAUDEX_PROXY` / `CLIPROXY_*` | harness ↔ proxy | Private Claudex route and OAuth keys |
 
-Full lists: [`.env.example`](./.env.example), [`edge/.dev.vars.example`](./edge/.dev.vars.example).
+Full tables: [`.env.example`](./.env.example),
+[`edge/.dev.vars.example`](./edge/.dev.vars.example), [setup.md](./setup.md).
 
 ---
 
 ## Hard invariants
 
-1. **No Socket Mode** on Cloudflare Workers — Events API + HMAC only.
-2. **Bot Worker owns Slack HTTP**; research is internal via `RESEARCH_TASKS`.
-3. Production turn IDs come from stable Slack identity; pre-admit before the first asynchronous lookup.
-4. Every turn output and non-Slack side effect crosses an exact active-turn fence.
-5. A distinct concurrent ask receives one durable-deduped busy note; a Slack redelivery remains silent.
-6. Render obligations clear only after confirmed visibility or exact cancellation.
-7. Coding credentials and remote-git authority are enforced by the harness Worker, never by prompt text.
-8. Task / actor code talks to adapters, not raw `pg` / ad-hoc DO APIs.
+1. Slack terminates only on `opentag-bot`; no Socket Mode.
+2. Bot, session, obligation, Stop, and research keys must agree.
+3. Pre-admit before the first asynchronous lookup.
+4. Never clear a render obligation merely because code returned.
+5. Slack renders and non-Slack effects claim the exact active-turn fence.
+6. Stop never claims success before runtime/task quiescence and a visible ack.
+7. Remote git is never granted by prompts or environment variables alone.
+8. Coding intent cannot silently fall back to AG-UI.
+9. Research cancellation is complete only after quiescence.
+10. Deployment is an explicit operator action; coding targets deploy before callers.
+
+Locked rationale: [DECISIONS.md](./DECISIONS.md) (§§11–16 especially).
+
+---
+
+## Centaur relationship
+
+OpenTag adopted Centaur’s Slack streaming conflation, status/title UX, Stop
+parser, render-obligation discipline, session/event log, sticky overrides,
+quick-action pattern, and requester-attribution guidance — then
+**reimplemented** them on Cloudflare Durable Objects and Workers.
+
+It did **not** port Centaur’s Kubernetes control plane, Postgres/ParadeDB,
+`iron-proxy`, Rails console, or multi-agent PM product. OpenTag adds stronger
+Cloudflare-specific controls: exact active-turn and effect fences, pre-admission,
+durable Stop continuation, research quiescence, Worker-enforced harness egress,
+and mechanical coding postconditions.
+
+Ledger: [docs/centaur-port.md](./docs/centaur-port.md).
+
+---
+
+## Make it yours
+
+| Goal | Start here |
+| --- | --- |
+| Change agent behavior / MCP | [`lib/triage-agent.ts`](./lib/triage-agent.ts) → redeploy `opentag-agent` |
+| Slack tools, cards, commands | [`edge/src/`](./edge/src/) |
+| Access control / prompts | [`edge/src/config/`](./edge/src/config/), `/config` |
+| New lifecycle or surface | [docs/extending.md](./docs/extending.md) |
+| Research fibers | [`lib/research/`](./lib/research/), [`edge/workers/orchestrator/`](./edge/workers/orchestrator/) |
+| Coding sandbox policy | [`edge/workers/sandbox/`](./edge/workers/sandbox/), [`containers/harness/`](./containers/harness/) |
+
+---
+
+## Documentation map
+
+| Doc | Contents |
+| --- | --- |
+| [PRODUCT.md](./PRODUCT.md) | North star, surfaces, reliability & security contracts |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Topology, sequences, fences, recovery, harness, research |
+| [DECISIONS.md](./DECISIONS.md) | Locked technical decisions |
+| [setup.md](./setup.md) | Slack app, secrets, local and production setup |
+| [docs/operations.md](./docs/operations.md) | Validate, deploy order, observe, diagnose |
+| [docs/extending.md](./docs/extending.md) | Safe extension recipes |
+| [docs/centaur-port.md](./docs/centaur-port.md) | What was ported, adapted, or omitted |
+| [docs/research-actors.md](./docs/research-actors.md) | Research actor contracts |
+| [edge/README.md](./edge/README.md) | Testable CF target, vendor channels, local E2E |
+| [AGENTS.md](./AGENTS.md) | Cloud / coding-agent instructions |
+| [docs/README.md](./docs/README.md) | Full doc index + precedence |
+
+When documents disagree: **PRODUCT → ARCHITECTURE → DECISIONS → operations →
+source/tests**.
 
 ---
 
 ## Don’t want to host it yourself?
 
-Self-hosting means you run and scale the runtime, persistence, and inspection tooling yourself.
-A **managed CopilotKit service** is on its way — same agent shape, less ops: durable threads,
-persistence, hosted inspection, and agents that improve from feedback (**Continuous Learning
-from Human Feedback**).
+A managed CopilotKit service is on the way — same agent shape, less ops.
 
 - **[Join the waitlist →](https://go.copilotkit.ai/opentag-managed-gh)**
 - **[Talk to an engineer →](https://copilotkit.ai/talk-to-an-engineer)**
-
----
-
-## Learn more
-
-| Doc | Contents |
-| --- | --- |
-| [PRODUCT.md](./PRODUCT.md) | Product north star, spine, deploy layout, remaining work |
-| [docs/README.md](./docs/README.md) | Doc index |
-| [edge/README.md](./edge/README.md) | Worker configs, vendored channels, local E2E |
-| [setup.md](./setup.md) | Setup walkthrough & env table |
-| [DECISIONS.md](./DECISIONS.md) | Locked technical decisions (DO naming, egress, Events API) |
-| [docs/research-actors.md](./docs/research-actors.md) | Research fiber / actor runbook |
-| [docs/evaluation.md](./docs/evaluation.md) | Research eval smoke commands |
-| [AGENTS.md](./AGENTS.md) | Instructions for coding agents |
-| [CopilotKit Slack quickstart](https://docs.copilotkit.ai/slack) | Canonical Slack agent guide |
 
 ---
 

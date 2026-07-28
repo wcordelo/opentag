@@ -13,7 +13,7 @@ records. When documents disagree, use this precedence order:
 
 | Document | Purpose |
 | --- | --- |
-| [README.md](../README.md) | Overview, quick start, features, deployment units |
+| [README.md](../README.md) | Overview, architecture diagrams, core concepts, quick start |
 | [PRODUCT.md](../PRODUCT.md) | Product promise, surfaces, reliability and security contracts |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | Topology, sequence diagrams, state machines, ownership, recovery |
 | [centaur-port.md](./centaur-port.md) | What was ported, adapted, strengthened, or intentionally omitted |

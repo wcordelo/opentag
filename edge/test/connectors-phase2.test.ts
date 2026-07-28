@@ -20,6 +20,39 @@ describe("wiki connector", () => {
     expect(docs.length).toBeGreaterThan(1);
     expect(docs.some((d) => d.sourceKey.includes("#prefetch"))).toBe(true);
     expect(docs[0]?.metadata.sourceType).toBe("wiki");
+    const page = docs[0]!;
+    const section = docs.find((d) => d.sourceKey.includes("#prefetch"));
+    expect(section).toBeDefined();
+    expect(page.revision).toBe(page.metadata.contentRevision);
+    expect(section!.revision).toBe(section!.metadata.contentRevision);
+    expect(section!.metadata.contentRevision).not.toBe(page.metadata.contentRevision);
+  });
+
+  it("updates section contentRevision when only that section changes", () => {
+    const base = {
+      teamId: "T1",
+      projectId: "P1",
+      spaceId: "eng",
+      pageId: "runbook",
+      title: "Restore",
+      updatedAt: "2026-07-28T00:00:00.000Z",
+      aclPolicyRef: "bundle:default",
+    };
+    const before = normalizeWikiPage({
+      ...base,
+      body: "## Prefetch\nSet CKPT_PREFETCH=4.\n\n## NFS\nUse the mount guide.",
+    });
+    const after = normalizeWikiPage({
+      ...base,
+      body: "## Prefetch\nSet CKPT_PREFETCH=8.\n\n## NFS\nUse the mount guide.",
+    });
+    const beforeSection = before.find((d) => d.sourceKey.includes("#prefetch"))!;
+    const afterSection = after.find((d) => d.sourceKey.includes("#prefetch"))!;
+    const beforeNfs = before.find((d) => d.sourceKey.includes("#nfs"))!;
+    const afterNfs = after.find((d) => d.sourceKey.includes("#nfs"))!;
+    expect(afterSection.metadata.contentRevision).not.toBe(beforeSection.metadata.contentRevision);
+    expect(afterSection.revision).toBe(afterSection.metadata.contentRevision);
+    expect(afterNfs.metadata.contentRevision).toBe(beforeNfs.metadata.contentRevision);
   });
 });
 

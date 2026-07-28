@@ -93,12 +93,19 @@ export function normalizeWikiPage(input: WikiPageInput): KnowledgeNormalizedDocu
       const chunkId = `${input.pageId}#${slug}`;
       const sourceKey = wikiSourceKey(input.teamId, input.spaceId, chunkId);
       const content = [`# ${title}`, `## ${heading}`, sectionBody].filter(Boolean).join("\n\n");
+      // Section documents must carry their own contentRevision — baseMeta defaults
+      // to the page hash, which would leave ledger/citation update detection stuck
+      // on the page revision after section-only edits.
+      const revision = contentRevision(content);
       docs.push({
         sourceKey,
         sourceType: "wiki",
         content,
-        revision: contentRevision(content),
-        metadata: baseMeta(sourceKey, { sectionHeading: heading.slice(0, KNOWLEDGE_LIMITS.maxMetadataStringLength) }),
+        revision,
+        metadata: baseMeta(sourceKey, {
+          sectionHeading: heading.slice(0, KNOWLEDGE_LIMITS.maxMetadataStringLength),
+          contentRevision: revision,
+        }),
       });
     }
   }

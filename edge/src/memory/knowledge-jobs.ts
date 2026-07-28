@@ -10,9 +10,26 @@ import {
   isTrackedKnowledgeSourceEnabled,
   type TrackedKnowledgeSource,
 } from "../config/knowledge-config.js";
+import type { EnqueueKnowledgeResult } from "./knowledge-ledger.js";
 import type { KnowledgeDO } from "./knowledge-do.js";
 import type { WorkspaceConfigDO } from "../config/workspace-config-do.js";
 import type { Env } from "../env.js";
+
+const ENQUEUE_REASONS = new Set<EnqueueKnowledgeResult["reason"]>([
+  "new",
+  "superseded",
+  "duplicate",
+  "out_of_order",
+]);
+
+function isEnqueueKnowledgeResult(value: unknown): value is EnqueueKnowledgeResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<EnqueueKnowledgeResult>;
+  return typeof result.accepted === "boolean" &&
+    typeof result.descriptorKey === "string" &&
+    typeof result.reason === "string" &&
+    ENQUEUE_REASONS.has(result.reason);
+}
 
 export const KNOWLEDGE_LEASE_MS = KNOWLEDGE_EXECUTION_BUDGETS.ledgerLeaseMs;
 export const KNOWLEDGE_CONFIG_EFFECT_LEASE_MS =
@@ -246,7 +263,13 @@ export async function scheduleKnowledgeFromSlackEvent(
       body: JSON.stringify(job),
     });
     if (!response.ok) throw new Error(`knowledge_descriptor_http_${response.status}`);
-    scheduled += 1;
+    const result: unknown = await response.json();
+    if (!isEnqueueKnowledgeResult(result)) {
+      throw new Error("knowledge_descriptor_result_malformed");
+    }
+    // Duplicate / out-of-order descriptors return HTTP 200 with accepted:false;
+    // only count rows that actually entered the outbox.
+    if (result.accepted) scheduled += 1;
   }
   return { scheduled };
 }

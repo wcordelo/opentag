@@ -102,8 +102,15 @@ function fakeEnv(args: {
     const request = input instanceof Request ? input : new Request(input, init);
     if (args.knowledgeFetch) return args.knowledgeFetch(request);
     const path = new URL(request.url).pathname;
-    const body = await request.json();
-    if (path === "/descriptor") descriptors.push(body);
+    const body = await request.json() as { sourceKey?: string; threadTs?: string };
+    if (path === "/descriptor") {
+      descriptors.push(body);
+      return Response.json({
+        accepted: true,
+        reason: "new",
+        descriptorKey: `${body.sourceKey ?? "source"}:${body.threadTs ?? "thread"}`,
+      });
+    }
     if (path === "/outcome") outcomes.push(body);
     if (path === "/stale") stale.push(body);
     if (path === "/lease") {
@@ -261,6 +268,39 @@ describe("knowledge descriptor scheduling", () => {
       event: { type: "message", channel: "C1", ts: "171234.000100" },
     })).rejects.toThrow("tracked_source_project_conflict");
     expect(fixture.descriptors).toEqual([]);
+  });
+
+  it("does not count duplicate or out-of-order descriptor rejections as scheduled", async () => {
+    const fixture = fakeEnv({
+      sources: [source()],
+      knowledgeFetch: async (request) => {
+        const body = await request.json();
+        return Response.json({
+          accepted: false,
+          reason: "duplicate",
+          descriptorKey: "slack:T1:C1:171234.000100",
+          echo: body,
+        });
+      },
+    });
+    const result = await scheduleKnowledgeFromSlackEvent(fixture.env, {
+      type: "event_callback",
+      team_id: "T1",
+      event: { type: "message", channel: "C1", ts: "171234.000100" },
+    });
+    expect(result).toEqual({ scheduled: 0 });
+  });
+
+  it("fails closed when the descriptor response is malformed", async () => {
+    const fixture = fakeEnv({
+      sources: [source()],
+      knowledgeFetch: async () => Response.json({ ok: true }),
+    });
+    await expect(scheduleKnowledgeFromSlackEvent(fixture.env, {
+      type: "event_callback",
+      team_id: "T1",
+      event: { type: "message", channel: "C1", ts: "171234.000100" },
+    })).rejects.toThrow("knowledge_descriptor_result_malformed");
   });
 });
 

@@ -349,4 +349,36 @@ describe("opentag-bot knowledge Queue consumer", () => {
       }),
     ]);
   });
+
+  it("acks terminal recorded_permanent outcomes instead of retrying forever", async () => {
+    const fixture = fakeEnv({ exactSource: source() });
+    const queued = queueMessage(descriptor());
+    const dispatch = vi.fn(async () => ({ status: "recorded_permanent" as const }));
+    await handleKnowledgeQueue(batch(queued.message), fixture.env, dispatch);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(queued.retry).not.toHaveBeenCalled();
+  });
+
+  it("still processes root deletes after the tracked source configVersion advances", async () => {
+    const fixture = fakeEnv({
+      exactSource: source({ configVersion: 5, enabled: false, everEnabled: true }),
+    });
+    const deleteJob = createKnowledgeJob({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 3,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "delete",
+      messageTs: "171234.000100",
+    });
+    const queued = queueMessage(deleteJob);
+    const dispatch = vi.fn(async () => ({ status: "recorded_permanent" as const }));
+    await handleKnowledgeQueue(batch(queued.message), fixture.env, dispatch);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(fixture.stale).toHaveLength(0);
+  });
 });

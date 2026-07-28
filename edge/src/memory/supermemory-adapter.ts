@@ -504,7 +504,7 @@ export function createKnowledgeSupermemoryDispatch(
   const prepared = await knowledgeDoCall<
     | { decision: "add" }
     | { decision: "update"; localDocumentId: string }
-    | { decision: "poll"; localDocumentId: string }
+    | { decision: "poll"; localDocumentId: string; pollDeadlineAt?: number }
     | { decision: "noop" }
     | { decision: "blocked"; reason: string }
   >(env, job.teamId, "/prepareRevision", {
@@ -528,8 +528,13 @@ export function createKnowledgeSupermemoryDispatch(
   if (prepared.decision === "noop") return { status: "recorded_success" };
 
   let localDocumentId: string;
+  let resumePollDeadlineAt: number | undefined;
   if (prepared.decision === "poll") {
     localDocumentId = prepared.localDocumentId;
+    resumePollDeadlineAt = typeof prepared.pollDeadlineAt === "number" &&
+      Number.isFinite(prepared.pollDeadlineAt)
+      ? prepared.pollDeadlineAt
+      : undefined;
   } else {
     // The durable configuration effect prevents a disable/policy update from
     // committing between this check and the Local effect.
@@ -591,7 +596,11 @@ export function createKnowledgeSupermemoryDispatch(
   await context.validateSource();
   let polled: PollResult;
   try {
-    polled = await adapter.pollDocument({ localDocumentId, sourceKey: job.sourceKey });
+    polled = await adapter.pollDocument({
+      localDocumentId,
+      sourceKey: job.sourceKey,
+      ...(resumePollDeadlineAt !== undefined ? { pollDeadlineAt: resumePollDeadlineAt } : {}),
+    });
   } catch (error) {
     const classified = error instanceof SupermemoryAdapterError ? error : new SupermemoryAdapterError("knowledge_unavailable", true);
     await recordFencedOutcome({

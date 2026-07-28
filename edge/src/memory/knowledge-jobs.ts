@@ -405,6 +405,7 @@ export async function handleKnowledgeQueue(
           continue;
         }
         if (outcome.status === "recorded_permanent") {
+          // Adapter already persisted a terminal tombstone / permanent_failure.
           message.ack();
           continue;
         }

@@ -59,6 +59,10 @@ export function chunkCodeFile(input: CodeFileInput): KnowledgeNormalizedDocument
       if (boundary.test(lines[i]!)) starts.push(i);
     }
     if (starts.length > 0) {
+      // Keep imports / headers / module-level preamble before the first boundary.
+      if (starts[0]! > 0) {
+        ranges.push({ start: 0, end: starts[0]! - 1 });
+      }
       for (let i = 0; i < starts.length; i += 1) {
         const start = starts[i]!;
         const end = (starts[i + 1] ?? lines.length) - 1;

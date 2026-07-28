@@ -24,18 +24,21 @@ describe("wiki connector", () => {
 });
 
 describe("code connector", () => {
-  it("chunks TypeScript by function boundaries", () => {
+  it("chunks TypeScript by function boundaries and keeps file preamble", () => {
     const docs = chunkCodeFile({
       teamId: "T1",
       projectId: "P1",
       repoId: "opentag",
       path: "src/foo.ts",
       language: "ts",
-      content: "export function a() {\n  return 1;\n}\n\nexport function b() {\n  return 2;\n}\n",
+      content:
+        "import { x } from \"./x\";\nconst PREAMBLE = 1;\n\nexport function a() {\n  return 1;\n}\n\nexport function b() {\n  return 2;\n}\n",
       aclPolicyRef: "bundle:default",
       observedAt: "2026-07-28T00:00:00.000Z",
     });
-    expect(docs.length).toBeGreaterThanOrEqual(2);
+    expect(docs.length).toBeGreaterThanOrEqual(3);
+    expect(docs[0]?.content).toContain("import { x }");
+    expect(docs[0]?.content).toContain("PREAMBLE");
     expect(docs[0]?.sourceType).toBe("code");
     expect(docs[0]?.sourceKey.startsWith("code:T1:opentag:")).toBe(true);
   });
@@ -56,6 +59,37 @@ describe("custom db connector", () => {
     expect(docs).toHaveLength(1);
     expect(docs[0]?.sourceKey).toBe("custom_db:T1:sales_kpi:r1");
     expect(docs[0]?.content).toContain("ARR");
+  });
+
+  it("does not let row metadata override canonical tenancy fields", () => {
+    const docs = normalizeCustomDbRows({
+      teamId: "T1",
+      projectId: "P1",
+      connectorId: "sales_kpi",
+      aclPolicyRef: "bundle:default",
+      rows: [{
+        rowId: "r1",
+        content: "secret row",
+        metadata: {
+          workspaceId: "OTHER",
+          sourceKey: "custom_db:OTHER:evil:r1",
+          aclPolicyRef: "bundle:evil",
+          status: "deleted",
+          projectId: "HACK",
+          note: "safe-extra",
+        },
+      }],
+    });
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.metadata).toMatchObject({
+      workspaceId: "T1",
+      projectId: "P1",
+      connectorId: "sales_kpi",
+      sourceKey: "custom_db:T1:sales_kpi:r1",
+      aclPolicyRef: "bundle:default",
+      status: "active",
+      note: "safe-extra",
+    });
   });
 });
 

@@ -51,6 +51,7 @@ export function normalizeCustomDbRows(input: CustomDbRowEmitter): KnowledgeNorma
     const revision = contentRevision(content);
     const metadata: FlatMetadata = {
       ...(row.metadata ?? {}),
+      // Canonical server-derived fields always win over caller row metadata.
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
       sourceType: "custom_db",
       workspaceId: input.teamId,

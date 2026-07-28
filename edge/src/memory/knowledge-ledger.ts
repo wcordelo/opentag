@@ -984,7 +984,8 @@ export class KnowledgeLedger {
         return { decision: "noop", reason: "already_complete" };
       }
       if (current.status === "permanent_failure") {
-        // Terminal ledger row: ack the Queue delivery without re-running external effects.
+        // Terminal ledger state: acknowledge the Queue message so at-least-once
+        // redeliveries converge. Operators replay via DLQ after root-cause fix.
         return { decision: "noop", reason: "permanent_failure" };
       }
       if (current.leaseToken && (current.leaseExpiresAt ?? 0) > nowMs) {

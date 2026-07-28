@@ -193,8 +193,10 @@ export function createHarnessProgressLiveRenderer(opts: {
               title: p.title,
               ...(typeof p.summary === "string" ? { summary: p.summary } : {}),
             });
-            items.clear();
-            for (const [k, v] of applied.items) items.set(k, v);
+            if (applied.changed) {
+              items.clear();
+              for (const [k, v] of applied.items) items.set(k, v);
+            }
           }
         }
         await ensurePosted(markdown());

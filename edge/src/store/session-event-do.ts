@@ -81,8 +81,8 @@ const MODEL_EVIDENCE_RANK: Record<string, number> = {
 };
 
 function modelEvidenceRank(value: unknown): number {
-  if (typeof value !== "string") return MODEL_EVIDENCE_RANK.unknown;
-  return MODEL_EVIDENCE_RANK[value] ?? MODEL_EVIDENCE_RANK.unknown;
+  if (typeof value !== "string") return 0;
+  return MODEL_EVIDENCE_RANK[value] ?? 0;
 }
 
 interface CreatedSlot {

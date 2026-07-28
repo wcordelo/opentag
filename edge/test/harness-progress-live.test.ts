@@ -66,6 +66,7 @@ describe("harness progress live renderer", () => {
     });
     const postMessage = vi.fn(async () => ({ ts: "progress-ts" }));
     const updateMessage = vi.fn(async () => undefined);
+    let clock = 1_000;
     const live = createHarnessProgressLiveRenderer({
       store,
       client: { postMessage, updateMessage } as never,
@@ -73,7 +74,7 @@ describe("harness progress live renderer", () => {
       threadTs: "1.0",
       threadKey,
       executionId,
-      now: () => 1_000,
+      now: () => clock,
     });
 
     await live.handleEvent({
@@ -95,14 +96,19 @@ describe("harness progress live renderer", () => {
         summary: "a.ts",
       },
     });
+    // First post is context-only (progress coalesced under rate limit).
     expect(postMessage).toHaveBeenCalledTimes(1);
-    expect(postMessage.mock.calls[0]![0]).toMatchObject({
+    const firstPost = (postMessage.mock.calls as unknown as Array<[
+      { client_msg_id?: string; text?: string },
+    ]>)[0]?.[0];
+    expect(firstPost).toMatchObject({
       client_msg_id: harnessProgressClientMessageId(executionId),
-      text: expect.stringContaining("Coding progress"),
+      text: expect.stringContaining("container argument"),
     });
     expect(live.finalAnswerPrefix()).toContain("container argument");
     expect(live.finalAnswerPrefix()).not.toContain("Coding progress");
 
+    clock = 2_000;
     await live.handleEvent({
       kind: "progress",
       payload: {
@@ -113,11 +119,19 @@ describe("harness progress live renderer", () => {
         title: "Tool",
       },
     });
-    // Rate-limited: same clock → no update yet.
-    expect(updateMessage).toHaveBeenCalledTimes(0);
-    await live.markTerminal({ ok: true });
     expect(updateMessage).toHaveBeenCalledTimes(1);
-    expect(updateMessage.mock.calls[0]![0].text).toContain("Complete");
+    const progressUpdate = (updateMessage.mock.calls as unknown as Array<[
+      { text?: string },
+    ]>)[0]?.[0];
+    expect(progressUpdate?.text).toContain("Coding progress");
+    expect(progressUpdate?.text).toContain("Read");
+
+    await live.markTerminal({ ok: true });
+    expect(updateMessage).toHaveBeenCalledTimes(2);
+    const terminalUpdate = (updateMessage.mock.calls as unknown as Array<[
+      { text?: string },
+    ]>)[1]?.[0];
+    expect(terminalUpdate?.text).toContain("Complete");
   });
 });
 
@@ -141,13 +155,13 @@ describe("overlay digest verification", () => {
       },
     };
     expect(
-      validateTurnRequest(base, {
+      await validateTurnRequest(base, {
         allowedHosts: new Set(["github.com"]),
         allowedOrgs: new Set(["acme"]),
       }),
     ).toEqual({ ok: false, error: "invalid_system_prompt_overlay" });
     expect(
-      validateTurnRequest(
+      await validateTurnRequest(
         {
           ...base,
           systemPromptOverlay: { ...base.systemPromptOverlay, digest },

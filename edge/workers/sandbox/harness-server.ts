@@ -1415,9 +1415,9 @@ function sendJson(res: http.ServerResponse, status: number, payload: unknown): v
 }
 
 function writeNdjson(res: http.ServerResponse, event: NdjsonEvent): void {
-  const sanitized: NdjsonEvent = {
-    ...event,
-    payload: redactJsonValue(event.payload) as NdjsonEvent["payload"],
+  const sanitized = {
+    kind: event.kind,
+    payload: redactJsonValue(event.payload),
   };
   res.write(`${JSON.stringify(sanitized)}\n`);
 }
@@ -1999,7 +1999,7 @@ async function handleRequest(
       sendJson(res, 400, { error: "invalid_json" });
       return;
     }
-    const validation = validateTurnRequest(body, ctx.repoPolicy);
+    const validation = await validateTurnRequest(body, ctx.repoPolicy);
     if (!validation.ok) {
       sendJson(res, 400, { error: validation.error });
       return;

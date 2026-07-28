@@ -93,7 +93,7 @@ describe("Durable Object integration", () => {
         teamId,
         channelId,
         channelContext: "keep this prompt",
-        runtimeDefaults: undefined,
+        runtimeDefaults: null,
       }),
     })).status).toBe(200);
     const cleared = await stub.fetch("https://do/getConfig", {

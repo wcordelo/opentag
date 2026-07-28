@@ -311,7 +311,7 @@ export async function routeHarnessRequest(
       approvalRevoked,
     });
   }
-  const validation = validateTurnRequest(body, repoPolicy);
+  const validation = await validateTurnRequest(body, repoPolicy);
   if (!validation.ok) {
     return jsonError(validation.error, 400);
   }
@@ -342,7 +342,7 @@ export async function routeHarnessRequest(
       },
     };
   }
-  const resolvedValidation = validateTurnRequest(turnBody, repoPolicy);
+  const resolvedValidation = await validateTurnRequest(turnBody, repoPolicy);
   if (!resolvedValidation.ok) return jsonError(resolvedValidation.error, 400);
   const forwardedBytes =
     hadStagedAttachments || resolvedValidation.body.permissionSnapshot

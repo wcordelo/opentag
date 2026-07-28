@@ -1,11 +1,15 @@
 /** Pure, runtime-neutral validation for the pinned harness /turn envelope. */
 
-import { createHash } from "node:crypto";
-
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-function sha256HexUtf8(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+async function sha256HexUtf8(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 // Production turn IDs are fixed-length, purpose-tagged SHA-256 base64url
 // values emitted by edge/src/harness/wire-id.ts. Keep execution and message
@@ -368,7 +372,7 @@ export function validateRepoSpec(repo: unknown, policy: RepoPolicy):
   return { ok: true, normalizedUrl: `https://${host}/${parts[0]}/${repoName}.git` };
 }
 
-export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): TurnValidation {
+export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Promise<TurnValidation> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, error: "invalid_request" };
   }
@@ -524,7 +528,7 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
     if (encoded.byteLength > 64 * 1024) {
       return { ok: false, error: "invalid_system_prompt_overlay" };
     }
-    const digestHex = sha256HexUtf8(text);
+    const digestHex = await sha256HexUtf8(text);
     const expected = overlay.digest.startsWith("sha256:")
       ? overlay.digest.slice("sha256:".length)
       : overlay.digest;

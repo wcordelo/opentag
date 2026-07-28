@@ -506,7 +506,8 @@ export function reconstructRecoveryContent(
         })
       : "";
   const prefix = contextLine ? `${contextLine}\n\n` : "";
-  const body = `${prefix}${answer}`.trim();
+  // Do not trim: obligation replay must preserve canonical answer bytes.
+  const body = `${prefix}${answer}`;
   return { answer, contextLine, progressMarkdown, body };
 }
 
@@ -1417,13 +1418,14 @@ export class ConversationStateDO extends DurableObject {
     }
     const successfulTerminal = hasSuccessfulTerminal(events, ob.executionId);
     const recovered = reconstructRecoveryContent(events, ob.executionId);
-    if (recovered.body) {
+    if (recovered.answer || recovered.contextLine) {
+      const content = recovered.body;
       await this.postFallback(
         ob,
         env,
         successfulTerminal
-          ? recovered.body
-          : `_Recovered after an interrupted turn:_\n${recovered.body}`,
+          ? content
+          : `_Recovered after an interrupted turn:_\n${content}`,
         "fallback_sent",
         successfulTerminal ? "output" : "diagnostic",
       );

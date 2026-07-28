@@ -731,3 +731,51 @@ describe("harness Container frontend", () => {
     expect(fake.getByName).not.toHaveBeenCalled();
   });
 });
+
+describe("resolveStagedTurnAttachments integrity", () => {
+  it("preserves sha256 when converting staged attachments to inline", async () => {
+    const { resolveStagedTurnAttachments } = await import("../workers/sandbox/src/router.js");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const objects = new Map<string, Uint8Array>([["stage/key", bytes]]);
+    const bucket = {
+      get: vi.fn(async (key: string) => {
+        const value = objects.get(key);
+        return value
+          ? { size: value.byteLength, arrayBuffer: async () => value.slice().buffer }
+          : null;
+      }),
+    };
+    const resolved = await resolveStagedTurnAttachments(
+      {
+        sessionId: "s1",
+        executionId: EXEC_A,
+        threadKey: "slack:C1:1.0",
+        inputLines: ["hi"],
+        attachments: [
+          {
+            kind: "staged",
+            id: "F1",
+            name: "a.bin",
+            mimeType: "application/octet-stream",
+            size: bytes.byteLength,
+            stageKey: "stage/key",
+            sha256: digest,
+          },
+        ],
+      },
+      bucket as never,
+    );
+    expect(resolved.attachments).toEqual([
+      expect.objectContaining({
+        kind: "inline",
+        id: "F1",
+        size: bytes.byteLength,
+        sha256: digest,
+        dataBase64: expect.any(String),
+      }),
+    ]);
+  });
+});

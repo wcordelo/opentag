@@ -27,10 +27,10 @@
 - [x] Container redaction defense-in-depth + docs/rollback notes
 
 ## Validation
-- `cd edge && npm run typecheck` — (re-run after gap closure)
-- `cd edge && npm test` — (re-run)
-- `cd edge && npm run test:e2e` — (re-run)
-- `cd edge/workers/sandbox && npm run typecheck` — (re-run)
+- `cd edge && npm run typecheck` — pass
+- `cd edge && npm test` — **737** passed
+- `cd edge && npm run test:e2e` — **26** passed
+- `cd edge/workers/sandbox && npm run typecheck` — pass
 - Container Docker build/smoke — **blocked** (no Docker in Cloud env)
 - Deploy — not authorized
 

@@ -98,8 +98,6 @@ export function createHarnessProgressLiveRenderer(opts: {
           ...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
           text,
           client_msg_id: clientMessageId,
-          unfurl_links: false,
-          unfurl_media: false,
         });
         return posted.ts;
       },

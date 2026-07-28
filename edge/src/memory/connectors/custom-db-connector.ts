@@ -5,6 +5,7 @@
 import {
   KNOWLEDGE_LIMITS,
   KNOWLEDGE_SCHEMA_VERSION,
+  validateFlatMetadata,
   type FlatMetadata,
   type KnowledgeCitationBase,
   type MetadataFilter,
@@ -49,7 +50,9 @@ export function normalizeCustomDbRows(input: CustomDbRowEmitter): KnowledgeNorma
     const sourceKey = customDbSourceKey(input.teamId, input.connectorId, row.rowId);
     const content = row.title ? `${row.title.trim()}\n\n${body}` : body;
     const revision = contentRevision(content);
-    const metadata: FlatMetadata = {
+    // Caller extras are merged first, then canonical fields overwrite. Validate the
+    // final flat map so entry limits / invalid shapes never reach Local add.
+    const metadata = validateFlatMetadata({
       ...(row.metadata ?? {}),
       // Canonical server-derived fields always win over caller row metadata.
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
@@ -64,7 +67,7 @@ export function normalizeCustomDbRows(input: CustomDbRowEmitter): KnowledgeNorma
       indexedAt: observedAt,
       aclPolicyRef: input.aclPolicyRef,
       status: "active",
-    };
+    });
     docs.push({
       sourceKey,
       sourceType: "custom_db",

@@ -124,6 +124,34 @@ describe("custom db connector", () => {
       note: "safe-extra",
     });
   });
+
+  it("rejects caller metadata that fails flat metadata validation", () => {
+    expect(() => normalizeCustomDbRows({
+      teamId: "T1",
+      projectId: "P1",
+      connectorId: "sales_kpi",
+      aclPolicyRef: "bundle:default",
+      rows: [{
+        rowId: "r1",
+        content: "row",
+        metadata: { nested: { nope: true } as unknown as string },
+      }],
+    })).toThrow("metadata values must be strings, numbers, or booleans");
+
+    expect(() => normalizeCustomDbRows({
+      teamId: "T1",
+      projectId: "P1",
+      connectorId: "sales_kpi",
+      aclPolicyRef: "bundle:default",
+      rows: [{
+        rowId: "r1",
+        content: "row",
+        metadata: Object.fromEntries(
+          Array.from({ length: 20 }, (_, i) => [`extra${i}`, `v${i}`]),
+        ),
+      }],
+    })).toThrow("metadata has too many entries");
+  });
 });
 
 describe("connector registry", () => {

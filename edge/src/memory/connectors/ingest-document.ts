@@ -2,8 +2,8 @@
  * Shared Local add for normalized multi-source documents (K2 Phase 2).
  */
 
-import type { FlatMetadata, LocalDocumentStatus } from "../knowledge-contract.js";
-import { parseLocalDocumentStatus, workspaceTag } from "../knowledge-contract.js";
+import type { LocalDocumentStatus } from "../knowledge-contract.js";
+import { parseLocalDocumentStatus, validateFlatMetadata, workspaceTag } from "../knowledge-contract.js";
 import type { KnowledgeNormalizedDocument } from "../knowledge-connector.js";
 import type { SupermemoryClient } from "../supermemory-client.js";
 import { SupermemoryAdapterError } from "../supermemory-adapter.js";
@@ -18,12 +18,13 @@ export async function addNormalizedDocument(
   if (input.document.metadata.sourceKey !== input.document.sourceKey) {
     throw new Error("metadata sourceKey mismatch");
   }
+  const metadata = validateFlatMetadata(input.document.metadata);
   try {
     const response = await client.add({
       content: input.document.content,
       containerTag: workspaceTag(input.teamId),
       customId: input.document.sourceKey,
-      metadata: input.document.metadata as FlatMetadata,
+      metadata,
     });
     if (!response || typeof response.id !== "string" || !response.id) {
       throw new SupermemoryAdapterError("local_malformed_response", false);

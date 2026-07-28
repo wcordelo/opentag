@@ -178,7 +178,13 @@ export const edgeCommands = [
               teamId: next.teamId,
               channelId: next.channelId,
               channelContext: next.channelContext,
-              runtimeDefaults: next.runtimeDefaults,
+              ...(runtimeCommand?.kind === "clear"
+                ? { runtimeDefaults: null }
+                : runtimeCommand?.kind === "set"
+                  ? { runtimeDefaults }
+                  : next.runtimeDefaults !== undefined
+                    ? { runtimeDefaults: next.runtimeDefaults }
+                    : {}),
               updatedAt: next.updatedAt,
             }),
           });

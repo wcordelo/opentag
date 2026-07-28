@@ -329,14 +329,17 @@ export class WorkspaceConfigDO extends DurableObject {
           { status: 400 },
         );
       }
-      let runtimeDefaults;
-      try {
-        runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
-      } catch (error) {
-        return Response.json(
-          { error: error instanceof Error ? error.message : "invalid runtime defaults" },
-          { status: 400 },
-        );
+      const runtimeDefaultsProvided = "runtimeDefaults" in body;
+      let runtimeDefaults: ReturnType<typeof normalizeChannelRuntimeDefaults>;
+      if (runtimeDefaultsProvided) {
+        try {
+          runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
+        } catch (error) {
+          return Response.json(
+            { error: error instanceof Error ? error.message : "invalid runtime defaults" },
+            { status: 400 },
+          );
+        }
       }
       const channelKey = body.channelId ?? "";
       const channelContext =
@@ -365,10 +368,10 @@ export class WorkspaceConfigDO extends DurableObject {
         channelContext,
         existing?.policies_json ?? "{}",
         existing?.access_bundle_id ?? DEFAULT_BUNDLE.id,
-        runtimeDefaults !== undefined
+        runtimeDefaultsProvided
           ? (runtimeDefaults?.harnessType ?? null)
           : (existing?.default_harness_type ?? null),
-        runtimeDefaults !== undefined
+        runtimeDefaultsProvided
           ? (runtimeDefaults?.model ?? null)
           : (existing?.default_model ?? null),
         updatedAt,

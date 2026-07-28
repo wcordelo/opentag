@@ -411,8 +411,11 @@ MCP endpoint and secret-reference names.
 ## Configure channel runtime defaults
 
 Use `/config runtime show`, `/config runtime set --harness claudex
---model gpt-5.6-sol`, and `/config runtime clear`. The authenticated
-`POST /admin/config` surface accepts the same `runtimeDefaults` object and
+--model gpt-5.6-sol`, and `/config runtime clear`. Slack `/config` edits
+channel context and runtime defaults only — never the trusted system prompt
+overlay. The authenticated `POST /admin/config` surface owns
+`systemPromptOverlay` (with optimistic `expectedRevision`), policies, bundle,
+and the same `runtimeDefaults` object and
 validation. Effective precedence is explicit message flag, sticky thread
 choice, channel default, then deployment default. Existing sticky threads keep
 masking a changed channel default until overwritten or expired.

@@ -2,7 +2,7 @@
  * OpenTag edge Worker — Claude Tag bot spine (PRODUCT.md).
  * Slack ingress → CloudflareSlackAdapter → createBot (Channels).
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AppEnv } from "./env.js";
 import { createDurableObjectStore } from "./store/index.js";
 import { slackVerify } from "./slack-verify.js";
@@ -39,6 +39,7 @@ import { postTurnRejectedFeedback } from "./slack/turn-lifecycle.js";
 import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
+import { handleKnowledgeMcp } from "./mcp/knowledge-mcp.js";
 import {
   hydrateLateFileRefs,
   lateFileRepairDedupeKey,
@@ -61,6 +62,39 @@ import {
   trustedTriggerReadiness,
   trustedRichTriggerDecision,
 } from "./slack/trusted-trigger.js";
+import {
+  handleKnowledgeQueue,
+  scheduleKnowledgeFromSlackEvent,
+} from "./memory/knowledge-jobs.js";
+import {
+  handleKnowledgeDlq,
+  inspectDurableKnowledgeDlq,
+  replayDurableKnowledgeDlqRecord,
+  runKnowledgeReconciliationPage,
+  runScheduledKnowledgeReconciliation,
+} from "./memory/knowledge-reconcile.js";
+import {
+  approveKnowledgeBackfillManifest,
+  discoverAndStoreKnowledgeBackfill,
+  executeKnowledgeBackfillPage,
+} from "./memory/knowledge-backfill.js";
+import {
+  KNOWLEDGE_BACKFILL_APPROVAL_HEADER,
+  KnowledgeBackfillApprovalError,
+} from "./memory/knowledge-backfill-authorization.js";
+import { dispatchKnowledgeToSupermemory } from "./memory/supermemory-adapter.js";
+import type { KnowledgeJob } from "./memory/knowledge-contract.js";
+import {
+  retryKnowledgeBatchWithoutParsing,
+  routeKnowledgeQueueName,
+} from "./memory/knowledge-queue-routing.js";
+import {
+  KNOWLEDGE_SOURCE_GRANT_HEADER,
+  KnowledgeSourceAuthorizationError,
+  parseKnowledgeSourceAdminRequest,
+  verifyKnowledgeSourceGrant,
+  type KnowledgeSourceAction,
+} from "./config/knowledge-source-authorization.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -436,6 +470,285 @@ app.get("/admin/permissions", requireAdminAuth(), async (c) => {
   return c.json(snapshot, 200, { "cache-control": "no-store" });
 });
 
+function knowledgeSourceActionHandler(action: KnowledgeSourceAction) {
+  return async (c: Context<AppEnv>): Promise<Response> => {
+    try {
+      const request = parseKnowledgeSourceAdminRequest(action, await c.req.json());
+      const grant = await verifyKnowledgeSourceGrant(
+        c.req.header(KNOWLEDGE_SOURCE_GRANT_HEADER),
+        request,
+        {
+          publicKey: c.env.KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY,
+          issuer: c.env.KNOWLEDGE_SOURCE_AUTH_ISSUER,
+          keyId: c.env.KNOWLEDGE_SOURCE_AUTH_KEY_ID,
+        },
+      );
+      const stub = c.env.WORKSPACE_CONFIG.get(
+        c.env.WORKSPACE_CONFIG.idFromName(request.teamId),
+      );
+      const response = await stub.fetch("https://do/authorizedTrackedKnowledgeSourceAction", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request, grant }),
+      });
+      if (!response.ok) {
+        return Response.json(
+          { error: "knowledge_source_control_plane_unavailable" },
+          { status: response.status >= 500 ? 503 : 400, headers: { "cache-control": "no-store" } },
+        );
+      }
+      const result = await response.json() as {
+        ok?: boolean;
+        status?: number;
+        error?: string;
+      };
+      const status = result.ok === false
+        ? result.status === 409 ? 409 : 400
+        : 200;
+      return Response.json(result, {
+        status,
+        headers: { "cache-control": "no-store" },
+      });
+    } catch (error) {
+      const status = error instanceof KnowledgeSourceAuthorizationError
+        ? error.status
+        : 400;
+      return Response.json(
+        {
+          error: error instanceof Error
+            ? error.message
+            : "knowledge_source_action_failed",
+        },
+        { status, headers: { "cache-control": "no-store" } },
+      );
+    }
+  };
+}
+
+// Source lifecycle grants are minted only by a separately approved external
+// authority. ADMIN_SECRET remains a second control-plane credential and cannot
+// mint or broaden the signed exact team/project/channel/action authority.
+app.post(
+  "/admin/knowledge/sources/inspect",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("inspect"),
+);
+app.post(
+  "/admin/knowledge/sources/list",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("list_exact"),
+);
+app.post(
+  "/admin/knowledge/sources/stage",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("stage_disabled"),
+);
+app.post(
+  "/admin/knowledge/sources/update-disabled",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("update_disabled"),
+);
+app.post(
+  "/admin/knowledge/sources/enable-first",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("enable_first"),
+);
+app.post(
+  "/admin/knowledge/sources/disable",
+  requireAdminAuth(),
+  knowledgeSourceActionHandler("disable"),
+);
+
+app.post("/admin/knowledge/reconcile", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: string;
+      runId?: string;
+      limit?: number;
+    };
+    const result = await runKnowledgeReconciliationPage(c.env, {
+      teamId: body.teamId ?? "",
+      runId: body.runId,
+      limit: body.limit,
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge reconciliation failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.get("/admin/knowledge/dlq", requireAdminAuth(), async (c) => {
+  try {
+    const cursor = Number(c.req.query("cursor") ?? "0");
+    const limit = Number(c.req.query("limit") ?? "25");
+    const result = await inspectDurableKnowledgeDlq(c.env, { cursor, limit });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge DLQ inspection failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/dlq/:recordId/replay", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      expectedSourceKey?: string;
+      rootCauseCorrectionRef?: string;
+    };
+    const result = await replayDurableKnowledgeDlqRecord(c.env, {
+      recordId: c.req.param("recordId"),
+      expectedSourceKey: body.expectedSourceKey ?? "",
+      rootCauseCorrectionRef: body.rootCauseCorrectionRef ?? "",
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge DLQ replay failed" },
+      409,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/backfill/discover", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      manifestId?: string;
+      teamId?: string;
+      projectId?: string;
+      channelIds?: string[];
+      from?: string;
+      to?: string;
+      maximumCount?: number;
+      maximumRatePerMinute?: number;
+      maximumErrors?: number;
+      releaseIds?: string[];
+      rollbackOwner?: string;
+    };
+    const allowed = new Set([
+      "manifestId",
+      "teamId",
+      "projectId",
+      "channelIds",
+      "from",
+      "to",
+      "maximumCount",
+      "maximumRatePerMinute",
+      "maximumErrors",
+      "releaseIds",
+      "rollbackOwner",
+    ]);
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Object.keys(body).some((key) => !allowed.has(key))
+    ) {
+      throw new Error("backfill discovery request contains unexpected fields");
+    }
+    const result = await discoverAndStoreKnowledgeBackfill(c.env, {
+      manifestId: body.manifestId ?? "",
+      teamId: body.teamId ?? "",
+      projectId: body.projectId ?? "",
+      channelIds: body.channelIds ?? [],
+      from: body.from ?? "",
+      to: body.to ?? "",
+      maximumCount: body.maximumCount ?? 0,
+      maximumRatePerMinute: body.maximumRatePerMinute ?? 0,
+      maximumErrors: body.maximumErrors ?? -1,
+      releaseIds: body.releaseIds ?? [],
+      rollbackOwner: body.rollbackOwner ?? "",
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge backfill discovery failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/backfill/:manifestId/approve", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: string;
+      manifestDigest?: string;
+    };
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Object.keys(body).some((key) =>
+        key !== "teamId" && key !== "manifestDigest")
+    ) {
+      throw new KnowledgeBackfillApprovalError(
+        "knowledge_backfill_approval_request_contains_untrusted_fields",
+        400,
+      );
+    }
+    const result = await approveKnowledgeBackfillManifest(c.env, {
+      teamId: body.teamId ?? "",
+      manifestId: c.req.param("manifestId"),
+      manifestDigest: body.manifestDigest ?? "",
+      approvalArtifact: c.req.header(KNOWLEDGE_BACKFILL_APPROVAL_HEADER),
+      verifier: {
+        publicKey: c.env.KNOWLEDGE_BACKFILL_APPROVAL_PUBLIC_KEY,
+        issuer: c.env.KNOWLEDGE_BACKFILL_APPROVAL_ISSUER,
+        keyId: c.env.KNOWLEDGE_BACKFILL_APPROVAL_KEY_ID,
+      },
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    const status = error instanceof KnowledgeBackfillApprovalError
+      ? error.status
+      : 409;
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge backfill approval failed" },
+      status,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/backfill/:manifestId/execute", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: string;
+      manifestDigest?: string;
+      batchLimit?: number;
+    };
+    const result = await executeKnowledgeBackfillPage(c.env, {
+      teamId: body.teamId ?? "",
+      manifestId: c.req.param("manifestId"),
+      manifestDigest: body.manifestDigest ?? "",
+      batchLimit: body.batchLimit,
+    });
+    return c.json(
+      result,
+      result.pageStatus === "partial" ? 409 : 200,
+      { "cache-control": "no-store" },
+    );
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge backfill execution failed" },
+      409,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+/**
+ * MCP-style knowledge retrieval primitives (K2 Phase 5).
+ * Bearer ADMIN_SECRET; LLM-light raw citations; no ingestion.
+ */
+app.post("/mcp/knowledge", async (c) => handleKnowledgeMcp(c.req.raw, c.env));
+
 /** Seed a pending HITL action snapshot key (admin/debug). */
 app.post("/debug/hitl", requireAdminAuth(), async (c) => {
   const body = (await c.req.json()) as {
@@ -583,6 +896,21 @@ app.post("/slack/events", slackVerify(), async (c) => {
       await runStop();
     }
     return c.json({ ok: true });
+  }
+
+  // Automatic ingestion scheduling is independent of the turn path. HMAC has
+  // already been verified by slackVerify(); only exact enabled config rows can
+  // create descriptors, and Queue/Supermemory work remains outside this ack.
+  // Exact Stop remains a control-plane continuation and is not captured.
+  if (exec?.waitUntil) {
+    exec.waitUntil(
+      scheduleKnowledgeFromSlackEvent(c.env, payload).catch((error) => {
+        console.error(
+          "[slack/events:knowledge] descriptor scheduling failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+      }),
+    );
   }
 
   const trustedDecision = trustedRichTriggerDecision(
@@ -846,4 +1174,42 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
   return c.json({ ok: true });
 });
 
-export default app;
+type QueueAndScheduledApp = typeof app & {
+  queue(batch: MessageBatch<KnowledgeJob>, env: AppEnv["Bindings"], ctx: ExecutionContext): Promise<void>;
+  scheduled(controller: ScheduledController, env: AppEnv["Bindings"], ctx: ExecutionContext): void;
+};
+
+const worker = app as QueueAndScheduledApp;
+worker.queue = async (batch, env, _ctx) => {
+  let route: "primary" | "dlq";
+  try {
+    route = routeKnowledgeQueueName(batch.queue, env);
+  } catch (error) {
+    retryKnowledgeBatchWithoutParsing(batch);
+    console.error(JSON.stringify({
+      metric: "knowledge_queue_routing_error",
+      queueName: batch.queue,
+      errorCode: error instanceof Error ? error.message : "unknown",
+    }));
+    throw error;
+  }
+  if (route === "dlq") {
+    await handleKnowledgeDlq(batch, env);
+    return;
+  }
+  await handleKnowledgeQueue(batch, env, dispatchKnowledgeToSupermemory);
+};
+worker.scheduled = (controller, env, ctx) => {
+  const scheduledAt = new Date(controller.scheduledTime).toISOString();
+  ctx.waitUntil(
+    runScheduledKnowledgeReconciliation(env, { scheduledAt }).catch((error) => {
+      console.error(JSON.stringify({
+        metric: "knowledge_reconcile_scheduler_entry_error",
+        errorCode: error instanceof Error ? error.message.slice(0, 256) : "unknown",
+      }));
+      throw error;
+    }),
+  );
+};
+
+export default worker;

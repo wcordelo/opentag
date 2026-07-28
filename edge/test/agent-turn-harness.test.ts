@@ -359,6 +359,50 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     );
   });
 
+  it("exposes search_slack only through an explicit human access bundle", async () => {
+    const searchBundle = {
+      id: "readers",
+      tools: ["search_slack"],
+      mcpEndpoints: [],
+      secretRefs: [],
+    };
+    loadTurnAccessMock.mockResolvedValue({
+      config: {
+        teamId: "T1",
+        channelId: "C1",
+        systemPrompt: "sys",
+        policies: {},
+        accessBundleId: "readers",
+        updatedAt: "now",
+      },
+      bundle: searchBundle,
+    } as never);
+
+    const human = makeThreadSpies("C1::1111111111.000074");
+    await runBundledAgentTurn(
+      makeEnv(),
+      human.thread as never,
+      "consult channel knowledge",
+      { id: "U1", name: "Human requester" },
+    );
+    const humanTools = human.runAgent.mock.calls[0]![0].tools as Array<{ name: string }>;
+    expect(humanTools.map((tool) => tool.name)).toContain("search_slack");
+
+    const automation = makeThreadSpies("C1::1111111111.000075");
+    bindRequestContext(automation.thread, {
+      teamId: "T1",
+      actor: { kind: "slack_automation", botId: "BALERT" },
+    });
+    await runBundledAgentTurn(
+      makeEnv(),
+      automation.thread as never,
+      "consult channel knowledge",
+      { id: "bot:BALERT", name: "Alert bot" },
+    );
+    const automationTools = automation.runAgent.mock.calls[0]![0].tools as Array<{ name: string }>;
+    expect(automationTools.map((tool) => tool.name)).not.toContain("search_slack");
+  });
+
   it("fails visibly when a channel-selected harness is disconnected", async () => {
     loadTurnAccessMock.mockResolvedValueOnce({
       config: {

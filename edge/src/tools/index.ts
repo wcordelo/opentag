@@ -41,6 +41,13 @@ import { coerceTicketFields } from "../slack/thread-memory.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
 import type { ActiveTurnEffectResource } from "../store/active-turn-types.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
+import { createSearchSlackTool } from "./search-slack.js";
+import {
+  createSearchWikiTool,
+  createSearchCodeTool,
+  createSearchCustomTool,
+} from "./search-multi-source.js";
+import { createSearchKnowledgeTool } from "./search-knowledge.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -540,6 +547,36 @@ export const memoryWriteTool = defineBotTool({
   },
 });
 
+export const searchSlackTool = createSearchSlackTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const searchWikiTool = createSearchWikiTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const searchCodeTool = createSearchCodeTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const searchCustomTool = createSearchCustomTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const searchKnowledgeTool = createSearchKnowledgeTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
 export const startTaskTool = defineBotTool({
   name: "start_task",
   description: "Start a long-running research task for the current thread.",
@@ -688,6 +725,11 @@ const RAW_EDGE_TOOLS = [
   researchProgressTool,
   memorySearchTool,
   memoryWriteTool,
+  searchSlackTool,
+  searchWikiTool,
+  searchCodeTool,
+  searchCustomTool,
+  searchKnowledgeTool,
   startTaskTool,
   reactMessageTool,
 ] as const;

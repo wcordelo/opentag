@@ -1077,21 +1077,44 @@ export class KnowledgeLedger {
           leaseToken,
         );
       } else {
-        this.sql.exec(
-          `UPDATE knowledge_ledger SET
-             status = ?, lease_token = NULL, lease_expires_at = NULL,
-             last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
-             last_local_error = ?, updated_at = ?
-           WHERE source_key = ? AND lease_token = ?`,
-          outcome.status,
-          outcome.errorClass,
-          outcome.errorCode ?? null,
-          outcome.status === "retryable_failure" ? outcome.incompleteReason ?? null : null,
-          outcome.errorCode ?? outcome.errorClass,
-          now,
-          sourceKey,
-          leaseToken,
-        );
+        const retryableAddNeverAccepted =
+          outcome.status === "retryable_failure" &&
+          current.lastLocalOperation === "add_started" &&
+          !current.localDocumentId;
+        if (retryableAddNeverAccepted) {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET
+               status = ?, lease_token = NULL, lease_expires_at = NULL,
+               last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
+               last_local_error = ?, last_local_operation = NULL,
+               add_attempt_token = NULL, add_attempt_revision = NULL, updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            outcome.status,
+            outcome.errorClass,
+            outcome.errorCode ?? null,
+            outcome.incompleteReason ?? null,
+            outcome.errorCode ?? outcome.errorClass,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        } else {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET
+               status = ?, lease_token = NULL, lease_expires_at = NULL,
+               last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
+               last_local_error = ?, updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            outcome.status,
+            outcome.errorClass,
+            outcome.errorCode ?? null,
+            outcome.status === "retryable_failure" ? outcome.incompleteReason ?? null : null,
+            outcome.errorCode ?? outcome.errorClass,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        }
       }
       return true;
     });

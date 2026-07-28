@@ -547,6 +547,8 @@ export class WorkspaceConfigDO extends DurableObject {
       const body = (await request.json()) as {
         teamId: string;
         channelId?: string | null;
+        channelContext?: string;
+        systemPrompt?: string;
         systemPromptOverlay?: {
           version?: number;
           revision?: number;
@@ -565,6 +567,8 @@ export class WorkspaceConfigDO extends DurableObject {
           ![
             "teamId",
             "channelId",
+            "channelContext",
+            "systemPrompt",
             "systemPromptOverlay",
             "policies",
             "accessBundleId",
@@ -591,12 +595,21 @@ export class WorkspaceConfigDO extends DurableObject {
           );
         }
       }
+      const channelContextProvided =
+        "channelContext" in body || "systemPrompt" in body;
       const channelKey = body.channelId ?? "";
       const existing = this.readRow(sql, body.teamId, channelKey);
       const currentRevision = existing?.system_prompt_overlay_version ?? 0;
+      // Overlay mutation requires an explicit text field ("" clears). Metadata-only
+      // objects must not wipe stored overlay policy via the empty-string default.
+      const overlayMutation =
+        body.systemPromptOverlay !== undefined &&
+        body.systemPromptOverlay !== null &&
+        typeof body.systemPromptOverlay === "object" &&
+        "text" in body.systemPromptOverlay;
       // Optimistic overlay CAS only applies when an overlay mutation is present.
       if (
-        body.systemPromptOverlay &&
+        overlayMutation &&
         typeof body.expectedRevision === "number" &&
         body.expectedRevision !== currentRevision
       ) {
@@ -611,7 +624,16 @@ export class WorkspaceConfigDO extends DurableObject {
       let overlayDigest = existing?.system_prompt_overlay_digest ?? "";
       let overlayUpdatedAt = existing?.system_prompt_overlay_updated_at ?? null;
 
-      if (body.systemPromptOverlay) {
+      if (body.systemPromptOverlay !== undefined && body.systemPromptOverlay !== null) {
+        if (typeof body.systemPromptOverlay !== "object") {
+          return Response.json({ error: "invalid_system_prompt_overlay" }, { status: 400 });
+        }
+        if (!overlayMutation) {
+          return Response.json(
+            { error: "overlay_text_required" },
+            { status: 400 },
+          );
+        }
         const overlay = body.systemPromptOverlay;
         if (overlay.version !== undefined && overlay.version !== 1) {
           return Response.json({ error: "invalid_overlay_version" }, { status: 400 });
@@ -619,7 +641,10 @@ export class WorkspaceConfigDO extends DurableObject {
         if (overlay.source !== undefined && overlay.source !== "workspace_admin") {
           return Response.json({ error: "invalid_overlay_source" }, { status: 400 });
         }
-        const text = typeof overlay.text === "string" ? overlay.text : "";
+        if (typeof overlay.text !== "string") {
+          return Response.json({ error: "overlay_text_required" }, { status: 400 });
+        }
+        const text = overlay.text;
         const trimmed = text.trim();
         if (text.length > 0 && trimmed.length === 0) {
           return Response.json({ error: "invalid_system_prompt_overlay" }, { status: 400 });
@@ -637,10 +662,21 @@ export class WorkspaceConfigDO extends DurableObject {
           return Response.json({ error: "overlay_digest_mismatch" }, { status: 400 });
         }
         overlayText = text;
-        overlayVersion =
-          typeof overlay.revision === "number" && Number.isSafeInteger(overlay.revision)
-            ? overlay.revision
-            : currentRevision + 1;
+        if (
+          typeof overlay.revision === "number" &&
+          Number.isSafeInteger(overlay.revision)
+        ) {
+          // Revisions are monotonic; never allow a client to decrease the stored version.
+          if (overlay.revision <= currentRevision) {
+            return Response.json(
+              { error: "overlay_revision_not_monotonic", currentRevision },
+              { status: 400 },
+            );
+          }
+          overlayVersion = overlay.revision;
+        } else {
+          overlayVersion = currentRevision + 1;
+        }
         if (overlayVersion < 0 || !Number.isSafeInteger(overlayVersion)) {
           return Response.json({ error: "invalid_overlay_revision" }, { status: 400 });
         }
@@ -648,9 +684,13 @@ export class WorkspaceConfigDO extends DurableObject {
         overlayUpdatedAt = new Date().toISOString();
       }
 
-      const channelContext = existing
-        ? rowChannelContext(existing)
-        : DEFAULT_SYSTEM_PROMPT;
+      const channelContext = channelContextProvided
+        ? ((typeof body.channelContext === "string" ? body.channelContext : undefined) ??
+            (typeof body.systemPrompt === "string" ? body.systemPrompt : undefined) ??
+            DEFAULT_SYSTEM_PROMPT)
+        : existing
+          ? rowChannelContext(existing)
+          : DEFAULT_SYSTEM_PROMPT;
       const updatedAt = body.updatedAt || new Date().toISOString();
       sql.exec(
         `INSERT INTO channel_config (
@@ -661,6 +701,10 @@ export class WorkspaceConfigDO extends DurableObject {
          )
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(team_id, channel_id) DO UPDATE SET
+           system_prompt = CASE
+             WHEN ? THEN excluded.system_prompt ELSE channel_config.system_prompt END,
+           channel_context = CASE
+             WHEN ? THEN excluded.channel_context ELSE channel_config.channel_context END,
            policies_json = excluded.policies_json,
            access_bundle_id = excluded.access_bundle_id,
            default_harness_type = excluded.default_harness_type,
@@ -689,6 +733,8 @@ export class WorkspaceConfigDO extends DurableObject {
         overlayVersion,
         overlayDigest,
         overlayUpdatedAt,
+        channelContextProvided ? 1 : 0,
+        channelContextProvided ? 1 : 0,
       );
       return Response.json({
         ok: true,

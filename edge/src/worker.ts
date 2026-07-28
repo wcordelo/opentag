@@ -382,23 +382,21 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
     }
   }
 
-  // Apply admin-owned fields first so overlay CAS can fail closed before any
-  // channel-context write (avoids partial success + HTTP 409).
-  let adminResult: unknown | undefined;
+  // Single DO write when admin-owned fields are present so overlay CAS, channel
+  // context, and runtime defaults cannot partially apply across two RPCs.
   if (hasAdminOwnedFields) {
     const response = await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
       body: JSON.stringify({
         teamId: body.teamId,
         channelId: body.channelId,
+        ...(hasChannelContext
+          ? { channelContext: body.channelContext ?? body.systemPrompt }
+          : {}),
         systemPromptOverlay: body.systemPromptOverlay,
         policies: body.policies,
         ...(hasAccessBundle ? { accessBundleId: body.accessBundleId } : {}),
-        // Prefer channel path for runtimeDefaults when channel context is also
-        // being written; otherwise clear/set via admin.
-        ...(!hasChannelContext && hasRuntimeDefaults
-          ? { runtimeDefaults: runtimeDefaults ?? null }
-          : {}),
+        ...(hasRuntimeDefaults ? { runtimeDefaults: runtimeDefaults ?? null } : {}),
         ...(body.systemPromptOverlay !== undefined
           ? { expectedRevision: body.expectedRevision }
           : {}),
@@ -411,13 +409,10 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
         response.status >= 500 ? 503 : response.status === 409 ? 409 : 400,
       );
     }
-    adminResult = await response.json();
-    if (!hasChannelContext && !hasRuntimeDefaults) {
-      return c.json(adminResult);
-    }
+    return c.json(await response.json());
   }
 
-  if (hasChannelContext || (hasRuntimeDefaults && !hasAdminOwnedFields)) {
+  if (hasChannelContext || hasRuntimeDefaults) {
     const channelResponse = await stub.fetch("https://do/putChannelContext", {
       method: "POST",
       body: JSON.stringify({
@@ -438,7 +433,7 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
     }
   }
 
-  return c.json(adminResult ?? { ok: true });
+  return c.json({ ok: true });
 });
 
 app.post("/admin/bundle", requireAdminAuth(), async (c) => {

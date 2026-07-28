@@ -243,6 +243,102 @@ describe("Durable Object integration", () => {
     expect(clearedRuntime.accessBundleId).toBe("custom-bundle");
   });
 
+  it("rejects overlay objects without text and non-monotonic revisions", async () => {
+    const teamId = `overlay-guard-${crypto.randomUUID()}`;
+    const channelId = "C-overlay-guard";
+    const stub = env.WORKSPACE_CONFIG.get(
+      env.WORKSPACE_CONFIG.idFromName(teamId),
+    );
+    expect((await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        systemPromptOverlay: {
+          version: 1,
+          text: "trusted overlay",
+          source: "workspace_admin",
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+    })).status).toBe(200);
+
+    const missingText = await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        systemPromptOverlay: {
+          version: 1,
+          source: "workspace_admin",
+          revision: 2,
+        },
+        expectedRevision: 1,
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    expect(missingText.status).toBe(400);
+    expect(await missingText.text()).toContain("overlay_text_required");
+
+    const downgrade = await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        systemPromptOverlay: {
+          version: 1,
+          text: "downgraded",
+          source: "workspace_admin",
+          revision: 1,
+        },
+        expectedRevision: 1,
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    expect(downgrade.status).toBe(400);
+    expect(await downgrade.text()).toContain("overlay_revision_not_monotonic");
+
+    const after = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId, includeOverlayText: true }),
+    }).then((response) => response.json()) as {
+      systemPromptOverlay?: { revision: number; text: string };
+    };
+    expect(after.systemPromptOverlay).toMatchObject({
+      revision: 1,
+      text: "trusted overlay",
+    });
+
+    // Mixed channel context + overlay apply in one admin write.
+    expect((await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        channelContext: "channel prompt from admin path",
+        systemPromptOverlay: {
+          version: 1,
+          text: "next overlay",
+          source: "workspace_admin",
+        },
+        expectedRevision: 1,
+        updatedAt: new Date().toISOString(),
+      }),
+    })).status).toBe(200);
+    const mixed = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId, includeOverlayText: true }),
+    }).then((response) => response.json()) as {
+      systemPrompt: string;
+      systemPromptOverlay?: { revision: number; text: string };
+    };
+    expect(mixed.systemPrompt).toBe("channel prompt from admin path");
+    expect(mixed.systemPromptOverlay).toMatchObject({
+      revision: 2,
+      text: "next overlay",
+    });
+  });
+
   it("rejects policy and overlay writes on legacy putConfig", async () => {
     const teamId = `legacy-${crypto.randomUUID()}`;
     const stub = env.WORKSPACE_CONFIG.get(

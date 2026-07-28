@@ -64,6 +64,10 @@ import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
 import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
 import { reconstructSessionHistory } from "./slack/session-history.js";
 import { createHarnessProgressLiveRenderer } from "./slack/harness-progress-live.js";
+import {
+  formatContextLine,
+  type HarnessContextLine,
+} from "./slack/harness-progress.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 import { bindPermissionSnapshot } from "./permissions/context.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
@@ -1185,6 +1189,16 @@ export async function runBundledAgentTurn(
     let progressLive:
       | ReturnType<typeof createHarnessProgressLiveRenderer>
       | undefined;
+    let harnessContextForAnswer: HarnessContextLine | undefined;
+    const harnessContextEvidenceRank: Record<
+      HarnessContextLine["modelEvidence"],
+      number
+    > = {
+      unknown: 0,
+      requested: 1,
+      container_argument: 2,
+      provider_reported: 3,
+    };
     if (env.SLACK_BOT_TOKEN) {
       const inbound = requireRequestContext(thread).inbound;
       progressLive = createHarnessProgressLiveRenderer({
@@ -1229,6 +1243,28 @@ export async function runBundledAgentTurn(
           }
         : {}),
       onHarnessEvent: async (event) => {
+        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
+          const p = event.payload as Record<string, unknown>;
+          const next: HarnessContextLine = {
+            harnessType:
+              typeof p.harnessType === "string" ? p.harnessType : "claudecode",
+            model: typeof p.model === "string" ? p.model : undefined,
+            modelEvidence:
+              p.modelEvidence === "requested" ||
+              p.modelEvidence === "container_argument" ||
+              p.modelEvidence === "provider_reported" ||
+              p.modelEvidence === "unknown"
+                ? p.modelEvidence
+                : "unknown",
+          };
+          if (
+            !harnessContextForAnswer ||
+            harnessContextEvidenceRank[next.modelEvidence] >=
+              harnessContextEvidenceRank[harnessContextForAnswer.modelEvidence]
+          ) {
+            harnessContextForAnswer = next;
+          }
+        }
         await progressLive?.handleEvent(event);
       },
     });
@@ -1256,7 +1292,11 @@ export async function runBundledAgentTurn(
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();
       // Final answer is separate from the live progress message.
-      const prefix = progressLive?.finalAnswerPrefix() ?? "";
+      const prefix =
+        progressLive?.finalAnswerPrefix() ??
+        (harnessContextForAnswer
+          ? `${formatContextLine(harnessContextForAnswer)}\n\n`
+          : "");
       const body =
         `${prefix}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
       await progressLive?.markTerminal({ ok: true });

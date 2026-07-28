@@ -152,7 +152,7 @@ export function createHarnessProgressLiveRenderer(opts: {
         if (terminal) return;
         if (event.kind === "context" && event.payload && typeof event.payload === "object") {
           const p = event.payload as Record<string, unknown>;
-          context = {
+          const next: HarnessContextLine = {
             harnessType:
               typeof p.harnessType === "string" ? p.harnessType : "claudecode",
             model: typeof p.model === "string" ? p.model : undefined,
@@ -164,6 +164,18 @@ export function createHarnessProgressLiveRenderer(opts: {
                 ? p.modelEvidence
                 : "unknown",
           };
+          const evidenceRank: Record<HarnessContextLine["modelEvidence"], number> = {
+            unknown: 0,
+            requested: 1,
+            container_argument: 2,
+            provider_reported: 3,
+          };
+          if (
+            !context ||
+            evidenceRank[next.modelEvidence] >= evidenceRank[context.modelEvidence]
+          ) {
+            context = next;
+          }
         }
         if (event.kind === "progress" && event.payload && typeof event.payload === "object") {
           const p = event.payload as Record<string, unknown>;

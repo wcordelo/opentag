@@ -12,7 +12,6 @@ import {
   resolveBotEngineKind,
 } from "./bot-engine.js";
 import {
-  DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
   normalizeChannelRuntimeDefaults,
   type AccessBundle,
@@ -374,7 +373,9 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
       channelId: body.channelId,
       systemPromptOverlay: body.systemPromptOverlay,
       policies: body.policies,
-      accessBundleId: body.accessBundleId || DEFAULT_BUNDLE.id,
+      ...(typeof body.accessBundleId === "string" && body.accessBundleId
+        ? { accessBundleId: body.accessBundleId }
+        : {}),
       ...(runtimeDefaults ? { runtimeDefaults } : {}),
       expectedRevision: body.expectedRevision,
       updatedAt: new Date().toISOString(),

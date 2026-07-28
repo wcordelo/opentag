@@ -99,7 +99,10 @@ export function renderProgressMarkdown(
   items: Iterable<ProgressItem>,
   opts: { done?: boolean; failed?: boolean } = {},
 ): string {
-  const list = [...items].sort((a, b) => a.progressId.localeCompare(b.progressId));
+  // Preserve caller/Map insertion order (first-seen chronological). Per-item
+  // `sequence` is only a lifecycle counter within one progressId (start→done),
+  // not a global timeline — do not sort by progressId or that sequence.
+  const list = [...items];
   const completed = list.filter(
     (i) => i.state === "completed" || i.state === "failed",
   );

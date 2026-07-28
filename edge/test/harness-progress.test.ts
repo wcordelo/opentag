@@ -154,4 +154,27 @@ describe("harness progress renderer", () => {
     ]);
     expect(rebuilt.context?.model).toBe("first-model");
   });
+
+  it("renders progress in first-seen order, not alphabetical progressId", () => {
+    // Mutate through successive apply so Map insertion order is chronological.
+    let state = applyProgressEvent(new Map(), {
+      progressId: "tool-z-late-alphabet",
+      sequence: 1,
+      category: "tool",
+      state: "completed",
+      title: "First",
+    });
+    state = applyProgressEvent(state.items, {
+      progressId: "tool-a-early-alphabet",
+      sequence: 1,
+      category: "tool",
+      state: "completed",
+      title: "Second",
+    });
+    const md = renderProgressMarkdown(state.items.values(), { done: true });
+    const firstIdx = md.indexOf("First");
+    const secondIdx = md.indexOf("Second");
+    expect(firstIdx).toBeGreaterThan(-1);
+    expect(secondIdx).toBeGreaterThan(firstIdx);
+  });
 });

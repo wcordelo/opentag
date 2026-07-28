@@ -2,6 +2,7 @@
  * Access bundle types + resolver (no Workers runtime imports).
  */
 import { harnessModelMismatchError } from "../slack/overrides.js";
+import { expandClaudeModelAlias } from "../slack/model-aliases.js";
 export type AccessBundle = {
   id: string;
   tools: string[];
@@ -14,10 +15,26 @@ export type ChannelRuntimeDefaults = {
   model?: string;
 };
 
+export type SystemPromptOverlay = {
+  version: 1;
+  revision: number;
+  text: string;
+  digest: string;
+  updatedAt: string;
+  source?: "workspace_admin";
+};
+
 export type WorkspaceChannelConfig = {
   teamId: string;
   channelId: string | null;
-  systemPrompt: string;
+  /** User-editable channel context (formerly systemPrompt). */
+  channelContext?: string;
+  /**
+   * @deprecated Prefer channelContext. Mirrored on reads for transitional callers;
+   * writes must not elevate into overlay.
+   */
+  systemPrompt?: string;
+  systemPromptOverlay?: SystemPromptOverlay;
   policies: {
     allowMemoryWrite?: boolean;
     allowTasks?: boolean;
@@ -58,6 +75,14 @@ export const DEFAULT_BUNDLE: AccessBundle = {
 export const DEFAULT_SYSTEM_PROMPT =
   "You are OpenTag, an open-source Claude Tag alternative in Slack. Be helpful, cite sources when researching, and respect channel access limits.";
 
+export function channelContextOf(config: WorkspaceChannelConfig): string {
+  return (
+    config.channelContext ??
+    config.systemPrompt ??
+    DEFAULT_SYSTEM_PROMPT
+  );
+}
+
 export function resolveAllowedTools(
   allToolNames: string[],
   bundle: AccessBundle,
@@ -73,12 +98,6 @@ export function resolveAllowedTools(
 }
 
 const SAFE_MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
-const CHANNEL_MODEL_ALIASES: Record<string, string> = {
-  fable: "claude-fable-5",
-  haiku: "claude-haiku-4-5-20251001",
-  opus: "claude-opus-4-8",
-  sonnet: "claude-sonnet-5",
-};
 
 export function normalizeChannelRuntimeDefaults(
   value: unknown,
@@ -111,9 +130,7 @@ export function normalizeChannelRuntimeDefaults(
   }
   const rawModel =
     typeof record.model === "string" ? record.model.trim() : undefined;
-  const model = rawModel
-    ? CHANNEL_MODEL_ALIASES[rawModel.toLowerCase()] ?? rawModel
-    : undefined;
+  const model = rawModel ? expandClaudeModelAlias(rawModel) : undefined;
   if (model && !SAFE_MODEL_ID_RE.test(model)) {
     throw new Error("invalid channel model id");
   }

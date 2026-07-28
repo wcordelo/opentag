@@ -61,11 +61,9 @@ export async function resolveStagedTurnAttachments(
     if (bytes.byteLength !== attachment.size) {
       throw new Error(`staged_attachment_size_mismatch:${attachment.id}`);
     }
-    if (attachment.sha256) {
-      const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
-      if (digest !== attachment.sha256) {
-        throw new Error(`staged_attachment_digest_mismatch:${attachment.id}`);
-      }
+    const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    if (attachment.sha256 && digest !== attachment.sha256) {
+      throw new Error(`staged_attachment_digest_mismatch:${attachment.id}`);
     }
     attachments.push({
       kind: "inline",
@@ -74,6 +72,7 @@ export async function resolveStagedTurnAttachments(
       mimeType: attachment.mimeType,
       size: attachment.size,
       dataBase64: bytesToBase64(bytes),
+      sha256: digest,
     });
   }
   return { ...body, attachments };
@@ -312,7 +311,7 @@ export async function routeHarnessRequest(
       approvalRevoked,
     });
   }
-  const validation = validateTurnRequest(body, repoPolicy);
+  const validation = await validateTurnRequest(body, repoPolicy);
   if (!validation.ok) {
     return jsonError(validation.error, 400);
   }
@@ -343,7 +342,7 @@ export async function routeHarnessRequest(
       },
     };
   }
-  const resolvedValidation = validateTurnRequest(turnBody, repoPolicy);
+  const resolvedValidation = await validateTurnRequest(turnBody, repoPolicy);
   if (!resolvedValidation.ok) return jsonError(resolvedValidation.error, 400);
   const forwardedBytes =
     hadStagedAttachments || resolvedValidation.body.permissionSnapshot

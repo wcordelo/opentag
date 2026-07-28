@@ -10,7 +10,7 @@ import type { SqlCursor, SqlExecutor, SqlValue, TransactionRunner } from "./sql.
  * need that *contract* — not the K8s-backed sandbox orchestration behind it.
  * This Durable Object reimplements the contract directly over DO SQLite:
  *
- *   - `events` table: an append-only log of `input | output | error | done`
+ *   - `events` table: an append-only log of `input | output | error | done | context | progress`
  *     rows per `execution_id`, replayable from any `afterEventId` cursor —
  *     this is what lets a crashed Worker isolate reconstruct a thread's state
  *     (see the render-obligation alarm in `conversation-state-do.ts`).
@@ -41,7 +41,7 @@ const EVENTS_DDL = [
   `CREATE TABLE IF NOT EXISTS events (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      execution_id TEXT NOT NULL,
-     kind TEXT NOT NULL,      -- 'input' | 'output' | 'error' | 'done'
+     kind TEXT NOT NULL,      -- 'input' | 'output' | 'error' | 'done' | 'context' | 'progress'
      payload TEXT NOT NULL,   -- JSON
      created_at INTEGER NOT NULL
    )`,
@@ -71,7 +71,19 @@ function migrateEvents(sql: SqlExecutor): void {
 
 // ── KV slot shapes ──────────────────────────────────────────────────────────
 
-type EventKind = "input" | "output" | "error" | "done";
+type EventKind = "input" | "output" | "error" | "done" | "context" | "progress";
+
+const MODEL_EVIDENCE_RANK: Record<string, number> = {
+  unknown: 0,
+  requested: 1,
+  container_argument: 2,
+  provider_reported: 3,
+};
+
+function modelEvidenceRank(value: unknown): number {
+  if (typeof value !== "string") return 0;
+  return MODEL_EVIDENCE_RANK[value] ?? 0;
+}
 
 interface CreatedSlot {
   sessionId: string;
@@ -319,6 +331,75 @@ export class SessionEventEngine {
     const executing = this.activeExecution();
     if (executing?.executionId !== args.executionId) {
       throw new Error(`execution_not_active:${args.executionId}`);
+    }
+
+    // Context singleton: at most one effective context row per execution.
+    // Monotonic evidence upgrades (e.g. container_argument → provider_reported)
+    // append; equal/lower evidence is a no-op.
+    if (args.kind === "context" && args.payload && typeof args.payload === "object") {
+      const incoming = args.payload as Record<string, unknown>;
+      const prior = this.sql
+        .exec<{ payload: string }>(
+          `SELECT payload FROM events WHERE execution_id = ? AND kind = 'context'
+           ORDER BY id DESC LIMIT 1`,
+          args.executionId,
+        )
+        .toArray()[0];
+      if (prior) {
+        let existing: Record<string, unknown> = {};
+        try {
+          existing = JSON.parse(prior.payload) as Record<string, unknown>;
+        } catch {
+          existing = {};
+        }
+        const nextRank = modelEvidenceRank(incoming.modelEvidence);
+        const prevRank = modelEvidenceRank(existing.modelEvidence);
+        if (nextRank <= prevRank) {
+          return { id: 0 };
+        }
+      }
+    }
+
+    // Progress idempotency: duplicate (progressId, sequence) is a no-op;
+    // completed/failed items reject later updates.
+    if (args.kind === "progress" && args.payload && typeof args.payload === "object") {
+      const p = args.payload as Record<string, unknown>;
+      const progressId = typeof p.progressId === "string" ? p.progressId : "";
+      const sequence = typeof p.sequence === "number" ? p.sequence : -1;
+      if (!progressId || sequence < 0) {
+        throw new Error("invalid_progress_event");
+      }
+      const prior = this.sql
+        .exec<{ payload: string }>(
+          `SELECT payload FROM events WHERE execution_id = ? AND kind = 'progress'`,
+          args.executionId,
+        )
+        .toArray();
+      for (const row of prior) {
+        let existing: Record<string, unknown>;
+        try {
+          existing = JSON.parse(row.payload) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (existing.progressId !== progressId) continue;
+        if (
+          existing.sequence === sequence &&
+          existing.state === p.state &&
+          existing.title === p.title
+        ) {
+          return { id: 0 };
+        }
+        if (existing.state === "completed" || existing.state === "failed") {
+          return { id: 0 };
+        }
+        if (
+          typeof existing.sequence === "number" &&
+          sequence < existing.sequence
+        ) {
+          return { id: 0 };
+        }
+      }
     }
 
     const createdAt = this.now();
@@ -587,7 +668,7 @@ export class SessionEventDO extends DurableObject {
    */
   async appendEvent(args: {
     executionId: string;
-    kind: "output" | "error" | "done";
+    kind: "output" | "error" | "done" | "context" | "progress";
     payload: unknown;
   }): Promise<{ id: number }> {
     return this.engine.appendEvent(args);

@@ -152,7 +152,7 @@ describe("permission snapshot transport", () => {
   };
 
   it("validates and writes a private per-execution permissions file", async () => {
-    expect(validateTurnRequest(
+    expect(await validateTurnRequest(
       { ...validTurn, permissionSnapshot },
       repoPolicy,
     )).toMatchObject({ ok: true });
@@ -173,8 +173,8 @@ describe("permission snapshot transport", () => {
     }
   });
 
-  it("rejects oversized and secret-shaped envelopes", () => {
-    expect(validateTurnRequest({
+  it("rejects oversized and secret-shaped envelopes", async () => {
+    expect(await validateTurnRequest({
       ...validTurn,
       permissionSnapshot: {
         ...permissionSnapshot,
@@ -184,7 +184,7 @@ describe("permission snapshot transport", () => {
         },
       },
     }, repoPolicy)).toMatchObject({ ok: false });
-    expect(validateTurnRequest({
+    expect(await validateTurnRequest({
       ...validTurn,
       permissionSnapshot: {
         ...permissionSnapshot,
@@ -194,7 +194,7 @@ describe("permission snapshot transport", () => {
       ok: false,
       error: "permission_snapshot_forbidden_field",
     });
-    expect(validateTurnRequest({
+    expect(await validateTurnRequest({
       ...validTurn,
       permissionSnapshot: {
         ...permissionSnapshot,
@@ -209,8 +209,8 @@ describe("permission snapshot transport", () => {
     });
   });
 
-  it("enforces actor metadata visibility and authoritative sandbox shape", () => {
-    expect(validateTurnRequest({
+  it("enforces actor metadata visibility and authoritative sandbox shape", async () => {
+    expect(await validateTurnRequest({
       ...validTurn,
       permissionSnapshot: {
         ...permissionSnapshot,
@@ -223,7 +223,7 @@ describe("permission snapshot transport", () => {
       ok: false,
       error: "invalid_permission_snapshot",
     });
-    expect(validateTurnRequest({
+    expect(await validateTurnRequest({
       ...validTurn,
       permissionSnapshot: {
         ...permissionSnapshot,
@@ -251,11 +251,11 @@ describe("git approval and outcome contract", () => {
     "Prompted by: @wcordelo",
   ].join("\n");
 
-  it("defaults remote writes to false and rejects PR creation without approval", () => {
-    const validated = validateTurnRequest(validTurn, repoPolicy);
+  it("defaults remote writes to false and rejects PR creation without approval", async () => {
+    const validated = await validateTurnRequest(validTurn, repoPolicy);
     expect(validated.ok && validated.body.remoteGitApproved).toBe(false);
     expect(
-      validateTurnRequest(
+      await validateTurnRequest(
         {
           ...validTurn,
           repo: { url: "https://github.com/wcordelo/opentag" },
@@ -288,20 +288,22 @@ describe("git approval and outcome contract", () => {
   it.each([
     "Prompted by: @slack.handle",
     "Prompted by: Renée O'Connor",
-  ])("accepts safe fallback attribution for createPullRequest: %s", (attribution) => {
+  ])("accepts safe fallback attribution for createPullRequest: %s", async (attribution) => {
     const context = `[Requester Context]\n${attribution}`;
     expect(requesterAttribution(context)).toBe(attribution);
     expect(
-      validateTurnRequest(
-        {
-          ...validTurn,
-          repo: { url: "https://github.com/wcordelo/opentag" },
-          codingTask: true,
-          remoteGitApproved: true,
-          createPullRequest: true,
-          requesterContext: context,
-        },
-        repoPolicy,
+      (
+        await validateTurnRequest(
+          {
+            ...validTurn,
+            repo: { url: "https://github.com/wcordelo/opentag" },
+            codingTask: true,
+            remoteGitApproved: true,
+            createPullRequest: true,
+            requesterContext: context,
+          },
+          repoPolicy,
+        )
       ).ok,
     ).toBe(true);
   });
@@ -467,7 +469,7 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     ]);
   });
 
-  it("maps an assistant tool_use block to an output tool summary event", () => {
+  it("maps an assistant tool_use block to started progress only", () => {
     const line = JSON.stringify({
       type: "assistant",
       message: {
@@ -478,6 +480,72 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     });
     expect(mapStreamJsonLine(line)).toEqual([
       { kind: "output", payload: { tool: "Bash", summary: "Bash: npm test" } },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Bash",
+          summary: "Bash: npm test",
+        },
+      },
+    ]);
+  });
+
+  it("maps tool_result user events to completed/failed progress", () => {
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 2,
+          category: "tool",
+          state: "completed",
+          title: "Tool",
+        },
+      },
+    ]);
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_2",
+                is_error: true,
+                content: "boom",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_2",
+          sequence: 2,
+          category: "tool",
+          state: "failed",
+          title: "Tool",
+        },
+      },
     ]);
   });
 
@@ -494,6 +562,40 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     expect(mapStreamJsonLine(line)).toEqual([
       { kind: "output", payload: { text: "Let me check." } },
       { kind: "output", payload: { tool: "Read", summary: "Read: a.ts" } },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Read",
+          summary: "Read: a.ts",
+        },
+      },
+    ]);
+  });
+
+  it("maps provider init system events to provider_reported context", () => {
+    expect(
+      mapStreamJsonLine(
+        JSON.stringify({
+          type: "system",
+          subtype: "init",
+          model: "claude-opus-4-8-20250918",
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "context",
+        payload: {
+          version: 1,
+          harnessType: "claudecode",
+          model: "claude-opus-4-8-20250918",
+          modelEvidence: "provider_reported",
+        },
+      },
     ]);
   });
 
@@ -531,7 +633,7 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     expect(done.payload.summary.endsWith("…")).toBe(true);
   });
 
-  it("ignores system and user event types", () => {
+  it("ignores blank system init without model and empty user content", () => {
     expect(mapStreamJsonLine(JSON.stringify({ type: "system", subtype: "init" }))).toEqual([]);
     expect(
       mapStreamJsonLine(JSON.stringify({ type: "user", message: { content: [] } })),
@@ -946,9 +1048,9 @@ describe("security validation", () => {
     );
   });
 
-  it("rejects path-bearing or oversized identifiers before workdir resolution", () => {
+  it("rejects path-bearing or oversized identifiers before workdir resolution", async () => {
     for (const sessionId of ["../escape", "a/b", ".hidden", "x".repeat(129)]) {
-      expect(validateTurnRequest({ ...validTurn, sessionId }, repoPolicy)).toEqual({
+      expect(await validateTurnRequest({ ...validTurn, sessionId }, repoPolicy)).toEqual({
         ok: false,
         error: "invalid_session_id",
       });
@@ -957,32 +1059,32 @@ describe("security validation", () => {
     expect(resolveSessionWorkdir("/work", "safe-session")).toBe("/work/safe-session");
   });
 
-  it("validates executionId, threadKey, model, line types, and context bounds", () => {
-    expect(validateTurnRequest({ ...validTurn, executionId: "../x" }, repoPolicy)).toMatchObject({
+  it("validates executionId, threadKey, model, line types, and context bounds", async () => {
+    expect(await validateTurnRequest({ ...validTurn, executionId: "../x" }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_execution_id",
     });
-    expect(validateTurnRequest({ ...validTurn, threadKey: "slack/C1" }, repoPolicy)).toMatchObject({
+    expect(await validateTurnRequest({ ...validTurn, threadKey: "slack/C1" }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_thread_key",
     });
-    expect(validateTurnRequest({ ...validTurn, model: "opus; rm -rf /" }, repoPolicy)).toMatchObject({
+    expect(await validateTurnRequest({ ...validTurn, model: "opus; rm -rf /" }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_model",
     });
-    expect(validateTurnRequest({ ...validTurn, harnessType: "codex" }, repoPolicy)).toMatchObject({
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "codex" }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_harness_type",
     });
-    expect(validateTurnRequest({ ...validTurn, harnessType: "claudex" }, repoPolicy)).toMatchObject({
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "claudex" }, repoPolicy)).toMatchObject({
       ok: true,
     });
-    expect(validateTurnRequest({ ...validTurn, inputLines: [42] }, repoPolicy)).toMatchObject({
+    expect(await validateTurnRequest({ ...validTurn, inputLines: [42] }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_input_lines",
     });
     expect(
-      validateTurnRequest({ ...validTurn, requesterContext: "x".repeat(16_385) }, repoPolicy),
+      await validateTurnRequest({ ...validTurn, requesterContext: "x".repeat(16_385) }, repoPolicy),
     ).toMatchObject({ ok: false, error: "invalid_context" });
   });
 

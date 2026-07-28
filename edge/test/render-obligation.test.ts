@@ -58,7 +58,7 @@ vi.mock("@copilotkit/channels-slack/render", async (importOriginal) => {
   };
 });
 
-const { ConversationStateDO, RenderObligationEngine, reconstructMarkdown } =
+const { ConversationStateDO, RenderObligationEngine, reconstructMarkdown, reconstructRecoveryContent } =
   await import("../src/store/conversation-state-do.js");
 import { migrate } from "../src/store/schema.js";
 import {
@@ -1360,5 +1360,54 @@ describe("ConversationStateDO render obligations", () => {
       close();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("reconstructRecoveryContent", () => {
+  it("includes context but not progress markdown in the final recovery body", () => {
+    const recovered = reconstructRecoveryContent(
+      [
+        {
+          executionId: "exec-1",
+          kind: "context",
+          payload: {
+            harnessType: "claudecode",
+            model: "claude-opus-5",
+            modelEvidence: "provider_reported",
+          },
+        },
+        {
+          executionId: "exec-1",
+          kind: "progress",
+          payload: {
+            progressId: "tool-1",
+            sequence: 1,
+            category: "tool",
+            state: "started",
+            title: "Read",
+          },
+        },
+        {
+          executionId: "exec-1",
+          kind: "progress",
+          payload: {
+            progressId: "tool-1",
+            sequence: 2,
+            category: "tool",
+            state: "completed",
+            title: "Tool",
+          },
+        },
+        { executionId: "exec-1", kind: "output", payload: { text: "Final answer." } },
+        { executionId: "exec-1", kind: "done", payload: { ok: true } },
+      ],
+      "exec-1",
+    );
+    expect(recovered.answer).toBe("Final answer.");
+    expect(recovered.contextLine).toContain("provider confirmed");
+    expect(recovered.progressMarkdown).toContain("Coding progress");
+    expect(recovered.body).toContain("Final answer.");
+    expect(recovered.body).toContain("provider confirmed");
+    expect(recovered.body).not.toContain("Coding progress");
   });
 });

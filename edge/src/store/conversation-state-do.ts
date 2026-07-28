@@ -21,6 +21,11 @@ import {
   SessionHandoffEngine,
   type SessionHandoffRow,
 } from "./session-handoff-engine.js";
+import {
+  formatContextLine,
+  rebuildProgressFromEvents,
+  renderProgressMarkdown,
+} from "../slack/harness-progress.js";
 
 /**
  * How often the background alarm sweeps expired rows. Lazy expiry already keeps
@@ -475,6 +480,35 @@ export function reconstructMarkdown(
     }
   }
   return parts.join("");
+}
+
+/**
+ * Obligation recovery body: context line + answer text only.
+ * Progress stays out of the final answer (live message owns it).
+ */
+export function reconstructRecoveryContent(
+  events: Array<{ executionId: string; kind: string; payload: unknown }>,
+  executionId: string,
+): {
+  answer: string;
+  contextLine: string;
+  progressMarkdown: string;
+  body: string;
+} {
+  const scoped = events.filter((e) => e.executionId === executionId);
+  const answer = reconstructMarkdown(scoped, executionId);
+  const rebuilt = rebuildProgressFromEvents(scoped);
+  const contextLine = rebuilt.context ? formatContextLine(rebuilt.context) : "";
+  const progressMarkdown =
+    rebuilt.items.size > 0
+      ? renderProgressMarkdown(rebuilt.items.values(), {
+          done: hasSuccessfulTerminal(events, executionId),
+        })
+      : "";
+  const prefix = contextLine ? `${contextLine}\n\n` : "";
+  // Do not trim: obligation replay must preserve canonical answer bytes.
+  const body = `${prefix}${answer}`;
+  return { answer, contextLine, progressMarkdown, body };
 }
 
 /**
@@ -1383,8 +1417,9 @@ export class ConversationStateDO extends DurableObject {
       );
     }
     const successfulTerminal = hasSuccessfulTerminal(events, ob.executionId);
-    const content = reconstructMarkdown(events, ob.executionId);
-    if (content) {
+    const recovered = reconstructRecoveryContent(events, ob.executionId);
+    if (recovered.answer || recovered.contextLine) {
+      const content = recovered.body;
       await this.postFallback(
         ob,
         env,

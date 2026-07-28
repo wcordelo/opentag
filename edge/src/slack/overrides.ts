@@ -18,6 +18,8 @@
  * the turn before persisting a preference or invoking a runtime.
  */
 
+import { CLAUDE_MODEL_ALIASES, expandClaudeModelAlias } from './model-aliases.js'
+
 export type MessageOverrides = {
   cleanedText: string
   harnessType?: string
@@ -25,6 +27,8 @@ export type MessageOverrides = {
   reasoning?: string
   errors: string[]
 }
+
+export { CLAUDE_MODEL_ALIASES, expandClaudeModelAlias }
 
 // Flag name -> HarnessType wire value (serde lowercase of the Rust enum).
 const HARNESS_FLAGS: Record<string, string> = {
@@ -36,12 +40,7 @@ const HARNESS_FLAGS: Record<string, string> = {
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
 // values (--model opus). Bare-flag form also implies the claude-code harness.
-const CLAUDE_MODEL_ALIASES: Record<string, string> = {
-  fable: 'claude-fable-5',
-  haiku: 'claude-haiku-4-5-20251001',
-  opus: 'claude-opus-4-8',
-  sonnet: 'claude-sonnet-5'
-}
+// See model-aliases.ts for the shared map (includes opus-5 / opus-5-fast).
 
 const MODEL_SHORTCUTS: Record<string, { harnessType: string; model: string }> =
   Object.fromEntries(
@@ -94,7 +93,7 @@ export function extractMessageOverrides(text: string): MessageOverrides {
   const modelMatch = MODEL_FLAG_PATTERN.exec(cleaned)
   if (modelMatch) {
     const value = modelMatch[1]!
-    model = CLAUDE_MODEL_ALIASES[value.toLowerCase()] ?? value
+    model = expandClaudeModelAlias(value)
     if (value.includes('/')) {
       errors.push(`provider-qualified model ${value} is unsupported; use --claudex with a GPT model or --claude with a Claude model`)
     }

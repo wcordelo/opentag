@@ -13,6 +13,7 @@ export {
   ConversationStateDO,
   RenderObligationEngine,
   reconstructMarkdown,
+  reconstructRecoveryContent,
 } from "./conversation-state-do.js";
 export type {
   RenderObligationRow,

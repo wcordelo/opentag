@@ -63,6 +63,11 @@ import {
 import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
 import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
 import { reconstructSessionHistory } from "./slack/session-history.js";
+import { createHarnessProgressLiveRenderer } from "./slack/harness-progress-live.js";
+import {
+  formatContextLine,
+  type HarnessContextLine,
+} from "./slack/harness-progress.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 import { bindPermissionSnapshot } from "./permissions/context.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
@@ -674,6 +679,7 @@ export async function runBundledAgentTurn(
     env.WORKSPACE_CONFIG,
     teamId,
     channelId,
+    { includeOverlayText: true },
   );
   if (!(await exactTurnPending())) return { status: "interrupted" };
 
@@ -985,7 +991,14 @@ export async function runBundledAgentTurn(
     draft.email || requesterEmail || transcriptEmails[transcriptEmails.length - 1] || "";
 
   const toolContext: Array<{ description: string; value: string }> = [
-    { description: "systemPrompt", value: config.systemPrompt },
+    {
+      description: "channelContext",
+      value: config.channelContext ?? config.systemPrompt ?? "",
+    },
+    {
+      description: "systemPrompt",
+      value: config.channelContext ?? config.systemPrompt ?? "",
+    },
     { description: "accessBundleId", value: bundle.id },
     {
       description: "allowedTools",
@@ -1029,6 +1042,22 @@ export async function runBundledAgentTurn(
     toolContext.push({
       description: "Requester Context",
       value: requesterContextBlock,
+    });
+  }
+
+  const overlay = config.systemPromptOverlay;
+  if (overlay?.text) {
+    toolContext.push({
+      description: "OpenTag administrator policy (trusted)",
+      value: overlay.text,
+    });
+  } else if (overlay?.digest) {
+    toolContext.push({
+      description: "OpenTag administrator policy digest",
+      value: JSON.stringify({
+        revision: overlay.revision,
+        digest: overlay.digest,
+      }),
     });
   }
 
@@ -1157,6 +1186,34 @@ export async function runBundledAgentTurn(
     );
     const codingTask = repositoryCodingIntent;
     if (!(await exactTurnPending())) return { status: "interrupted" };
+    let progressLive:
+      | ReturnType<typeof createHarnessProgressLiveRenderer>
+      | undefined;
+    let harnessContextForAnswer: HarnessContextLine | undefined;
+    const harnessContextEvidenceRank: Record<
+      HarnessContextLine["modelEvidence"],
+      number
+    > = {
+      unknown: 0,
+      requested: 1,
+      container_argument: 2,
+      provider_reported: 3,
+    };
+    if (env.SLACK_BOT_TOKEN) {
+      const inbound = requireRequestContext(thread).inbound;
+      progressLive = createHarnessProgressLiveRenderer({
+        store,
+        client: createSlackWebClient(env.SLACK_BOT_TOKEN, {
+          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+        }),
+        channelId,
+        ...(inbound?.threadTs || inbound?.ts
+          ? { threadTs: inbound.threadTs ?? inbound.ts }
+          : {}),
+        threadKey: harnessThreadKey,
+        executionId: identity.executionId,
+      });
+    }
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
       conversationKey,
@@ -1174,11 +1231,49 @@ export async function runBundledAgentTurn(
       createPullRequest:
         humanActor && identity.createPullRequest === true,
       permissionSnapshot,
+      ...(config.systemPromptOverlay?.text
+        ? {
+            systemPromptOverlay: {
+              version: 1 as const,
+              revision: config.systemPromptOverlay.revision,
+              digest: config.systemPromptOverlay.digest,
+              text: config.systemPromptOverlay.text,
+              source: "workspace_admin" as const,
+            },
+          }
+        : {}),
+      onHarnessEvent: async (event) => {
+        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
+          const p = event.payload as Record<string, unknown>;
+          const next: HarnessContextLine = {
+            harnessType:
+              typeof p.harnessType === "string" ? p.harnessType : "claudecode",
+            model: typeof p.model === "string" ? p.model : undefined,
+            modelEvidence:
+              p.modelEvidence === "requested" ||
+              p.modelEvidence === "container_argument" ||
+              p.modelEvidence === "provider_reported" ||
+              p.modelEvidence === "unknown"
+                ? p.modelEvidence
+                : "unknown",
+          };
+          // Match SessionEventDO: only upgrade on strictly higher evidence.
+          if (
+            !harnessContextForAnswer ||
+            harnessContextEvidenceRank[next.modelEvidence] >
+              harnessContextEvidenceRank[harnessContextForAnswer.modelEvidence]
+          ) {
+            harnessContextForAnswer = next;
+          }
+        }
+        await progressLive?.handleEvent(event);
+      },
     });
 
     // Stop owns the sole durable terminal transition. Never fall back to
     // AG-UI and never post accumulated text after an interrupt.
     if (!harnessResult.ok && harnessResult.failureKind === "interrupted") {
+      await progressLive?.markTerminal({ ok: false, interrupted: true });
       return { status: "interrupted" };
     }
 
@@ -1191,11 +1286,21 @@ export async function runBundledAgentTurn(
       (harnessResult.failureKind === "duplicate" ||
         harnessResult.failureKind === "concurrent")
     ) {
+      await progressLive?.markTerminal({ ok: false });
       return { status: "rejected", reason: harnessResult.failureKind };
     }
 
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();
+      // Final answer is separate from the live progress message.
+      const prefix =
+        progressLive?.finalAnswerPrefix() ??
+        (harnessContextForAnswer
+          ? `${formatContextLine(harnessContextForAnswer)}\n\n`
+          : "");
+      const body =
+        `${prefix}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
+      await progressLive?.markTerminal({ ok: true });
       // Never-silent guarantee: even a nominally "ok" turn must not post
       // nothing (GOAL.md house rule / SPEC §3.1 taxonomy — error_visible /
       // answer_visible, never silent).
@@ -1205,9 +1310,7 @@ export async function runBundledAgentTurn(
       if (target?.__opentagExecutionFence) {
         try {
           markThreadNextRenderFinal(thread);
-          await thread.post(
-            text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
-          );
+          await thread.post(body);
         } catch (err) {
           if (err instanceof Error && err.message === "active_turn_render_suppressed") {
             return { status: "interrupted" };
@@ -1221,9 +1324,7 @@ export async function runBundledAgentTurn(
           store,
           { threadKey: harnessThreadKey, executionId: identity.executionId },
           async () => {
-            await thread.post(
-              text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
-            );
+            await thread.post(body);
           },
         );
         if (delivery !== "delivered") return { status: "interrupted" };
@@ -1234,6 +1335,7 @@ export async function runBundledAgentTurn(
       };
     }
 
+    await progressLive?.markTerminal({ ok: false });
     // A selected/authoritative harness is never allowed to fall through to a
     // different runtime after any harness-side failure.
     throw new AuthoritativeHarnessError(

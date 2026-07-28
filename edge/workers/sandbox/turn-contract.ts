@@ -1,6 +1,16 @@
 /** Pure, runtime-neutral validation for the pinned harness /turn envelope. */
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+async function sha256HexUtf8(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 // Production turn IDs are fixed-length, purpose-tagged SHA-256 base64url
 // values emitted by edge/src/harness/wire-id.ts. Keep execution and message
 // identities distinct so neither can be substituted for the other.
@@ -34,7 +44,7 @@ export type TurnAttachment = {
   mimeType: string;
   size: number;
 } & (
-  | { kind: "inline"; dataBase64: string }
+  | { kind: "inline"; dataBase64: string; sha256?: string }
   | { kind: "staged"; stageKey: string; sha256?: string }
 );
 
@@ -54,6 +64,15 @@ export interface TurnRequestBody {
   remoteGitApproved?: boolean;
   createPullRequest?: boolean;
   permissionSnapshot?: PermissionSnapshotV1;
+  /** Additive v2 field; Container continues accepting v1 (absent). */
+  contractVersion?: 1 | 2;
+  systemPromptOverlay?: {
+    version: 1;
+    revision: number;
+    digest: string;
+    text: string;
+    source: "workspace_admin";
+  };
 }
 
 export interface PermissionSnapshotV1 {
@@ -353,7 +372,7 @@ export function validateRepoSpec(repo: unknown, policy: RepoPolicy):
   return { ok: true, normalizedUrl: `https://${host}/${parts[0]}/${repoName}.git` };
 }
 
-export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): TurnValidation {
+export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Promise<TurnValidation> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, error: "invalid_request" };
   }
@@ -396,6 +415,12 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       if (item.kind === "inline") {
         if (typeof item.dataBase64 !== "string" || item.dataBase64.length > 44 * 1024 * 1024 ||
             !/^[A-Za-z0-9+/]*={0,2}$/.test(item.dataBase64)) {
+          return { ok: false, error: "invalid_attachments" };
+        }
+        if (
+          item.sha256 !== undefined &&
+          (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256))
+        ) {
           return { ok: false, error: "invalid_attachments" };
         }
         inlineBytes += Math.floor(item.dataBase64.length * 3 / 4) -
@@ -459,6 +484,92 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       return { ok: false, error: "pull_request_requires_attribution" };
     }
   }
+
+  let contractVersion: 1 | 2 | undefined;
+  if (record.contractVersion !== undefined) {
+    if (record.contractVersion !== 1 && record.contractVersion !== 2) {
+      return { ok: false, error: "invalid_contract_version" };
+    }
+    contractVersion = record.contractVersion;
+  }
+
+  let systemPromptOverlay: TurnRequestBody["systemPromptOverlay"];
+  if (record.systemPromptOverlay !== undefined) {
+    if (contractVersion !== 2) {
+      return { ok: false, error: "overlay_requires_contract_v2" };
+    }
+    if (
+      !record.systemPromptOverlay ||
+      typeof record.systemPromptOverlay !== "object" ||
+      Array.isArray(record.systemPromptOverlay)
+    ) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const overlay = record.systemPromptOverlay as Record<string, unknown>;
+    if (overlay.version !== 1) return { ok: false, error: "invalid_system_prompt_overlay" };
+    if (overlay.source !== "workspace_admin") {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    if (
+      typeof overlay.revision !== "number" ||
+      !Number.isSafeInteger(overlay.revision) ||
+      overlay.revision < 0
+    ) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    if (typeof overlay.text !== "string" || typeof overlay.digest !== "string") {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const text = overlay.text;
+    if (text.includes("\0") || text.trim().length === 0) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const encoded = new TextEncoder().encode(text);
+    if (encoded.byteLength > 64 * 1024) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const digestHex = await sha256HexUtf8(text);
+    const expected = overlay.digest.startsWith("sha256:")
+      ? overlay.digest.slice("sha256:".length)
+      : overlay.digest;
+    if (expected !== digestHex) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    systemPromptOverlay = {
+      version: 1,
+      revision: overlay.revision,
+      digest: `sha256:${digestHex}`,
+      text,
+      source: "workspace_admin",
+    };
+  }
+
+  // v2 rejects unknown top-level fields after the compatibility window opens.
+  if (contractVersion === 2) {
+    const allowed = new Set([
+      "sessionId",
+      "executionId",
+      "forwardedMessageId",
+      "threadKey",
+      "inputLines",
+      "attachments",
+      "harnessType",
+      "model",
+      "repo",
+      "requesterContext",
+      "transcript",
+      "codingTask",
+      "remoteGitApproved",
+      "createPullRequest",
+      "permissionSnapshot",
+      "contractVersion",
+      "systemPromptOverlay",
+    ]);
+    for (const key of Object.keys(record)) {
+      if (!allowed.has(key)) return { ok: false, error: `unknown_field:${key}` };
+    }
+  }
+
   return {
     ok: true,
     body: {
@@ -477,6 +588,8 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       remoteGitApproved: record.remoteGitApproved === true,
       ...(record.createPullRequest === undefined ? {} : { createPullRequest: record.createPullRequest as boolean }),
       ...(permissionSnapshot ? { permissionSnapshot } : {}),
+      ...(contractVersion === undefined ? {} : { contractVersion }),
+      ...(systemPromptOverlay ? { systemPromptOverlay } : {}),
     },
   };
 }

@@ -12,7 +12,6 @@ import {
   resolveBotEngineKind,
 } from "./bot-engine.js";
 import {
-  DEFAULT_BUNDLE,
   DEFAULT_SYSTEM_PROMPT,
   normalizeChannelRuntimeDefaults,
   type AccessBundle,
@@ -347,12 +346,32 @@ app.get("/debug/store", requireAdminAuth(), async (c) => {
 });
 
 app.post("/admin/config", requireAdminAuth(), async (c) => {
-  const body = (await c.req.json()) as WorkspaceChannelConfig;
+  const body = (await c.req.json()) as WorkspaceChannelConfig & {
+    expectedRevision?: number;
+    systemPromptOverlay?: {
+      version?: number;
+      revision?: number;
+      text?: string;
+      digest?: string;
+      source?: string;
+    };
+  };
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
-  let runtimeDefaults;
-  if ("runtimeDefaults" in body) {
+
+  const hasChannelContext =
+    body.channelContext !== undefined || body.systemPrompt !== undefined;
+  const hasRuntimeDefaults = "runtimeDefaults" in body;
+  const hasAccessBundle =
+    typeof body.accessBundleId === "string" && body.accessBundleId.length > 0;
+  const hasAdminOwnedFields =
+    body.systemPromptOverlay !== undefined ||
+    body.policies !== undefined ||
+    hasAccessBundle;
+
+  let runtimeDefaults: ReturnType<typeof normalizeChannelRuntimeDefaults>;
+  if (hasRuntimeDefaults) {
     try {
       runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
     } catch (error) {
@@ -361,32 +380,59 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
         400,
       );
     }
-  } else {
-    const existingResponse = await stub.fetch("https://do/getConfig", {
+  }
+
+  // Single DO write when admin-owned fields are present so overlay CAS, channel
+  // context, and runtime defaults cannot partially apply across two RPCs.
+  if (hasAdminOwnedFields) {
+    const response = await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
-      body: JSON.stringify({ teamId: body.teamId, channelId: body.channelId }),
+      body: JSON.stringify({
+        teamId: body.teamId,
+        channelId: body.channelId,
+        ...(hasChannelContext
+          ? { channelContext: body.channelContext ?? body.systemPrompt }
+          : {}),
+        systemPromptOverlay: body.systemPromptOverlay,
+        policies: body.policies,
+        ...(hasAccessBundle ? { accessBundleId: body.accessBundleId } : {}),
+        ...(hasRuntimeDefaults ? { runtimeDefaults: runtimeDefaults ?? null } : {}),
+        ...(body.systemPromptOverlay !== undefined
+          ? { expectedRevision: body.expectedRevision }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      }),
     });
-    if (existingResponse.ok) {
-      const existing = await existingResponse.json() as WorkspaceChannelConfig;
-      runtimeDefaults = existing.runtimeDefaults;
+    if (!response.ok) {
+      return c.json(
+        { error: await response.text() },
+        response.status >= 500 ? 503 : response.status === 409 ? 409 : 400,
+      );
+    }
+    return c.json(await response.json());
+  }
+
+  if (hasChannelContext || hasRuntimeDefaults) {
+    const channelResponse = await stub.fetch("https://do/putChannelContext", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId: body.teamId,
+        channelId: body.channelId,
+        ...(hasChannelContext
+          ? { channelContext: body.channelContext ?? body.systemPrompt }
+          : {}),
+        ...(hasRuntimeDefaults ? { runtimeDefaults: runtimeDefaults ?? null } : {}),
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    if (!channelResponse.ok) {
+      return c.json(
+        { error: await channelResponse.text() },
+        channelResponse.status >= 500 ? 503 : 400,
+      );
     }
   }
-  const response = await stub.fetch("https://do/putConfig", {
-    method: "POST",
-    body: JSON.stringify({
-      ...body,
-      systemPrompt: body.systemPrompt || DEFAULT_SYSTEM_PROMPT,
-      accessBundleId: body.accessBundleId || DEFAULT_BUNDLE.id,
-      ...(runtimeDefaults ? { runtimeDefaults } : {}),
-      updatedAt: new Date().toISOString(),
-    }),
-  });
-  if (!response.ok) {
-    return c.json(
-      { error: await response.text() },
-      response.status >= 500 ? 503 : 400,
-    );
-  }
+
   return c.json({ ok: true });
 });
 

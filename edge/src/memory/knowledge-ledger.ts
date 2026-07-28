@@ -964,7 +964,15 @@ export class KnowledgeLedger {
     return this.tx(() => {
       const current = this.get(job.sourceKey);
       if (!current) return { decision: "noop", reason: "missing" };
-      if (job.configVersion !== authoritativeConfigVersion || current.configVersion !== authoritativeConfigVersion) {
+      const workspaceConfigAhead =
+        job.reason === "delete" &&
+        authoritativeConfigVersion > job.configVersion &&
+        current.configVersion === job.configVersion;
+      if (
+        !workspaceConfigAhead &&
+        (job.configVersion !== authoritativeConfigVersion ||
+          current.configVersion !== authoritativeConfigVersion)
+      ) {
         return { decision: "noop", reason: "config_drift" };
       }
       if (job.requestedAt !== current.requestedAt || job.configVersion !== current.configVersion) {

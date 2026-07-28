@@ -311,19 +311,25 @@ export async function handleKnowledgeQueue(
     }
     try {
       const source = await loadExactSource(env, job);
+      const deleteConfigAdvanced =
+        job.reason === "delete" && source !== undefined &&
+        source.configVersion > job.configVersion;
       if (
         !source ||
         (job.reason !== "delete" && !isTrackedKnowledgeSourceEnabled(source)) ||
         source.teamId !== job.teamId ||
         source.projectId !== job.projectId ||
         source.channelId !== job.channelId ||
-        source.configVersion !== job.configVersion
+        (source.configVersion !== job.configVersion && !deleteConfigAdvanced)
       ) {
         await knowledgeDoRequest(env, job.teamId, "/stale", { job });
         message.ack();
         continue;
       }
 
+      const effectConfigVersion = deleteConfigAdvanced
+        ? source.configVersion
+        : job.configVersion;
       const effectToken = crypto.randomUUID();
       const effect = await workspaceDoRequest<
         | { decision: "lease"; effectToken: string; expiresAt: number; source: TrackedKnowledgeSource }
@@ -332,7 +338,7 @@ export async function handleKnowledgeQueue(
         teamId: job.teamId,
         projectId: job.projectId,
         channelId: job.channelId,
-        configVersion: job.configVersion,
+        configVersion: effectConfigVersion,
         effectToken,
         leaseMs: KNOWLEDGE_CONFIG_EFFECT_LEASE_MS,
         allowDisabled: job.reason === "delete",
@@ -350,7 +356,7 @@ export async function handleKnowledgeQueue(
           teamId: job.teamId,
           projectId: job.projectId,
           channelId: job.channelId,
-          configVersion: job.configVersion,
+          configVersion: effectConfigVersion,
           effectToken,
           allowDisabled: job.reason === "delete",
         });

@@ -394,8 +394,21 @@ Update the docs that own the changed contract:
 | New var, secret, or deploy step | `setup.md`, `docs/operations.md` |
 | New edge command/tool | `edge/README.md`, `AGENTS.md` if it creates a pitfall |
 | New research behavior | `docs/research-actors.md`, `docs/evaluation.md` |
+| New knowledge connector / search tool / MCP surface | `KNOWLEDGE-BASE-SPEC.md` (K2), `docs/operations.md` |
 | New test/smoke flow | `e2e/README.md` |
 | Centaur-derived behavior | `docs/centaur-port.md`, `implementation-notes.md` |
+
+## Knowledge base connectors (K2)
+
+Multi-source knowledge retrieval is additive on the Supermemory Local sidecar:
+
+- Tools (explicit bundle grant; not in `DEFAULT_BUNDLE`): `search_slack`, `search_wiki`, `search_code`, `search_custom`, unified `search`.
+- Connectors normalize into the shared document contract (`sourceKey` / flat metadata) then Local `add` via the Queue consumer only.
+- MCP: `POST /mcp/knowledge` with `Authorization: Bearer $ADMIN_SECRET` — raw citations, no planner, no ingest.
+- Web UI orchestration helpers live in `edge/src/web-ui/knowledge-query.ts` (planner → executor → synthesis).
+- Project scopes: `edge/src/knowledge/projects.ts`. Isolation modes other than `metadata_filter` require proven Local project tags.
+
+Do not call Supermemory from Slack acknowledgement or ordinary non-retrieval turn work.
 
 ## Common unsafe shortcuts
 

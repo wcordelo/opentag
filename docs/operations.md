@@ -575,6 +575,235 @@ Reproduce from `edge/` using `npm ci` under Node 22. Do not rely on a nested
 `workers/sandbox/node_modules`; edge TypeScript includes `workers/**/*.ts` and
 must declare their compile-time packages in `edge/package.json`.
 
+## Slack knowledge index operations (disabled until named gates)
+
+The Supermemory Local integration is an optional sidecar index. Slack still
+terminates only at `opentag-bot`; `ConversationStateDO`, `SessionEventDO`,
+`WorkspaceConfigDO`, and existing durable fences remain authoritative. A
+tracked source is disabled unless one exact `(teamId, projectId, channelId)`
+row is explicitly enabled, and only one project may be enabled for a team and
+channel. Disabling a source is an immediate authorization change.
+
+Source lifecycle administration is a separate fail-closed surface. Every call
+requires both `ADMIN_SECRET` and a one-use Ed25519 artifact in
+`X-OpenTag-Knowledge-Source-Grant`. The external artifact binds its issuer/key,
+named human or service actor, exact team/project/channel, exact action, request
+digest, issue/expiry time, and the expected config version for mutations.
+`WorkspaceConfigDO` atomically consumes the grant, rejects replay/config drift
+and active ingestion effects, performs the action, and durably stores the
+actor, grant/digest, scope, versions, outcome, and time without storing the
+artifact or a signing key.
+
+The routes are deliberately distinct:
+
+- `POST /admin/knowledge/sources/inspect` and `/list` read one exact scope;
+  there is no workspace/channel wildcard list.
+- `POST /admin/knowledge/sources/stage` creates only a missing disabled row at
+  expected version `0`; `/update-disabled` changes only a never-enabled staged
+  row.
+- `POST /admin/knowledge/sources/enable-first` performs the sole first-enable
+  transition, and `/disable` performs the later disable transition. Re-enable
+  remains blocked until the pinned Local deletion/reindex contract is proven.
+
+The Worker has no grant issuer, private key, or fallback authority.
+`KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY`, `KNOWLEDGE_SOURCE_AUTH_ISSUER`, and
+`KNOWLEDGE_SOURCE_AUTH_KEY_ID` remain unset in production until C1/S1 approves
+the external authority and exact staging matrix. With any verifier field
+missing, lifecycle routes return unavailable; `ADMIN_SECRET` alone never
+authorizes a source.
+
+Automatic ingestion is `waitUntil -> KnowledgeDO -> Cloudflare Queue ->
+opentag-bot queue() -> Supermemory Local`. The production Queue and DLQ binding
+remain absent until the named C1 gate approves exact resources and retry
+policy. C1 must configure distinct exact `KNOWLEDGE_QUEUE_NAME` and
+`KNOWLEDGE_DLQ_NAME` values; the primary name cannot use the `-dlq` role suffix
+and the DLQ name must use it. Any Queue delivery with missing, identical,
+swapped, or unknown names is retried and throws before a message body is parsed.
+Missing Slack or Local runtime configuration is recorded as retryable
+degradation; it must not delay Slack acknowledgement or cause a turn to call
+ingestion. During a turn, only the bounded `search_slack` tool may call Local.
+It returns `knowledge_unavailable` without failing the turn when Local is down,
+and it returns no citation after a source disable, policy/version change,
+tombstone, or ledger/revision mismatch.
+
+Local update and delete semantics for the pinned server remain unverified.
+Edits to an already indexed revision stop as
+`unsupported_update_contract`. Slack `message_deleted` handling preserves the
+exact deleted `ts`: only a well-formed deletion proving that timestamp is the
+actual root emits `delete`, persists a source tombstone, and stops as
+`unsupported_delete_contract`. A reply or `thread_broadcast` deletion emits
+`reply_delete` for the exact parent `thread_ts`, refetches the whole thread, and
+uses the edit/reconciliation path. If canonical content changed after an
+indexed revision, it stops non-searchable as `unsupported_update_contract`;
+it never tombstones the parent. Missing or contradictory `previous_message`
+identity is never granted root-tombstone authority; where an exact distinct
+parent and envelope `deleted_ts` remain available it can only request a parent
+refetch, otherwise it is ignored. Operators
+must not simulate deletion with a second add. Disabling config removes
+authorization immediately, and the
+config RPC rejects later re-enable until a verified deletion/reindex contract
+exists, so an old indexed revision cannot become authorized again. Retention
+execution is likewise not enabled before that contract is proven.
+`processing_unconfirmed` means a bounded poll timed out. Reconciliation resumes
+the same durable Local document ID and never issues another add for that
+revision. Only Local status `done` sets `indexed_revision`; `queued`,
+`extracting`, `chunking`, `embedding`, and `indexing` are not searchable states.
+
+An `ambiguous_add_contract` stop means Local may have accepted an add but the
+Worker did not durably record the returned internal ID. Do not replay or issue
+a second add: keep the source blocked until the pinned release proves a safe
+get-by-custom-ID/idempotency recovery contract or an operator resolves it under
+an approved synthetic procedure.
+
+Knowledge recovery controls remain inert until their corresponding
+bindings/data gates are approved. The source-level scheduled entry is the
+convergence engine, but no live cron trigger or production configuration exists
+in `wrangler.bot.toml`. C1 must approve the trigger, Queue resources, and exact
+comma-separated `KNOWLEDGE_RECONCILIATION_TEAM_IDS` scope before setting
+`KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED=true`. The scheduled reconciliation
+coordinator requires that explicit flag, producer binding, exact primary/DLQ
+names, and nonempty exact team scope together; partial configuration fails
+closed.
+
+The scheduled reconciliation coordinator in the global operator KnowledgeDO
+durably fences one scheduler cycle, freezes the
+ordered team scope and its SHA-256 digest, and preserves the active team/run ID
+across isolate restart. Each team run preserves its source-key cursor and
+uncommitted page. An overlapping invocation returns `busy`; an expired lease
+reclaims the same run; config drift begins a fresh exact-scope cycle only after
+the prior lease expires. Each invocation is bounded to 25 rows per page, eight
+pages, and four teams. Partial-page failure leaves the page uncommitted and
+persists exponential backoff capped at one hour. Later scheduled invocations
+continue until every team run is complete, without manual continuation calls.
+Structured JSON metrics are
+`knowledge_reconcile_run_started`, `knowledge_reconcile_page_completed`,
+`knowledge_reconcile_lag_seconds`, `knowledge_reconcile_run_error`, and
+`knowledge_reconcile_run_completed`; they expose scope digest/team ordinal and
+counts, not source content.
+
+Manual diagnostic reconciliation is one exact team at a time:
+`POST /admin/knowledge/reconcile` remains a one-page control for that exact
+team. The first call may omit `runId`; continuation supplies the returned
+`runId`. Neither that route nor repeated operator calls are the periodic
+convergence mechanism. A page commits only when each application-level
+descriptor result was accepted or an authoritative ledger/config read proves
+the exact duplicate, converged state, or safe supersession. Response loss is
+reported as `accepted_response_lost` only when the exact durable descriptor is
+proved. Active leases are skipped; expired leases, incomplete work, retryable
+failures, and `processing_unconfirmed` can be requeued. Tombstones, disabled
+sources, permanent failures, unsupported mutation states, and unproved
+descriptor rejection do not advance silently.
+
+The future C1 DLQ consumer is selected only when the delivery name exactly
+matches the role-validated `KNOWLEDGE_DLQ_NAME`; only the exact
+`KNOWLEDGE_QUEUE_NAME` can reach normal ingestion. No binding or value is
+present in the current production configuration. The DLQ handler records each
+actual DLQ message in the operator
+KnowledgeDO before acknowledging it. DLQ inspection reads the durable records
+with
+`GET /admin/knowledge/dlq?cursor=<n>&limit=<1..100>`. Replay is never automatic
+or bulk: after correcting the root cause, call
+`POST /admin/knowledge/dlq/<recordId>/replay` with the exact expected
+`sourceKey` and a bounded root-cause correction reference. Replay reloads the
+exact enabled source/config and rejects drift, malformed records, wildcard
+scope, and a second replay. A successful replay creates one new reconcile
+descriptor through the normal KnowledgeDO outbox; it does not send directly to
+Local or bypass the Queue. Replay parses the application-level descriptor
+result. `replayed` is recorded only for a directly observed `accepted` result.
+An exact authoritative `accepted_response_lost` proof, exact duplicate, already
+converged work, or safely superseded newer descriptor is a terminal `disposed`
+record with an explicit disposition. Unproved rejection or config drift
+releases the replay claim for retry/operator action.
+
+Backfill likewise has no all-workspace default.
+`POST /admin/knowledge/backfill/discover` requires one team, one project, a
+caller-chosen bounded `manifestId`, a non-empty exact channel list, a bounded
+time range, `maximumCount`,
+`maximumRatePerMinute`, `maximumErrors`, exact `releaseIds`, and a
+`rollbackOwner`. There is no caller cursor field: the caller selects the stable
+manifest identity before the first request, and the server creates or resumes
+only that exact immutable scope. It persists each exact channel as `unvisited`,
+`pending` with its own Slack cursor, or `exhausted`. Each invocation reads at
+most 20 Slack pages; resumption sends the same manifest ID and exact immutable
+request. Because the ID is known before the first Slack read, even a failed
+first invocation can resume the persisted page state. Page candidates and
+cursor advancement merge atomically behind the expected channel state, so an
+isolate restart or concurrent resume cannot skip a page.
+
+Discovery continues across channels even after the candidate count exceeds the
+maximum. A manifest becomes approvable only after every exact channel/range is
+exhausted and the persisted deduplicated count is within `maximumCount`.
+`complete_over_budget` and `blocked_config_drift` are terminal, inert states;
+an operator must start a new exact manifest. Only complete persisted candidates
+produce the canonical version-2 dry-run manifest, jobs, count, per-channel page
+evidence, and SHA-256 digest. Discovery never executes jobs.
+
+`POST /admin/knowledge/backfill/<manifestId>/approve` accepts only `teamId` and
+the exact manifest digest in its JSON body. It also requires a compact EdDSA
+artifact in `x-opentag-knowledge-backfill-approval`. The Worker verifies only
+an externally configured Ed25519 public key, issuer, and key ID; it has no
+private key or minting route. The signed one-use P1 artifact binds approval ID,
+human approver identity, manifest ID/digest, exact team/project/channels/range,
+maximum count/rate/error budget, release IDs, rollback owner, issued time, and
+expiry. The KnowledgeDO atomically rejects replay and records redacted evidence.
+Caller-supplied `approvalGate`, reference, approver, or approval time fields are
+rejected. `ADMIN_SECRET` remains execution/transport authority and cannot mint
+P1 authority. The verifier variables remain unset until an external P1 issuer
+and key are explicitly approved:
+`KNOWLEDGE_BACKFILL_APPROVAL_PUBLIC_KEY`,
+`KNOWLEDGE_BACKFILL_APPROVAL_ISSUER`, and
+`KNOWLEDGE_BACKFILL_APPROVAL_KEY_ID`.
+
+Execution through
+`POST /admin/knowledge/backfill/<manifestId>/execute` rechecks the stored digest,
+unexpired independently verified P1 evidence, exact team/project/channels,
+every current source config version, and the count/rate/error budgets before
+claiming a bounded restart-safe page. Rate reservations are durable per minute.
+A digest, scope, config, approval-expiry, or budget mismatch blocks the
+manifest; there is no caller-supplied replacement scope.
+KnowledgeDO rejects `reason: "backfill"` on its ordinary descriptor endpoint;
+only a job in the currently claimed page of that persisted P1-approved
+manifest can enter the outbox. Every enqueue response is parsed. The pending
+page durably records each `accepted`, exact duplicate,
+`accepted_response_lost`, authoritatively converged, or explicitly safe
+superseded disposition. The page cursor advances only when every exact job has
+one of those dispositions. An unproved rejection records an operator-visible
+partial-page error and error-budget consumption while leaving the successful
+job results and page cursor restart-safe; it never reports the whole page as
+enqueued.
+Approval expiry is enforced at page claim, each enqueue, disposition/failure
+recording, and commit. An expired approval therefore cannot authorize another
+effect, but it also does not discard a pending page: the page token, accepted
+dispositions, next index, error count, and rate reservation remain durable
+across restart. If the original fixed rate window elapsed before renewal, the
+new window reserves only the still-unclassified jobs; if it has not elapsed,
+the original reservation remains authoritative. After the prior approval
+expires, the same approve route may
+consume a new independently signed one-use artifact only for the exact
+unchanged manifest digest, scope, releases, rollback owner, and
+same-or-stricter budgets. The new issuance cannot overlap the prior unexpired
+approval;
+expired renewals and replayed IDs are rejected. The append-only approval audit
+links each renewal to the approval it supersedes. Execution resumes only under
+the current unexpired approval and skips already classified jobs; a second
+expiry requires another exact-scope, same-or-stricter reapproval.
+Every live canary and each backfill manifest requires separate P1 approval.
+
+`wrangler.bot-store.toml` is a local/workerd test alias. It has no package
+deploy script and embeds no admin credential; Vitest injects its test bearer
+through Miniflare bindings. Run `npm run validate:deploy-config` from `edge/`
+to reject any deploy script targeting a test/debug TOML and any tracked
+Wrangler TOML containing `ADMIN_SECRET` or a known/default admin credential.
+
+The remaining external gates are independent: R1 covers the exact Railway
+service/volume/domain/runtime plan; R2 covers backup restoration and key
+rotation rehearsal; C1/S1 cover Cloudflare bindings/secrets and Slack changes;
+P1 covers each canary/backfill; D1 covers exact cleanup targets. No live
+ingestion, canary, or backfill begins before backup restoration and
+cross-workspace authorization tests pass. Local bind, health, generated-key,
+complete data-path, inherited database-variable, and non-root volume behavior
+remain R1 runtime proofs rather than current operational facts.
+
 ## Rollback and safety
 
 - Bot, agent, Claudex proxy, harness, and research deploy independently, but
@@ -610,3 +839,14 @@ must declare their compile-time packages in `edge/package.json`.
 - [ ] Approved coding turn creates a new commit and attributed PR.
 - [ ] Unapproved coding turn cannot push or create a PR.
 - [ ] Alarm recovery produces one visible terminal outcome, never two.
+
+## Knowledge base K2 (file-only until gates)
+
+Slack B0–B4 remains behind R1/C1/S1/P1. K2 adds wiki/code/custom connectors, distillation libraries, RRF unified search, MCP (`POST /mcp/knowledge`), and project scope helpers without enabling production ingestion.
+
+Operator checklist (still inert without approvals):
+
+- [ ] `SUPERMEMORY_MUTATION_CONTRACT=verified` only after R1 Local update/delete smoke.
+- [ ] Grant `search_*` / `search` tools via workspace access bundles (not default).
+- [ ] MCP callers use `ADMIN_SECRET` bearer; never accept caller-supplied `containerTag` / `customId`.
+- [ ] Project isolation `tag_fanout` / `tag_duplicate` only after Local project-tag contract proof.

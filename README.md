@@ -8,8 +8,11 @@ optional repository coding — with runtime and state on Cloudflare Workers,
 Durable Objects, and Containers. Slack is the product surface; everything else
 stays behind the bot.
 
-Built with [`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)
-and hosted on Cloudflare. No Socket Mode. No Railway bot. Events API only.
+Runs on **Cloudflare** (Workers, Durable Objects, Containers). The Slack bot
+engine uses CopilotKit’s [`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)
+package among other pieces — TanStack AI for the triage runtime, Claude Code
+for repository turns, and MCP for tools like Linear and Notion. No Socket Mode.
+No Railway bot. Events API only.
 
 > **Canonical docs:** [PRODUCT.md](./PRODUCT.md) ·
 > [ARCHITECTURE.md](./ARCHITECTURE.md) · [DECISIONS.md](./DECISIONS.md) ·
@@ -31,8 +34,6 @@ and hosted on Cloudflare. No Socket Mode. No Railway bot. Events API only.
 | Repository coding | Claude Code in an isolated Container with Worker-enforced egress and git postconditions |
 
 ▶️ **[Watch the demo](https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135)** (~50s) — generative UI in a Slack thread plus an Approve gate before writing out.
-
-Self-host with the stack below, or **[join the managed waitlist →](https://go.copilotkit.ai/opentag-managed-gh)**.
 
 ---
 
@@ -193,10 +194,10 @@ reports success ahead of the underlying work.
 
 ### Cross-isolate HITL
 
-`@copilotkit/channels` keeps `awaitChoice` waiters in isolate memory. Slack
-button clicks often land on a different isolate. OpenTag embeds a stable
-`choiceId` in every Create/Cancel (and remote-git) button, persists the click
-in `BOT_STATE`, and races the in-memory waiter against a Durable Object poll
+The Channels `awaitChoice` waiters live in isolate memory. Slack button clicks
+often land on a different isolate. OpenTag embeds a stable `choiceId` in every
+Create/Cancel (and remote-git) button, persists the click in `BOT_STATE`, and
+races the in-memory waiter against a Durable Object poll
 (`edge/src/hitl/durable-choice.ts`).
 
 ### Runtime selection is authoritative
@@ -431,7 +432,7 @@ opentag/
 │   │   ├── sandbox/           # opentag-harness Worker
 │   │   ├── claudex-proxy/     # Private Claudex backend
 │   │   └── orchestrator/      # Research actors
-│   └── vendor/                # Workers-safe @copilotkit/channels tarball
+│   └── vendor/                # Vendored Workers-safe Channels package
 └── docs/                      # Operations, extending, Centaur port ledger
 ```
 
@@ -553,15 +554,6 @@ Ledger: [docs/centaur-port.md](./docs/centaur-port.md).
 
 When documents disagree: **PRODUCT → ARCHITECTURE → DECISIONS → operations →
 source/tests**.
-
----
-
-## Don’t want to host it yourself?
-
-A managed CopilotKit service is on the way — same agent shape, less ops.
-
-- **[Join the waitlist →](https://go.copilotkit.ai/opentag-managed-gh)**
-- **[Talk to an engineer →](https://copilotkit.ai/talk-to-an-engineer)**
 
 ---
 

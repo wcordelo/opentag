@@ -23,7 +23,7 @@ WORKDIR /build
 COPY containers/harness/package.json containers/harness/package-lock.json ./
 RUN npm ci
 
-COPY edge/workers/sandbox/harness-server.ts edge/workers/sandbox/tool-host.ts edge/workers/sandbox/turn-contract.ts ./
+COPY edge/workers/sandbox/harness-server.ts edge/workers/sandbox/tool-host.ts edge/workers/sandbox/turn-contract.ts edge/workers/sandbox/image-normalization.ts ./
 
 # Compile with the lockfile-pinned TypeScript version. Compiling to
 # ES2022/ESM (not CommonJS) keeps `import.meta` usable in the sources
@@ -38,7 +38,14 @@ RUN ./node_modules/.bin/tsc \
       --strict \
       --skipLibCheck \
       --outDir dist \
-      harness-server.ts tool-host.ts turn-contract.ts
+      harness-server.ts tool-host.ts turn-contract.ts image-normalization.ts
+
+# Production deps for the runtime image (sharp native modules).
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS harness-deps
+WORKDIR /opt/harness-deps
+COPY containers/harness/package.json containers/harness/package-lock.json ./
+RUN npm ci --omit=dev \
+    && test -d ./node_modules/sharp
 
 # Install Claude Code from the same integrity-locked npm graph, without the
 # compiler-only dependencies used by the build stage.
@@ -226,6 +233,8 @@ RUN mkdir -p /opt/harness \
 COPY --from=build /build/dist/harness-server.js /opt/harness/harness-server.js
 COPY --from=build /build/dist/tool-host.js /opt/harness/tool-host.js
 COPY --from=build /build/dist/turn-contract.js /opt/harness/turn-contract.js
+COPY --from=build /build/dist/image-normalization.js /opt/harness/image-normalization.js
+COPY --from=harness-deps /opt/harness-deps/node_modules /opt/harness/node_modules
 COPY containers/harness/SYSTEM_PROMPT.md /opt/harness/SYSTEM_PROMPT.md
 
 # Make the optional custom-tool bridge discoverable to every Claude turn.
@@ -249,14 +258,20 @@ RUN mkdir -p /work \
     && chown harness:harness /work \
     && chmod 0755 /work \
     && chown -R root:root /opt/harness \
-    && find /opt/harness -type f -exec chmod 0444 {} + \
+    && find /opt/harness \( -path '/opt/harness/node_modules' -o -path '/opt/harness/node_modules/*' \) -prune \
+         -o -type f -exec chmod 0444 {} + \
+    && find /opt/harness/node_modules -type d -exec chmod 0555 {} + \
+    && find /opt/harness/node_modules -type f ! -perm /111 -exec chmod 0444 {} + \
+    && find /opt/harness/node_modules -type f -perm /111 -exec chmod 0555 {} + \
     && chmod 0555 /opt/harness \
     && test "$(stat -c '%u:%g:%a' /opt/harness)" = "0:0:555" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/harness-server.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/tool-host.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/turn-contract.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/image-normalization.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/package.json)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/SYSTEM_PROMPT.md)" = "0:0:444" \
+    && test -d /opt/harness/node_modules/sharp \
     && test "$(stat -c '%u:%g:%a' /home/harness)" = "0:0:555" \
     && ! setpriv --reuid=1001 --regid=1001 --init-groups \
       sh -c 'printf tamper >> /opt/harness/SYSTEM_PROMPT.md' \

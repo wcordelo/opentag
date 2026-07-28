@@ -154,8 +154,11 @@ export const edgeCommands = [
         const next: WorkspaceChannelConfig = {
           teamId,
           channelId,
+          channelContext: runtimeCommand
+            ? (existing.channelContext ?? existing.systemPrompt ?? DEFAULT_SYSTEM_PROMPT)
+            : text?.trim() || DEFAULT_SYSTEM_PROMPT,
           systemPrompt: runtimeCommand
-            ? existing.systemPrompt
+            ? (existing.channelContext ?? existing.systemPrompt ?? DEFAULT_SYSTEM_PROMPT)
             : text?.trim() || DEFAULT_SYSTEM_PROMPT,
           policies: existing.policies ?? {
             allowMemoryWrite: true,
@@ -169,9 +172,15 @@ export const edgeCommands = [
           const stub = env.WORKSPACE_CONFIG.get(
             env.WORKSPACE_CONFIG.idFromName(teamId),
           );
-          const response = await stub.fetch("https://do/putConfig", {
+          const response = await stub.fetch("https://do/putChannelContext", {
             method: "POST",
-            body: JSON.stringify(next),
+            body: JSON.stringify({
+              teamId: next.teamId,
+              channelId: next.channelId,
+              channelContext: next.channelContext,
+              runtimeDefaults: next.runtimeDefaults,
+              updatedAt: next.updatedAt,
+            }),
           });
           return { ok: response.ok, status: response.status };
         });
@@ -189,7 +198,7 @@ export const edgeCommands = [
             ? "Channel runtime default cleared. Deployment defaults now apply unless a sticky thread choice exists."
             : runtimeCommand?.kind === "set"
               ? `Channel runtime default set: harness \`${runtimeDefaults?.harnessType}\`, model \`${runtimeDefaults?.model ?? "harness default"}\`. Existing sticky thread choices take precedence.`
-              : `Channel prompt updated (${next.systemPrompt.length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
+              : `Channel prompt updated (${(next.channelContext ?? next.systemPrompt ?? "").length} chars). Bundle: \`${next.accessBundleId}\` (unchanged).`,
         );
       } catch (err) {
         if (err instanceof Error && err.message === "active_turn_render_suppressed") return;

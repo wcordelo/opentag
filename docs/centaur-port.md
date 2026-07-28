@@ -299,16 +299,27 @@ Claude's own success claim is held until OpenTag verifies:
   same bucket used by the bot's staged attachment writer.
 - Clone-per-session can be slow for large repositories. R2-backed snapshots or
   shallow-cache refresh are possible future optimizations.
-- The harness streams NDJSON into the event log, but Slack currently posts the
-  accumulated harness answer as one final fenced message. `onText` is the hook
-  for future live coding output.
+- The harness streams NDJSON into the event log (`output`, `error`, `done`,
+  plus additive `context` and `progress`). Slack shows one compact
+  evidence-labeled context line and a coalesced progress block with the final
+  answer. `onText` / `onHarnessEvent` remain the live-rendering hooks.
 - AG-UI text uses the Channels incremental renderer; the bespoke conflation
-  helper remains the adapter `stream()` path. Richer harness task/plan events
-  are not yet emitted.
+  helper remains the adapter `stream()` path.
+- Harness output is sanitized at the Worker boundary (`edge/src/harness/redaction.ts`)
+  before SessionEventDO persistence, callbacks, and Slack delivery.
+- Image attachments are normalized in the Container after digest verification
+  (long edge ≤1568, encoded ≤4 MiB) via `sharp`; already-safe images stay byte-identical.
+- Channel config splits user-editable `channelContext` from admin-owned
+  `systemPromptOverlay` (`/putChannelContext` vs `/putAdminConfig`).
+- Opus shortcuts: `--opus` → `claude-opus-4-8`; `--opus-5` / `--opus-5-fast`
+  → `claude-opus-5` / `claude-opus-5-fast`.
 - Set `SESSION_VIEWER_BASE_URL` with `ADMIN_SECRET` to append a signed,
   expiring first-turn event link. The endpoint is read-only and no-store.
 - The current outbound policy is deliberately GitHub-specific. Other git hosts
   need their own parser, allowlist, branch proof, and API authorization logic.
+- **Container smoke (sharp under UID 1001, v2 overlay turns):** blocked in Cloud
+  environments without Docker/BuildKit; TypeScript tests do not prove native
+  image-module packaging.
 
 ## Source documents
 

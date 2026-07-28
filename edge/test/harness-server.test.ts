@@ -478,6 +478,29 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     });
     expect(mapStreamJsonLine(line)).toEqual([
       { kind: "output", payload: { tool: "Bash", summary: "Bash: npm test" } },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Bash",
+          summary: "Bash: npm test",
+        },
+      },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 2,
+          category: "tool",
+          state: "completed",
+          title: "Bash",
+        },
+      },
     ]);
   });
 
@@ -494,6 +517,29 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
     expect(mapStreamJsonLine(line)).toEqual([
       { kind: "output", payload: { text: "Let me check." } },
       { kind: "output", payload: { tool: "Read", summary: "Read: a.ts" } },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Read",
+          summary: "Read: a.ts",
+        },
+      },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-toolu_1",
+          sequence: 2,
+          category: "tool",
+          state: "completed",
+          title: "Read",
+        },
+      },
     ]);
   });
 

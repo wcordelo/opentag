@@ -674,6 +674,7 @@ export async function runBundledAgentTurn(
     env.WORKSPACE_CONFIG,
     teamId,
     channelId,
+    { includeOverlayText: true },
   );
   if (!(await exactTurnPending())) return { status: "interrupted" };
 
@@ -985,7 +986,14 @@ export async function runBundledAgentTurn(
     draft.email || requesterEmail || transcriptEmails[transcriptEmails.length - 1] || "";
 
   const toolContext: Array<{ description: string; value: string }> = [
-    { description: "systemPrompt", value: config.systemPrompt },
+    {
+      description: "channelContext",
+      value: config.channelContext ?? config.systemPrompt ?? "",
+    },
+    {
+      description: "systemPrompt",
+      value: config.channelContext ?? config.systemPrompt ?? "",
+    },
     { description: "accessBundleId", value: bundle.id },
     {
       description: "allowedTools",
@@ -1029,6 +1037,22 @@ export async function runBundledAgentTurn(
     toolContext.push({
       description: "Requester Context",
       value: requesterContextBlock,
+    });
+  }
+
+  const overlay = config.systemPromptOverlay;
+  if (overlay?.text) {
+    toolContext.push({
+      description: "OpenTag administrator policy (trusted)",
+      value: overlay.text,
+    });
+  } else if (overlay?.digest) {
+    toolContext.push({
+      description: "OpenTag administrator policy digest",
+      value: JSON.stringify({
+        revision: overlay.revision,
+        digest: overlay.digest,
+      }),
     });
   }
 
@@ -1157,6 +1181,13 @@ export async function runBundledAgentTurn(
     );
     const codingTask = repositoryCodingIntent;
     if (!(await exactTurnPending())) return { status: "interrupted" };
+    let contextLine = "";
+    const progressItems = new Map<
+      string,
+      import("./slack/harness-progress.js").ProgressItem
+    >();
+    const { formatContextLine, applyProgressEvent, renderProgressMarkdown } =
+      await import("./slack/harness-progress.js");
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
       conversationKey,
@@ -1174,6 +1205,62 @@ export async function runBundledAgentTurn(
       createPullRequest:
         humanActor && identity.createPullRequest === true,
       permissionSnapshot,
+      ...(config.systemPromptOverlay?.text
+        ? {
+            systemPromptOverlay: {
+              version: 1 as const,
+              revision: config.systemPromptOverlay.revision,
+              digest: config.systemPromptOverlay.digest,
+              text: config.systemPromptOverlay.text,
+              source: "workspace_admin" as const,
+            },
+          }
+        : {}),
+      onHarnessEvent: (event) => {
+        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
+          const p = event.payload as Record<string, unknown>;
+          contextLine = formatContextLine({
+            harnessType:
+              typeof p.harnessType === "string" ? p.harnessType : selectedHarness!,
+            model: typeof p.model === "string" ? p.model : undefined,
+            modelEvidence:
+              p.modelEvidence === "requested" ||
+              p.modelEvidence === "container_argument" ||
+              p.modelEvidence === "provider_reported" ||
+              p.modelEvidence === "unknown"
+                ? p.modelEvidence
+                : "unknown",
+          });
+        }
+        if (event.kind === "progress" && event.payload && typeof event.payload === "object") {
+          const p = event.payload as Record<string, unknown>;
+          if (
+            typeof p.progressId === "string" &&
+            typeof p.sequence === "number" &&
+            typeof p.title === "string"
+          ) {
+            const applied = applyProgressEvent(progressItems, {
+              progressId: p.progressId,
+              sequence: p.sequence,
+              category:
+                p.category === "commentary" || p.category === "task" || p.category === "tool"
+                  ? p.category
+                  : "task",
+              state:
+                p.state === "started" ||
+                p.state === "updated" ||
+                p.state === "completed" ||
+                p.state === "failed"
+                  ? p.state
+                  : "updated",
+              title: p.title,
+              ...(typeof p.summary === "string" ? { summary: p.summary } : {}),
+            });
+            progressItems.clear();
+            for (const [k, v] of applied.items) progressItems.set(k, v);
+          }
+        }
+      },
     });
 
     // Stop owns the sole durable terminal transition. Never fall back to
@@ -1196,6 +1283,13 @@ export async function runBundledAgentTurn(
 
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();
+      const progressBlock =
+        progressItems.size > 0
+          ? `${renderProgressMarkdown(progressItems.values(), { done: true })}\n\n`
+          : "";
+      const prefix = contextLine ? `${contextLine}\n\n` : "";
+      const body =
+        `${prefix}${progressBlock}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
       // Never-silent guarantee: even a nominally "ok" turn must not post
       // nothing (GOAL.md house rule / SPEC §3.1 taxonomy — error_visible /
       // answer_visible, never silent).
@@ -1205,9 +1299,7 @@ export async function runBundledAgentTurn(
       if (target?.__opentagExecutionFence) {
         try {
           markThreadNextRenderFinal(thread);
-          await thread.post(
-            text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
-          );
+          await thread.post(body);
         } catch (err) {
           if (err instanceof Error && err.message === "active_turn_render_suppressed") {
             return { status: "interrupted" };
@@ -1221,9 +1313,7 @@ export async function runBundledAgentTurn(
           store,
           { threadKey: harnessThreadKey, executionId: identity.executionId },
           async () => {
-            await thread.post(
-              text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`,
-            );
+            await thread.post(body);
           },
         );
         if (delivery !== "delivered") return { status: "interrupted" };

@@ -27,6 +27,12 @@ import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import type { PreparedAttachment } from "../slack/download-files.js";
 import type { PermissionSnapshotV1 } from "../permissions/contract.js";
+import {
+  collectExactSecretsFromEnv,
+  emitRedactionTelemetry,
+  malformedNdjsonDigest,
+  sanitizeValue,
+} from "./redaction.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -58,8 +64,21 @@ export interface RunHarnessTurnArgs {
   createPullRequest?: boolean;
   /** Redacted informational snapshot; the sandbox Worker enriches its own section. */
   permissionSnapshot?: PermissionSnapshotV1;
+  /** Trusted administrator overlay for coding turns (contract v2). */
+  systemPromptOverlay?: {
+    version: 1;
+    revision: number;
+    digest: string;
+    text: string;
+    source: "workspace_admin";
+  };
   /** Called once per `output` event carrying a text delta (best-effort live rendering hook — unused in v1's single-final-post path, kept for a later incremental-render phase). */
   onText?: (delta: string) => void;
+  /** Optional progress/context callback for live Slack progress rendering. */
+  onHarnessEvent?: (event: {
+    kind: "context" | "progress";
+    payload: unknown;
+  }) => void;
 }
 
 export type HarnessFailureKind =
@@ -73,10 +92,13 @@ export type HarnessFailureKind =
   | "spawn_or_exit"
   | "missing_done"
   | "persistence"
+  | "sanitization"
   | "interrupted"
   | "postcondition"
   | "transport"
   | "harness";
+
+export type HarnessEventKind = "output" | "error" | "done" | "context" | "progress";
 
 export type RunHarnessTurnResult =
   | { ok: true; text: string; terminalPersisted?: true }
@@ -144,7 +166,7 @@ interface SessionEventsFullRpc extends SessionEventsRpc {
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
     executionId: string;
-    kind: "output" | "error" | "done";
+    kind: HarnessEventKind;
     payload: unknown;
   }): Promise<{ id: number }>;
 }
@@ -247,7 +269,7 @@ export async function interruptHarnessTurn(
 async function appendStrict(
   sessionDo: SessionEventsFullRpc,
   executionId: string,
-  kind: "output" | "error" | "done",
+  kind: HarnessEventKind,
   payload: unknown,
 ): Promise<void> {
   try {
@@ -258,6 +280,54 @@ async function appendStrict(
   }
 }
 
+class EventSanitizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EventSanitizationError";
+  }
+}
+
+/**
+ * Sanitize then append. Reuses the same sanitized object for any further
+ * accumulation/callback delivery. Fail-closed on sanitizer inability.
+ */
+async function sanitizeAndAppend(
+  sessionDo: SessionEventsFullRpc,
+  executionId: string,
+  kind: HarnessEventKind,
+  payload: unknown,
+  exactSecrets: readonly string[],
+): Promise<unknown> {
+  const sanitized = sanitizeValue(payload, { exactSecrets });
+  if (!sanitized.ok) {
+    emitRedactionTelemetry({
+      ruleCategory: "bearer",
+      eventKind: kind,
+      replacementCount: sanitized.replacementCount,
+      sanitizerFailureCount: 1,
+      executionId,
+    });
+    throw new EventSanitizationError(
+      `event_sanitization_failed:${sanitized.reason}`,
+    );
+  }
+  if (sanitized.replacementCount > 0) {
+    for (const category of sanitized.categories.length
+      ? sanitized.categories
+      : (["bearer"] as const)) {
+      emitRedactionTelemetry({
+        ruleCategory: category,
+        eventKind: kind,
+        replacementCount: sanitized.replacementCount,
+        sanitizerFailureCount: 0,
+        executionId,
+      });
+    }
+  }
+  await appendStrict(sessionDo, executionId, kind, sanitized.value);
+  return sanitized.value;
+}
+
 /** Record a failed terminal without ever disguising a storage failure as the original cause. */
 async function persistFailure(
   sessionDo: SessionEventsFullRpc,
@@ -265,17 +335,25 @@ async function persistFailure(
   failureKind: HarnessFailureKind,
   message: string,
   text: string,
+  exactSecrets: readonly string[] = [],
 ): Promise<RunHarnessTurnResult> {
+  const sanitizedMessage = sanitizeValue(message, { exactSecrets });
+  const summary =
+    sanitizedMessage.ok && typeof sanitizedMessage.value === "string"
+      ? sanitizedMessage.value
+      : failureKind === "sanitization"
+        ? "event_sanitization_failed"
+        : "harness_failure";
   let errorAppendFailure: string | undefined;
   try {
-    await appendStrict(sessionDo, executionId, "error", { message });
+    await appendStrict(sessionDo, executionId, "error", { message: summary });
   } catch (err) {
     errorAppendFailure = err instanceof Error ? err.message : String(err);
   }
   try {
     await appendStrict(sessionDo, executionId, "done", {
       ok: false,
-      summary: message,
+      summary,
     });
   } catch (err) {
     return failed(
@@ -287,7 +365,7 @@ async function persistFailure(
   }
   return errorAppendFailure
     ? failed("persistence", `event_persistence_failed: ${errorAppendFailure}`, text, true)
-    : failed(failureKind, message, text, true);
+    : failed(failureKind, summary, text, true);
 }
 
 async function interrupted(
@@ -415,12 +493,19 @@ export async function runHarnessTurn(
   if (args.codingTask) body.codingTask = true;
   if (args.createPullRequest) body.createPullRequest = true;
   if (args.permissionSnapshot) body.permissionSnapshot = args.permissionSnapshot;
+  if (args.systemPromptOverlay) {
+    body.contractVersion = 2;
+    body.systemPromptOverlay = args.systemPromptOverlay;
+  }
 
   let accumulatedText = "";
   let sawDone = false;
   let doneOk = false;
   let doneSummary: string | undefined;
   let lastHarnessError: string | undefined;
+  const exactSecrets = collectExactSecretsFromEnv(
+    env as unknown as Record<string, unknown>,
+  );
 
   /** Parse + mirror one NDJSON line into the event log, in order, awaited. */
   const consumeLine = async (line: string): Promise<boolean> => {
@@ -428,34 +513,57 @@ export async function runHarnessTurn(
     try {
       parsed = JSON.parse(line) as { kind?: string; payload?: unknown };
     } catch {
-      // Malformed line from the container — never crash the stream over it.
-      console.error("[harness-client] malformed NDJSON line", line.slice(0, 200));
+      const dig = await malformedNdjsonDigest(line);
+      console.error(
+        "[harness-client] malformed NDJSON line",
+        JSON.stringify(dig),
+      );
       return false;
     }
 
     if (parsed.kind === "output") {
-      const payload = (parsed.payload ?? {}) as {
-        text?: string;
-        tool?: string;
-        summary?: string;
-      };
-      await appendStrict(sessionDo, executionId, "output", payload);
-      if (typeof payload.text === "string" && payload.text) {
-        accumulatedText += payload.text;
-        args.onText?.(payload.text);
+      const sanitized = (await sanitizeAndAppend(
+        sessionDo,
+        executionId,
+        "output",
+        parsed.payload ?? {},
+        exactSecrets,
+      )) as { text?: string; tool?: string; summary?: string };
+      if (typeof sanitized.text === "string" && sanitized.text) {
+        accumulatedText += sanitized.text;
+        args.onText?.(sanitized.text);
       }
     } else if (parsed.kind === "error") {
-      await appendStrict(sessionDo, executionId, "error", parsed.payload ?? {});
-      const payload = (parsed.payload ?? {}) as { message?: unknown };
-      if (typeof payload.message === "string") lastHarnessError = payload.message;
+      const sanitized = (await sanitizeAndAppend(
+        sessionDo,
+        executionId,
+        "error",
+        parsed.payload ?? {},
+        exactSecrets,
+      )) as { message?: unknown };
+      if (typeof sanitized.message === "string") lastHarnessError = sanitized.message;
+    } else if (parsed.kind === "context" || parsed.kind === "progress") {
+      const sanitized = await sanitizeAndAppend(
+        sessionDo,
+        executionId,
+        parsed.kind,
+        parsed.payload ?? {},
+        exactSecrets,
+      );
+      args.onHarnessEvent?.({ kind: parsed.kind, payload: sanitized });
     } else if (parsed.kind === "done") {
-      const payload = (parsed.payload ?? {}) as { ok?: boolean; summary?: string };
+      const sanitized = (await sanitizeAndAppend(
+        sessionDo,
+        executionId,
+        "done",
+        parsed.payload ?? {},
+        exactSecrets,
+      )) as { ok?: boolean; summary?: string };
       // A successful result is impossible unless the terminal event is
       // durably committed. Do not swallow this append failure.
-      await appendStrict(sessionDo, executionId, "done", payload);
       sawDone = true;
-      doneOk = payload.ok === true;
-      doneSummary = payload.summary;
+      doneOk = sanitized.ok === true;
+      doneSummary = sanitized.summary;
       return true;
     }
     // Unknown kinds are ignored — forward compatibility with new event types.
@@ -485,6 +593,7 @@ export async function runHarnessTurn(
         res.status === 401 || res.status === 403 ? "auth" : "http",
         error,
         accumulatedText,
+        exactSecrets,
       );
     }
 
@@ -542,6 +651,17 @@ export async function runHarnessTurn(
         accumulatedText,
       );
     }
+    if (err instanceof EventSanitizationError) {
+      // Persist only generated safe diagnostics — never the unsafe raw value.
+      return persistFailure(
+        sessionDo,
+        executionId,
+        "sanitization",
+        "event_sanitization_failed",
+        accumulatedText,
+        exactSecrets,
+      );
+    }
     try {
       if (await interruptedStrict(sessionDo, executionId)) {
         return failed("interrupted", "interrupted", accumulatedText);
@@ -561,6 +681,7 @@ export async function runHarnessTurn(
       persistenceFailure ? "persistence" : "transport",
       persistenceFailure ? `event_persistence_failed: ${message}` : message,
       accumulatedText,
+      exactSecrets,
     );
   }
 
@@ -575,6 +696,7 @@ export async function runHarnessTurn(
       "missing_done",
       message,
       accumulatedText,
+      exactSecrets,
     );
   }
 

@@ -313,7 +313,16 @@ app.get("/debug/store", requireAdminAuth(), async (c) => {
 });
 
 app.post("/admin/config", requireAdminAuth(), async (c) => {
-  const body = (await c.req.json()) as WorkspaceChannelConfig;
+  const body = (await c.req.json()) as WorkspaceChannelConfig & {
+    expectedRevision?: number;
+    systemPromptOverlay?: {
+      version?: number;
+      revision?: number;
+      text?: string;
+      digest?: string;
+      source?: string;
+    };
+  };
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
@@ -337,23 +346,47 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
       runtimeDefaults = existing.runtimeDefaults;
     }
   }
-  const response = await stub.fetch("https://do/putConfig", {
+
+  // Channel context updates (if any) go through the channel-owned path.
+  if (body.channelContext !== undefined || body.systemPrompt !== undefined) {
+    const channelResponse = await stub.fetch("https://do/putChannelContext", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId: body.teamId,
+        channelId: body.channelId,
+        channelContext: body.channelContext ?? body.systemPrompt,
+        runtimeDefaults,
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    if (!channelResponse.ok) {
+      return c.json(
+        { error: await channelResponse.text() },
+        channelResponse.status >= 500 ? 503 : 400,
+      );
+    }
+  }
+
+  const response = await stub.fetch("https://do/putAdminConfig", {
     method: "POST",
     body: JSON.stringify({
-      ...body,
-      systemPrompt: body.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      teamId: body.teamId,
+      channelId: body.channelId,
+      systemPromptOverlay: body.systemPromptOverlay,
+      policies: body.policies,
       accessBundleId: body.accessBundleId || DEFAULT_BUNDLE.id,
       ...(runtimeDefaults ? { runtimeDefaults } : {}),
+      expectedRevision: body.expectedRevision,
       updatedAt: new Date().toISOString(),
     }),
   });
   if (!response.ok) {
     return c.json(
       { error: await response.text() },
-      response.status >= 500 ? 503 : 400,
+      response.status >= 500 ? 503 : response.status === 409 ? 409 : 400,
     );
   }
-  return c.json({ ok: true });
+  return c.json(await response.json());
 });
 
 app.post("/admin/bundle", requireAdminAuth(), async (c) => {

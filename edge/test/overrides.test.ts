@@ -31,6 +31,23 @@ describe('overrides', () => {
       expect(result.cleanedText).toBe('Tell me a story')
     })
 
+    it('--opus-5 and --model opus-5 map to claude-opus-5 without changing opus', () => {
+      const shortcut = extractMessageOverrides('--opus-5 Hello')
+      expect(shortcut.model).toBe('claude-opus-5')
+      expect(shortcut.harnessType).toBe('claudecode')
+      const viaModel = extractMessageOverrides('--model opus-5 Hello')
+      expect(viaModel.model).toBe('claude-opus-5')
+      const fast = extractMessageOverrides('--opus-5-fast Hello')
+      expect(fast.model).toBe('claude-opus-5-fast')
+      const opus = extractMessageOverrides('--opus Hello')
+      expect(opus.model).toBe('claude-opus-4-8')
+    })
+
+    it('--model opus-5-fast is case-insensitive', () => {
+      const result = extractMessageOverrides('--model OPUS-5-FAST Hello')
+      expect(result.model).toBe('claude-opus-5-fast')
+    })
+
     it('--fable sets model claude-fable-5 + harnessType claudecode', () => {
       const result = extractMessageOverrides('--fable Hello')
       expect(result.model).toBe('claude-fable-5')

@@ -54,6 +54,15 @@ export interface TurnRequestBody {
   remoteGitApproved?: boolean;
   createPullRequest?: boolean;
   permissionSnapshot?: PermissionSnapshotV1;
+  /** Additive v2 field; Container continues accepting v1 (absent). */
+  contractVersion?: 1 | 2;
+  systemPromptOverlay?: {
+    version: 1;
+    revision: number;
+    digest: string;
+    text: string;
+    source: "workspace_admin";
+  };
 }
 
 export interface PermissionSnapshotV1 {
@@ -459,6 +468,85 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       return { ok: false, error: "pull_request_requires_attribution" };
     }
   }
+
+  let contractVersion: 1 | 2 | undefined;
+  if (record.contractVersion !== undefined) {
+    if (record.contractVersion !== 1 && record.contractVersion !== 2) {
+      return { ok: false, error: "invalid_contract_version" };
+    }
+    contractVersion = record.contractVersion;
+  }
+
+  let systemPromptOverlay: TurnRequestBody["systemPromptOverlay"];
+  if (record.systemPromptOverlay !== undefined) {
+    if (contractVersion !== 2) {
+      return { ok: false, error: "overlay_requires_contract_v2" };
+    }
+    if (
+      !record.systemPromptOverlay ||
+      typeof record.systemPromptOverlay !== "object" ||
+      Array.isArray(record.systemPromptOverlay)
+    ) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const overlay = record.systemPromptOverlay as Record<string, unknown>;
+    if (overlay.version !== 1) return { ok: false, error: "invalid_system_prompt_overlay" };
+    if (overlay.source !== "workspace_admin") {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    if (
+      typeof overlay.revision !== "number" ||
+      !Number.isSafeInteger(overlay.revision) ||
+      overlay.revision < 0
+    ) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    if (typeof overlay.text !== "string" || typeof overlay.digest !== "string") {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const text = overlay.text;
+    if (text.includes("\0") || text.trim().length === 0) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    const encoded = new TextEncoder().encode(text);
+    if (encoded.byteLength > 64 * 1024) {
+      return { ok: false, error: "invalid_system_prompt_overlay" };
+    }
+    systemPromptOverlay = {
+      version: 1,
+      revision: overlay.revision,
+      digest: overlay.digest,
+      text,
+      source: "workspace_admin",
+    };
+  }
+
+  // v2 rejects unknown top-level fields after the compatibility window opens.
+  if (contractVersion === 2) {
+    const allowed = new Set([
+      "sessionId",
+      "executionId",
+      "forwardedMessageId",
+      "threadKey",
+      "inputLines",
+      "attachments",
+      "harnessType",
+      "model",
+      "repo",
+      "requesterContext",
+      "transcript",
+      "codingTask",
+      "remoteGitApproved",
+      "createPullRequest",
+      "permissionSnapshot",
+      "contractVersion",
+      "systemPromptOverlay",
+    ]);
+    for (const key of Object.keys(record)) {
+      if (!allowed.has(key)) return { ok: false, error: `unknown_field:${key}` };
+    }
+  }
+
   return {
     ok: true,
     body: {
@@ -477,6 +565,8 @@ export function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy): Turn
       remoteGitApproved: record.remoteGitApproved === true,
       ...(record.createPullRequest === undefined ? {} : { createPullRequest: record.createPullRequest as boolean }),
       ...(permissionSnapshot ? { permissionSnapshot } : {}),
+      ...(contractVersion === undefined ? {} : { contractVersion }),
+      ...(systemPromptOverlay ? { systemPromptOverlay } : {}),
     },
   };
 }

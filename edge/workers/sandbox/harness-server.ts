@@ -49,6 +49,7 @@ import {
   type TurnValidation,
   type HarnessType,
 } from "./turn-contract.js";
+import { normalizeImageFile, isImageMime, sha256Hex } from "./image-normalization.js";
 
 export {
   EXECUTION_BINDING_HEADER,
@@ -111,6 +112,29 @@ export function repoPolicyFromEnv(env: NodeJS.ProcessEnv = process.env): RepoPol
 export type NdjsonEvent =
   | { kind: "output"; payload: { text: string } }
   | { kind: "output"; payload: { tool: string; summary: string } }
+  | {
+      kind: "context";
+      payload: {
+        version: 1;
+        harnessType: string;
+        model?: string;
+        modelEvidence: "requested" | "container_argument" | "provider_reported" | "unknown";
+        promptOverlay?: { version: 1; revision: number; digest: string };
+        contractVersion?: number;
+      };
+    }
+  | {
+      kind: "progress";
+      payload: {
+        version: 1;
+        progressId: string;
+        sequence: number;
+        category: "commentary" | "task" | "tool";
+        state: "started" | "updated" | "completed" | "failed";
+        title: string;
+        summary?: string;
+      };
+    }
   | { kind: "error"; payload: { message: string } }
   | { kind: "done"; payload: { ok: boolean; summary: string } };
 
@@ -163,7 +187,25 @@ export async function materializeTurnAttachments(
     const bytes = Buffer.from(attachment.dataBase64, "base64");
     if (bytes.byteLength !== attachment.size) throw new Error(`attachment_size_mismatch:${attachment.id}`);
     await fs.promises.writeFile(target, bytes, { mode: 0o600 });
-    paths.push(`${target} (${attachment.mimeType})`);
+
+    if (isImageMime(attachment.mimeType)) {
+      const digest =
+        attachment.kind === "inline" && "sha256" in attachment && typeof attachment.sha256 === "string"
+          ? attachment.sha256
+          : sha256Hex(bytes);
+      const normalized = await normalizeImageFile({
+        attachmentId: attachment.id,
+        sourcePath: target,
+        mimeType: attachment.mimeType,
+        expectedSize: attachment.size,
+        expectedDigest: digest,
+        executionHome,
+      });
+      if (!normalized.ok) throw new Error(normalized.error);
+      paths.push(`${normalized.meta.path} (${normalized.meta.derivedMime})`);
+    } else {
+      paths.push(`${target} (${attachment.mimeType})`);
+    }
   }
   return paths;
 }
@@ -297,9 +339,12 @@ export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
   const line = rawLine.trim();
   if (!line) return [];
 
-  let parsed: ClaudeStreamLine;
+  let parsed: ClaudeStreamLine & {
+    message?: { content?: ClaudeContentBlock[]; model?: string };
+    tool_use_id?: string;
+  };
   try {
-    parsed = JSON.parse(line) as ClaudeStreamLine;
+    parsed = JSON.parse(line) as typeof parsed;
   } catch {
     return [];
   }
@@ -309,19 +354,53 @@ export function mapStreamJsonLine(rawLine: string): NdjsonEvent[] {
     case "assistant": {
       const blocks = parsed.message?.content ?? [];
       const events: NdjsonEvent[] = [];
+      let toolSeq = 0;
       for (const block of blocks) {
+        if (block.type === "thinking") {
+          // Never surface thinking/reasoning blocks.
+          continue;
+        }
         if (block.type === "text" && typeof block.text === "string" && block.text) {
+          // Final-answer / visible text stays in output only — never concatenated from progress.
           events.push({ kind: "output", payload: { text: block.text } });
         } else if (block.type === "tool_use" && typeof block.name === "string") {
+          toolSeq += 1;
+          const progressId =
+            typeof (block as { id?: unknown }).id === "string"
+              ? `tool-${(block as { id: string }).id}`
+              : `tool-${block.name}-${toolSeq}`;
+          const summary = summarizeToolInput(block.name, block.input);
           events.push({
             kind: "output",
             payload: {
               tool: block.name,
-              summary: summarizeToolInput(block.name, block.input),
+              summary,
+            },
+          });
+          events.push({
+            kind: "progress",
+            payload: {
+              version: 1,
+              progressId,
+              sequence: 1,
+              category: "tool",
+              state: "started",
+              title: truncateSummary(block.name, 120),
+              summary: truncateSummary(summary, 500),
+            },
+          });
+          events.push({
+            kind: "progress",
+            payload: {
+              version: 1,
+              progressId,
+              sequence: 2,
+              category: "tool",
+              state: "completed",
+              title: truncateSummary(block.name, 120),
             },
           });
         }
-        // "thinking" blocks and anything else are intentionally not surfaced.
       }
       return events;
     }
@@ -1135,6 +1214,35 @@ export async function loadAuthoritativeSystemPrompt(
   return text;
 }
 
+/** Compose image-owned base first, then optional administrator overlay (append-only). */
+export async function composeSystemPromptWithOverlay(
+  basePrompt: string,
+  overlay: TurnRequestBody["systemPromptOverlay"] | undefined,
+): Promise<{ text: string; overlayMeta?: { version: 1; revision: number; digest: string } }> {
+  if (!overlay) return { text: basePrompt };
+  const trimmed = overlay.text.trim();
+  if (!trimmed) throw new Error("invalid_system_prompt_overlay");
+  if (overlay.text.includes("\0")) throw new Error("invalid_system_prompt_overlay");
+  const encoded = new TextEncoder().encode(overlay.text);
+  if (encoded.byteLength > 64 * 1024) throw new Error("invalid_system_prompt_overlay");
+  const digestHex = sha256Hex(Buffer.from(encoded));
+  const expected = overlay.digest.startsWith("sha256:")
+    ? overlay.digest.slice("sha256:".length)
+    : overlay.digest;
+  if (expected !== digestHex) throw new Error("invalid_system_prompt_overlay");
+  if (overlay.source !== "workspace_admin" || overlay.version !== 1) {
+    throw new Error("invalid_system_prompt_overlay");
+  }
+  return {
+    text: `${basePrompt}\n\n[OpenTag administrator overlay]\n${overlay.text}`,
+    overlayMeta: {
+      version: 1,
+      revision: overlay.revision,
+      digest: `sha256:${digestHex}`,
+    },
+  };
+}
+
 export function buildClaudeEnv(
   source: NodeJS.ProcessEnv,
   model?: string,
@@ -1481,27 +1589,61 @@ export async function runTurnStreaming(
   }
 
   let systemPromptText: string;
+  let overlayMeta: { version: 1; revision: number; digest: string } | undefined;
   try {
-    systemPromptText = await loadAuthoritativeSystemPrompt(
+    const basePrompt = await loadAuthoritativeSystemPrompt(
       SYSTEM_PROMPT_PATH,
       MAX_SYSTEM_PROMPT_BYTES,
       signal,
     );
+    const composed = await composeSystemPromptWithOverlay(
+      basePrompt,
+      body.systemPromptOverlay,
+    );
+    systemPromptText = composed.text;
+    overlayMeta = composed.overlayMeta;
   } catch (err) {
     if (signal.aborted) {
       emitInterrupted();
       return;
     }
+    const message = err instanceof Error ? err.message : String(err);
     emit({
       kind: "error",
       payload: {
-        message: `system prompt setup failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: message.startsWith("invalid_system_prompt_overlay")
+          ? "invalid_system_prompt_overlay"
+          : `system prompt setup failed: ${message}`,
       },
     });
-    emit({ kind: "done", payload: { ok: false, summary: "system prompt unavailable" } });
+    emit({
+      kind: "done",
+      payload: {
+        ok: false,
+        summary: message.startsWith("invalid_system_prompt_overlay")
+          ? "invalid_system_prompt_overlay"
+          : "system prompt unavailable",
+      },
+    });
     return;
   }
   throwIfAborted(signal);
+
+  // Authoritative effective-runtime context — container CLI argument evidence
+  // until a provider-reported model is available (unknown if no model arg).
+  emit({
+    kind: "context",
+    payload: {
+      version: 1,
+      harnessType: body.harnessType ?? "claudecode",
+      ...(body.model ? { model: body.model } : {}),
+      modelEvidence: body.model ? "container_argument" : "unknown",
+      ...(overlayMeta ? { promptOverlay: overlayMeta } : {}),
+      ...(body.contractVersion !== undefined
+        ? { contractVersion: body.contractVersion }
+        : {}),
+    },
+  });
 
   let executionHome: string;
   try {

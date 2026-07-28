@@ -342,11 +342,16 @@ export class WorkspaceConfigDO extends DurableObject {
         }
       }
       const channelKey = body.channelId ?? "";
-      const channelContext =
-        (typeof body.channelContext === "string" ? body.channelContext : undefined) ??
-        (typeof body.systemPrompt === "string" ? body.systemPrompt : undefined) ??
-        DEFAULT_SYSTEM_PROMPT;
       const existing = this.readRow(sql, body.teamId, channelKey);
+      const channelContextProvided =
+        "channelContext" in body || "systemPrompt" in body;
+      const channelContext = channelContextProvided
+        ? ((typeof body.channelContext === "string" ? body.channelContext : undefined) ??
+            (typeof body.systemPrompt === "string" ? body.systemPrompt : undefined) ??
+            DEFAULT_SYSTEM_PROMPT)
+        : existing
+          ? rowChannelContext(existing)
+          : DEFAULT_SYSTEM_PROMPT;
       const updatedAt = body.updatedAt || new Date().toISOString();
       sql.exec(
         `INSERT INTO channel_config (
@@ -419,19 +424,24 @@ export class WorkspaceConfigDO extends DurableObject {
           { status: 400 },
         );
       }
-      let runtimeDefaults;
-      try {
-        runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
-      } catch (error) {
-        return Response.json(
-          { error: error instanceof Error ? error.message : "invalid runtime defaults" },
-          { status: 400 },
-        );
+      const runtimeDefaultsProvided = "runtimeDefaults" in body;
+      let runtimeDefaults: ReturnType<typeof normalizeChannelRuntimeDefaults>;
+      if (runtimeDefaultsProvided) {
+        try {
+          runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
+        } catch (error) {
+          return Response.json(
+            { error: error instanceof Error ? error.message : "invalid runtime defaults" },
+            { status: 400 },
+          );
+        }
       }
       const channelKey = body.channelId ?? "";
       const existing = this.readRow(sql, body.teamId, channelKey);
       const currentRevision = existing?.system_prompt_overlay_version ?? 0;
+      // Optimistic overlay CAS only applies when an overlay mutation is present.
       if (
+        body.systemPromptOverlay &&
         typeof body.expectedRevision === "number" &&
         body.expectedRevision !== currentRevision
       ) {
@@ -509,12 +519,14 @@ export class WorkspaceConfigDO extends DurableObject {
         channelKey,
         channelContext,
         channelContext,
-        JSON.stringify(body.policies ?? (existing ? JSON.parse(existing.policies_json) : {})),
+        JSON.stringify(
+          body.policies ?? (existing ? JSON.parse(existing.policies_json) : {}),
+        ),
         body.accessBundleId || existing?.access_bundle_id || DEFAULT_BUNDLE.id,
-        runtimeDefaults !== undefined
+        runtimeDefaultsProvided
           ? (runtimeDefaults?.harnessType ?? null)
           : (existing?.default_harness_type ?? null),
-        runtimeDefaults !== undefined
+        runtimeDefaultsProvided
           ? (runtimeDefaults?.model ?? null)
           : (existing?.default_model ?? null),
         updatedAt,

@@ -325,8 +325,19 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
-  let runtimeDefaults;
-  if ("runtimeDefaults" in body) {
+
+  const hasChannelContext =
+    body.channelContext !== undefined || body.systemPrompt !== undefined;
+  const hasRuntimeDefaults = "runtimeDefaults" in body;
+  const hasAccessBundle =
+    typeof body.accessBundleId === "string" && body.accessBundleId.length > 0;
+  const hasAdminOwnedFields =
+    body.systemPromptOverlay !== undefined ||
+    body.policies !== undefined ||
+    hasAccessBundle;
+
+  let runtimeDefaults: ReturnType<typeof normalizeChannelRuntimeDefaults>;
+  if (hasRuntimeDefaults) {
     try {
       runtimeDefaults = normalizeChannelRuntimeDefaults(body.runtimeDefaults);
     } catch (error) {
@@ -335,26 +346,53 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
         400,
       );
     }
-  } else {
-    const existingResponse = await stub.fetch("https://do/getConfig", {
+  }
+
+  // Apply admin-owned fields first so overlay CAS can fail closed before any
+  // channel-context write (avoids partial success + HTTP 409).
+  let adminResult: unknown | undefined;
+  if (hasAdminOwnedFields) {
+    const response = await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
-      body: JSON.stringify({ teamId: body.teamId, channelId: body.channelId }),
+      body: JSON.stringify({
+        teamId: body.teamId,
+        channelId: body.channelId,
+        systemPromptOverlay: body.systemPromptOverlay,
+        policies: body.policies,
+        ...(hasAccessBundle ? { accessBundleId: body.accessBundleId } : {}),
+        // Prefer channel path for runtimeDefaults when channel context is also
+        // being written; otherwise clear/set via admin.
+        ...(!hasChannelContext && hasRuntimeDefaults
+          ? { runtimeDefaults: runtimeDefaults ?? null }
+          : {}),
+        ...(body.systemPromptOverlay !== undefined
+          ? { expectedRevision: body.expectedRevision }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      }),
     });
-    if (existingResponse.ok) {
-      const existing = await existingResponse.json() as WorkspaceChannelConfig;
-      runtimeDefaults = existing.runtimeDefaults;
+    if (!response.ok) {
+      return c.json(
+        { error: await response.text() },
+        response.status >= 500 ? 503 : response.status === 409 ? 409 : 400,
+      );
+    }
+    adminResult = await response.json();
+    if (!hasChannelContext && !hasRuntimeDefaults) {
+      return c.json(adminResult);
     }
   }
 
-  // Channel context updates (if any) go through the channel-owned path.
-  if (body.channelContext !== undefined || body.systemPrompt !== undefined) {
+  if (hasChannelContext || (hasRuntimeDefaults && !hasAdminOwnedFields)) {
     const channelResponse = await stub.fetch("https://do/putChannelContext", {
       method: "POST",
       body: JSON.stringify({
         teamId: body.teamId,
         channelId: body.channelId,
-        channelContext: body.channelContext ?? body.systemPrompt,
-        runtimeDefaults,
+        ...(hasChannelContext
+          ? { channelContext: body.channelContext ?? body.systemPrompt }
+          : {}),
+        ...(hasRuntimeDefaults ? { runtimeDefaults: runtimeDefaults ?? null } : {}),
         updatedAt: new Date().toISOString(),
       }),
     });
@@ -366,28 +404,7 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
     }
   }
 
-  const response = await stub.fetch("https://do/putAdminConfig", {
-    method: "POST",
-    body: JSON.stringify({
-      teamId: body.teamId,
-      channelId: body.channelId,
-      systemPromptOverlay: body.systemPromptOverlay,
-      policies: body.policies,
-      ...(typeof body.accessBundleId === "string" && body.accessBundleId
-        ? { accessBundleId: body.accessBundleId }
-        : {}),
-      ...(runtimeDefaults ? { runtimeDefaults } : {}),
-      expectedRevision: body.expectedRevision,
-      updatedAt: new Date().toISOString(),
-    }),
-  });
-  if (!response.ok) {
-    return c.json(
-      { error: await response.text() },
-      response.status >= 500 ? 503 : response.status === 409 ? 409 : 400,
-    );
-  }
-  return c.json(await response.json());
+  return c.json(adminResult ?? { ok: true });
 });
 
 app.post("/admin/bundle", requireAdminAuth(), async (c) => {

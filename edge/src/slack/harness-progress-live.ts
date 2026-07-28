@@ -170,9 +170,10 @@ export function createHarnessProgressLiveRenderer(opts: {
             container_argument: 2,
             provider_reported: 3,
           };
+          // Match SessionEventDO: only upgrade on strictly higher evidence.
           if (
             !context ||
-            evidenceRank[next.modelEvidence] >= evidenceRank[context.modelEvidence]
+            evidenceRank[next.modelEvidence] > evidenceRank[context.modelEvidence]
           ) {
             context = next;
           }

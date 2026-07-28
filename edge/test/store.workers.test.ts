@@ -105,6 +105,144 @@ describe("Durable Object integration", () => {
     expect(cleared.runtimeDefaults).toBeUndefined();
   });
 
+  it("preserves channel context when only runtimeDefaults are updated", async () => {
+    const teamId = `runtime-only-${crypto.randomUUID()}`;
+    const channelId = "C-runtime-only";
+    const stub = env.WORKSPACE_CONFIG.get(
+      env.WORKSPACE_CONFIG.idFromName(teamId),
+    );
+    expect((await stub.fetch("https://do/putChannelContext", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        channelContext: "keep this prompt",
+        runtimeDefaults: { harnessType: "claudecode", model: "claude-sonnet-5" },
+      }),
+    })).status).toBe(200);
+    expect((await stub.fetch("https://do/putChannelContext", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        runtimeDefaults: null,
+      }),
+    })).status).toBe(200);
+    const cleared = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as {
+      systemPrompt: string;
+      runtimeDefaults?: unknown;
+    };
+    expect(cleared.systemPrompt).toBe("keep this prompt");
+    expect(cleared.runtimeDefaults).toBeUndefined();
+  });
+
+  it("allows policy-only admin updates without overlay expectedRevision CAS", async () => {
+    const teamId = `admin-partial-${crypto.randomUUID()}`;
+    const channelId = "C-admin-partial";
+    const stub = env.WORKSPACE_CONFIG.get(
+      env.WORKSPACE_CONFIG.idFromName(teamId),
+    );
+    const first = await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        systemPromptOverlay: {
+          version: 1,
+          text: "overlay",
+          source: "workspace_admin",
+        },
+        policies: { allowMemoryWrite: true, allowTasks: true },
+        accessBundleId: "custom-bundle",
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { revision: number };
+    expect(firstBody.revision).toBe(1);
+
+    // Stale expectedRevision must not block a non-overlay admin mutation.
+    const policyOnly = await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        policies: { allowMemoryWrite: false, allowTasks: false },
+        expectedRevision: 0,
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    expect(policyOnly.status).toBe(200);
+    const afterPolicy = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as {
+      policies: { allowMemoryWrite: boolean; allowTasks: boolean };
+      accessBundleId: string;
+      systemPromptOverlay?: { revision: number; text: string };
+    };
+    expect(afterPolicy.policies).toEqual({
+      allowMemoryWrite: false,
+      allowTasks: false,
+    });
+    expect(afterPolicy.accessBundleId).toBe("custom-bundle");
+    expect(afterPolicy.systemPromptOverlay).toMatchObject({
+      revision: 1,
+    });
+
+    // Overlay write with stale revision still conflicts.
+    const staleOverlay = await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        systemPromptOverlay: {
+          version: 1,
+          text: "new overlay",
+          source: "workspace_admin",
+        },
+        expectedRevision: 0,
+        updatedAt: new Date().toISOString(),
+      }),
+    });
+    expect(staleOverlay.status).toBe(409);
+
+    // Admin runtime clear must wipe defaults when runtimeDefaults: null is sent.
+    expect((await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        runtimeDefaults: {
+          harnessType: "claudecode",
+          model: "claude-sonnet-5",
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+    })).status).toBe(200);
+    expect((await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId,
+        runtimeDefaults: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    })).status).toBe(200);
+    const clearedRuntime = await stub.fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId }),
+    }).then((response) => response.json()) as {
+      runtimeDefaults?: unknown;
+      accessBundleId: string;
+    };
+    expect(clearedRuntime.runtimeDefaults).toBeUndefined();
+    expect(clearedRuntime.accessBundleId).toBe("custom-bundle");
+  });
+
   it("rejects policy and overlay writes on legacy putConfig", async () => {
     const teamId = `legacy-${crypto.randomUUID()}`;
     const stub = env.WORKSPACE_CONFIG.get(

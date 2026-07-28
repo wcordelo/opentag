@@ -271,9 +271,9 @@ async function appendStrict(
   executionId: string,
   kind: HarnessEventKind,
   payload: unknown,
-): Promise<void> {
+): Promise<{ id: number }> {
   try {
-    await sessionDo.appendEvent({ executionId, kind, payload });
+    return await sessionDo.appendEvent({ executionId, kind, payload });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new EventPersistenceError(`${kind}: ${message}`);
@@ -290,6 +290,8 @@ class EventSanitizationError extends Error {
 /**
  * Sanitize then append. Reuses the same sanitized object for any further
  * accumulation/callback delivery. Fail-closed on sanitizer inability.
+ * `appended` is false when SessionEventDO no-ops (e.g. equal/lower context
+ * evidence or duplicate progress) and returns `{ id: 0 }`.
  */
 async function sanitizeAndAppend(
   sessionDo: SessionEventsFullRpc,
@@ -297,7 +299,7 @@ async function sanitizeAndAppend(
   kind: HarnessEventKind,
   payload: unknown,
   exactSecrets: readonly string[],
-): Promise<unknown> {
+): Promise<{ value: unknown; appended: boolean }> {
   const sanitized = sanitizeValue(payload, { exactSecrets });
   if (!sanitized.ok) {
     emitRedactionTelemetry({
@@ -324,8 +326,8 @@ async function sanitizeAndAppend(
       });
     }
   }
-  await appendStrict(sessionDo, executionId, kind, sanitized.value);
-  return sanitized.value;
+  const { id } = await appendStrict(sessionDo, executionId, kind, sanitized.value);
+  return { value: sanitized.value, appended: id > 0 };
 }
 
 /** Record a failed terminal without ever disguising a storage failure as the original cause. */
@@ -522,43 +524,50 @@ export async function runHarnessTurn(
     }
 
     if (parsed.kind === "output") {
-      const sanitized = (await sanitizeAndAppend(
+      const { value } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         "output",
         parsed.payload ?? {},
         exactSecrets,
-      )) as { text?: string; tool?: string; summary?: string };
+      );
+      const sanitized = value as { text?: string; tool?: string; summary?: string };
       if (typeof sanitized.text === "string" && sanitized.text) {
         accumulatedText += sanitized.text;
         args.onText?.(sanitized.text);
       }
     } else if (parsed.kind === "error") {
-      const sanitized = (await sanitizeAndAppend(
+      const { value } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         "error",
         parsed.payload ?? {},
         exactSecrets,
-      )) as { message?: unknown };
+      );
+      const sanitized = value as { message?: unknown };
       if (typeof sanitized.message === "string") lastHarnessError = sanitized.message;
     } else if (parsed.kind === "context" || parsed.kind === "progress") {
-      const sanitized = await sanitizeAndAppend(
+      const { value, appended } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         parsed.kind,
         parsed.payload ?? {},
         exactSecrets,
       );
-      await args.onHarnessEvent?.({ kind: parsed.kind, payload: sanitized });
+      // Skip live/UI callbacks when durable storage no-oped the event so
+      // Slack context cannot diverge from the recoverable event log.
+      if (appended) {
+        await args.onHarnessEvent?.({ kind: parsed.kind, payload: value });
+      }
     } else if (parsed.kind === "done") {
-      const sanitized = (await sanitizeAndAppend(
+      const { value } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         "done",
         parsed.payload ?? {},
         exactSecrets,
-      )) as { ok?: boolean; summary?: string };
+      );
+      const sanitized = value as { ok?: boolean; summary?: string };
       // A successful result is impossible unless the terminal event is
       // durably committed. Do not swallow this append failure.
       sawDone = true;

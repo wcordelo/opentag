@@ -1257,9 +1257,10 @@ export async function runBundledAgentTurn(
                 ? p.modelEvidence
                 : "unknown",
           };
+          // Match SessionEventDO: only upgrade on strictly higher evidence.
           if (
             !harnessContextForAnswer ||
-            harnessContextEvidenceRank[next.modelEvidence] >=
+            harnessContextEvidenceRank[next.modelEvidence] >
               harnessContextEvidenceRank[harnessContextForAnswer.modelEvidence]
           ) {
             harnessContextForAnswer = next;

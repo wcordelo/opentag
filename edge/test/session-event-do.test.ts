@@ -673,6 +673,17 @@ describe("SessionEventEngine context/progress", () => {
       },
     });
     expect(upgrade.id).toBeGreaterThan(0);
+    const equal = await engine.appendEvent({
+      executionId: "exec-ctx",
+      kind: "context",
+      payload: {
+        version: 1,
+        harnessType: "claudecode",
+        model: "other-model-same-rank",
+        modelEvidence: "provider_reported",
+      },
+    });
+    expect(equal).toEqual({ id: 0 });
     const events = await engine.replay();
     expect(events.filter((e) => e.kind === "context")).toHaveLength(2);
   });

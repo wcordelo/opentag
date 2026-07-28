@@ -132,4 +132,26 @@ describe("harness progress renderer", () => {
     expect(md).toContain("Complete");
     expect(md).not.toContain("final answer");
   });
+
+  it("rebuild keeps higher evidence when equal-rank context appears later", () => {
+    const rebuilt = rebuildProgressFromEvents([
+      {
+        kind: "context",
+        payload: {
+          harnessType: "claudecode",
+          model: "first-model",
+          modelEvidence: "provider_reported",
+        },
+      },
+      {
+        kind: "context",
+        payload: {
+          harnessType: "claudecode",
+          model: "same-rank-model",
+          modelEvidence: "provider_reported",
+        },
+      },
+    ]);
+    expect(rebuilt.context?.model).toBe("first-model");
+  });
 });

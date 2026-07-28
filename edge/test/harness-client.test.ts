@@ -22,6 +22,8 @@ function makeFakeSessionEvents(
     createResult?: { sessionId: string; restarted: boolean };
     failDoneAppend?: boolean;
     failAppendOnce?: "output" | "error" | "done";
+    /** Return `{ id: 0 }` for matching appends (durable no-op). */
+    noopAppend?: (args: AppendedEvent) => boolean;
     getState?: () => {
       interrupted: boolean;
       interruptedExecutionId?: string;
@@ -49,6 +51,9 @@ function makeFakeSessionEvents(
       }
       if (opts.failDoneAppend && args.kind === "done") {
         throw new Error("storage unavailable");
+      }
+      if (opts.noopAppend?.(args)) {
+        return { id: 0 };
       }
       appended.push(args);
       return { id: appended.length };
@@ -635,5 +640,51 @@ describe("runHarnessTurn", () => {
     expect(logged).not.toContain("xoxb-");
     expect(logged).toContain("malformed_ndjson");
     errorSpy.mockRestore();
+  });
+
+  it("skips onHarnessEvent when durable append no-ops context/progress", async () => {
+    const ndjson = [
+      JSON.stringify({
+        kind: "context",
+        payload: {
+          harnessType: "claudecode",
+          model: "weaker",
+          modelEvidence: "unknown",
+        },
+      }),
+      JSON.stringify({
+        kind: "progress",
+        payload: {
+          progressId: "tool-1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Read",
+        },
+      }),
+      JSON.stringify({ kind: "done", payload: { ok: true, summary: "ok" } }),
+    ].join("\n");
+    const { namespace } = makeFakeSessionEvents({
+      noopAppend: (args) => args.kind === "context" || args.kind === "progress",
+    });
+    const env = {
+      HARNESS_URL: "https://harness.example.com",
+      HARNESS_AUTH_TOKEN: "test-token",
+      SESSION_EVENTS: namespace,
+    } as unknown as Env;
+    mockFetchOnce(streamFromText(ndjson, [40]));
+    const onHarnessEvent = vi.fn();
+
+    const result = await runHarnessTurn(env, {
+      threadKey: "slack:C-noop:1.0",
+      conversationKey: "C-noop::1.0",
+      executionId: "slack:C-noop:1.1",
+      forwardedMessageId: "slack:C-noop:1.1",
+      prompt: "hello",
+      onHarnessEvent,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(onHarnessEvent).not.toHaveBeenCalled();
   });
 });

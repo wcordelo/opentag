@@ -154,9 +154,10 @@ export function rebuildProgressFromEvents(
             ? p.modelEvidence
             : "unknown",
       };
+      // Match SessionEventDO: only upgrade on strictly higher evidence.
       if (
         !context ||
-        evidenceRank[next.modelEvidence] >= evidenceRank[context.modelEvidence]
+        evidenceRank[next.modelEvidence] > evidenceRank[context.modelEvidence]
       ) {
         context = next;
       }

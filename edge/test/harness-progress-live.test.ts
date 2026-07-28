@@ -133,6 +133,60 @@ describe("harness progress live renderer", () => {
     ]>)[1]?.[0];
     expect(terminalUpdate?.text).toContain("Complete");
   });
+
+  it("ignores equal-or-lower modelEvidence for live context", async () => {
+    const store = makeStore();
+    const threadKey = "slack:C1:2.0";
+    const executionId = "exec-live-2";
+    await store.activeTurn.register({
+      channelId: "C1",
+      threadKey,
+      conversationKey: "C1::2.0",
+      executionId,
+      threadTs: "2.0",
+      registeredAt: Date.now(),
+    });
+    const live = createHarnessProgressLiveRenderer({
+      store,
+      client: {
+        postMessage: vi.fn(async () => ({ ts: "progress-ts" })),
+        updateMessage: vi.fn(async () => undefined),
+      } as never,
+      channelId: "C1",
+      threadTs: "2.0",
+      threadKey,
+      executionId,
+    });
+
+    await live.handleEvent({
+      kind: "context",
+      payload: {
+        harnessType: "claudecode",
+        model: "strong-model",
+        modelEvidence: "provider_reported",
+      },
+    });
+    await live.handleEvent({
+      kind: "context",
+      payload: {
+        harnessType: "claudecode",
+        model: "same-rank-other-model",
+        modelEvidence: "provider_reported",
+      },
+    });
+    await live.handleEvent({
+      kind: "context",
+      payload: {
+        harnessType: "claudecode",
+        model: "weaker-model",
+        modelEvidence: "unknown",
+      },
+    });
+    expect(live.finalAnswerPrefix()).toContain("strong-model");
+    expect(live.finalAnswerPrefix()).toContain("provider confirmed");
+    expect(live.finalAnswerPrefix()).not.toContain("same-rank-other-model");
+    expect(live.finalAnswerPrefix()).not.toContain("weaker-model");
+  });
 });
 
 describe("overlay digest verification", () => {

@@ -1,8 +1,10 @@
 import type {
   AnalyticsEngineDataset,
   DurableObjectNamespace,
+  Queue,
   R2Bucket,
 } from "@cloudflare/workers-types";
+import type { KnowledgeJob } from "./memory/knowledge-contract.js";
 import type { ConversationStateDO } from "./store/conversation-state-do.js";
 import type { WorkspaceConfigDO } from "./config/workspace-config-do.js";
 import type { KnowledgeDO } from "./memory/knowledge-do.js";
@@ -17,6 +19,16 @@ export interface Env {
   BOT_STATE: DurableObjectNamespace<ConversationStateDO>;
   WORKSPACE_CONFIG: DurableObjectNamespace<WorkspaceConfigDO>;
   KNOWLEDGE: DurableObjectNamespace<KnowledgeDO>;
+  /** Optional until Queue/DLQ names and the C1 deployment gate are approved. */
+  KNOWLEDGE_QUEUE?: Queue<KnowledgeJob>;
+  /** Exact future C1 primary Queue name; required by any Queue delivery. */
+  KNOWLEDGE_QUEUE_NAME?: string;
+  /** Exact future C1 DLQ name; must be distinct and end in `-dlq`. */
+  KNOWLEDGE_DLQ_NAME?: string;
+  /** Explicit C1 scheduler gate; only the exact string `true` activates it. */
+  KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED?: string;
+  /** Exact comma-separated team IDs covered by scheduled reconciliation. */
+  KNOWLEDGE_RECONCILIATION_TEAM_IDS?: string;
   /** Required per-thread durable session log and exact execute/forward dedup. */
   SESSION_EVENTS: DurableObjectNamespace<SessionEventDO>;
   /** Stable click/late-file jobs; alarm retries survive request-isolate loss. */
@@ -43,6 +55,22 @@ export interface Env {
 
   /** Bearer for /admin/* and /debug/* and /tasks/start. */
   ADMIN_SECRET?: string;
+  /**
+   * External Ed25519 verifier for one-use source lifecycle grants. These stay
+   * unset until C1/S1 approves the issuer/key and exact administration scope;
+   * the Worker has no grant-issuance endpoint or private key.
+   */
+  KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY?: string;
+  KNOWLEDGE_SOURCE_AUTH_ISSUER?: string;
+  KNOWLEDGE_SOURCE_AUTH_KEY_ID?: string;
+  /**
+   * External Ed25519 verifier for one-use P1 backfill approvals. The Worker
+   * verifies public artifacts only; no issuer/private key or minting route is
+   * part of this service. Unset until the external P1 authority is approved.
+   */
+  KNOWLEDGE_BACKFILL_APPROVAL_PUBLIC_KEY?: string;
+  KNOWLEDGE_BACKFILL_APPROVAL_ISSUER?: string;
+  KNOWLEDGE_BACKFILL_APPROVAL_KEY_ID?: string;
 
   AGENT_URL: string;
   AGENT_MODEL?: string;
@@ -58,6 +86,10 @@ export interface Env {
 
   SLACK_BOT_TOKEN?: string;
   SLACK_SIGNING_SECRET?: string;
+  /** Public HTTPS origin for the approval-gated Supermemory Local service. */
+  SUPERMEMORY_URL?: string;
+  /** Local bearer credential; never logged or accepted from tool callers. */
+  SUPERMEMORY_API_KEY?: string;
   /** Installed OpenTag bot user id, required for trusted rich-payload mentions. */
   SLACK_BOT_USER_ID?: string;
   /** Exact comma/whitespace-separated `bot:B...` / `app:A...` trigger actors. */

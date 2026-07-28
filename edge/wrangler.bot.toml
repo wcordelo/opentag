@@ -61,6 +61,15 @@ service = "opentag-orchestrator"
 binding = "BOT_SELF"
 service = "opentag-bot"
 
+# Knowledge Queue/DLQ bindings are deliberately absent. Queue names,
+# retention/retry policy, and the C1 deployment gate have not been approved.
+# Source code treats KNOWLEDGE_QUEUE as optional and keeps durable outbox rows
+# recoverable until an approved producer + opentag-bot consumer binding exists.
+# Do not add [[queues.producers]] or [[queues.consumers]] here merely for local
+# testing: deploying either section can create or mutate Cloudflare resources.
+# The scheduled reconciliation entry is also source-only: do not add [triggers]
+# or set its exact team/name enablement variables before the same C1 approval.
+
 # Worker→Worker must use a service binding — public workers.dev fetch returns 1042
 # on the same zone. HttpAgent still needs AGENT_URL for the Request path/URL.
 [[services]]
@@ -84,6 +93,16 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # SLACK_TRUSTED_TRIGGER_ACTORS = "bot:B0123456789,app:A0123456789"
 # AGENT_URL: https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
 # (path used by HttpAgent; traffic goes through AGENT_RUNTIME service binding)
+# Source lifecycle issuance stays external and the verifier stays disabled
+# until C1/S1 approves an exact authority/key. Configure only the Ed25519
+# public key, issuer, and key id then; never add a private signing key:
+# KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY, KNOWLEDGE_SOURCE_AUTH_ISSUER,
+# KNOWLEDGE_SOURCE_AUTH_KEY_ID.
+# P1 backfill approval issuance is likewise external and disabled. Configure
+# only the approved Ed25519 verifier tuple after P1 authority selection:
+# KNOWLEDGE_BACKFILL_APPROVAL_PUBLIC_KEY,
+# KNOWLEDGE_BACKFILL_APPROVAL_ISSUER,
+# KNOWLEDGE_BACKFILL_APPROVAL_KEY_ID. The Worker must never hold its private key.
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET

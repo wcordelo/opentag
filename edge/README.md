@@ -20,7 +20,7 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 | `workers/sandbox/` | `opentag-harness`, Claude Code Container | Production coding runtime |
 | `workers/claudex-proxy/` | `opentag-claudex-proxy`, CLIProxyAPI Container | Private Claudex backend |
 | `wrangler.research.toml` | `opentag-orchestrator`, internal research | Optional task plane |
-| `wrangler.bot-store.toml` | StateStore workerd alias | Test-only |
+| `wrangler.bot-store.toml` | StateStore workerd alias | Test-only; no deploy script or embedded admin credential |
 | `workers/wasm-dispatch/` | Intent dispatcher | Optional research build path |
 
 ## Install and test

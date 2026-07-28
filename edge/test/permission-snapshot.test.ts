@@ -6,6 +6,7 @@ import {
   requirePermissionSnapshot,
   resetPermissionSnapshots,
 } from "../src/permissions/context.js";
+import { AUTOMATION_SAFE_TOOLS } from "../src/permissions/contract.js";
 import { buildPermissionSnapshot } from "../src/permissions/snapshot.js";
 
 const config = {
@@ -62,6 +63,7 @@ describe("permission snapshots", () => {
   });
 
   it("applies the automation safe ceiling and hides integration metadata", () => {
+    expect(AUTOMATION_SAFE_TOOLS.has("search_slack")).toBe(false);
     const snapshot = buildPermissionSnapshot({
       teamId: "T1",
       channelId: "C1",
@@ -73,6 +75,7 @@ describe("permission snapshots", () => {
         "show_permissions",
         "memory_write",
         "start_task",
+        "search_slack",
         "new_future_write_tool",
       ],
       allowedTools: [
@@ -80,6 +83,7 @@ describe("permission snapshots", () => {
         "show_permissions",
         "memory_write",
         "start_task",
+        "search_slack",
         "new_future_write_tool",
       ],
       runtime: { harnessConnected: false },
@@ -91,6 +95,7 @@ describe("permission snapshots", () => {
     expect(snapshot.channelAccess.deniedTools).toEqual([
       "memory_write",
       "new_future_write_tool",
+      "search_slack",
       "start_task",
     ]);
     expect(snapshot.channelAccess.metadataVisibility).toBe("restricted");

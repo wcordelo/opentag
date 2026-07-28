@@ -405,7 +405,7 @@ export async function handleKnowledgeQueue(
           continue;
         }
         if (outcome.status === "recorded_permanent") {
-          message.retry({ delaySeconds: RETRY_DELAY_SECONDS });
+          message.ack();
           continue;
         }
         await validateSource();

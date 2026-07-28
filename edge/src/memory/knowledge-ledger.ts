@@ -434,8 +434,8 @@ export type EnqueueKnowledgeResult = {
 
 export type LeaseKnowledgeResult =
   | { decision: "lease"; leaseToken: string; leaseExpiresAt: number }
-  | { decision: "noop"; reason: "missing" | "stale_descriptor" | "already_complete" | "config_drift" }
-  | { decision: "retry"; reason: "lease_active" | "permanent_failure"; retryAfterSeconds: number };
+  | { decision: "noop"; reason: "missing" | "stale_descriptor" | "already_complete" | "config_drift" | "permanent_failure" }
+  | { decision: "retry"; reason: "lease_active"; retryAfterSeconds: number };
 
 export type KnowledgeOutcome =
   | { status: "normalized"; desiredRevision: string }
@@ -984,9 +984,8 @@ export class KnowledgeLedger {
         return { decision: "noop", reason: "already_complete" };
       }
       if (current.status === "permanent_failure") {
-        // Preserve Queue/DLQ delivery without re-running a known permanent
-        // external effect on every at-least-once attempt.
-        return { decision: "retry", reason: "permanent_failure", retryAfterSeconds: 300 };
+        // Terminal ledger row: ack the Queue delivery without re-running external effects.
+        return { decision: "noop", reason: "permanent_failure" };
       }
       if (current.leaseToken && (current.leaseExpiresAt ?? 0) > nowMs) {
         return {

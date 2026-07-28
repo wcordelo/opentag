@@ -50,6 +50,7 @@ export function normalizeCustomDbRows(input: CustomDbRowEmitter): KnowledgeNorma
     const content = row.title ? `${row.title.trim()}\n\n${body}` : body;
     const revision = contentRevision(content);
     const metadata: FlatMetadata = {
+      ...(row.metadata ?? {}),
       schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
       sourceType: "custom_db",
       workspaceId: input.teamId,
@@ -62,7 +63,6 @@ export function normalizeCustomDbRows(input: CustomDbRowEmitter): KnowledgeNorma
       indexedAt: observedAt,
       aclPolicyRef: input.aclPolicyRef,
       status: "active",
-      ...(row.metadata ?? {}),
     };
     docs.push({
       sourceKey,

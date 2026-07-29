@@ -18,15 +18,17 @@
 - [x] Task F — deterministic implementation validator/report, six narrow integration fixes, and full local matrix (746 unit, 27 workerd E2E).
 
 ## In progress
-- [ ] Task G third fresh rereview — all known source blockers are corrected, but the fresh reviewer hit its usage limit before producing an artifact; a different fresh zero-blocker review is still required before R1 planning.
+- [x] Task H / R1 — Railway project/service/volume/domain deployed and authenticated Local smoke passed (2026-07-28).
+- [ ] Task G third fresh rereview — still owed for source completeness; user overrode the review gate to execute R1 for connected-system testing.
 
 ## Blocked
-- Task G review completion is temporarily blocked by reviewer usage availability; the failed call produced no trusted review result.
-- Task H/R1 planning is blocked until a different fresh re-review reports zero blocking findings.
+- C1/S1 Worker secrets + Queue/source enablement await explicit approval.
+- R2 backup/restore and mutation-contract enablement await separate approvals.
+- Harness Container smoke remains blocked: Docker.app present but daemon not ready.
 
 ## Queued
-- [ ] Task H — stage exact Railway R1 mutation plan and pause for explicit approval (depends on G).
-- [ ] Tasks B5-B9 — execute only after their exact external-action gates are separately approved.
+- [ ] C1 — set Cloudflare `SUPERMEMORY_URL`/`SUPERMEMORY_API_KEY`, deploy bot only with approval.
+- [ ] Tasks B6-B9 — canary/backfill/cleanup only after their exact gates.
 
 ## Confirm on return
 - R1 approval will be requested only after the exact new Railway targets, version/checksum, variables/secrets, cost cap, downtime, and rollback plan are known.

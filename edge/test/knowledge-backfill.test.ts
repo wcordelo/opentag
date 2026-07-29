@@ -88,7 +88,7 @@ describe("knowledge backfill", () => {
       projectId: "P1",
       channelIds: ["C1"],
       count: 1,
-      sourceKeys: ["slack:T1:C1:1.0"],
+      sourceKeys: ["slack:T1:C1:1_0"],
       discovery: {
         status: "complete",
         channels: [{ channelId: "C1", status: "exhausted" }],

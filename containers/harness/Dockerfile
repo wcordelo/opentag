@@ -23,7 +23,7 @@ WORKDIR /build
 COPY containers/harness/package.json containers/harness/package-lock.json ./
 RUN npm ci
 
-COPY edge/workers/sandbox/harness-server.ts edge/workers/sandbox/tool-host.ts edge/workers/sandbox/turn-contract.ts edge/workers/sandbox/image-normalization.ts ./
+COPY edge/workers/sandbox/harness-server.ts edge/workers/sandbox/tool-host.ts edge/workers/sandbox/turn-contract.ts edge/workers/sandbox/image-normalization.ts edge/workers/sandbox/output-redaction.ts ./
 
 # Compile with the lockfile-pinned TypeScript version. Compiling to
 # ES2022/ESM (not CommonJS) keeps `import.meta` usable in the sources
@@ -38,7 +38,7 @@ RUN ./node_modules/.bin/tsc \
       --strict \
       --skipLibCheck \
       --outDir dist \
-      harness-server.ts tool-host.ts turn-contract.ts image-normalization.ts
+      harness-server.ts tool-host.ts turn-contract.ts image-normalization.ts output-redaction.ts
 
 # Production deps for the runtime image (sharp native modules).
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS harness-deps
@@ -61,6 +61,7 @@ RUN npm ci --omit=dev \
 FROM ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982 AS harness
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
 
 # ── Base system packages ───────────────────────────────────────────────
 # curl/ca-certificates: needed by release-asset installs below and by any
@@ -70,19 +71,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   Ubuntu packages the `fd-find` binary as `fdfind`; symlink it to `fd` so
 #   the prompt's guidance ("prefer `fd`") is actually true.
 # The timestamped Ubuntu archive freezes both package indexes and transitive
-# dependencies. The base image has no CA bundle, so bootstrap TLS from exact
-# Ubuntu package URLs whose bytes BuildKit verifies before dpkg sees them.
+# dependencies. Bootstrap from architecture-specific snapshot repositories over
+# plain HTTP so the base image does not need a pre-existing CA bundle just to
+# install `ca-certificates` and `curl`.
 ARG UBUNTU_SNAPSHOT=20260701T000000Z
-ADD --checksum=sha256:08e75ff19d4fab73a1e2f92140a9e12b7cab36b4dc8efb764ec9963b57dbb455 \
-  http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.25_amd64.deb /tmp/openssl.deb
-ADD --checksum=sha256:6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245 \
-  http://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb /tmp/ca-certificates.deb
-RUN dpkg -i /tmp/openssl.deb /tmp/ca-certificates.deb \
-    && rm /tmp/openssl.deb /tmp/ca-certificates.deb \
+RUN case "$TARGETARCH" in \
+      amd64) snapshot_host="archive.ubuntu.com/ubuntu" ;; \
+      arm64) snapshot_host="ports.ubuntu.com/ubuntu-ports" ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 64 ;; \
+    esac \
     && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy main universe" \
-      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy-updates main universe" \
-      "deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT} jammy-security main universe" \
+      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy main universe" \
+      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy-updates main universe" \
+      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy-security main universe" \
       > /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/* \
     && apt-get update \
@@ -106,9 +107,10 @@ COPY --from=build /usr/local/ /usr/local/
 # than a moving apt channel. This is the authorized PR creation surface.
 ARG GH_VERSION=2.93.0
 ARG GH_AMD64_SHA256=5371f77155e5dd81b6e897c379431f734949b99b99ae1f01c5e3ab6d3795cf4d
+ARG GH_ARM64_SHA256=ac30768545cc31bbef9ffef27d2f2218b2739375019883b8095acf2f734e7b7f
 RUN curl -fsSLo /tmp/gh.deb \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
-    && echo "${GH_AMD64_SHA256}  /tmp/gh.deb" | sha256sum -c - \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_$(case "$TARGETARCH" in amd64) echo amd64 ;; arm64) echo arm64 ;; *) echo unsupported; exit 64 ;; esac).deb" \
+    && echo "$(case "$TARGETARCH" in amd64) echo "${GH_AMD64_SHA256}" ;; arm64) echo "${GH_ARM64_SHA256}" ;; *) echo unsupported; exit 64 ;; esac)  /tmp/gh.deb" | sha256sum -c - \
     && dpkg -i /tmp/gh.deb \
     && rm /tmp/gh.deb \
     && gh --version | grep -F "gh version ${GH_VERSION}"
@@ -190,11 +192,13 @@ EOF
 # ── uv — exact release archive, checksum verified before extraction ────
 ARG UV_VERSION=0.6.14
 ARG UV_AMD64_SHA256=0aaf451c391d3913823bfb8ed354b446dcfd0553a32ed8266611e4181c61fd51
+ARG UV_ARM64_SHA256=ea25597354af186bdd55aee0de431e16d45d82951a4f41f065a8e4dc27885265
 RUN curl -fsSLo /tmp/uv.tar.gz \
-      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
-    && echo "${UV_AMD64_SHA256}  /tmp/uv.tar.gz" | sha256sum -c - \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/$(case "$TARGETARCH" in amd64) echo uv-x86_64-unknown-linux-gnu.tar.gz ;; arm64) echo uv-aarch64-unknown-linux-gnu.tar.gz ;; *) echo unsupported; exit 64 ;; esac)" \
+    && echo "$(case "$TARGETARCH" in amd64) echo "${UV_AMD64_SHA256}" ;; arm64) echo "${UV_ARM64_SHA256}" ;; *) echo unsupported; exit 64 ;; esac)  /tmp/uv.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin \
-      uv-x86_64-unknown-linux-gnu/uv uv-x86_64-unknown-linux-gnu/uvx \
+      "$(case "$TARGETARCH" in amd64) echo uv-x86_64-unknown-linux-gnu/uv ;; arm64) echo uv-aarch64-unknown-linux-gnu/uv ;; *) echo unsupported; exit 64 ;; esac)" \
+      "$(case "$TARGETARCH" in amd64) echo uv-x86_64-unknown-linux-gnu/uvx ;; arm64) echo uv-aarch64-unknown-linux-gnu/uvx ;; *) echo unsupported; exit 64 ;; esac)" \
     && rm /tmp/uv.tar.gz \
     && test "$(uv --version)" = "uv ${UV_VERSION}"
 
@@ -234,6 +238,7 @@ COPY --from=build /build/dist/harness-server.js /opt/harness/harness-server.js
 COPY --from=build /build/dist/tool-host.js /opt/harness/tool-host.js
 COPY --from=build /build/dist/turn-contract.js /opt/harness/turn-contract.js
 COPY --from=build /build/dist/image-normalization.js /opt/harness/image-normalization.js
+COPY --from=build /build/dist/output-redaction.js /opt/harness/output-redaction.js
 COPY --from=harness-deps /opt/harness-deps/node_modules /opt/harness/node_modules
 COPY containers/harness/SYSTEM_PROMPT.md /opt/harness/SYSTEM_PROMPT.md
 
@@ -269,6 +274,7 @@ RUN mkdir -p /work \
     && test "$(stat -c '%u:%g:%a' /opt/harness/tool-host.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/turn-contract.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/image-normalization.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/output-redaction.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/package.json)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/SYSTEM_PROMPT.md)" = "0:0:444" \
     && test -d /opt/harness/node_modules/sharp \

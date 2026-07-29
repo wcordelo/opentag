@@ -27,6 +27,15 @@ records. When documents disagree, use this precedence order:
 | [../edge/workers/agent-runtime/README.md](../edge/workers/agent-runtime/README.md) | Production AG-UI Container |
 | [../edge/wasm-core/README.md](../edge/wasm-core/README.md) | Optional research WASM dispatcher |
 
+## Proposed specifications
+
+These documents describe planning-stage product work that is not yet current
+implementation truth:
+
+| Document | Purpose |
+| --- | --- |
+| [knowledge-base-implementation-spec.md](./knowledge-base-implementation-spec.md) | Cross-source knowledge ingestion, hybrid retrieval, projects, ACLs, citations, MCP, and rollout plan |
+
 ## Historical records
 
 These remain useful for rationale and acceptance criteria, but their planned

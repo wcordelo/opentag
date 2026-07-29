@@ -43,7 +43,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
     expect(planKnowledgeReconciliation({
       ...source, status: "processing_unconfirmed", localDocumentId: "doc-1", desiredRevision: "sha256:one",
     }, "2026-07-19T01:00:00.000Z")).toEqual({
-      action: "resume_poll", sourceKey: "slack:T1:C1:1.0", localDocumentId: "doc-1",
+      action: "resume_poll", sourceKey: "slack:T1:C1:1_0", localDocumentId: "doc-1",
     });
     expect(planKnowledgeReconciliation({
       ...source, status: "incomplete", incompleteReason: "cursor_missing",
@@ -84,11 +84,11 @@ describe("knowledge reconciliation and DLQ operations", () => {
 
   it("makes DLQ inspection observable and replay exact and explicit", () => {
     const records = [
-      { messageId: "m2", sourceKey: "slack:T1:C1:2.0", attempts: 3 },
-      { messageId: "m1", sourceKey: "slack:T1:C1:1.0", attempts: 2 },
+      { messageId: "m2", sourceKey: "slack:T1:C1:2_0", attempts: 3 },
+      { messageId: "m1", sourceKey: "slack:T1:C1:1_0", attempts: 2 },
     ];
     expect(inspectKnowledgeDlq(records, 1)).toMatchObject({ count: 2, truncated: true });
-    expect(planKnowledgeDlqReplay(records, "slack:T1:C1:1.0")).toMatchObject({ action: "replay_one", record: records[1] });
+    expect(planKnowledgeDlqReplay(records, "slack:T1:C1:1_0")).toMatchObject({ action: "replay_one", record: records[1] });
     expect(() => planKnowledgeDlqReplay(records, "slack:T1:C1:*")).toThrow("exact sourceKey");
   });
 
@@ -112,7 +112,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
           pageToken: "page-1",
           rows: [{
             ...source,
-            sourceKey: "slack:T1:C1:1.0",
+            sourceKey: "slack:T1:C1:1_0",
             requestedAt: "2026-07-19T01:00:00.000Z",
             reason: "event",
             status: "retryable_failure",
@@ -135,7 +135,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
       if (path === "/reconcile/commit") {
         return Response.json({
           status: "running",
-          cursor: "slack:T1:C1:1.0",
+          cursor: "slack:T1:C1:1_0",
           scannedCount: 1,
           enqueuedCount: 1,
           skippedCount: 0,
@@ -344,7 +344,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
   it("scheduled reconciliation completes a durable cursor without manual calls", async () => {
     const reconcileRow = {
       ...source,
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
       requestedAt: "2026-07-19T01:00:00.000Z",
       reason: "event",
       status: "retryable_failure",

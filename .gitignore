@@ -10,3 +10,10 @@ state.db-shm
 state.db-wal
 data/blobs
 .tools
+
+# Railway local link metadata (never commit)
+.railway/
+**/.railway/
+
+# Local knowledge-source grant authority (private key)
+.opentag-knowledge-source-authority.json

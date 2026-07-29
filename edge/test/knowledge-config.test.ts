@@ -98,7 +98,7 @@ describe("knowledge configuration foundation", () => {
 
   it("derives the one exact workspace tag and stable Slack custom ID", () => {
     expect(workspaceTag("T1")).toBe("workspace:T1");
-    expect(slackSourceKey("T1", "C1", "171234.000100")).toBe("slack:T1:C1:171234.000100");
+    expect(slackSourceKey("T1", "C1", "171234.000100")).toBe("slack:T1:C1:171234_000100");
     const job = createKnowledgeJob({
       ...scope,
       threadTs: "171234.000100",
@@ -106,7 +106,7 @@ describe("knowledge configuration foundation", () => {
       requestedAt: "2026-07-19T00:00:00.000Z",
       reason: "event",
     });
-    expect(job.sourceKey).toBe("slack:T1:C1:171234.000100");
+    expect(job.sourceKey).toBe("slack:T1:C1:171234_000100");
     expect(() => workspaceTag("T1:prefix")).toThrow("safe identifier");
     expect(() => rejectCallerControlledAddressing({ containerTag: "workspace:T2" }))
       .toThrow("containerTag");
@@ -133,14 +133,14 @@ describe("knowledge configuration foundation", () => {
       projectId: "P1",
       channelId: "C1",
       threadTs: "1.0",
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
       contentRevision: "sha256:fixture",
       rootTs: "1.0",
       observedAt: "2026-07-19T00:00:00.000Z",
       indexedAt: "2026-07-19T00:00:00.000Z",
       aclPolicyRef: "bundle:readers",
       status: "active",
-    })).toMatchObject({ sourceKey: "slack:T1:C1:1.0" });
+    })).toMatchObject({ sourceKey: "slack:T1:C1:1_0" });
     for (const status of ["unknown", "queued", "extracting", "chunking", "embedding", "indexing", "failed"] as const) {
       expect(isIndexedDocumentStatus(status)).toBe(false);
     }

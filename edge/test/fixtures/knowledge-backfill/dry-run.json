@@ -21,7 +21,7 @@
   "releaseIds": ["worker:fixture", "local:fixture"],
   "rollbackOwner": "operator:fixture",
   "count": 1,
-  "sourceKeys": ["slack:T_FIXTURE:C_FIXTURE:1782864000.000001"],
+  "sourceKeys": ["slack:T_FIXTURE:C_FIXTURE:1782864000_000001"],
   "jobs": [
     {
       "version": 1,
@@ -29,7 +29,7 @@
       "projectId": "P_FIXTURE",
       "channelId": "C_FIXTURE",
       "threadTs": "1782864000.000001",
-      "sourceKey": "slack:T_FIXTURE:C_FIXTURE:1782864000.000001",
+      "sourceKey": "slack:T_FIXTURE:C_FIXTURE:1782864000_000001",
       "configVersion": 1,
       "requestedAt": "2026-07-01T00:00:00.000Z",
       "reason": "backfill"

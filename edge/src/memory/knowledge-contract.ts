@@ -167,12 +167,21 @@ function sourcePart(value: string, field: string): string {
   return value;
 }
 
+/**
+ * Local `customId` allows only `[A-Za-z0-9_:-]`. Slack message timestamps use
+ * `.` (e.g. `171234.000100`), so the ts component of `sourceKey`/`customId`
+ * must be encoded. Metadata `threadTs` / `rootTs` keep the real Slack ts.
+ */
+export function encodeSlackTsForSourceKey(threadTs: string): string {
+  return sourcePart(threadTs, "threadTs").replaceAll(".", "_");
+}
+
 export function workspaceTag(teamId: string): `workspace:${string}` {
   return `workspace:${identifier(teamId, "teamId")}`;
 }
 
 export function slackSourceKey(teamId: string, channelId: string, threadTs: string): string {
-  return `slack:${identifier(teamId, "teamId")}:${identifier(channelId, "channelId")}:${sourcePart(threadTs, "threadTs")}`;
+  return `slack:${identifier(teamId, "teamId")}:${identifier(channelId, "channelId")}:${encodeSlackTsForSourceKey(threadTs)}`;
 }
 
 export function isIndexedDocumentStatus(status: LocalDocumentStatus): boolean {

@@ -107,7 +107,7 @@ function env(options: {
 }
 
 const citation = {
-  sourceKey: "slack:T1:C1:1.0", projectId: "P1", channelId: "C1", threadTs: "1.0",
+  sourceKey: "slack:T1:C1:1_0", projectId: "P1", channelId: "C1", threadTs: "1.0",
   contentRevision: "sha256:one", excerpt: "result", aclPolicyRef: "bundle:readers",
   retrievedAt: "2026-07-19T00:00:00.000Z",
 };

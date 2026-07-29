@@ -61,14 +61,21 @@ service = "opentag-orchestrator"
 binding = "BOT_SELF"
 service = "opentag-bot"
 
-# Knowledge Queue/DLQ bindings are deliberately absent. Queue names,
-# retention/retry policy, and the C1 deployment gate have not been approved.
-# Source code treats KNOWLEDGE_QUEUE as optional and keeps durable outbox rows
-# recoverable until an approved producer + opentag-bot consumer binding exists.
-# Do not add [[queues.producers]] or [[queues.consumers]] here merely for local
-# testing: deploying either section can create or mutate Cloudflare resources.
-# The scheduled reconciliation entry is also source-only: do not add [triggers]
-# or set its exact team/name enablement variables before the same C1 approval.
+# Knowledge Queue/DLQ — C1 approved 2026-07-28 for connected E2E with Railway Local.
+[[queues.producers]]
+binding = "KNOWLEDGE_QUEUE"
+queue = "opentag-knowledge"
+
+[[queues.consumers]]
+queue = "opentag-knowledge"
+max_batch_size = 10
+max_retries = 5
+dead_letter_queue = "opentag-knowledge-dlq"
+
+[[queues.consumers]]
+queue = "opentag-knowledge-dlq"
+max_batch_size = 5
+max_retries = 3
 
 # Worker→Worker must use a service binding — public workers.dev fetch returns 1042
 # on the same zone. HttpAgent still needs AGENT_URL for the Request path/URL.
@@ -86,6 +93,8 @@ service = "opentag-harness"
 [vars]
 ENVIRONMENT = "production"
 HARNESS_REPO_URL = "https://github.com/wcordelo/opentag"
+KNOWLEDGE_QUEUE_NAME = "opentag-knowledge"
+KNOWLEDGE_DLQ_NAME = "opentag-knowledge-dlq"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
 SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"

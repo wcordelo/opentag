@@ -27,20 +27,25 @@ and configured client/provider secrets, and returns the child exit status after
 forwarding termination. Its fake-child tests prove this wrapper only; they do
 not prove the Local binary's generated-key file/path/format.
 
-## Explicit stops before R1
+## R1 runtime proofs (executed)
 
-- The pinned binary has not been smoke-tested for its bind host, a safe health
-  endpoint, generated-key file/path/rotation behavior, or arbitrary
-  `DATABASE_URL` handling. Do not invent a Railway healthcheck.
-- A real empty-volume first boot must prove owner-only auth/data paths and that
-  no generated key or provider secret reaches Railway logs.
-- The approved provider account must prove `gpt-5.1` availability without
-  placing an `OPENAI_API_KEY` in this repository or transcript.
-- Railway's mounted volume may be root-owned. This non-root image must be
-  tested against the exact mount before R1; do not silently use root or a
-  guessed `RAILWAY_RUN_UID` setting.
+- The pinned binary has been smoke-tested on Railway
+  (`opentag-supermemory-local` / `supermemory-local`):
+  - Bind: public HTTPS serves Local UI at `/` and OpenAPI at `/v3/openapi`
+    / `/v4/openapi`.
+  - Auth: bearer required; generated key file is exactly
+    `$SUPERMEMORY_DATA_DIR/api-key` (volume path `/api-key`).
+  - First-boot key is redacted from Railway logs by this entrypoint.
+  - Proven ingest path: `POST /v3/documents` → poll `GET /v3/documents/{id}`
+    through `queued`/`indexing`/`done` → `POST /v4/search` under an exact
+    `containerTag`. Cross-tag search returned zero hits in smoke.
+  - Do not invent a Railway `healthcheckPath` from `/` (UI HTML) or
+    authenticated data routes.
+- Railway volume mounts are root-owned. Proven fix: set service variable
+  `RAILWAY_RUN_UID=0`. The entrypoint no longer crash-loops on `chmod`
+  denial, but still requires a writable data directory.
 - No source can be production-enabled until an authoritative workspace/project/
   channel administrator authorization contract exists. The current DO RPC is
   intentionally not exposed by an admin route.
 
-Do not run this image or create `.supermemory` in the repository for B0.
+Do not create `.supermemory` in the repository.

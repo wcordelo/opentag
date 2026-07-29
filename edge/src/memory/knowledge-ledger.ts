@@ -1085,20 +1085,39 @@ export class KnowledgeLedger {
       } else if (outcome.status === "preserve_indexed") {
         // Mutation contract is off: keep the last successful index searchable
         // instead of poisoning the row to permanent_failure on reply/edit.
-        if (!current.indexedRevision || !current.localDocumentId) return false;
-        this.sql.exec(
-          `UPDATE knowledge_ledger SET status = 'indexed', desired_revision = indexed_revision,
-           lease_token = NULL, lease_expires_at = NULL,
-           last_error_class = ?, last_error_code = ?, incomplete_reason = NULL,
-           last_local_error = ?, last_local_operation = 'update_skipped', updated_at = ?
-           WHERE source_key = ? AND lease_token = ?`,
-          outcome.errorClass,
-          outcome.errorCode,
-          outcome.errorCode,
-          now,
-          sourceKey,
-          leaseToken,
-        );
+        if (!current.indexedRevision) {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET
+               status = ?, lease_token = NULL, lease_expires_at = NULL,
+               last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
+               last_local_error = ?, updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            "permanent_failure",
+            outcome.errorClass,
+            outcome.errorCode ?? null,
+            null,
+            outcome.errorCode ?? outcome.errorClass,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        } else if (!current.localDocumentId) {
+          return false;
+        } else {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET status = 'indexed', desired_revision = indexed_revision,
+             lease_token = NULL, lease_expires_at = NULL,
+             last_error_class = ?, last_error_code = ?, incomplete_reason = NULL,
+             last_local_error = ?, last_local_operation = 'update_skipped', updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            outcome.errorClass,
+            outcome.errorCode,
+            outcome.errorCode,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        }
       } else {
         const retryableAddNeverAccepted =
           outcome.status === "retryable_failure" &&

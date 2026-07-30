@@ -15,7 +15,7 @@ function metadata(overrides: Record<string, unknown> = {}) {
     projectId: "P1",
     channelId: "C1",
     threadTs: "1.0",
-    sourceKey: "slack:T1:C1:1.0",
+    sourceKey: "slack:T1:C1:1_0",
     contentRevision: "sha256:one",
     rootTs: "1.0",
     observedAt: "2026-07-19T00:00:00.000Z",
@@ -30,7 +30,7 @@ function client(overrides: Partial<SupermemoryClient> = {}): SupermemoryClient {
   return {
     add: vi.fn(async () => ({ id: "doc-1", status: "queued" })),
     documents: {
-      get: vi.fn(async () => ({ id: "doc-1", customId: "slack:T1:C1:1.0", status: "done" })),
+      get: vi.fn(async () => ({ id: "doc-1", customId: "slack:T1:C1:1_0", status: "done" })),
       update: vi.fn(async () => ({ id: "doc-1", status: "queued" })),
       delete: vi.fn(async () => undefined),
     },
@@ -47,17 +47,17 @@ describe("SupermemoryAdapter", () => {
       .toEqual({ localDocumentId: "doc-1", status: "queued" });
     expect(add).toHaveBeenCalledWith(expect.objectContaining({
       containerTag: "workspace:T1",
-      customId: "slack:T1:C1:1.0",
+      customId: "slack:T1:C1:1_0",
     }));
     await expect(adapter.addSlackDocument({
-      teamId: "T1", content: "fixture", metadata: metadata({ sourceKey: "slack:T1:C2:1.0" }),
+      teamId: "T1", content: "fixture", metadata: metadata({ sourceKey: "slack:T1:C2:1_0" }),
     })).rejects.toThrow("invalid schema version or sourceKey");
     expect(add).toHaveBeenCalledTimes(1);
   });
 
   it("times out non-terminal indexing and resumes the same Local document ID without add", async () => {
     let now = 0;
-    const get = vi.fn(async (id: string) => ({ id, customId: "slack:T1:C1:1.0", status: "indexing" as const }));
+    const get = vi.fn(async (id: string) => ({ id, customId: "slack:T1:C1:1_0", status: "indexing" as const }));
     const add = vi.fn();
     const adapter = new SupermemoryAdapter(client({
       add: add as unknown as SupermemoryClient["add"],
@@ -65,7 +65,7 @@ describe("SupermemoryAdapter", () => {
     }), { now: () => now, sleep: async (ms) => { now += ms; } });
     const result = await adapter.pollDocument({
       localDocumentId: "doc-known",
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
       pollDeadlineAt: 300,
     });
     expect(result).toMatchObject({
@@ -79,9 +79,9 @@ describe("SupermemoryAdapter", () => {
 
   it("classifies unsupported statuses and bounds search at the adapter boundary", async () => {
     const adapter = new SupermemoryAdapter(client({
-      documents: { get: vi.fn(async () => ({ id: "doc-1", customId: "slack:T1:C1:1.0", status: "processing" })) } as unknown as SupermemoryClient["documents"],
+      documents: { get: vi.fn(async () => ({ id: "doc-1", customId: "slack:T1:C1:1_0", status: "processing" })) } as unknown as SupermemoryClient["documents"],
     }));
-    await expect(adapter.pollDocument({ localDocumentId: "doc-1", sourceKey: "slack:T1:C1:1.0" }))
+    await expect(adapter.pollDocument({ localDocumentId: "doc-1", sourceKey: "slack:T1:C1:1_0" }))
       .rejects.toEqual(expect.objectContaining({ code: "local_malformed_response", retryable: false }));
     await expect(adapter.searchSlack({
       teamId: "T1", projectId: "P1", channelId: "C1", aclPolicyRef: "bundle:readers",
@@ -107,12 +107,12 @@ describe("SupermemoryAdapter", () => {
     })).toEqual({ localDocumentId: "doc-1", status: "queued" });
     expect(update).toHaveBeenCalledWith("doc-1", expect.objectContaining({
       content: "revised",
-      customId: "slack:T1:C1:1.0",
+      customId: "slack:T1:C1:1_0",
       containerTag: "workspace:T1",
     }));
     expect(await adapter.deleteSlackDocument({
       localDocumentId: "doc-1",
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
     })).toEqual({ deleted: true });
     expect(del).toHaveBeenCalledWith("doc-1");
   });
@@ -162,7 +162,7 @@ describe("SupermemoryAdapter", () => {
       limit: 3,
     });
     expect(citations).toEqual([expect.objectContaining({
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
       sourceType: "slack",
       contentRevision: "sha256:one",
       excerpt: "useful excerpt",
@@ -292,7 +292,7 @@ describe("Supermemory Queue dispatch configuration fence", () => {
     expect(fetchThread).not.toHaveBeenCalled();
     expect(deleteSlackDocument).toHaveBeenCalledWith({
       localDocumentId: "doc-1",
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
     });
     expect(addSlackDocument).not.toHaveBeenCalled();
     expect(updateSlackDocument).not.toHaveBeenCalled();
@@ -388,7 +388,7 @@ describe("Supermemory Queue dispatch configuration fence", () => {
     expect(addSlackDocument).not.toHaveBeenCalled();
     expect(pollDocument).toHaveBeenCalledWith({
       localDocumentId: "doc-1",
-      sourceKey: "slack:T1:C1:1.0",
+      sourceKey: "slack:T1:C1:1_0",
     });
   });
 
@@ -460,13 +460,14 @@ describe("Supermemory Queue dispatch configuration fence", () => {
     expect(outcomes).toEqual([
       expect.objectContaining({
         outcome: {
-          status: "permanent_failure",
+          status: "preserve_indexed",
           errorClass: "unsupported_capability",
           errorCode: "unsupported_update_contract",
         },
       }),
     ]);
     expect(JSON.stringify(outcomes)).not.toContain("tombstoned");
+    expect(JSON.stringify(outcomes)).not.toContain("permanent_failure");
   });
 
   it.each([

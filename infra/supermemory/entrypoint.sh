@@ -8,9 +8,14 @@ data_dir="${SUPERMEMORY_DATA_DIR:-/var/lib/supermemory}"
 binary="${SUPERMEMORY_BINARY:-/usr/local/bin/supermemory-server}"
 
 mkdir -p "$data_dir" || exit $?
-chmod 700 "$data_dir" || exit $?
+# Railway volumes are often root-owned. Prefer mode 0700 when permitted; do not
+# crash-loop when chmod is denied — fall through to the writable check instead.
+if ! chmod 700 "$data_dir" 2>/dev/null; then
+  echo "supermemory: chmod on data dir not permitted (common on Railway volumes); continuing if writable" >&2
+fi
 if [ ! -w "$data_dir" ]; then
   echo "supermemory data directory is not writable" >&2
+  echo "supermemory: on Railway, set RAILWAY_RUN_UID=0 for root-owned volume mounts" >&2
   exit 70
 fi
 

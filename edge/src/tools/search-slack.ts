@@ -218,17 +218,24 @@ async function citationIsCurrent(
       indexedRevision?: string;
       tombstonedAt?: string;
       status?: string;
+      lastErrorCode?: string;
       projectId?: string;
       channelId?: string;
       configVersion?: number;
     } | null;
   };
-  return state.ledger?.status === "indexed" &&
-    !state.ledger.tombstonedAt &&
-    state.ledger.projectId === citation.projectId &&
-    state.ledger.channelId === citation.channelId &&
-    state.ledger.configVersion === configVersion &&
-    state.ledger.indexedRevision === citation.contentRevision;
+  const ledger = state.ledger;
+  // Cite the last successfully indexed revision even when a later unsupported
+  // update marked the row permanent_failure (mutation contract still off).
+  return Boolean(
+    ledger &&
+    !ledger.tombstonedAt &&
+    ledger.indexedRevision &&
+    ledger.projectId === citation.projectId &&
+    ledger.channelId === citation.channelId &&
+    ledger.configVersion === configVersion &&
+    ledger.indexedRevision === citation.contentRevision,
+  );
 }
 
 export async function searchSlackKnowledge(input: {

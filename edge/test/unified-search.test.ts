@@ -9,7 +9,7 @@ import {
 
 function citation(partial: Partial<KnowledgeCitationBase> & { excerpt: string }): KnowledgeCitationBase {
   return {
-    sourceKey: partial.sourceKey ?? "slack:T1:C1:1.0",
+    sourceKey: partial.sourceKey ?? "slack:T1:C1:1_0",
     projectId: partial.projectId ?? "P1",
     contentRevision: partial.contentRevision ?? "sha256:abc",
     excerpt: partial.excerpt,

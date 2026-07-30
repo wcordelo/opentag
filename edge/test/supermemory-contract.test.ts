@@ -22,7 +22,7 @@ describe("supermemory@4.24.12 SDK contract", () => {
           return Response.json({ id: "local-doc-1", status: "queued" });
         }
         if (path === "/v3/documents/local-doc-1" && init?.method === "GET") {
-          return Response.json({ id: "local-doc-1", status: "done", customId: "slack:T1:C1:1.0", metadata: {} });
+          return Response.json({ id: "local-doc-1", status: "done", customId: "slack:T1:C1:1_0", metadata: {} });
         }
         if (path === "/v3/documents/local-doc-1" && init?.method === "PATCH") {
           return Response.json({ id: "local-doc-1", status: "queued" });
@@ -61,12 +61,12 @@ describe("supermemory@4.24.12 SDK contract", () => {
       expect.objectContaining({
         url: "https://local.example/v3/documents",
         method: "POST",
-        body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1.0" }),
+        body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1_0" }),
       }),
       expect.objectContaining({
         url: "https://local.example/v3/documents",
         method: "POST",
-        body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1.0" }),
+        body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1_0" }),
       }),
       expect.objectContaining({ url: "https://local.example/v3/documents/local-doc-1", method: "GET" }),
       expect.objectContaining({
@@ -75,7 +75,7 @@ describe("supermemory@4.24.12 SDK contract", () => {
         body: expect.objectContaining({
           content: "revised fixture",
           containerTag: "workspace:T1",
-          customId: "slack:T1:C1:1.0",
+          customId: "slack:T1:C1:1_0",
         }),
       }),
       expect.objectContaining({ url: "https://local.example/v3/documents/local-doc-1", method: "DELETE" }),

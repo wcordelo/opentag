@@ -514,14 +514,20 @@ export function createKnowledgeSupermemoryDispatch(
     mutationsVerified,
   });
   if (prepared.decision === "blocked") {
+    if (prepared.reason === "unsupported_update_contract") {
+      await recordFencedOutcome({
+        status: "preserve_indexed",
+        errorClass: "unsupported_capability",
+        errorCode: "unsupported_update_contract",
+      });
+      return { status: "recorded_permanent" };
+    }
     await recordFencedOutcome({
       status: "permanent_failure",
       errorClass: "unsupported_capability",
       errorCode: prepared.reason === "tombstoned"
         ? "unsupported_delete_contract"
-        : prepared.reason === "ambiguous_add_contract"
-          ? "ambiguous_add_contract"
-          : "unsupported_update_contract",
+        : "ambiguous_add_contract",
     });
     return { status: "recorded_permanent" };
   }

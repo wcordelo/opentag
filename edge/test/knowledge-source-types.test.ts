@@ -24,7 +24,7 @@ describe("knowledge source types (K2)", () => {
     expect(wikiSourceKey("T1", "S1", "page-1")).toBe("wiki:T1:S1:page-1");
     expect(codeSourceKey("T1", "repo1", "chunk.0")).toBe("code:T1:repo1:chunk.0");
     expect(customDbSourceKey("T1", "conn1", "row-9")).toBe("custom_db:T1:conn1:row-9");
-    expect(slackSourceKey("T1", "C1", "171234.000100")).toBe("slack:T1:C1:171234.000100");
+    expect(slackSourceKey("T1", "C1", "171234.000100")).toBe("slack:T1:C1:171234_000100");
 
     expect(() => wikiSourceKey("T1:x", "S1", "p")).toThrow("safe identifier");
     expect(() => codeSourceKey("T1", "repo:1", "c")).toThrow("safe identifier");
@@ -33,7 +33,7 @@ describe("knowledge source types (K2)", () => {
   });
 
   it("derives sourceType from sourceKey prefixes including custom_db", () => {
-    expect(parseSourceTypeFromKey("slack:T1:C1:1.0")).toBe("slack");
+    expect(parseSourceTypeFromKey("slack:T1:C1:1_0")).toBe("slack");
     expect(parseSourceTypeFromKey("wiki:T1:S1:p")).toBe("wiki");
     expect(parseSourceTypeFromKey("code:T1:r:c")).toBe("code");
     expect(parseSourceTypeFromKey("custom_db:T1:conn:row")).toBe("custom_db");

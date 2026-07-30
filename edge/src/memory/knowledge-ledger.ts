@@ -442,6 +442,11 @@ export type KnowledgeOutcome =
   | { status: "indexed"; desiredRevision: string; indexedRevision: string; localDocumentId: string; workflowStatus: "done"; pollCount: number }
   | { status: "processing_unconfirmed"; desiredRevision: string; localDocumentId: string; workflowStatus: string; pollDeadlineAt: number; nextPollAt: number; pollCount: number }
   | { status: "tombstoned"; tombstonedAt: string; errorCode?: "unsupported_delete_contract" | "deleted" }
+  | {
+    status: "preserve_indexed";
+    errorClass: "unsupported_capability";
+    errorCode: "unsupported_update_contract";
+  }
   | { status: "retryable_failure"; errorClass: string; errorCode?: string; incompleteReason?: string }
   | { status: "permanent_failure"; errorClass: string; errorCode?: string };
 
@@ -1077,6 +1082,44 @@ export class KnowledgeLedger {
           sourceKey,
           leaseToken,
         );
+      } else if (outcome.status === "preserve_indexed") {
+        // Mutation contract is off: keep the last successful index searchable
+        // instead of poisoning the row to permanent_failure on reply/edit.
+        // preserve_indexed always carries required errorClass/errorCode literals;
+        // do not use `??` on them (TS narrows the RHS to never).
+        if (!current.indexedRevision) {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET
+               status = ?, lease_token = NULL, lease_expires_at = NULL,
+               last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
+               last_local_error = ?, updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            "permanent_failure",
+            outcome.errorClass,
+            outcome.errorCode,
+            null,
+            outcome.errorCode,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        } else if (!current.localDocumentId) {
+          return false;
+        } else {
+          this.sql.exec(
+            `UPDATE knowledge_ledger SET status = 'indexed', desired_revision = indexed_revision,
+             lease_token = NULL, lease_expires_at = NULL,
+             last_error_class = ?, last_error_code = ?, incomplete_reason = NULL,
+             last_local_error = ?, last_local_operation = 'update_skipped', updated_at = ?
+             WHERE source_key = ? AND lease_token = ?`,
+            outcome.errorClass,
+            outcome.errorCode,
+            outcome.errorCode,
+            now,
+            sourceKey,
+            leaseToken,
+          );
+        }
       } else {
         const retryableAddNeverAccepted =
           outcome.status === "retryable_failure" &&

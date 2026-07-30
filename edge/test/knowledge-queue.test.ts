@@ -278,7 +278,7 @@ describe("knowledge descriptor scheduling", () => {
         return Response.json({
           accepted: false,
           reason: "duplicate",
-          descriptorKey: "slack:T1:C1:171234.000100",
+          descriptorKey: "slack:T1:C1:171234_000100",
           echo: body,
         });
       },
@@ -370,7 +370,7 @@ describe("opentag-bot knowledge Queue consumer", () => {
     expect(queued.retry).not.toHaveBeenCalled();
     expect(fixture.outcomes).toEqual([
       expect.objectContaining({
-        sourceKey: "slack:T1:C1:171234.000100",
+        sourceKey: "slack:T1:C1:171234_000100",
         leaseToken: "lease-1",
         outcome: { status: "normalized", desiredRevision: "sha256:abc" },
       }),

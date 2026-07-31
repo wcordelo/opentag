@@ -308,6 +308,10 @@ export class SqlStateEngine {
     });
   }
 
+  dedupForget(key: string): void {
+    this.sql.exec(`DELETE FROM dedup WHERE key = ?`, key);
+  }
+
   // ── queue ──────────────────────────────────────────────────────────────────
 
   queueEnqueue(

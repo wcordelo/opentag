@@ -124,6 +124,9 @@ export function makeSqliteStateStore(): { store: StateStore; close: () => void }
     dedup: {
       seen: async (key: string, ttlMs: number) => engine.dedupSeen(key, ttlMs),
       has: async (key: string) => engine.dedupHas(key),
+      forget: async (key: string) => {
+        engine.dedupForget(key);
+      },
     },
     queue: {
       enqueue: async <T>(

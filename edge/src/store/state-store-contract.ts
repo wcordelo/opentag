@@ -54,6 +54,8 @@ export interface StateStore {
      * redelivery may need to re-fetch when authoritative admission never ran).
      */
     has(key: string): Promise<boolean>;
+    /** Drop a claim so a failed admission can be retried. */
+    forget(key: string): Promise<void>;
   };
   queue: {
     enqueue<T>(

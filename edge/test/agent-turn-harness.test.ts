@@ -86,6 +86,7 @@ function makeMemoryStore(): LifecycleStateStore {
       async has() {
         return false;
       },
+      async forget() {},
     },
     queue: {
       async enqueue() {

@@ -1798,6 +1798,10 @@ export class ConversationStateDO extends DurableObject {
     return this.engine.dedupHas(key);
   }
 
+  async dedupForget(key: string): Promise<void> {
+    this.engine.dedupForget(key);
+  }
+
   async queueEnqueue(
     key: string,
     value: unknown,

@@ -260,11 +260,16 @@ export async function processBuzzWakeReceive(
     });
   }
 
-  await deps.runtime.admit({
-    tenantId: wakeClaim.tenantId,
-    inbound,
-    conversationKey,
-  });
+  try {
+    await deps.runtime.admit({
+      tenantId: wakeClaim.tenantId,
+      inbound,
+      conversationKey,
+    });
+  } catch (error) {
+    await deps.authoritativeDedupe.forget(authoritative.dedupeKey);
+    throw error;
+  }
 
   return Object.freeze({
     status: "accepted",
@@ -288,5 +293,6 @@ export function stateStoreBuzzEventDedupe(
   return {
     seen: (key, ttlMs) => store.dedup.seen(key, ttlMs),
     has: (key) => store.dedup.has(key),
+    forget: (key) => store.dedup.forget(key),
   };
 }

@@ -91,6 +91,9 @@ function memoryEventDedupe(): BuzzEventDedupe & { keys: Map<string, number> } {
       const expiresAt = base.keys.get(key);
       return expiresAt !== undefined && expiresAt > Date.now();
     },
+    async forget(key: string) {
+      base.keys.delete(key);
+    },
   };
 }
 

@@ -56,6 +56,8 @@ export type BuzzWakeDedupe = {
 export type BuzzEventDedupe = BuzzWakeDedupe & {
   /** True when an unexpired claim exists. Must not insert or refresh TTL. */
   has(key: string): Promise<boolean>;
+  /** Drop a claim so a failed admission can be retried (loss-side recovery). */
+  forget(key: string): Promise<void>;
 };
 
 /**

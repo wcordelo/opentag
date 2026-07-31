@@ -70,7 +70,7 @@ function memoryStore() {
         if (locks.get(key) === token) locks.delete(key);
       },
     },
-    dedup: { seen: async () => false, has: async () => false },
+    dedup: { seen: async () => false, has: async () => false, forget: async () => {} },
     queue: {
       enqueue: async () => 0,
       dequeue: async () => undefined,

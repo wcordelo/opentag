@@ -43,7 +43,19 @@ export interface StateStore {
     release(key: string, token: string): Promise<void>;
   };
   dedup: {
+    /**
+     * Claim-or-check: returns true when the key was already claimed (duplicate);
+     * returns false and inserts/refreshes the TTL when first-seen.
+     */
     seen(key: string, ttlMs: number): Promise<boolean>;
+    /**
+     * Read-only probe: true when an unexpired claim exists. Must not insert
+     * or refresh TTL — required for Buzz wake loss-side recovery (pre-fetch
+     * redelivery may need to re-fetch when authoritative admission never ran).
+     */
+    has(key: string): Promise<boolean>;
+    /** Drop a claim so a failed admission can be retried. */
+    forget(key: string): Promise<void>;
   };
   queue: {
     enqueue<T>(

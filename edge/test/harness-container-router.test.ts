@@ -67,6 +67,7 @@ describe("harness Container frontend", () => {
         permissionSnapshot: {
           version: 1,
           scope: {
+            platform: "slack",
             teamId: "T1",
             channelId: "C1",
             actorKind: "slack_automation",

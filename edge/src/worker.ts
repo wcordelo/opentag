@@ -94,6 +94,12 @@ import {
   verifyKnowledgeSourceGrant,
   type KnowledgeSourceAction,
 } from "./config/knowledge-source-authorization.js";
+import { BuzzContractError } from "./buzz/contract.js";
+import { tryBuildBuzzWakeReceiveDeps } from "./buzz/wake-bindings.js";
+import {
+  handleBuzzWakeHttp,
+  readBuzzWakeJsonBody,
+} from "./buzz/wake-http.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -326,6 +332,61 @@ app.get("/health", async (c) => {
   }, ok ? 200 : 503);
 });
 
+/**
+ * Buzz wake ingress. Binds NIP-98 fetcher + runtime-admit only when the
+ * Cloudflare-secret signer seam, relay base URL, and channel→tenant map are
+ * all present; otherwise fails closed with 503 (no dedupe / fetch / admit).
+ */
+app.post("/buzz/wake", async (c) => {
+  let deps;
+  try {
+    const configured =
+      Boolean(c.env.BUZZ_OPEN_TAG_SIGNER_SECRET)
+      && Boolean(c.env.BUZZ_RELAY_HTTP_BASE_URL)
+      && Boolean(c.env.BUZZ_CHANNEL_TENANT_MAP)
+      && Boolean(c.env.BOT_STATE);
+    const store = configured
+      ? createDurableObjectStore(c.env.BOT_STATE)
+      : undefined;
+    deps = tryBuildBuzzWakeReceiveDeps(c.env, store);
+  } catch (error) {
+    if (error instanceof BuzzContractError) {
+      return new Response(
+        JSON.stringify({ status: "error", error: error.code }),
+        { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },
+      );
+    }
+    if (error instanceof Error && error.message === "buzz_signer_invalid_secret_shape") {
+      return new Response(
+        JSON.stringify({ status: "error", error: "buzz_signer_invalid_secret_shape" }),
+        { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ status: "error", error: "buzz_receive_not_configured" }),
+      { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },
+    );
+  }
+  if (deps === undefined) {
+    return handleBuzzWakeHttp(null, undefined);
+  }
+  try {
+    const raw = await readBuzzWakeJsonBody(c.req.raw);
+    return handleBuzzWakeHttp(raw, deps);
+  } catch (error) {
+    if (error instanceof BuzzContractError) {
+      return new Response(
+        JSON.stringify({ status: "error", error: error.code }),
+        { status: 400, headers: { "content-type": "application/json; charset=utf-8" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({ status: "error", error: "buzz_receive_internal_error" }),
+      { status: 500, headers: { "content-type": "application/json; charset=utf-8" } },
+    );
+  }
+});
+
 app.get("/debug/store", requireAdminAuth(), async (c) => {
   const store = createDurableObjectStore(c.env.BOT_STATE);
   const k = `debug:${crypto.randomUUID()}`;
@@ -337,11 +398,13 @@ app.get("/debug/store", requireAdminAuth(), async (c) => {
   if (lock) await store.lock.release(`${k}:lock`, lock.token);
   const firstSeen = await store.dedup.seen(`${k}:evt`, 5_000);
   const secondSeen = await store.dedup.seen(`${k}:evt`, 5_000);
+  const hasAfterSeen = await store.dedup.has(`${k}:evt`);
+  const hasUnseen = await store.dedup.has(`${k}:never`);
   return c.json({
     kv: got,
     list,
     lock: { acquired: lock !== null },
-    dedup: { firstSeen, secondSeen },
+    dedup: { firstSeen, secondSeen, hasAfterSeen, hasUnseen },
   });
 });
 

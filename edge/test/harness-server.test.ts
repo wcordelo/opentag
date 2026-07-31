@@ -50,6 +50,9 @@ import {
   type NdjsonEvent,
   type WorkdirFilesystem,
 } from "../workers/sandbox/harness-server.js";
+import { validatePermissionSnapshot } from "../workers/sandbox/turn-contract.js";
+import { DEFAULT_BUNDLE } from "../src/config/access-bundle.js";
+import { buildPermissionSnapshot } from "../src/permissions/snapshot.js";
 
 const repoPolicy = {
   allowedHosts: new Set(["github.com"]),
@@ -133,6 +136,7 @@ describe("permission snapshot transport", () => {
   const permissionSnapshot = {
     version: 1 as const,
     scope: {
+      platform: "slack" as const,
       teamId: "T1",
       channelId: "C1",
       actorKind: "slack_user" as const,
@@ -174,6 +178,50 @@ describe("permission snapshot transport", () => {
     } finally {
       await fs.promises.rm(home, { recursive: true, force: true });
     }
+  });
+
+  it("accepts a builder-shaped V1 snapshot at the sandbox receiver", async () => {
+    const built = buildPermissionSnapshot({
+      teamId: "T1",
+      channelId: "C1",
+      actor: { kind: "slack_user", userId: "U1" },
+      config: {
+        teamId: "T1",
+        channelId: "C1",
+        systemPrompt: "",
+        policies: { allowMemoryWrite: false, allowTasks: false },
+        accessBundleId: DEFAULT_BUNDLE.id,
+        updatedAt: "2026-07-30T15:00:00.000Z",
+      },
+      bundle: DEFAULT_BUNDLE,
+      allToolNames: ["show_permissions"],
+      allowedTools: ["show_permissions"],
+      runtime: { harnessConnected: true },
+      generatedAt: "2026-07-30T15:00:00.000Z",
+    });
+    expect(validatePermissionSnapshot(built)).toMatchObject({ ok: true });
+    expect(await validateTurnRequest(
+      { ...validTurn, permissionSnapshot: built },
+      repoPolicy,
+    )).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["non-Slack", "buzz"],
+  ])("rejects a %s V1 scope platform at the sandbox receiver", async (_label, platform) => {
+    const value = {
+      ...permissionSnapshot,
+      scope: { ...permissionSnapshot.scope, platform },
+    };
+    expect(validatePermissionSnapshot(value)).toEqual({
+      ok: false,
+      error: "invalid_permission_snapshot",
+    });
+    expect(await validateTurnRequest(
+      { ...validTurn, permissionSnapshot: value },
+      repoPolicy,
+    )).toEqual({ ok: false, error: "invalid_permission_snapshot" });
   });
 
   it("rejects oversized and secret-shaped envelopes", async () => {

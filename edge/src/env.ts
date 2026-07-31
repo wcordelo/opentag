@@ -124,6 +124,23 @@ export interface Env {
    * one (SPEC.md §4.4). Forwarded as `repo.url` in the `/turn` POST body.
    */
   HARNESS_REPO_URL?: string;
+
+  /**
+   * Buzz M1 test-only OpenTag signer — 64-hex secp256k1 private key.
+   * Cloudflare Worker secret ONLY; never commit a value. Named seam for
+   * NIP-98 `/query` (Task #27). Unset → `/buzz/wake` stays 503.
+   */
+  BUZZ_OPEN_TAG_SIGNER_SECRET?: string;
+  /**
+   * Absolute HTTPS origin of the Buzz community host (no trailing slash),
+   * e.g. `https://berendo.communities.buzz.xyz`. Non-secret.
+   */
+  BUZZ_RELAY_HTTP_BASE_URL?: string;
+  /**
+   * JSON object mapping Buzz channel UUID → canonical internal tenant UUID.
+   * Server-side directory only; never populated from a wake body.
+   */
+  BUZZ_CHANNEL_TENANT_MAP?: string;
 }
 
 export type BotVariables = {

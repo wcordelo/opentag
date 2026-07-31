@@ -6,6 +6,7 @@ import type { RequestActor } from "../request-context.js";
 import {
   AUTOMATION_SAFE_TOOLS,
   PERMISSION_SNAPSHOT_MAX_BYTES,
+  assertPermissionSnapshotV1SlackOnly,
   type PermissionSnapshotV1,
   type RuntimeSelectionSource,
 } from "./contract.js";
@@ -99,6 +100,7 @@ export function buildPermissionSnapshot(
   const snapshot = deepFreeze({
     version: 1 as const,
     scope: {
+      platform: "slack" as const,
       teamId: bounded(args.teamId),
       channelId: bounded(args.channelId),
       ...(args.conversationKey
@@ -144,6 +146,7 @@ export function buildPermissionSnapshot(
       : {}),
     generatedAt: bounded(args.generatedAt ?? new Date().toISOString()),
   }) satisfies PermissionSnapshotV1;
+  assertPermissionSnapshotV1SlackOnly(snapshot);
   assertPermissionSnapshotSize(snapshot);
   return snapshot;
 }

@@ -72,7 +72,7 @@ function makeStore(): LifecycleStateStore & {
       async acquire() { return { token: "t" }; },
       async release() {},
     },
-    dedup: { async seen() { return false; } },
+    dedup: { async seen() { return false; }, async has() { return false; }, async forget() {} },
     queue: {
       async enqueue() { return 0; },
       async dequeue() { return undefined; },

@@ -85,6 +85,10 @@ function makeMemoryStore(): StateStore {
       async seen() {
         return false;
       },
+      async has() {
+        return false;
+      },
+      async forget() {},
     },
     queue: {
       async enqueue() {

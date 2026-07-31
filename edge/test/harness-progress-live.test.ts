@@ -134,6 +134,68 @@ describe("harness progress live renderer", () => {
     expect(terminalUpdate?.text).toContain("Complete");
   });
 
+  it("uses Working heading for AG-UI progress messages", async () => {
+    const store = makeStore();
+    const threadKey = "slack:C1:agui.0";
+    const executionId = "exec-agui-1";
+    await store.activeTurn.register({
+      channelId: "C1",
+      threadKey,
+      conversationKey: "C1::agui.0",
+      executionId,
+      threadTs: "agui.0",
+      registeredAt: Date.now(),
+    });
+    const postMessage = vi.fn(async () => ({ ts: "progress-ts" }));
+    const updateMessage = vi.fn(async () => undefined);
+    let clock = 1_000;
+    const live = createHarnessProgressLiveRenderer({
+      store,
+      client: { postMessage, updateMessage } as never,
+      channelId: "C1",
+      threadTs: "agui.0",
+      threadKey,
+      executionId,
+      now: () => clock,
+      progressHeading: "*Working…*",
+    });
+
+    await live.handleEvent({
+      kind: "context",
+      payload: { harnessType: "agui", modelEvidence: "unknown" },
+    });
+    await live.handleEvent({
+      kind: "progress",
+      payload: {
+        progressId: "tool-1",
+        sequence: 1,
+        category: "tool",
+        state: "started",
+        title: "Searching Slack",
+      },
+    });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    clock = 2_000;
+    await live.handleEvent({
+      kind: "progress",
+      payload: {
+        progressId: "tool-1",
+        sequence: 2,
+        category: "tool",
+        state: "completed",
+        title: "Tool",
+      },
+    });
+    expect(updateMessage).toHaveBeenCalledTimes(1);
+    const text = (updateMessage.mock.calls as unknown as Array<
+      [{ text?: string }]
+    >)[0]?.[0]?.text ?? "";
+    expect(text).toContain("OpenTag AG-UI");
+    expect(text).toContain("*Working…*");
+    expect(text).toContain("Searching Slack");
+    expect(text).not.toContain("Coding progress");
+  });
+
   it("ignores equal-or-lower modelEvidence for live context", async () => {
     const store = makeStore();
     const threadKey = "slack:C1:2.0";

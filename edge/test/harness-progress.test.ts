@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyProgressEvent,
   formatContextLine,
+  humanizeToolProgressTitle,
   rebuildProgressFromEvents,
   renderProgressMarkdown,
 } from "../src/slack/harness-progress.js";
@@ -28,6 +29,44 @@ describe("harness progress renderer", () => {
         modelEvidence: "container_argument",
       }),
     ).toBe("_Claude Code · claude-opus-5 · container argument_");
+    expect(
+      formatContextLine({
+        harnessType: "agui",
+        modelEvidence: "unknown",
+      }),
+    ).toBe("_OpenTag AG-UI · model unconfirmed_");
+    expect(
+      formatContextLine({
+        harnessType: "agui",
+        model: "gpt-5.5",
+        modelEvidence: "requested",
+      }),
+    ).toBe("_OpenTag AG-UI · gpt-5.5 · requested_");
+  });
+
+  it("humanizes AG-UI tool titles and supports Working heading", () => {
+    expect(humanizeToolProgressTitle("search_slack")).toBe("Searching Slack");
+    expect(humanizeToolProgressTitle("show_permissions")).toBe(
+      "Checking permissions",
+    );
+    expect(humanizeToolProgressTitle("weird_custom_tool")).toBe(
+      "Weird Custom Tool",
+    );
+    const md = renderProgressMarkdown(
+      [
+        {
+          progressId: "t1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "Searching Slack",
+        },
+      ],
+      { heading: "*Working…*" },
+    );
+    expect(md).toContain("*Working…*");
+    expect(md).toContain("Searching Slack");
+    expect(md).not.toContain("Coding progress");
   });
 
   it("preserves tool titles when completion events only say Tool", () => {

@@ -118,25 +118,29 @@ export async function resolveThreadOverrides(
     sticky?.harnessType ??
     channelDefaults?.harnessType ??
     inferHarnessTypeFromModel(effectiveModel);
+  const modelSource: RuntimeSelectionSource = messageOverride.model
+    ? "explicit"
+    : sticky?.model
+      ? "sticky"
+      : channelDefaults?.model
+        ? "channel"
+        : "deployment";
+  const harnessSource: RuntimeSelectionSource = messageOverride.harnessType
+    ? "explicit"
+    : sticky?.harnessType
+      ? "sticky"
+      : channelDefaults?.harnessType
+        ? "channel"
+        : effectiveHarnessType != null && effectiveModel != null
+          ? modelSource
+          : "deployment";
   return {
     cleanedText: messageOverride.cleanedText,
     hasMessageFlags,
     effectiveModel,
     effectiveHarnessType,
     effectiveReasoning: messageOverride.reasoning,
-    harnessSource: messageOverride.harnessType
-      ? "explicit"
-      : sticky?.harnessType
-        ? "sticky"
-        : channelDefaults?.harnessType
-          ? "channel"
-          : "deployment",
-    modelSource: messageOverride.model
-      ? "explicit"
-      : sticky?.model
-        ? "sticky"
-        : channelDefaults?.model
-          ? "channel"
-          : "deployment",
+    harnessSource,
+    modelSource,
   };
 }

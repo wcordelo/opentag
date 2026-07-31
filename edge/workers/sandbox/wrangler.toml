@@ -9,6 +9,7 @@ HARNESS_ALLOWED_REPO_HOSTS = "github.com"
 HARNESS_ALLOWED_REPO_ORGS = "wcordelo"
 CLAUDEX_PROXY_URL = "https://claudex.internal"
 CLAUDEX_MODEL = "gpt-5.6-sol"
+NANOCODEX_MODEL = "gpt-5.6-sol"
 
 [[services]]
 binding = "CLAUDEX_PROXY"
@@ -37,10 +38,13 @@ new_sqlite_classes = ["HarnessContainer"]
 
 # Worker-only secrets (set before deployment, never commit values). The
 # Container receives sentinels; outbound handlers inject these only for the
-# exact api.anthropic.com, private Claudex service binding, or GitHub request:
+# exact api.anthropic.com, api.openai.com, private Claudex service binding, or
+# GitHub request:
 #   ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
+#   OPENAI_API_KEY (native Nanocodex HTTPS Responses)
 #   CLAUDEX_PROXY_URL is the synthetic https://claudex.internal origin
 #   CLAUDEX_MODEL defaults to gpt-5.6-sol
+#   NANOCODEX_MODEL defaults to gpt-5.6-sol (Nanocodex fixed model contract)
 #   GITHUB_TOKEN (optional, for private clone + approved push/PR)
 #   OPENTAG_TOOL_BIN (optional; enables the installed opentag-tool-host bridge)
 #   HARNESS_AUTH_TOKEN (required; shared only with the bot Worker)

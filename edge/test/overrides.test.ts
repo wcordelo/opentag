@@ -9,9 +9,9 @@ describe('overrides', () => {
       expect(result.cleanedText).toBe('Use ChatGPT')
     })
 
-    it('--model gpt-* implies Claudex', () => {
+    it('--model gpt-* does not override harnessType at parse time', () => {
       const result = extractMessageOverrides('--model gpt-5.6-sol Reply briefly')
-      expect(result.harnessType).toBe('claudex')
+      expect(result.harnessType).toBeUndefined()
       expect(result.model).toBe('gpt-5.6-sol')
     })
   })
@@ -179,8 +179,31 @@ describe('overrides', () => {
       expect(result.harnessType).toBeUndefined()
       expect(result.cleanedText).toBe('Message')
       expect(result.errors).toEqual([
-        '--codex is unsupported; use --claudex to run Claude Code with a Codex-backed model'
+        '--codex is unsupported; use --claudex (Claude Code + Codex proxy) or --nanocodex (native Nanocodex harness)',
       ])
+    })
+
+    it('--nanocodex selects the native Nanocodex harness', () => {
+      const result = extractMessageOverrides('--nanocodex Fix the flaky test')
+      expect(result.harnessType).toBe('nanocodex')
+      expect(result.cleanedText).toBe('Fix the flaky test')
+      expect(result.errors).toEqual([])
+    })
+
+    it('--nanocodex with a Claude model is rejected', () => {
+      const result = extractMessageOverrides('--nanocodex --model claude-sonnet-5 Fix it')
+      expect(result.harnessType).toBe('nanocodex')
+      expect(result.model).toBe('claude-sonnet-5')
+      expect(result.errors).toEqual([
+        'Nanocodex requires a GPT model (gpt-*); use --claude with a Claude model',
+      ])
+    })
+
+    it('--nanocodex --model gpt-* is accepted', () => {
+      const result = extractMessageOverrides('--nanocodex --model gpt-5.6-sol Ship it')
+      expect(result.harnessType).toBe('nanocodex')
+      expect(result.model).toBe('gpt-5.6-sol')
+      expect(result.errors).toEqual([])
     })
   })
 

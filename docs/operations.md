@@ -32,9 +32,11 @@ flowchart LR
 ```
 
 The bot, AG-UI agent, and coding harness are deployed in the current production
-configuration. Research remains optional. The coding plane runs the Claude Code
-CLI with native Anthropic and Claudex/CLIProxyAPI modes. Its active service
-bindings require target-before-caller deploy order: Claudex proxy, harness, bot.
+configuration. Research remains optional. The coding plane runs Claude Code
+(native Anthropic and Claudex/CLIProxyAPI) plus the native Nanocodex CLI in the
+same sandbox. Active service bindings require target-before-caller deploy order:
+Claudex proxy, harness, bot. Nanocodex needs harness Worker secret
+`OPENAI_API_KEY` (no Claudex proxy dependency).
 
 ## Local prerequisites
 

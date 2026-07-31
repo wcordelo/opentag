@@ -42,6 +42,13 @@ describe("harness progress renderer", () => {
         modelEvidence: "requested",
       }),
     ).toBe("_OpenTag AG-UI · gpt-5.5 · requested_");
+    expect(
+      formatContextLine({
+        harnessType: "nanocodex",
+        model: "gpt-5.6-sol",
+        modelEvidence: "provider_reported",
+      }),
+    ).toBe("_Nanocodex · gpt-5.6-sol · provider confirmed_");
   });
 
   it("humanizes AG-UI tool titles and supports Working heading", () => {

@@ -214,7 +214,9 @@ Parsing lives in `edge/src/slack/overrides.ts`; persistence lives in
 `claudecode` and `claudex` are provider modes of the same Claude Code harness,
 not separate tool runtimes. Add another translated provider mode only when it
 can preserve the same CLI, turn contract, interrupt behavior, egress boundary,
-and terminal postconditions. To add a genuinely different harness, introduce a
+and terminal postconditions. `nanocodex` is a genuinely different harness: it
+spawns the Nanocodex CLI, maps Nanocodex JSONL into the same NDJSON contract, and
+reuses Stop/egress/postconditions. To add another distinct runtime, introduce a
 typed runtime adapter rather than branching throughout `agent-turn.ts`; each
 adapter must implement exact execute/interrupt/event-terminal semantics.
 
@@ -229,6 +231,7 @@ resolved independently per field:
 Using a channel default must never write `thread:overrides:*`. Configuration
 uses `/config runtime show`, `/config runtime set --harness claude-code
 [--model <id-or-alias>]`, `/config runtime set --harness claudex
+[--model gpt-<id>]`, `/config runtime set --harness nanocodex
 [--model gpt-<id>]`, and `/config runtime clear`. Only exact
 `runtime show|set|clear` prefixes enter this parser; all other `/config` text
 continues to mean a system prompt.

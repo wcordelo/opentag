@@ -226,16 +226,18 @@ describe("harness zero-trust egress policy", () => {
     expect(container).toContain("allowedHosts = harnessAllowedHosts()");
     expect(
       container.match(/request = takeExecutionBinding\(request\)\.request;/g),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(container).toContain("CLAUDEX_PROXY.fetch");
     expect(container).not.toContain("CLAUDEX_AUTH_TOKEN");
     expect(container).toContain("HarnessContainer.outboundByHost = {");
     expect(container).toContain('"claudex.internal": claudexOutbound');
+    expect(container).toContain('"api.openai.com": openaiOutbound');
     expect(container).toContain("HarnessContainer.outbound = harnessFallbackOutbound");
     expect(container).toContain('headers.delete("content-length")');
     expect(container).toContain("new FixedLengthStream(parsedLength)");
     expect(dockerfile).toContain("/etc/cloudflare/certs/cloudflare-containers-ca.crt");
     expect(dockerfile).toContain("NODE_EXTRA_CA_CERTS");
+    expect(dockerfile).toContain("NANOCODEX_BIN=nanocodex");
     expect(dockerfile).toContain('x-opentag-execution-id: ${OPENTAG_EXECUTION_ID:-}');
     expect(EGRESS_SENTINEL).not.toMatch(/sk-ant|ghp_|github_pat_/);
   });

@@ -126,8 +126,10 @@ The default is `AGENT_RUNTIME` plus the `AGENT_URL` path. Same-zone
 `workers.dev` fetches can fail with Cloudflare 1042, so use the service binding.
 Repository coding defaults to `claudecode`. `--claude` selects native Claude;
 `--claudex` or a `gpt-*` model selects the same Claude Code binary through the
-private `CLAUDEX_PROXY` service binding. Qualifying coding work and explicit
-coding-mode selections do not fall back to AG-UI.
+private `CLAUDEX_PROXY` service binding. `--nanocodex` selects the native
+Nanocodex CLI against OpenAI Responses (`OPENAI_API_KEY` injected by the
+Harness Worker). Qualifying coding work and explicit coding-mode selections do
+not fall back to AG-UI.
 
 ## Deploy
 

@@ -18,8 +18,10 @@ export interface Env {
   CLAUDEX_PROXY?: Fetcher;
   ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
+  OPENAI_API_KEY?: string;
   CLAUDEX_PROXY_URL?: string;
   CLAUDEX_MODEL?: string;
+  NANOCODEX_MODEL?: string;
   GITHUB_TOKEN?: string;
   OPENTAG_TOOL_BIN?: string;
   HARNESS_AUTH_TOKEN?: string;
@@ -33,6 +35,7 @@ const APPROVAL_KEY = "github-approval-scope";
 /** Public destinations reachable from repository-controlled code. */
 export const HARNESS_ALLOWED_HOSTS = [
   "api.anthropic.com",
+  "api.openai.com",
   "github.com",
   "api.github.com",
   "objects.githubusercontent.com",
@@ -51,11 +54,19 @@ export function harnessEnvVars(workerEnv: Env = env as Env): Record<string, stri
   const values: Record<string, string> = {
     PORT: "8080",
     ANTHROPIC_API_KEY: EGRESS_SENTINEL,
+    OPENAI_API_KEY: EGRESS_SENTINEL,
     GITHUB_TOKEN: EGRESS_SENTINEL,
     GH_TOKEN: EGRESS_SENTINEL,
     HARNESS_AUTH_TOKEN: EGRESS_SENTINEL,
   };
-  for (const key of ["OPENTAG_TOOL_BIN", "HARNESS_ALLOWED_REPO_HOSTS", "HARNESS_ALLOWED_REPO_ORGS", "CLAUDEX_PROXY_URL", "CLAUDEX_MODEL"] as const) {
+  for (const key of [
+    "OPENTAG_TOOL_BIN",
+    "HARNESS_ALLOWED_REPO_HOSTS",
+    "HARNESS_ALLOWED_REPO_ORGS",
+    "CLAUDEX_PROXY_URL",
+    "CLAUDEX_MODEL",
+    "NANOCODEX_MODEL",
+  ] as const) {
     const value = workerEnv[key];
     if (typeof value === "string" && value.length > 0) values[key] = value;
   }
@@ -94,6 +105,49 @@ export const anthropicOutbound: OutboundHandler<Env> = (request, workerEnv) => {
     return fetch(withCredentialHeader(request, "authorization", `Bearer ${workerEnv.CLAUDE_CODE_OAUTH_TOKEN}`));
   }
   return deny("Anthropic credential unavailable", 503);
+};
+
+const OPENAI_ENDPOINTS_PREFIXES = ["/v1/"] as const;
+const MAX_OPENAI_REQUEST_BYTES = 48 * 1024 * 1024;
+
+/** Inject OpenAI credentials for the native Nanocodex HTTPS Responses path. */
+export const openaiOutbound: OutboundHandler<Env> = async (request, workerEnv) => {
+  request = takeExecutionBinding(request).request;
+  const url = new URL(request.url);
+  if (url.hostname.toLowerCase() !== "api.openai.com") return deny("host denied");
+  if (!OPENAI_ENDPOINTS_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) {
+    return deny("OpenAI endpoint denied");
+  }
+  if (!workerEnv.OPENAI_API_KEY) return deny("OpenAI credential unavailable", 503);
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const declared = request.headers.get("content-length");
+    const parsedLength = declared && /^\d+$/.test(declared) ? Number(declared) : Number.NaN;
+    if (Number.isSafeInteger(parsedLength) && parsedLength > MAX_OPENAI_REQUEST_BYTES) {
+      return deny("OpenAI request too large", 413);
+    }
+    if (!Number.isSafeInteger(parsedLength) || parsedLength <= 0) {
+      const bytes = await request.clone().arrayBuffer();
+      if (bytes.byteLength > MAX_OPENAI_REQUEST_BYTES) return deny("OpenAI request too large", 413);
+      if (bytes.byteLength <= 0) return deny("OpenAI request body required", 400);
+      return fetch(
+        withCredentialHeader(
+          new Request(request.url, {
+            method: request.method,
+            headers: request.headers,
+            body: bytes,
+            redirect: "manual",
+          }),
+          "authorization",
+          `Bearer ${workerEnv.OPENAI_API_KEY}`,
+        ),
+      );
+    }
+  }
+
+  return fetch(
+    withCredentialHeader(request, "authorization", `Bearer ${workerEnv.OPENAI_API_KEY}`),
+  );
 };
 
 function claudexProxyOrigin(workerEnv: Env): URL | undefined {
@@ -303,6 +357,7 @@ export class HarnessContainer extends Container<Env> {
 // too late for its interception metadata scan and silently bypass handlers.
 HarnessContainer.outboundByHost = {
   "api.anthropic.com": anthropicOutbound,
+  "api.openai.com": openaiOutbound,
   "github.com": githubWebOutbound,
   "api.github.com": githubApiOutbound,
   "claudex.internal": claudexOutbound,

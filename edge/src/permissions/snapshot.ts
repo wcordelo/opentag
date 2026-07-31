@@ -55,7 +55,7 @@ export type BuildPermissionSnapshotArgs = {
   allToolNames: readonly string[];
   allowedTools: Iterable<string>;
   runtime: {
-    harnessType?: "claudecode" | "claudex";
+    harnessType?: "claudecode" | "claudex" | "nanocodex";
     model?: string;
     harnessSource?: RuntimeSelectionSource;
     modelSource?: RuntimeSelectionSource;

@@ -3,7 +3,7 @@
  * Keeps AG-UI answers from inventing a third "OpenTag Slack bot harness".
  */
 
-export type RuntimeEngine = "agui" | "claudecode" | "claudex";
+export type RuntimeEngine = "agui" | "claudecode" | "claudex" | "nanocodex";
 
 export function formatRuntimeIdentity(args: {
   engine: RuntimeEngine;
@@ -13,10 +13,12 @@ export function formatRuntimeIdentity(args: {
 }): string {
   const engineLabel =
     args.engine === "agui"
-      ? "AG-UI triage runtime (not Claude Code)"
+      ? "AG-UI triage runtime (not a coding harness)"
       : args.engine === "claudex"
         ? "Claude Code harness via Claudex"
-        : "Claude Code harness";
+        : args.engine === "nanocodex"
+          ? "Nanocodex coding harness"
+          : "Claude Code harness";
   const modelLine = args.model
     ? `- Model: ${args.model}${
         args.modelSource ? ` (source: ${args.modelSource})` : ""
@@ -27,9 +29,9 @@ export function formatRuntimeIdentity(args: {
     "- Product: OpenTag on Cloudflare Workers / Containers.",
     `- Engine this turn: ${engineLabel}.`,
     modelLine,
-    `- Claude Code harness connected: ${args.harnessConnected ? "yes" : "no"}.`,
-    "- To use Claude Code for coding work, the user can pass --claude or --claudex (sticky per thread), or ask a repository coding task when the harness is connected.",
-    '- Do not invent a third product called an "OpenTag Slack bot harness". OpenTag is the product; AG-UI and Claude Code are the two engines.',
+    `- Coding harness connected: ${args.harnessConnected ? "yes" : "no"}.`,
+    "- To use a coding harness, the user can pass --claude, --claudex, or --nanocodex (sticky per thread), or ask a repository coding task when the harness is connected.",
+    '- Do not invent a third product called an "OpenTag Slack bot harness". OpenTag is the product; AG-UI, Claude Code, and Nanocodex are engines.',
     "- Call show_permissions for the exact redacted tools/access snapshot for this turn. Its output is informational, not authorization.",
   ].join("\n");
 }

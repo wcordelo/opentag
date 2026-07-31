@@ -36,7 +36,11 @@ export interface RepoSpec {
   branch?: string;
 }
 
-export type HarnessType = "claudecode" | "claudex";
+export type HarnessType = "claudecode" | "claudex" | "nanocodex";
+
+export function isHarnessType(value: unknown): value is HarnessType {
+  return value === "claudecode" || value === "claudex" || value === "nanocodex";
+}
 
 export type TurnAttachment = {
   id: string;
@@ -262,9 +266,7 @@ export function validatePermissionSnapshot(
     typeof (access.policies as Record<string, unknown>).allowTasks !== "boolean" ||
     !Array.isArray(access.mcpEndpoints) ||
     access.mcpEndpoints.length > 200 ||
-    (runtime.harnessType !== undefined &&
-      runtime.harnessType !== "claudecode" &&
-      runtime.harnessType !== "claudex") ||
+    (runtime.harnessType !== undefined && !isHarnessType(runtime.harnessType)) ||
     (runtime.model !== undefined &&
       (typeof runtime.model !== "string" ||
         runtime.model.length > 256 ||
@@ -444,8 +446,7 @@ export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy)
       (typeof record.model !== "string" || !MODEL_RE.test(record.model))) {
     return { ok: false, error: "invalid_model" };
   }
-  if (record.harnessType !== undefined &&
-      record.harnessType !== "claudecode" && record.harnessType !== "claudex") {
+  if (record.harnessType !== undefined && !isHarnessType(record.harnessType)) {
     return { ok: false, error: "invalid_harness_type" };
   }
   if ((record.requesterContext !== undefined &&

@@ -2,8 +2,9 @@
  * Inline message directives, restored from the v1 slackbot:
  *   --claude | --claude-code                         pick the harness for the thread
  *   --claudex                                       run Claude Code through CLIProxyAPI/Codex
+ *   --nanocodex                                     run the native Nanocodex CLI harness
  *   --model <name> (or --model=<name>)              pick the model within that harness
- *   --codex                                         rejected: use the Claude Code `--claudex` mode
+ *   --codex                                         rejected: use `--claudex` or `--nanocodex`
  *   -rsn                                            rejected: reasoning is operator-controlled
  *   --fable | --opus | --sonnet | --haiku           model shortcuts (imply claude-code)
  *
@@ -35,7 +36,8 @@ const HARNESS_FLAGS: Record<string, string> = {
   claude: 'claudecode',
   'claude-code': 'claudecode',
   claudecode: 'claudecode',
-  claudex: 'claudex'
+  claudex: 'claudex',
+  nanocodex: 'nanocodex',
 }
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
@@ -97,7 +99,9 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     if (value.includes('/')) {
       errors.push(`provider-qualified model ${value} is unsupported; use --claudex with a GPT model or --claude with a Claude model`)
     }
-    harnessType = /^gpt-/i.test(value) ? 'claudex' : 'claudecode'
+    if (!/^gpt-/i.test(value)) {
+      harnessType = 'claudecode'
+    }
     cleaned = stripMatch(cleaned, modelMatch)
   }
 
@@ -115,7 +119,9 @@ export function extractMessageOverrides(text: string): MessageOverrides {
 
   const codexMatch = flagPattern('codex').exec(cleaned)
   if (codexMatch) {
-    errors.push('--codex is unsupported; use --claudex to run Claude Code with a Codex-backed model')
+    errors.push(
+      '--codex is unsupported; use --claudex (Claude Code + Codex proxy) or --nanocodex (native Nanocodex harness)',
+    )
     cleaned = stripMatch(cleaned, codexMatch)
   }
 
@@ -152,11 +158,16 @@ export function harnessModelMismatchError(
   model: string | undefined,
 ): string | undefined {
   if (!harnessType || !model) return undefined
-  if (harnessType === 'claudex' && !/^gpt-/i.test(model)) {
-    return 'Claudex requires a GPT model (gpt-*); use --claude with a Claude model'
+  if (
+    (harnessType === 'claudex' || harnessType === 'nanocodex') &&
+    !/^gpt-/i.test(model)
+  ) {
+    return harnessType === 'nanocodex'
+      ? 'Nanocodex requires a GPT model (gpt-*); use --claude with a Claude model'
+      : 'Claudex requires a GPT model (gpt-*); use --claude with a Claude model'
   }
   if (harnessType === 'claudecode' && /^gpt-/i.test(model)) {
-    return 'Claude Code requires a Claude model; use --claudex with a GPT model'
+    return 'Claude Code requires a Claude model; use --claudex or --nanocodex with a GPT model'
   }
   return undefined
 }

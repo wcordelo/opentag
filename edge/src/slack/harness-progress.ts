@@ -26,11 +26,13 @@ export function formatContextLine(ctx: HarnessContextLine): string {
   const harnessLabel =
     ctx.harnessType === "claudex"
       ? "Claude Code (Claudex)"
-      : ctx.harnessType === "claudecode"
-        ? "Claude Code"
-        : ctx.harnessType === "agui"
-          ? "OpenTag AG-UI"
-          : ctx.harnessType;
+      : ctx.harnessType === "nanocodex"
+        ? "Nanocodex"
+        : ctx.harnessType === "claudecode"
+          ? "Claude Code"
+          : ctx.harnessType === "agui"
+            ? "OpenTag AG-UI"
+            : ctx.harnessType;
   if (!ctx.model || ctx.modelEvidence === "unknown") {
     return `_${harnessLabel} · model unconfirmed_`;
   }

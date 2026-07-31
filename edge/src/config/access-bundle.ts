@@ -11,7 +11,7 @@ export type AccessBundle = {
 };
 
 export type ChannelRuntimeDefaults = {
-  harnessType?: "claudecode" | "claudex";
+  harnessType?: "claudecode" | "claudex" | "nanocodex";
   model?: string;
 };
 
@@ -124,7 +124,9 @@ export function normalizeChannelRuntimeDefaults(
       ? ("claudecode" as const)
       : rawHarness === "claudex"
         ? ("claudex" as const)
-      : undefined;
+        : rawHarness === "nanocodex"
+          ? ("nanocodex" as const)
+          : undefined;
   if (rawHarness && !harnessType) {
     throw new Error(`unsupported channel harness: ${rawHarness}`);
   }

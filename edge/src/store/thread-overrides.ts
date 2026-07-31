@@ -42,6 +42,12 @@ export type ResolvedThreadOverrides = {
 
 const STICKY_TTL_MS = 30 * 86_400_000; // 30 days
 
+function inferHarnessTypeFromModel(model?: string): string | undefined {
+  if (!model) return undefined;
+  if (/^gpt-/i.test(model)) return "claudex";
+  return "claudecode";
+}
+
 export function threadOverridesKey(conversationKey: string): string {
   return `thread:overrides:${conversationKey}`;
 }
@@ -110,26 +116,31 @@ export async function resolveThreadOverrides(
   const effectiveHarnessType =
     messageOverride.harnessType ??
     sticky?.harnessType ??
-    channelDefaults?.harnessType;
+    channelDefaults?.harnessType ??
+    inferHarnessTypeFromModel(effectiveModel);
+  const modelSource: RuntimeSelectionSource = messageOverride.model
+    ? "explicit"
+    : sticky?.model
+      ? "sticky"
+      : channelDefaults?.model
+        ? "channel"
+        : "deployment";
+  const harnessSource: RuntimeSelectionSource = messageOverride.harnessType
+    ? "explicit"
+    : sticky?.harnessType
+      ? "sticky"
+      : channelDefaults?.harnessType
+        ? "channel"
+        : effectiveHarnessType != null && effectiveModel != null
+          ? modelSource
+          : "deployment";
   return {
     cleanedText: messageOverride.cleanedText,
     hasMessageFlags,
     effectiveModel,
     effectiveHarnessType,
     effectiveReasoning: messageOverride.reasoning,
-    harnessSource: messageOverride.harnessType
-      ? "explicit"
-      : sticky?.harnessType
-        ? "sticky"
-        : channelDefaults?.harnessType
-          ? "channel"
-          : "deployment",
-    modelSource: messageOverride.model
-      ? "explicit"
-      : sticky?.model
-        ? "sticky"
-        : channelDefaults?.model
-          ? "channel"
-          : "deployment",
+    harnessSource,
+    modelSource,
   };
 }

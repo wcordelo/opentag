@@ -306,12 +306,15 @@ Inline flags are stripped before the model sees the prompt:
 - `--claude` selects the Claude Code harness type.
 - `--claudex` selects the same Claude Code binary through the private
   CLIProxyAPI/Codex backend.
+- `--nanocodex` selects the native Nanocodex CLI in the same sandbox (OpenAI
+  Responses over HTTPS; fixed `gpt-5.6-sol` model contract).
 - `--model <id>` and model aliases select a sticky thread model.
 - `-rsn <effort>` is reserved syntax and currently fails visibly; no deployed
   OpenTag runtime accepts or persists reasoning effort.
 
 Sticky model and harness preferences live in DO-backed thread state. GPT model
-IDs imply `claudex`; Claude aliases imply `claudecode`. Provider-qualified IDs
+IDs imply `claudex`; Claude aliases imply `claudecode`. Explicit `--nanocodex`
+overrides that implication for the native Nanocodex runtime. Provider-qualified IDs
 remain unsupported. If the selected coding mode is not configured, every
 selected turn fails visibly, including ordinary non-coding turns. Explicit or
 sticky selection is authoritative and never falls back to AG-UI; repository
@@ -321,21 +324,27 @@ The AG-UI path injects the current Slack transcript on every run because agent
 message lists are isolate-local. The harness path re-feeds up to 24,000 recent
 characters when creating or restarting a session.
 
-## Claude Code harness and Claudex backend
+## Claude Code harness, Claudex backend, and Nanocodex
 
-The coding plane has three components:
+The coding plane has three shared components plus one optional proxy:
 
 1. A Cloudflare Worker validates and authenticates `/turn` and `/interrupt`,
    selects one durable container by `sessionId`, installs an exact approval
    scope, and wraps the NDJSON response.
 2. A Node server inside the Ubuntu container clones or reuses the allowlisted
-   repository, starts Claude Code, maps `stream-json` output to OpenTag NDJSON,
-   verifies postconditions, and emits `done` last.
+   repository, starts the selected CLI (`claude` or `nanocodex`), maps stream
+   output to OpenTag NDJSON, verifies postconditions, and emits `done` last.
 3. In `claudex` mode, the Harness Worker routes only the Anthropic-compatible
    model endpoints through a private service binding to `opentag-claudex-proxy`.
    That Worker imports bounded Codex OAuth JSON from private R2, starts
    CLIProxyAPI in its own Container, strips caller credentials, and persists
    refreshed OAuth state back to R2.
+4. In `nanocodex` mode, the same sandbox spawns `nanocodex run` with HTTPS
+   Responses (`api.openai.com`). The Container receives only an OpenAI sentinel
+   key; the Worker injects `OPENAI_API_KEY` after host/path validation. This is
+   a distinct tool runtime from Claudex (native Nanocodex CLI, not Claude Code
+   through CLIProxyAPI). Pin the binary from a Nanocodex release; the intended
+   operator fork is `wcordelo/nanocodex` once it publishes matching assets.
 
 ```mermaid
 flowchart TB

@@ -82,6 +82,11 @@ import {
   findQuickSiteUrls,
 } from "./quick-card.js";
 import type { TrustedTriggerConfig } from "./trusted-trigger.js";
+import {
+  createHarnessProgressLiveRenderer,
+  type HarnessProgressLiveRenderer,
+} from "./harness-progress-live.js";
+import { humanizeToolProgressTitle } from "./harness-progress.js";
 
 const EXECUTION_FENCE = "__opentagExecutionFence";
 const NEXT_RENDER_FINAL = "__opentagNextRenderFinal";
@@ -1390,18 +1395,44 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       },
     };
     const statusTs = t.threadTs ?? t.statusTs;
+    // Prefer one stable "Working…" progress message (Centaur-style) over
+    // Channels' per-tool ✅ status pings, which strand the thread if a turn
+    // crashes after announcing a tool and before the final answer.
     const renderer = createRunRenderer({
       transport,
       target: { channel: t.channel, threadTs: t.threadTs },
       status: statusTs
         ? { threadTs: statusTs, isPane: false }
         : undefined,
-      // Channels' renderer is the production conflation equivalent: it
-      // accumulates AG-UI text into one throttled message and coalesces tool
-      // lifecycle by toolCallId. Keep progress enabled so long turns expose
-      // real activity instead of a static Thinking status.
-      showToolStatus: true,
+      showToolStatus: false,
     });
+    // Lazily create progress only when a tool runs so text-only turns keep the
+    // prior Channels path (no competing progress render fence / Slack posts).
+    let progressLive: HarnessProgressLiveRenderer | undefined;
+    const toolSequences = new Map<string, number>();
+    const ensureProgressLive = async (): Promise<
+      HarnessProgressLiveRenderer | undefined
+    > => {
+      if (progressLive) return progressLive;
+      if (!this.opts.stateStore || !renderFence) return undefined;
+      progressLive = createHarnessProgressLiveRenderer({
+        store: this.opts.stateStore,
+        client: this.client,
+        channelId: t.channel,
+        threadTs: t.threadTs,
+        threadKey: renderFence.threadKey,
+        executionId: renderFence.executionId,
+        progressHeading: "*Working…*",
+      });
+      await progressLive.handleEvent({
+        kind: "context",
+        payload: {
+          harnessType: "agui",
+          modelEvidence: "unknown",
+        },
+      });
+      return progressLive;
+    };
     const baseSubscriber = renderer.subscriber;
     type TextEndArgs = Parameters<
       NonNullable<typeof baseSubscriber.onTextMessageEndEvent>
@@ -1434,8 +1465,22 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         const event = args.event as { toolCallId?: string; toolCallName?: string };
         if (event.toolCallId && event.toolCallName) {
           toolNames.set(event.toolCallId, event.toolCallName);
+          const sequence = (toolSequences.get(event.toolCallId) ?? 0) + 1;
+          toolSequences.set(event.toolCallId, sequence);
+          const live = await ensureProgressLive();
+          await live?.handleEvent({
+            kind: "progress",
+            payload: {
+              progressId: event.toolCallId,
+              sequence,
+              category: "tool",
+              state: "started",
+              title: humanizeToolProgressTitle(event.toolCallName),
+            },
+          });
         }
-        return baseSubscriber.onToolCallStartEvent?.(args);
+        // Do not forward to Channels tool-status rendering (disabled above).
+        return undefined;
       },
       onToolCallResultEvent: async (
         args: Parameters<NonNullable<typeof baseSubscriber.onToolCallResultEvent>>[0],
@@ -1454,6 +1499,21 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
           toolCallId,
           tool,
           summary,
+        });
+        const sequence = (toolSequences.get(toolCallId) ?? 0) + 1;
+        toolSequences.set(toolCallId, sequence);
+        // Prefer explicit denial markers over keyword heuristics — tool JSON
+        // often contains words like "deniedTools" that are not failures.
+        const failed = summary.trimStart().startsWith("⛔");
+        await progressLive?.handleEvent({
+          kind: "progress",
+          payload: {
+            progressId: toolCallId,
+            sequence,
+            category: "tool",
+            state: failed ? "failed" : "completed",
+            title: humanizeToolProgressTitle(tool),
+          },
         });
         return baseSubscriber.onToolCallResultEvent?.(args);
       },
@@ -1485,6 +1545,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       ) => {
         runErrorPostFinal = true;
         try {
+          await progressLive?.markTerminal({ ok: false });
           await baseSubscriber.onRunErrorEvent?.(args);
         } finally {
           runErrorPostFinal = false;
@@ -1496,10 +1557,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       subscriber,
       finish: async () => {
         await renderer.finish?.();
-        if (terminalTextCommitted) return;
+        if (terminalTextCommitted) {
+          await progressLive?.markTerminal({ ok: true });
+          return;
+        }
 
         // Tool-only and empty AG-UI runs still owe the user a visible terminal
         // result. This final post is also the atomic lifecycle commit point.
+        await progressLive?.markTerminal({ ok: true });
         const context = await this.sessionContextBlock(renderFence);
         await this.fenced(target, async () => requireSlackPost(
           await this.client.postMessage({

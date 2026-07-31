@@ -30,7 +30,9 @@ export function formatContextLine(ctx: HarnessContextLine): string {
         ? "Nanocodex"
         : ctx.harnessType === "claudecode"
           ? "Claude Code"
-          : ctx.harnessType;
+          : ctx.harnessType === "agui"
+            ? "OpenTag AG-UI"
+            : ctx.harnessType;
   if (!ctx.model || ctx.modelEvidence === "unknown") {
     return `_${harnessLabel} · model unconfirmed_`;
   }
@@ -41,6 +43,35 @@ export function formatContextLine(ctx: HarnessContextLine): string {
         ? "container argument"
         : "requested";
   return `_${harnessLabel} · ${ctx.model} · ${evidence}_`;
+}
+
+/** User-facing tool titles for AG-UI live progress (not raw snake_case names). */
+export function humanizeToolProgressTitle(toolName: string): string {
+  const known: Record<string, string> = {
+    search_slack: "Searching Slack",
+    search_wiki: "Searching wiki",
+    search_code: "Searching code",
+    search: "Searching knowledge",
+    show_permissions: "Checking permissions",
+    confirm_write: "Waiting for write confirmation",
+    memory_search: "Searching channel memory",
+    memory_write: "Saving channel memory",
+    read_thread: "Reading thread",
+    lookup_slack_user: "Looking up Slack user",
+    issue_card: "Rendering issue card",
+    issue_list: "Rendering issue list",
+    page_list: "Rendering page list",
+    show_status: "Rendering status",
+    show_links: "Rendering links",
+    show_incident: "Rendering incident card",
+    start_task: "Starting research task",
+    research_progress: "Posting research progress",
+    react_message: "Adding reaction",
+  };
+  if (known[toolName]) return known[toolName];
+  const spaced = toolName.replace(/[_-]+/g, " ").trim();
+  if (!spaced) return "Tool";
+  return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function clampProgressItem(item: ProgressItem): ProgressItem {
@@ -99,7 +130,7 @@ export function applyProgressEvent(
 
 export function renderProgressMarkdown(
   items: Iterable<ProgressItem>,
-  opts: { done?: boolean; failed?: boolean } = {},
+  opts: { done?: boolean; failed?: boolean; heading?: string } = {},
 ): string {
   // Preserve caller/Map insertion order (first-seen chronological). Per-item
   // `sequence` is only a lifecycle counter within one progressId (start→done),
@@ -113,7 +144,7 @@ export function renderProgressMarkdown(
   );
   const visible = [...active, ...completed].slice(-MAX_VISIBLE);
   const earlier = Math.max(0, list.length - visible.length);
-  const lines: string[] = ["*Coding progress*"];
+  const lines: string[] = [opts.heading ?? "*Coding progress*"];
   if (earlier > 0) lines.push(`_${earlier} earlier item(s)_`);
   for (const item of visible) {
     const mark =

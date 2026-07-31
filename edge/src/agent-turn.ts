@@ -71,6 +71,7 @@ import {
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 import { bindPermissionSnapshot } from "./permissions/context.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
+import { formatRuntimeIdentity } from "./runtime-identity.js";
 
 type Requester = {
   id?: string;
@@ -757,9 +758,17 @@ export async function runBundledAgentTurn(
       overrides.effectiveHarnessType === "nanocodex"
         ? { harnessType: overrides.effectiveHarnessType }
         : {}),
-      ...(overrides.effectiveModel ? { model: overrides.effectiveModel } : {}),
+      ...(overrides.effectiveModel
+        ? { model: overrides.effectiveModel }
+        : env.AGENT_MODEL?.trim()
+          ? { model: env.AGENT_MODEL.trim() }
+          : {}),
       harnessSource: overrides.harnessSource,
-      modelSource: overrides.modelSource,
+      modelSource: overrides.effectiveModel
+        ? overrides.modelSource
+        : env.AGENT_MODEL?.trim()
+          ? "deployment"
+          : overrides.modelSource,
       harnessConnected: harnessCapability(env).ok,
     },
   });
@@ -1000,6 +1009,18 @@ export async function runBundledAgentTurn(
     draft.email || requesterEmail || transcriptEmails[transcriptEmails.length - 1] || "";
 
   const toolContext: Array<{ description: string; value: string }> = [
+    {
+      description: "OpenTag runtime identity",
+      value: formatRuntimeIdentity({
+        engine: selectedHarness ?? "agui",
+        ...(overrides.effectiveModel
+          ? { model: overrides.effectiveModel, modelSource: overrides.modelSource }
+          : env.AGENT_MODEL?.trim()
+            ? { model: env.AGENT_MODEL.trim(), modelSource: "deployment" as const }
+            : {}),
+        harnessConnected: harnessCapability(env).ok,
+      }),
+    },
     {
       description: "channelContext",
       value: config.channelContext ?? config.systemPrompt ?? "",

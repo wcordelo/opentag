@@ -293,6 +293,83 @@ describe("CloudflareSlackAdapter.stream", () => {
     }
   });
 
+  it("posts one Working progress message for AG-UI tools instead of Channels tool status", async () => {
+    const original = globalThis.fetch;
+    const posts: Array<{ text?: string; client_msg_id?: string }> = [];
+    const updates: Array<{ text?: string }> = [];
+    let ts = 20;
+    const activeTurn = {
+      beginRender: async () => ({ status: "claimed" as const, token: `r-${++ts}` }),
+      confirmRender: async () => true,
+      failRender: async () => true,
+    };
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const method = String(url).split("/").pop()!;
+      const raw = typeof init?.body === "string" ? init.body : "";
+      const params = new URLSearchParams(raw);
+      const text = params.get("text") ?? undefined;
+      const clientMsgId = params.get("client_msg_id") ?? undefined;
+      if (method === "chat.postMessage") {
+        posts.push({ text, client_msg_id: clientMsgId ?? undefined });
+        return Response.json({ ok: true, ts: `progress.${posts.length}` });
+      }
+      if (method === "chat.update") {
+        updates.push({ text });
+        return Response.json({ ok: true });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const adapter = new CloudflareSlackAdapter({
+      botToken: "xoxb-test",
+      stateStore: { activeTurn } as unknown as LifecycleStateStore,
+      sessionEvents: {
+        idFromName: () => "session-id",
+        get: () => ({
+          appendEvent: async () => ({}),
+        }),
+      } as never,
+    });
+    const target = { channel: "C1", threadTs: "1.0" };
+    adapter.bindExecutionFence(target, {
+      threadKey: "slack:C1:1.0",
+      executionId: "exec-agui-progress",
+    });
+    try {
+      const renderer = adapter.createRunRenderer(target as never);
+      const subscriber = renderer.subscriber as unknown as {
+        onToolCallStartEvent(args: unknown): Promise<void>;
+        onToolCallResultEvent(args: unknown): Promise<void>;
+      };
+      await subscriber.onToolCallStartEvent({
+        event: { toolCallId: "t1", toolCallName: "search_slack" },
+      });
+      expect(posts.some((p) => p.text?.includes("OpenTag AG-UI"))).toBe(true);
+      expect(posts.some((p) => /:white_check_mark:\s*search_slack/i.test(p.text ?? ""))).toBe(
+        false,
+      );
+      await subscriber.onToolCallResultEvent({
+        event: {
+          toolCallId: "t1",
+          messageId: "tr1",
+          content: "Hit count: 2",
+        },
+      });
+      // Progress updates are rate-limited; advance past the throttle window.
+      await new Promise((r) => setTimeout(r, 850));
+      await subscriber.onToolCallStartEvent({
+        event: { toolCallId: "t2", toolCallName: "show_permissions" },
+      });
+      const progressText = [...posts, ...updates]
+        .map((m) => m.text ?? "")
+        .join("\n");
+      expect(progressText).toContain("Searching Slack");
+      expect(progressText).toContain("*Working…*");
+      expect(progressText).not.toMatch(/:white_check_mark:/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("serializes final AG-UI update against Stop with no answer-plus-Stopped gap", async () => {
     const original = globalThis.fetch;
     let finalUpdateEntered!: () => void;

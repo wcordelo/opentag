@@ -185,6 +185,9 @@ describe("Buzz signer secret seam", () => {
     expect(loadBuzzOpenTagAuthTag(undefined)).toBeUndefined();
     expect(loadBuzzOpenTagAuthTag("")).toBeUndefined();
     expect(loadBuzzOpenTagAuthTag(tag)).toBe(tag);
+    // Interior whitespace between tokens is re-serialized away (Athena rec).
+    const pretty = `[\n  "auth",\n  "${"a".repeat(64)}",\n  "",\n  "${"b".repeat(128)}"\n]`;
+    expect(loadBuzzOpenTagAuthTag(pretty)).toBe(tag);
     // Present-but-malformed (incl. whitespace-only) → fail closed, never omit.
     expect(() => loadBuzzOpenTagAuthTag("   \t\n  ")).toThrow(
       "buzz_auth_tag_invalid_shape",

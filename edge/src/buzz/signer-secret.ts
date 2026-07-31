@@ -90,7 +90,9 @@ export function loadBuzzOpenTagSigner(
  * - `undefined` / `""` → `undefined` (explicit NIP-98-only mode)
  * - whitespace-only or any present-but-malformed value → throws
  *   {@link BUZZ_AUTH_TAG_INVALID_SHAPE} (fail closed; do not silently omit)
- * - valid 4-element `auth` tag JSON → trimmed string for `x-auth-tag`
+ * - valid 4-element `auth` tag JSON → canonical `JSON.stringify(parsed)` for
+ *   `x-auth-tag` (re-serialize so interior whitespace / control chars between
+ *   tokens cannot survive into the header value)
  */
 export function loadBuzzOpenTagAuthTag(
   raw: string | undefined,
@@ -131,8 +133,10 @@ export function loadBuzzOpenTagAuthTag(
   if (/\s/.test(conditions)) {
     throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
-  // Return the trimmed original so header bytes match operator provisioning.
-  return trimmed;
+  // Canonical re-serialize: validation checked parsed elements; returning the
+  // trimmed raw would let interior whitespace between JSON tokens ride into
+  // the header (Athena defense-in-depth).
+  return JSON.stringify(parsed);
 }
 
 /**

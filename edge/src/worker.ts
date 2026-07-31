@@ -362,6 +362,13 @@ app.post("/buzz/wake", async (c) => {
         { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },
       );
     }
+    // Mis-set optional auth-tag must not degrade into a live fetch → relay 403.
+    if (error instanceof Error && error.message === "buzz_auth_tag_invalid_shape") {
+      return new Response(
+        JSON.stringify({ status: "error", error: "buzz_auth_tag_invalid_shape" }),
+        { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },
+      );
+    }
     return new Response(
       JSON.stringify({ status: "error", error: "buzz_receive_not_configured" }),
       { status: 503, headers: { "content-type": "application/json; charset=utf-8" } },

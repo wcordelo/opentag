@@ -34,8 +34,11 @@ import {
 } from "../src/buzz/runtime-admit.js";
 import {
   BUZZ_CHANNEL_TENANT_MAP_VAR,
+  BUZZ_OPEN_TAG_AUTH_TAG_HEADER,
+  BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME,
   BUZZ_OPEN_TAG_SIGNER_SECRET_NAME,
   BUZZ_RELAY_HTTP_BASE_URL_VAR,
+  loadBuzzOpenTagAuthTag,
   loadBuzzOpenTagSigner,
   redactSecretShaped,
 } from "../src/buzz/signer-secret.js";
@@ -165,8 +168,42 @@ describe("Buzz signer secret seam", () => {
 
   it("exports the exact provisioning contract names", () => {
     expect(BUZZ_OPEN_TAG_SIGNER_SECRET_NAME).toBe("BUZZ_OPEN_TAG_SIGNER_SECRET");
+    expect(BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME).toBe("BUZZ_OPEN_TAG_AUTH_TAG");
+    expect(BUZZ_OPEN_TAG_AUTH_TAG_HEADER).toBe("x-auth-tag");
     expect(BUZZ_RELAY_HTTP_BASE_URL_VAR).toBe("BUZZ_RELAY_HTTP_BASE_URL");
     expect(BUZZ_CHANNEL_TENANT_MAP_VAR).toBe("BUZZ_CHANNEL_TENANT_MAP");
+  });
+
+  it("loads optional NIP-OA auth-tag JSON opaquely", () => {
+    const tag = JSON.stringify([
+      "auth",
+      "a".repeat(64),
+      "",
+      "b".repeat(128),
+    ]);
+    // Explicit defaults: truly unset/empty → NIP-98-only mode (not a mis-set).
+    expect(loadBuzzOpenTagAuthTag(undefined)).toBeUndefined();
+    expect(loadBuzzOpenTagAuthTag("")).toBeUndefined();
+    expect(loadBuzzOpenTagAuthTag(tag)).toBe(tag);
+    // Present-but-malformed (incl. whitespace-only) → fail closed, never omit.
+    expect(() => loadBuzzOpenTagAuthTag("   \t\n  ")).toThrow(
+      "buzz_auth_tag_invalid_shape",
+    );
+    expect(() => loadBuzzOpenTagAuthTag("not-json")).toThrow(
+      "buzz_auth_tag_invalid_shape",
+    );
+    expect(() => loadBuzzOpenTagAuthTag('["auth","short","",""]')).toThrow(
+      "buzz_auth_tag_invalid_shape",
+    );
+    try {
+      loadBuzzOpenTagAuthTag(tag.slice(0, -1));
+      expect.unreachable();
+    } catch (error) {
+      const text = String(error);
+      expect(text).toContain("buzz_auth_tag_invalid_shape");
+      expect(text).not.toContain("a".repeat(64));
+      expect(text).not.toContain("b".repeat(128));
+    }
   });
 });
 
@@ -342,6 +379,7 @@ describe("NIP-98 /query fetcher failure taxonomy", () => {
         const headers = new Headers(init?.headers);
         const auth = headers.get("authorization") ?? "";
         expect(auth.startsWith("Nostr ")).toBe(true);
+        expect(headers.get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER)).toBeNull();
         sawAuth = true;
         return new Response(JSON.stringify([event]), {
           status: 200,
@@ -357,6 +395,42 @@ describe("NIP-98 /query fetcher failure taxonomy", () => {
     });
     expect(sawAuth).toBe(true);
     expect(got).toMatchObject({ id: event.id, pubkey });
+  });
+
+  it("sends x-auth-tag when optional authTagJson is set", async () => {
+    const authorSecret = randomPrivateKeyHex();
+    const { pubkey, event } = await signedKind9(authorSecret);
+    const signerSecret = randomPrivateKeyHex();
+    const signer = loadBuzzOpenTagSigner(signerSecret)!;
+    const authTag = JSON.stringify([
+      "auth",
+      "c".repeat(64),
+      "",
+      "d".repeat(128),
+    ]);
+    let sawAuthTag: string | null = null;
+    const fetcher = createBuzzNip98QueryFetcher({
+      relayHttpBaseUrl: RELAY_BASE,
+      signer,
+      authTagJson: authTag,
+      nowSeconds: () => NOW,
+      fetchImpl: async (_url, init) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")?.startsWith("Nostr ")).toBe(true);
+        sawAuthTag = headers.get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER);
+        return new Response(JSON.stringify([event]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    await fetcher.fetchAndVerify({
+      messageId: event.id,
+      channelId: CHANNEL,
+      authorPubkey: pubkey,
+      tenantId: TENANT,
+    });
+    expect(sawAuthTag).toBe(authTag);
   });
 });
 
@@ -516,6 +590,107 @@ describe("Channel→tenant map + wake binding gate", () => {
       close();
     }
   });
+
+  it("tryBuild forwards optional auth-tag and omits header when unset", async () => {
+    const { store, close } = makeSqliteStateStore();
+    try {
+      const secret = randomPrivateKeyHex();
+      const authTag = JSON.stringify([
+        "auth",
+        "e".repeat(64),
+        "",
+        "f".repeat(128),
+      ]);
+      const mapJson = JSON.stringify({ [CHANNEL]: String(TENANT) });
+      const seen: Array<string | null> = [];
+      const depsWith = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: secret,
+          [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]: authTag,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: mapJson,
+        },
+        store,
+        {
+          fetchImpl: async (_url, init) => {
+            seen.push(new Headers(init?.headers).get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER));
+            return new Response("[]", {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          },
+        },
+      );
+      expect(depsWith).toBeDefined();
+      await expect(
+        depsWith!.fetcher.fetchAndVerify({
+          messageId: "a".repeat(64),
+          channelId: CHANNEL,
+          authorPubkey: "b".repeat(64),
+          tenantId: TENANT,
+        }),
+      ).rejects.toThrow(BUZZ_RECEIVE_FETCH_FAILED);
+      expect(seen).toEqual([authTag]);
+
+      // Explicit unset mode: build succeeds and never sends x-auth-tag.
+      const seenUnset: Array<string | null> = [];
+      const depsUnset = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: secret,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: mapJson,
+        },
+        store,
+        {
+          fetchImpl: async (_url, init) => {
+            seenUnset.push(
+              new Headers(init?.headers).get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER),
+            );
+            return new Response("[]", {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          },
+        },
+      );
+      expect(depsUnset).toBeDefined();
+      await expect(
+        depsUnset!.fetcher.fetchAndVerify({
+          messageId: "a".repeat(64),
+          channelId: CHANNEL,
+          authorPubkey: "b".repeat(64),
+          tenantId: TENANT,
+        }),
+      ).rejects.toThrow(BUZZ_RECEIVE_FETCH_FAILED);
+      expect(seenUnset).toEqual([null]);
+
+      expect(() =>
+        tryBuildBuzzWakeReceiveDeps(
+          {
+            [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: secret,
+            [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]: "not-a-tag",
+            [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+            [BUZZ_CHANNEL_TENANT_MAP_VAR]: mapJson,
+          },
+          store,
+        ),
+      ).toThrow("buzz_auth_tag_invalid_shape");
+
+      expect(() =>
+        tryBuildBuzzWakeReceiveDeps(
+          {
+            [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: secret,
+            [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]: "   ",
+            [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+            [BUZZ_CHANNEL_TENANT_MAP_VAR]: mapJson,
+          },
+          store,
+        ),
+      ).toThrow("buzz_auth_tag_invalid_shape");
+    } finally {
+      close();
+    }
+  });
 });
 
 describe("§14.4 / §14.6 secret-shape full surface", () => {
@@ -524,9 +699,16 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
     const authorSecret = randomPrivateKeyHex();
     const { event } = await signedKind9(authorSecret);
     const signer = loadBuzzOpenTagSigner(signerSecret)!;
+    const ownerAuthTag = JSON.stringify([
+      "auth",
+      "1".repeat(64),
+      "",
+      "2".repeat(128),
+    ]);
     const { store, close } = makeSqliteStateStore();
     const captured: {
       authorization?: string;
+      authTagHeader?: string | null;
       urls: string[];
       bodies: string[];
     } = { urls: [], bodies: [] };
@@ -538,11 +720,13 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
       const fetcher = createBuzzNip98QueryFetcher({
         relayHttpBaseUrl: RELAY_BASE,
         signer,
+        authTagJson: ownerAuthTag,
         nowSeconds: () => NOW,
         fetchImpl: async (url, init) => {
           captured.urls.push(String(url));
           const headers = new Headers(init?.headers);
           captured.authorization = headers.get("authorization") ?? undefined;
+          captured.authTagHeader = headers.get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER);
           captured.bodies.push(String(init?.body ?? ""));
           // Intended use of auth header toward the relay — not a leak surface.
           return new Response(JSON.stringify([event]), {
@@ -565,11 +749,13 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
       const result = await processBuzzWakeReceive(wakeFor(event), deps);
       expect(result.status).toBe("accepted");
       expect(captured.authorization?.startsWith("Nostr ")).toBe(true);
+      expect(captured.authTagHeader).toBe(ownerAuthTag);
 
       // Force an error path and capture the message — must stay opaque.
       const failingFetcher = createBuzzNip98QueryFetcher({
         relayHttpBaseUrl: RELAY_BASE,
         signer,
+        authTagJson: ownerAuthTag,
         fetchImpl: async () => new Response(signerSecret, { status: 401 }),
       });
       let authErrorText = "";
@@ -609,7 +795,7 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
         // *signer* secret (author secret is only used to mint a valid event).
         captured.bodies,
         captured.urls,
-        redactSecretShaped("safe", [signerSecret]),
+        redactSecretShaped("safe", [signerSecret, ownerAuthTag]),
       ];
 
       const haystackParts: string[] = [];
@@ -622,14 +808,16 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
 
       expect(haystack).not.toContain(signerSecret);
       expect(haystack.toLowerCase()).not.toContain(signerSecret.toLowerCase());
+      expect(haystack).not.toContain(ownerAuthTag);
       // Auth-tag base64 payload must not land in stored/observable surfaces.
       const authTag = captured.authorization!.slice("Nostr ".length);
       expect(authTag.length).toBeGreaterThan(40);
       expect(haystack).not.toContain(authTag);
       expect(haystack).not.toContain(captured.authorization);
 
-      // Intended relay hop still carried the header (prove the test saw it).
+      // Intended relay hop still carried the headers (prove the test saw them).
       expect(captured.authorization).toContain(authTag);
+      expect(captured.authTagHeader).toBe(ownerAuthTag);
     } finally {
       close();
     }

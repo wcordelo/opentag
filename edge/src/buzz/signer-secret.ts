@@ -30,6 +30,27 @@ export const BUZZ_RELAY_HTTP_BASE_URL_VAR = "BUZZ_RELAY_HTTP_BASE_URL";
  */
 export const BUZZ_CHANNEL_TENANT_MAP_VAR = "BUZZ_CHANNEL_TENANT_MAP";
 
+/**
+ * Optional Cloudflare Worker secret: NIP-OA owner-attestation tag JSON for the
+ * OpenTag signer pubkey. When set, the `/query` fetcher sends it as
+ * `x-auth-tag` (countdown-bot owner-attested path).
+ *
+ * Default when **unset / empty string**: NIP-98 Authorization only (standalone
+ * relay-member path). This is an explicit mode, not silent degradation.
+ * Present-but-malformed (incl. whitespace-only) → opaque
+ * `buzz_auth_tag_invalid_shape` so `/buzz/wake` stays 503 — never attempt a
+ * fetch that would surface as a confusing relay 403.
+ *
+ * Format: `["auth","<owner-pubkey-hex>","<conditions>","<sig-hex>"]`.
+ */
+export const BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME = "BUZZ_OPEN_TAG_AUTH_TAG";
+
+/** HTTP header name the Buzz relay reads for NIP-OA on `/query` (bridge.rs). */
+export const BUZZ_OPEN_TAG_AUTH_TAG_HEADER = "x-auth-tag";
+
+/** Opaque code when the auth-tag secret is present but not valid NIP-OA JSON. */
+export const BUZZ_AUTH_TAG_INVALID_SHAPE = "buzz_auth_tag_invalid_shape";
+
 export type BuzzOpenTagSigner = Readonly<{
   /** Hex pubkey derived from the secret — safe to log / admit to a channel. */
   publicKeyHex: string;
@@ -64,9 +85,60 @@ export function loadBuzzOpenTagSigner(
 }
 
 /**
+ * Validate optional NIP-OA auth-tag JSON without echoing its contents.
+ *
+ * - `undefined` / `""` → `undefined` (explicit NIP-98-only mode)
+ * - whitespace-only or any present-but-malformed value → throws
+ *   {@link BUZZ_AUTH_TAG_INVALID_SHAPE} (fail closed; do not silently omit)
+ * - valid 4-element `auth` tag JSON → trimmed string for `x-auth-tag`
+ */
+export function loadBuzzOpenTagAuthTag(
+  raw: string | undefined,
+): string | undefined {
+  // Truly unset / empty CF secret → standalone NIP-98 path (explicit default).
+  if (raw === undefined || raw.length === 0) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  // Present but blank after trim is mis-set, not unset — fail closed.
+  if (trimmed.length === 0) {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 4) {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  if (parsed[0] !== "auth") {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  for (let i = 1; i < 4; i += 1) {
+    if (typeof parsed[i] !== "string") {
+      throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    }
+  }
+  const owner = parsed[1] as string;
+  const conditions = parsed[2] as string;
+  const sig = parsed[3] as string;
+  // NIP-OA: owner/sig lowercase hex; conditions empty or ASCII without whitespace.
+  if (!/^[0-9a-f]{64}$/.test(owner) || !/^[0-9a-f]{128}$/.test(sig)) {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  if (/\s/.test(conditions)) {
+    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  }
+  // Return the trimmed original so header bytes match operator provisioning.
+  return trimmed;
+}
+
+/**
  * Redact any occurrence of known secret-shaped substrings from a diagnostic
  * string. Used by tests and fail-closed error paths that must not leak the
- * Cloudflare secret or a NIP-98 Authorization header value.
+ * Cloudflare secret, NIP-OA auth-tag, or a NIP-98 Authorization header value.
  */
 export function redactSecretShaped(
   text: string,
@@ -86,5 +158,9 @@ export function redactSecretShaped(
     "Authorization: Nostr [REDACTED]",
   );
   out = out.replace(/\bNostr\s+[A-Za-z0-9+/=]{40,}/g, "Nostr [REDACTED]");
+  out = out.replace(
+    /x-auth-tag:\s*\[[^\]]+\]/gi,
+    "x-auth-tag: [REDACTED]",
+  );
   return out;
 }

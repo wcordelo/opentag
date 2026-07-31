@@ -6,10 +6,12 @@
  * 2. Injected canonical fetch + signature verify (custody stays outside)
  * 3. Bind/normalize via {@link normalizeBuzzInboundEvent}
  *    (`expectedChannelId` = wake `channel_id` — arms channel cross-check)
- * 4. Authoritative per-tenant/channel DO event-ID claim (`buzz-event:v1:`)
- * 5. Injected runtime admit
+ * 4. Installation allowlist (distinct relay-origin grant) — never skip on
+ *    wake `first` alone; loss-side re-entry must re-hit this gate
+ * 5. Authoritative per-tenant/channel DO event-ID claim (`buzz-event:v1:`)
+ * 6. Injected runtime admit
  *
- * A wake `first` must never bypass step 4. Pre-fetch and authoritative keys
+ * A wake `first` must never bypass steps 4–5. Pre-fetch and authoritative keys
  * use distinct namespaces so they cannot collide in the shared `dedup` table.
  * Both keys use the same directory-resolved tenant (Athena).
  *
@@ -23,6 +25,10 @@
  * injected or loco-gated.
  */
 
+import {
+  enforceBuzzRelayOriginAllowlist,
+  type BuzzInstallationAllowlist,
+} from "./allowlist.js";
 import {
   BuzzContractError,
   buzzConversationKey,
@@ -68,6 +74,8 @@ export type BuzzWakeRuntime = {
     tenantId: CanonicalInternalTenantId;
     inbound: BuzzInboundEvent;
     conversationKey: string;
+    /** Forensic non-enforcing stamp from the installation allowlist. */
+    policyAuditMarker: string;
   }>): Promise<void>;
 };
 
@@ -78,6 +86,11 @@ export type BuzzWakeReceiveDeps = Readonly<{
   authoritativeDedupe: BuzzEventDedupe;
   fetcher: BuzzCanonicalEventFetcher;
   runtime: BuzzWakeRuntime;
+  /**
+   * Installation allowlist. Distinct allowed-origin vs live fetch base.
+   * Required — absence would bypass the only M1 origin gate.
+   */
+  allowlist: BuzzInstallationAllowlist;
   wakeDedupeTtlMs?: number;
   authoritativeDedupeTtlMs?: number;
 }>;
@@ -241,6 +254,10 @@ export async function processBuzzWakeReceive(
   const inbound = bindVerifiedEventToWake(verifiedRaw, wakeClaim.wake);
   const conversationKey = buzzConversationKey(wakeClaim.tenantId, inbound);
 
+  // Installation allowlist — shared by wake-first and loss-side re-entry.
+  // Before authoritative claim so deny does not leave a durable "processed" key.
+  enforceBuzzRelayOriginAllowlist(deps.allowlist);
+
   const authoritative = await claimAuthoritativeBuzzEvent(
     wakeClaim.tenantId,
     inbound,
@@ -265,6 +282,7 @@ export async function processBuzzWakeReceive(
       tenantId: wakeClaim.tenantId,
       inbound,
       conversationKey,
+      policyAuditMarker: deps.allowlist.policyAuditMarker,
     });
   } catch (error) {
     await deps.authoritativeDedupe.forget(authoritative.dedupeKey);

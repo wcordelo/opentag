@@ -6,6 +6,11 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  BUZZ_M1_POLICY_AUDIT_MARKER,
+  BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR,
+  buildBuzzInstallationAllowlist,
+} from "../src/buzz/allowlist.js";
+import {
   BuzzContractError,
   canonicalInternalTenantId,
 } from "../src/buzz/contract.js";
@@ -59,6 +64,16 @@ const ROOT = "c".repeat(64);
 const TENANT = canonicalInternalTenantId("11111111-1111-4111-8111-111111111111");
 const RELAY_BASE = "https://opentag-contract-test.example.invalid";
 const NOW = 1_785_424_252;
+
+function matchingAllowlist(
+  overrides: Partial<{ allowed: string; live: string }> = {},
+) {
+  return buildBuzzInstallationAllowlist({
+    allowedRelayOriginRaw: overrides.allowed ?? RELAY_BASE,
+    relayHttpBaseUrlRaw: overrides.live ?? RELAY_BASE,
+    policyAuditMarker: BUZZ_M1_POLICY_AUDIT_MARKER,
+  });
+}
 
 function directory(): BuzzChannelTenantDirectory {
   return {
@@ -171,6 +186,9 @@ describe("Buzz signer secret seam", () => {
     expect(BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME).toBe("BUZZ_OPEN_TAG_AUTH_TAG");
     expect(BUZZ_OPEN_TAG_AUTH_TAG_HEADER).toBe("x-auth-tag");
     expect(BUZZ_RELAY_HTTP_BASE_URL_VAR).toBe("BUZZ_RELAY_HTTP_BASE_URL");
+    expect(BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR).toBe(
+      "BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN",
+    );
     expect(BUZZ_CHANNEL_TENANT_MAP_VAR).toBe("BUZZ_CHANNEL_TENANT_MAP");
   });
 
@@ -443,6 +461,7 @@ describe("HTTP mapping: permanent vs transient", () => {
       directory: directory(),
       wakeDedupe: memoryDedupe(),
       authoritativeDedupe: memoryEventDedupe(),
+      allowlist: matchingAllowlist(),
       fetcher: {
         async fetchAndVerify() {
           throw new Error(BUZZ_RECEIVE_AUTH_REJECTED);
@@ -472,6 +491,7 @@ describe("HTTP mapping: permanent vs transient", () => {
       directory: directory(),
       wakeDedupe,
       authoritativeDedupe,
+      allowlist: matchingAllowlist(),
       fetcher: {
         async fetchAndVerify() {
           attempts += 1;
@@ -509,6 +529,7 @@ describe("Runtime admit (minimal, post-authoritative)", () => {
       await runtime.admit({
         tenantId: TENANT,
         conversationKey: `ck:${event.id}`,
+        policyAuditMarker: BUZZ_M1_POLICY_AUDIT_MARKER,
         inbound: {
           eventId: event.id,
           authorPubkey: event.pubkey,
@@ -528,6 +549,7 @@ describe("Runtime admit (minimal, post-authoritative)", () => {
         event_id: event.id,
         author_pubkey: event.pubkey,
         admitted_at: 42,
+        policy_audit_marker: BUZZ_M1_POLICY_AUDIT_MARKER,
       });
       const blob = JSON.stringify(record);
       expect(blob).not.toContain(authorSecret);
@@ -554,6 +576,7 @@ describe("Channel→tenant map + wake binding gate", () => {
       {
         [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: undefined,
         [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+        [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
         [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
       },
       undefined,
@@ -561,7 +584,19 @@ describe("Channel→tenant map + wake binding gate", () => {
     expect(deps).toBeUndefined();
   });
 
-  it("tryBuild wires fetcher + admit when secret/url/map/store are present", async () => {
+  it("tryBuild returns undefined when distinct allowed-origin is unset", () => {
+    const deps = tryBuildBuzzWakeReceiveDeps(
+      {
+        [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: randomPrivateKeyHex(),
+        [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+        [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+      },
+      undefined,
+    );
+    expect(deps).toBeUndefined();
+  });
+
+  it("tryBuild wires fetcher + admit when secret/url/allowed-origin/map/store are present", async () => {
     const { store, close } = makeSqliteStateStore();
     try {
       const secret = randomPrivateKeyHex();
@@ -569,6 +604,7 @@ describe("Channel→tenant map + wake binding gate", () => {
         {
           [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: secret,
           [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
           [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
         },
         store,
@@ -581,6 +617,9 @@ describe("Channel→tenant map + wake binding gate", () => {
         },
       );
       expect(deps).toBeDefined();
+      expect(deps!.allowlist.allowedRelayOrigin).toBe(RELAY_BASE);
+      expect(deps!.allowlist.relayHttpBaseUrl).toBe(RELAY_BASE);
+      expect(deps!.allowlist.policyAuditMarker).toBe(BUZZ_M1_POLICY_AUDIT_MARKER);
       await expect(
         deps!.fetcher.fetchAndVerify({
           messageId: "a".repeat(64),
@@ -745,6 +784,7 @@ describe("§14.4 / §14.6 secret-shape full surface", () => {
         directory: directory(),
         wakeDedupe,
         authoritativeDedupe,
+        allowlist: matchingAllowlist(),
         fetcher,
         runtime: createBuzzRuntimeAdmit(store, { nowMs: () => NOW * 1000 }),
       };

@@ -54,8 +54,18 @@ const TRANSIENT_FETCH_CODES = new Set([
 /** Permanent relay auth rejection — distinct from transient fetch failure. */
 const AUTH_REJECTED_CODE = "buzz_receive_auth_rejected";
 
+/** Installation allowlist / policy misconfig — fail closed like unconfigured. */
+const ALLOWLIST_FAIL_CLOSED_CODES = new Set([
+  "buzz_relay_origin_not_allowed",
+  "buzz_allowlist_not_configured",
+  "buzz_relay_origin_invalid_shape",
+]);
+
 function mapError(error: unknown): Response {
   if (error instanceof BuzzContractError) {
+    if (ALLOWLIST_FAIL_CLOSED_CODES.has(error.code)) {
+      return jsonResponse({ status: "error", error: error.code }, 503);
+    }
     const client = error.code.startsWith("buzz_wake_")
       || error.code.startsWith("buzz_receive_")
       || error.code.startsWith("buzz_");

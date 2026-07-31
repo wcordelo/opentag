@@ -334,8 +334,9 @@ app.get("/health", async (c) => {
 
 /**
  * Buzz wake ingress. Binds NIP-98 fetcher + runtime-admit only when the
- * Cloudflare-secret signer seam, relay base URL, and channel→tenant map are
- * all present; otherwise fails closed with 503 (no dedupe / fetch / admit).
+ * Cloudflare-secret signer seam, relay base URL, distinct allowed-origin
+ * grant, and channel→tenant map are all present; otherwise fails closed with
+ * 503 (no dedupe / fetch / admit).
  */
 app.post("/buzz/wake", async (c) => {
   let deps;
@@ -343,6 +344,7 @@ app.post("/buzz/wake", async (c) => {
     const configured =
       Boolean(c.env.BUZZ_OPEN_TAG_SIGNER_SECRET)
       && Boolean(c.env.BUZZ_RELAY_HTTP_BASE_URL)
+      && Boolean(c.env.BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN)
       && Boolean(c.env.BUZZ_CHANNEL_TENANT_MAP)
       && Boolean(c.env.BOT_STATE);
     const store = configured

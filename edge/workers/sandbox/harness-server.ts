@@ -621,7 +621,11 @@ export function mapNanocodexJsonlLine(
         typeof payload.message === "string" && payload.message
           ? payload.message
           : "nanocodex error";
-      return [{ kind: "error", payload: { message: truncateSummary(message, 500) } }];
+      const summary = truncateSummary(message, 500);
+      return [
+        { kind: "error", payload: { message: summary } },
+        { kind: "done", payload: { ok: false, summary } },
+      ];
     }
     case "run.completed": {
       return [{ kind: "done", payload: { ok: true, summary: "completed" } }];

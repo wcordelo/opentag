@@ -339,11 +339,32 @@ describe("tryBuild requires distinct allowed-origin", () => {
   it("wires independently provisioned allowed-origin (canary source independence)", async () => {
     const { store, close } = makeSqliteStateStore();
     try {
+      // Mismatched grant vs fetch base must fail at tryBuild (Athena fast-fail),
+      // not return deps that would waste a fetch then deny.
+      expect(() =>
+        tryBuildBuzzWakeReceiveDeps(
+          {
+            [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: randomPrivateKeyHex(),
+            [BUZZ_RELAY_HTTP_BASE_URL_VAR]: OTHER_ORIGIN,
+            [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: ALLOWED,
+            [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+          },
+          store,
+          {
+            fetchImpl: async () =>
+              new Response("[]", {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+          },
+        ),
+      ).toThrow(new BuzzContractError("buzz_relay_origin_not_allowed"));
+
       const deps = tryBuildBuzzWakeReceiveDeps(
         {
           [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: randomPrivateKeyHex(),
-          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: OTHER_ORIGIN,
-          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: ALLOWED,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: ALLOWED,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: `${ALLOWED}/`,
           [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
         },
         store,
@@ -356,12 +377,8 @@ describe("tryBuild requires distinct allowed-origin", () => {
         },
       );
       expect(deps).toBeDefined();
-      // Grant and fetch base remain distinct values on the deps object.
       expect(deps!.allowlist.allowedRelayOrigin).toBe(ALLOWED);
-      expect(deps!.allowlist.relayHttpBaseUrl).toBe(OTHER_ORIGIN);
-      expect(deps!.allowlist.allowedRelayOrigin).not.toBe(
-        deps!.allowlist.relayHttpBaseUrl,
-      );
+      expect(deps!.allowlist.relayHttpBaseUrl).toBe(ALLOWED);
     } finally {
       close();
     }

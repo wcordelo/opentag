@@ -14,6 +14,7 @@ import {
   BUZZ_M1_POLICY_AUDIT_MARKER,
   BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR,
   buildBuzzInstallationAllowlist,
+  enforceBuzzRelayOriginAllowlist,
   loadBuzzAllowedRelayOrigin,
 } from "./allowlist.js";
 import {
@@ -145,6 +146,10 @@ export function tryBuildBuzzWakeReceiveDeps(
     relayHttpBaseUrlRaw: relayBase,
     policyAuditMarker: BUZZ_M1_POLICY_AUDIT_MARKER,
   });
+  // Config-consistency fast-fail (Athena): mismatch is known at build time —
+  // fail closed here so a misprovisioned install 503s without a wasted fetch.
+  // Per-event enforceBuzzRelayOriginAllowlist in receive remains the load-bearing gate.
+  enforceBuzzRelayOriginAllowlist(allowlist);
 
   const directory = parseBuzzChannelTenantMap(mapJson);
   const dedupe = stateStoreBuzzEventDedupe(store);

@@ -37,6 +37,8 @@ export function createHarnessProgressLiveRenderer(opts: {
   threadKey: string;
   executionId: string;
   now?: () => number;
+  /** Progress section heading. Harness default; AG-UI uses "*Working…*". */
+  progressHeading?: string;
 }): HarnessProgressLiveRenderer {
   const items = new Map<string, ProgressItem>();
   let context: HarnessContextLine | undefined;
@@ -46,6 +48,7 @@ export function createHarnessProgressLiveRenderer(opts: {
   let terminal = false;
   let pending: Promise<void> = Promise.resolve();
   const now = opts.now ?? Date.now;
+  const progressHeading = opts.progressHeading ?? "*Coding progress*";
 
   const clientMessageId = harnessProgressClientMessageId(opts.executionId);
 
@@ -53,7 +56,13 @@ export function createHarnessProgressLiveRenderer(opts: {
     const parts: string[] = [];
     if (context) parts.push(formatContextLine(context));
     if (items.size > 0) {
-      parts.push(renderProgressMarkdown(items.values(), { done, failed }));
+      parts.push(
+        renderProgressMarkdown(items.values(), {
+          done,
+          failed,
+          heading: progressHeading,
+        }),
+      );
     } else if (context) {
       parts.push(done ? "_Complete_" : failed ? "_Interrupted or failed_" : "_Working…_");
     }

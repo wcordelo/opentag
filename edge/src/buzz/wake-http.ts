@@ -46,6 +46,14 @@ function mapReceiveResult(result: BuzzWakeReceiveResult): Response {
   }, 200);
 }
 
+const TRANSIENT_FETCH_CODES = new Set([
+  "buzz_receive_fetch_failed",
+  "buzz_receive_event_unverified",
+]);
+
+/** Permanent relay auth rejection — distinct from transient fetch failure. */
+const AUTH_REJECTED_CODE = "buzz_receive_auth_rejected";
+
 function mapError(error: unknown): Response {
   if (error instanceof BuzzContractError) {
     const client = error.code.startsWith("buzz_wake_")
@@ -56,8 +64,12 @@ function mapError(error: unknown): Response {
       client ? 400 : 500,
     );
   }
-  if (error instanceof Error && error.message === "buzz_receive_fetch_failed") {
-    return jsonResponse({ status: "error", error: "buzz_receive_fetch_failed" }, 502);
+  if (error instanceof Error && error.message === AUTH_REJECTED_CODE) {
+    // Athena: 401/403 → 502 with distinct permanent code (not masked as fetch_failed).
+    return jsonResponse({ status: "error", error: AUTH_REJECTED_CODE }, 502);
+  }
+  if (error instanceof Error && TRANSIENT_FETCH_CODES.has(error.message)) {
+    return jsonResponse({ status: "error", error: error.message }, 502);
   }
   return jsonResponse({ status: "error", error: "buzz_receive_internal_error" }, 500);
 }

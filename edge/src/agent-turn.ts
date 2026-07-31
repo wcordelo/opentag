@@ -665,7 +665,11 @@ export async function runBundledAgentTurn(
       `${requestedOverrides.errors.join("; ")}. No preference was saved.`,
     );
   }
-  if (requestedOverrides.harnessType === "claudecode" || requestedOverrides.harnessType === "claudex") {
+  if (
+    requestedOverrides.harnessType === "claudecode" ||
+    requestedOverrides.harnessType === "claudex" ||
+    requestedOverrides.harnessType === "nanocodex"
+  ) {
     const capability = harnessCapability(env);
     if (!capability.ok) {
       return postVisibleRuntimeRejection(
@@ -748,7 +752,9 @@ export async function runBundledAgentTurn(
     allToolNames: ALL_EDGE_TOOL_NAMES,
     allowedTools: allowed,
     runtime: {
-      ...(overrides.effectiveHarnessType === "claudecode" || overrides.effectiveHarnessType === "claudex"
+      ...(overrides.effectiveHarnessType === "claudecode" ||
+      overrides.effectiveHarnessType === "claudex" ||
+      overrides.effectiveHarnessType === "nanocodex"
         ? { harnessType: overrides.effectiveHarnessType }
         : {}),
       ...(overrides.effectiveModel ? { model: overrides.effectiveModel } : {}),
@@ -788,9 +794,12 @@ export async function runBundledAgentTurn(
     (executionIdentity?.createPullRequest === true ||
       isRepositoryCodingIntent(promptText));
   // Repository coding uses Claude Code by default. Claudex is the same CLI
-  // pointed at an operator-managed CLIProxyAPI/Codex backend.
+  // pointed at an operator-managed CLIProxyAPI/Codex backend. Nanocodex is a
+  // separate native OpenAI/Codex-compatible coding CLI in the same sandbox.
   const selectedHarness =
-    overrides.effectiveHarnessType === "claudecode" || overrides.effectiveHarnessType === "claudex"
+    overrides.effectiveHarnessType === "claudecode" ||
+    overrides.effectiveHarnessType === "claudex" ||
+    overrides.effectiveHarnessType === "nanocodex"
       ? overrides.effectiveHarnessType
       : repositoryCodingIntent
         ? "claudecode"

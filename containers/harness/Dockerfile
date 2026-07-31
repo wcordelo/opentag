@@ -207,6 +207,30 @@ COPY --from=claude-cli /opt/claude /opt/claude
 RUN ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude \
     && test "$(claude --version)" = "2.1.154 (Claude Code)"
 
+# ── Nanocodex CLI — pinned release binary (native OpenAI/Codex harness) ─
+# Default pin is the upstream v0.3.0 Linux GNU build. Operators intending the
+# wcordelo/nanocodex fork should publish matching release assets and rebuild
+# with NANOCODEX_REPO=wcordelo/nanocodex (same tag/sha when available).
+ARG NANOCODEX_VERSION=v0.3.0
+ARG NANOCODEX_REPO=gakonst/nanocodex
+ARG NANOCODEX_AMD64_SHA256=0647bb658477cb66bea8b4b5b39d0e9ef9c897d7951f487da60dc83a3d626267
+ARG NANOCODEX_ARM64_SHA256=8ac68abdca14051244bc706f9e3fb63bbe47e2cef3470df58d21ba5c426f15c9
+RUN asset="$(case "$TARGETARCH" in \
+      amd64) echo nanocodex-x86_64-unknown-linux-gnu ;; \
+      arm64) echo nanocodex-aarch64-unknown-linux-gnu ;; \
+      *) echo unsupported; exit 64 ;; \
+    esac)" \
+    && curl -fsSLo "/tmp/${asset}" \
+      "https://github.com/${NANOCODEX_REPO}/releases/download/${NANOCODEX_VERSION}/${asset}" \
+    && echo "$(case "$TARGETARCH" in \
+      amd64) echo "${NANOCODEX_AMD64_SHA256}" ;; \
+      arm64) echo "${NANOCODEX_ARM64_SHA256}" ;; \
+      *) echo unsupported; exit 64 ;; \
+    esac)  /tmp/${asset}" | sha256sum -c - \
+    && install -m 0755 "/tmp/${asset}" /usr/local/bin/nanocodex \
+    && rm "/tmp/${asset}" \
+    && nanocodex --version >/dev/null
+
 # Fail the build if the immutable sources ever stop producing the promised
 # harness toolchain.
 RUN test "$(node --version)" = "v20.20.2" \
@@ -306,6 +330,8 @@ ENV PORT=8080 \
     SYSTEM_PROMPT_PATH=/opt/harness/SYSTEM_PROMPT.md \
     WORK_ROOT=/work \
     CLAUDE_BIN=claude \
+    NANOCODEX_BIN=nanocodex \
+    NANOCODEX_MODEL=gpt-5.6-sol \
     CLAUDE_PERMISSION_MODE=bypassPermissions
 
 # The Cloudflare HTTPS interception CA exists only after container startup.

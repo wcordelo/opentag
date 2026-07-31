@@ -44,7 +44,7 @@ A user should experience:
 | Thread overrides | Implemented | Sticky model/harness; unsupported reasoning flags fail visibly |
 | Quick actions | Implemented | Synthetic turn authored by clicking user |
 | Never-silent recovery | Implemented | Session events, render obligations, DO alarms |
-| Claude Code harness | Production-enabled | Native Claude and Claudex modes share the same sandbox, Stop, egress, and git postconditions |
+| Claude Code harness | Production-enabled | Native Claude, Claudex, and Nanocodex modes share the same sandbox, Stop, egress, and git postconditions |
 | Research actors | Optional | Internal task plane, never Slack ingress |
 | Multi-agent PM/implement/verify product | Deferred | Not in the public TaskRuntime API |
 
@@ -62,10 +62,12 @@ A user should experience:
    recovery; `SessionEventDO` owns execution, events, replay, and interrupts.
 6. **Conversation runtime:** `opentag-agent` runs Node `runtime.ts`, reached
    through the `AGENT_RUNTIME` service binding plus `AGENT_URL` path.
-7. **Coding runtime:** `opentag-harness` runs Claude Code in a per-session
+7. **Coding runtime:** `opentag-harness` runs coding CLIs in a per-session
    Container with outbound interception and remote-git HITL. It can call
-   Anthropic directly (`claudecode`) or the private `opentag-claudex-proxy`
-   service (`claudex`) for GPT models through CLIProxyAPI/Codex OAuth.
+   Anthropic directly (`claudecode`), the private `opentag-claudex-proxy`
+   service (`claudex`) for GPT models through CLIProxyAPI/Codex OAuth, or the
+   native Nanocodex CLI (`nanocodex`) against OpenAI Responses with a Worker-
+   injected `OPENAI_API_KEY`.
 8. **Tasks:** optional research starts through `RESEARCH_TASKS` and delivers
    back to the originating Slack thread.
 

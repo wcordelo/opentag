@@ -94,7 +94,7 @@ export function parseRuntimeCommand(
     const value = (inline ?? tokens[++index])?.replace(/^"|"$/g, "");
     if (!flag || !value || !["--harness", "--model"].includes(flag)) {
       throw new Error(
-        "Usage: /config runtime set --harness claude-code [--model <id-or-alias>]",
+        "Usage: /config runtime set --harness claude-code|claudex|nanocodex [--model <id-or-alias>]",
       );
     }
     if (flag === "--harness") harnessType = value;
@@ -102,7 +102,7 @@ export function parseRuntimeCommand(
   }
   if (!harnessType) {
     throw new Error(
-      "Usage: /config runtime set --harness claude-code [--model <id-or-alias>]",
+      "Usage: /config runtime set --harness claude-code|claudex|nanocodex [--model <id-or-alias>]",
     );
   }
   return {

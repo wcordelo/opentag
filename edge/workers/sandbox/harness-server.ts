@@ -67,6 +67,8 @@ export type { RepoPolicy, RepoSpec, TurnRequestBody, TurnValidation };
 
 const PORT = Number(process.env.PORT || 8080);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
+const NANOCODEX_BIN = process.env.NANOCODEX_BIN || "nanocodex";
+const NANOCODEX_DEFAULT_MODEL = process.env.NANOCODEX_MODEL || "gpt-5.6-sol";
 const WORK_ROOT = process.env.WORK_ROOT || "/work";
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS || 10 * 60_000);
 // The authenticated Worker may resolve the 32 MiB staged tier to base64 before
@@ -493,6 +495,240 @@ export function buildClaudeArgs(opts: {
   args.push("--append-system-prompt", opts.systemPromptText);
   args.push(opts.prompt);
   return args;
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers — nanocodex JSONL -> NDJSON event mapping
+// ---------------------------------------------------------------------------
+
+interface NanocodexEventLine {
+  type?: string;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * Maps one Nanocodex contractual JSONL event (`nanocodex run` stdout) into the
+ * pinned OpenTag harness NDJSON kinds. Terminal events are `run.completed` /
+ * `run.failed`; assistant deltas stream as `output.text`.
+ */
+export function mapNanocodexJsonlLine(
+  rawLine: string,
+  stats?: MapStreamStats,
+): NdjsonEvent[] {
+  const line = rawLine.trim();
+  if (!line) return [];
+
+  let parsed: NanocodexEventLine;
+  try {
+    parsed = JSON.parse(line) as NanocodexEventLine;
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || typeof parsed.type !== "string") {
+    return [];
+  }
+  const payload =
+    parsed.payload && typeof parsed.payload === "object" && !Array.isArray(parsed.payload)
+      ? parsed.payload
+      : {};
+
+  switch (parsed.type) {
+    case "assistant.delta": {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (!text) return [];
+      return [{ kind: "output", payload: { text } }];
+    }
+    case "assistant.message": {
+      // Deltas already streamed the same text; keep the final message only when
+      // no deltas arrived for sparse emitters.
+      return [];
+    }
+    case "tool.call": {
+      const tool = typeof payload.tool === "string" && payload.tool ? payload.tool : "tool";
+      const callId =
+        typeof payload.call_id === "string" && payload.call_id
+          ? payload.call_id
+          : tool;
+      let input: unknown = payload.arguments;
+      if (typeof input === "string") {
+        try {
+          input = JSON.parse(input);
+        } catch {
+          input = { input };
+        }
+      }
+      const summary = summarizeToolInput(tool, input);
+      return [
+        { kind: "output", payload: { tool, summary } },
+        {
+          kind: "progress",
+          payload: {
+            version: 1,
+            progressId: `tool-${callId}`,
+            sequence: 1,
+            category: "tool",
+            state: "started",
+            title: truncateSummary(tool, 120),
+            summary: truncateSummary(summary, 500),
+          },
+        },
+      ];
+    }
+    case "tool.result": {
+      const callId =
+        typeof payload.call_id === "string" && payload.call_id
+          ? payload.call_id
+          : undefined;
+      if (!callId) return [];
+      const status = typeof payload.status === "string" ? payload.status : "completed";
+      const failed = status === "failed" || status === "cancelled";
+      return [
+        {
+          kind: "progress",
+          payload: {
+            version: 1,
+            progressId: `tool-${callId}`,
+            sequence: 2,
+            category: "tool",
+            state: failed ? "failed" : "completed",
+            title: typeof payload.tool === "string" ? payload.tool : "Tool",
+          },
+        },
+      ];
+    }
+    case "run.started": {
+      const model =
+        (typeof payload.model === "string" && payload.model) || NANOCODEX_DEFAULT_MODEL;
+      return [
+        {
+          kind: "context",
+          payload: {
+            version: 1,
+            harnessType: "nanocodex",
+            model,
+            modelEvidence: "provider_reported",
+          },
+        },
+      ];
+    }
+    case "run.error": {
+      const message =
+        typeof payload.message === "string" && payload.message
+          ? payload.message
+          : "nanocodex error";
+      return [{ kind: "error", payload: { message: truncateSummary(message, 500) } }];
+    }
+    case "run.completed": {
+      return [{ kind: "done", payload: { ok: true, summary: "completed" } }];
+    }
+    case "run.failed": {
+      const status =
+        typeof payload.status === "string" && payload.status
+          ? payload.status
+          : "failed";
+      return [{ kind: "done", payload: { ok: false, summary: truncateSummary(status, 500) } }];
+    }
+    default:
+      if (stats) stats.unknownEventCount += 1;
+      return [];
+  }
+}
+
+/**
+ * Headless Nanocodex argv. Forces HTTPS Responses (Cloudflare harness egress is
+ * HTTPS-intercepted, not raw WebSocket) and disables network-heavy optional
+ * tools that the sandbox allowlist would deny anyway.
+ */
+export function buildNanocodexArgs(opts: {
+  prompt: string;
+  systemPromptText: string;
+  cwd: string;
+  thinking?: string;
+}): string[] {
+  if (!opts.systemPromptText.trim()) {
+    throw new Error("authoritative system prompt is empty");
+  }
+  if (!opts.prompt.trim()) {
+    throw new Error("nanocodex prompt is empty");
+  }
+  const args = [
+    "run",
+    "--cwd",
+    opts.cwd,
+    "--responses-transport",
+    "https",
+    "--api-base-url",
+    "https://api.openai.com/v1",
+    "--web-search",
+    "false",
+    "--image-generation",
+    "false",
+    "--mcp-defaults",
+    "false",
+    "--mcp-codex-config",
+    "false",
+    "--rollouts",
+    "false",
+    "--instructions",
+    opts.systemPromptText,
+  ];
+  if (opts.thinking) args.push("--thinking", opts.thinking);
+  args.push(opts.prompt);
+  return args;
+}
+
+export function buildNanocodexEnv(
+  source: NodeJS.ProcessEnv,
+  opts: {
+    repo?: RepoSpec;
+    sessionId?: string;
+    executionId?: string;
+    executionHome?: string;
+    permissionsFile?: string;
+  } = {},
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = gitAuthenticationEnv(source);
+  delete env.HARNESS_AUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_BASE_URL;
+  delete env.CLAUDEX_AUTH_TOKEN;
+  delete env.OPENTAG_REMOTE_GIT_APPROVED;
+  delete env.OPENTAG_EXECUTION_ID;
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/.test(key)) delete env[key];
+  }
+  // Sentinel only — Worker egress injects the real OpenAI credential.
+  env.OPENAI_API_KEY = "opentag-egress-injected-not-a-secret";
+  env.GITHUB_TOKEN = "opentag-egress-injected-not-a-secret";
+  env.GH_TOKEN = "opentag-egress-injected-not-a-secret";
+  env.NANOCODEX_RESPONSES_TRANSPORT = "https";
+  env.OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+  if (opts.executionHome) {
+    env.HOME = opts.executionHome;
+    env.USERPROFILE = opts.executionHome;
+    delete env.HOMEDRIVE;
+    delete env.HOMEPATH;
+    env.XDG_CONFIG_HOME = path.join(opts.executionHome, ".config");
+    env.XDG_CACHE_HOME = path.join(opts.executionHome, ".cache");
+    env.XDG_DATA_HOME = path.join(opts.executionHome, ".local", "share");
+    env.CODEX_HOME = path.join(opts.executionHome, ".codex");
+  }
+  if (opts.repo) {
+    const url = new URL(opts.repo.url);
+    env.OPENTAG_REPO_SLUG = url.pathname.replace(/^\//, "").replace(/\.git$/i, "");
+  }
+  if (opts.sessionId) env.OPENTAG_WORK_BRANCH = workBranchName(opts.sessionId);
+  if (opts.executionId) {
+    env.OPENTAG_EXECUTION_ID = opts.executionId;
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraHeader";
+    env.GIT_CONFIG_VALUE_0 = `${EXECUTION_BINDING_HEADER}: ${opts.executionId}`;
+  }
+  if (opts.permissionsFile) env.OPENTAG_PERMISSIONS_FILE = opts.permissionsFile;
+  else delete env.OPENTAG_PERMISSIONS_FILE;
+  return env;
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,6 +1456,7 @@ export async function verifyTurnOutcome(
 }
 
 let cachedClaudeVersion: Promise<string> | undefined;
+let cachedNanocodexVersion: Promise<string> | undefined;
 
 async function getClaudeVersion(): Promise<string> {
   if (cachedClaudeVersion !== undefined) return cachedClaudeVersion;
@@ -1229,6 +1466,16 @@ async function getClaudeVersion(): Promise<string> {
     timeoutMs: 5000,
   }).then((out) => out || "missing", () => "missing");
   return cachedClaudeVersion;
+}
+
+async function getNanocodexVersion(): Promise<string> {
+  if (cachedNanocodexVersion !== undefined) return cachedNanocodexVersion;
+  const controller = new AbortController();
+  cachedNanocodexVersion = runAbortableCommand(NANOCODEX_BIN, ["--version"], {
+    signal: controller.signal,
+    timeoutMs: 5000,
+  }).then((out) => out || "missing", () => "missing");
+  return cachedNanocodexVersion;
 }
 
 /**
@@ -1670,19 +1917,29 @@ export async function runTurnStreaming(
 
   // Authoritative effective-runtime context — container CLI argument evidence
   // until a provider-reported model is available (unknown if no model arg).
-  emit({
-    kind: "context",
-    payload: {
-      version: 1,
-      harnessType: body.harnessType ?? "claudecode",
-      ...(body.model ? { model: body.model } : {}),
-      modelEvidence: body.model ? "container_argument" : "unknown",
-      ...(overlayMeta ? { promptOverlay: overlayMeta } : {}),
-      ...(body.contractVersion !== undefined
-        ? { contractVersion: body.contractVersion }
-        : {}),
-    },
-  });
+  {
+    const harnessType = body.harnessType ?? "claudecode";
+    const defaultModel =
+      harnessType === "nanocodex" && !body.model ? NANOCODEX_DEFAULT_MODEL : undefined;
+    const reportedModel = body.model ?? defaultModel;
+    emit({
+      kind: "context",
+      payload: {
+        version: 1,
+        harnessType,
+        ...(reportedModel ? { model: reportedModel } : {}),
+        modelEvidence: body.model
+          ? "container_argument"
+          : defaultModel
+            ? "requested"
+            : "unknown",
+        ...(overlayMeta ? { promptOverlay: overlayMeta } : {}),
+        ...(body.contractVersion !== undefined
+          ? { contractVersion: body.contractVersion }
+          : {}),
+      },
+    });
+  }
 
   let executionHome: string;
   try {
@@ -1721,29 +1978,56 @@ export async function runTurnStreaming(
     attachmentPaths,
   });
   const harnessType: HarnessType = body.harnessType ?? "claudecode";
+  const useNanocodex = harnessType === "nanocodex";
   const effectiveModel = harnessType === "claudex"
     ? body.model || process.env.CLAUDEX_MODEL || "gpt-5.6-sol"
-    : body.model;
-  const agentLabel = harnessType === "claudex" ? "claudex" : "claude";
-  const args = buildClaudeArgs({ prompt, model: effectiveModel, systemPromptText });
+    : useNanocodex
+      ? body.model || NANOCODEX_DEFAULT_MODEL
+      : body.model;
+  const agentLabel = useNanocodex
+    ? "nanocodex"
+    : harnessType === "claudex"
+      ? "claudex"
+      : "claude";
+  const args = useNanocodex
+    ? buildNanocodexArgs({
+        prompt,
+        systemPromptText,
+        cwd: workdir,
+      })
+    : buildClaudeArgs({ prompt, model: effectiveModel, systemPromptText });
 
   let env: NodeJS.ProcessEnv;
   try {
-    env = buildClaudeEnv(
-      process.env,
-      effectiveModel,
-      body.remoteGitApproved === true,
-      body.repo,
-      body.sessionId,
-      body.executionId,
-      executionHome,
-      permissionsFile,
-      harnessType,
-    );
+    env = useNanocodex
+      ? buildNanocodexEnv(process.env, {
+          repo: body.repo,
+          sessionId: body.sessionId,
+          executionId: body.executionId,
+          executionHome,
+          permissionsFile,
+        })
+      : buildClaudeEnv(
+          process.env,
+          effectiveModel,
+          body.remoteGitApproved === true,
+          body.repo,
+          body.sessionId,
+          body.executionId,
+          executionHome,
+          permissionsFile,
+          harnessType,
+        );
   } catch (err) {
     try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* reported by setup next turn */ }
     emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
-    emit({ kind: "done", payload: { ok: false, summary: "claudex setup failed" } });
+    emit({
+      kind: "done",
+      payload: {
+        ok: false,
+        summary: useNanocodex ? "nanocodex setup failed" : "claudex setup failed",
+      },
+    });
     return;
   }
   let agentResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
@@ -1751,7 +2035,11 @@ export async function runTurnStreaming(
   let child: ReturnType<typeof spawn>;
   try {
     throwIfAborted(signal);
-    child = spawn(CLAUDE_BIN, args, buildClaudeSpawnOptions(workdir, env));
+    child = spawn(
+      useNanocodex ? NANOCODEX_BIN : CLAUDE_BIN,
+      args,
+      buildClaudeSpawnOptions(workdir, env),
+    );
   } catch (err) {
     try { await cleanupExecutionHome(WORK_ROOT, body.executionId); } catch { /* reported by setup next turn */ }
     if (signal.aborted) { emitInterrupted(); return; }
@@ -1798,7 +2086,10 @@ export async function runTurnStreaming(
   if (child.stdout) {
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
-      for (const event of mapStreamJsonLine(line)) {
+      const mapped = useNanocodex
+        ? mapNanocodexJsonlLine(line)
+        : mapStreamJsonLine(line);
+      for (const event of mapped) {
         // A successful terminal event is held until git/PR postconditions pass.
         if (event.kind === "done") agentResult = event;
         else emit(event);
@@ -1923,6 +2214,7 @@ async function handleRequest(
       ok: true,
       service: "opentag-harness",
       claudeCode: await getClaudeVersion(),
+      nanocodex: await getNanocodexVersion(),
     });
     return;
   }

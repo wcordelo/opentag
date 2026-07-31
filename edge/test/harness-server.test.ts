@@ -14,6 +14,8 @@ import {
   buildClaudeArgs,
   buildClaudeEnv,
   buildClaudeSpawnOptions,
+  buildNanocodexArgs,
+  buildNanocodexEnv,
   cleanupExecutionHome,
   createExecutionTracker,
   createChildTerminator,
@@ -27,6 +29,7 @@ import {
   gitAuthenticationEnv,
   hasValidBearerToken,
   loadAuthoritativeSystemPrompt,
+  mapNanocodexJsonlLine,
   mapStreamJsonLine,
   normalizeClaudexProxyUrl,
   materializeTurnAttachments,
@@ -653,6 +656,135 @@ describe("mapStreamJsonLine — claude-code stream-json -> NDJSON event mapping"
   });
 });
 
+describe("mapNanocodexJsonlLine — nanocodex JSONL -> NDJSON event mapping", () => {
+  it("streams assistant deltas as output text", () => {
+    const line = JSON.stringify({
+      protocol_version: 1,
+      request_id: "r1",
+      seq: 1,
+      type: "assistant.delta",
+      payload: { text: "hello", model_call_index: 0 },
+    });
+    expect(mapNanocodexJsonlLine(line)).toEqual([
+      { kind: "output", payload: { text: "hello" } },
+    ]);
+  });
+
+  it("maps tool.call and tool.result to output + progress", () => {
+    expect(
+      mapNanocodexJsonlLine(
+        JSON.stringify({
+          type: "tool.call",
+          payload: {
+            call_id: "c1",
+            tool: "shell",
+            arguments: { command: "ls" },
+            model_call_index: 0,
+          },
+        }),
+      ),
+    ).toEqual([
+      { kind: "output", payload: { tool: "shell", summary: "shell: ls" } },
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-c1",
+          sequence: 1,
+          category: "tool",
+          state: "started",
+          title: "shell",
+          summary: "shell: ls",
+        },
+      },
+    ]);
+    expect(
+      mapNanocodexJsonlLine(
+        JSON.stringify({
+          type: "tool.result",
+          payload: { call_id: "c1", tool: "shell", status: "completed", duration_ns: 1 },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "progress",
+        payload: {
+          version: 1,
+          progressId: "tool-c1",
+          sequence: 2,
+          category: "tool",
+          state: "completed",
+          title: "shell",
+        },
+      },
+    ]);
+  });
+
+  it("maps run.started to context and terminal run events to done", () => {
+    expect(
+      mapNanocodexJsonlLine(
+        JSON.stringify({
+          type: "run.started",
+          payload: { model: "gpt-5.6-sol", mode: "default" },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "context",
+        payload: {
+          version: 1,
+          harnessType: "nanocodex",
+          model: "gpt-5.6-sol",
+          modelEvidence: "provider_reported",
+        },
+      },
+    ]);
+    expect(mapNanocodexJsonlLine(JSON.stringify({ type: "run.completed", payload: {} }))).toEqual([
+      { kind: "done", payload: { ok: true, summary: "completed" } },
+    ]);
+    expect(
+      mapNanocodexJsonlLine(
+        JSON.stringify({ type: "run.failed", payload: { status: "cancelled" } }),
+      ),
+    ).toEqual([{ kind: "done", payload: { ok: false, summary: "cancelled" } }]);
+  });
+
+  it("ignores unknown and malformed lines", () => {
+    expect(mapNanocodexJsonlLine(JSON.stringify({ type: "api.event", payload: {} }))).toEqual([]);
+    expect(mapNanocodexJsonlLine("{not json")).toEqual([]);
+    expect(mapNanocodexJsonlLine("")).toEqual([]);
+  });
+});
+
+describe("buildNanocodexArgs / buildNanocodexEnv", () => {
+  it("forces HTTPS Responses and disables optional network tools", () => {
+    const args = buildNanocodexArgs({
+      prompt: "fix the bug",
+      systemPromptText: "You are OpenTag.",
+      cwd: "/work/session",
+    });
+    expect(args.slice(0, 3)).toEqual(["run", "--cwd", "/work/session"]);
+    expect(args).toContain("--responses-transport");
+    expect(args).toContain("https");
+    expect(args).toContain("--web-search");
+    expect(args).toContain("false");
+    expect(args.at(-1)).toBe("fix the bug");
+  });
+
+  it("injects OpenAI sentinel credentials and execution HOME", () => {
+    const home = "/work/exec/home";
+    const env = buildNanocodexEnv(
+      { HARNESS_AUTH_TOKEN: "secret", OPENAI_API_KEY: "should-not-leak" },
+      { executionHome: home, executionId: "ot1e_abcdefghijklmnopqrstuvwxyz0123456789ABCDE" },
+    );
+    expect(env.OPENAI_API_KEY).toBe("opentag-egress-injected-not-a-secret");
+    expect(env.HARNESS_AUTH_TOKEN).toBeUndefined();
+    expect(env.HOME).toBe(home);
+    expect(env.CODEX_HOME).toBe(path.join(home, ".codex"));
+    expect(env.NANOCODEX_RESPONSES_TRANSPORT).toBe("https");
+  });
+});
+
 describe("finalizeEvents — done-always-last invariant", () => {
   it("appends a fallback done{ok:false} when the stream never produced one", () => {
     const events: NdjsonEvent[] = [{ kind: "output", payload: { text: "partial" } }];
@@ -1077,6 +1209,9 @@ describe("security validation", () => {
       error: "invalid_harness_type",
     });
     expect(await validateTurnRequest({ ...validTurn, harnessType: "claudex" }, repoPolicy)).toMatchObject({
+      ok: true,
+    });
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "nanocodex" }, repoPolicy)).toMatchObject({
       ok: true,
     });
     expect(await validateTurnRequest({ ...validTurn, inputLines: [42] }, repoPolicy)).toMatchObject({

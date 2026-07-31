@@ -32,9 +32,22 @@ describe("channel runtime defaults", () => {
     [{ harnessType: "claudecode", model: "bad model" }, /invalid channel model/],
     [{ harnessType: "claudecode", reasoning: "high" }, /unknown runtimeDefaults field/],
     [{ harnessType: "claudex", model: "claude-opus-4-8" }, /Claudex requires a GPT model/],
+    [{ harnessType: "nanocodex", model: "claude-opus-4-8" }, /Nanocodex requires a GPT model/],
     [{ harnessType: "claudecode", model: "gpt-5.6-sol" }, /Claude Code requires a Claude model/],
   ])("rejects invalid configuration atomically", (value, error) => {
     expect(() => normalizeChannelRuntimeDefaults(value)).toThrow(error);
+  });
+
+  it("accepts nanocodex channel defaults with a GPT model", () => {
+    expect(
+      normalizeChannelRuntimeDefaults({
+        harnessType: "nanocodex",
+        model: "gpt-5.6-sol",
+      }),
+    ).toEqual({
+      harnessType: "nanocodex",
+      model: "gpt-5.6-sol",
+    });
   });
 
   it("routes only exact runtime show/set/clear prefixes", () => {

@@ -36,6 +36,9 @@ function makeStore(): LifecycleStateStore {
       async seen() {
         return false;
       },
+      async has() {
+        return false;
+      },
     },
     queue: {
       async enqueue() {

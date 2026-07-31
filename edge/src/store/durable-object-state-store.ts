@@ -126,6 +126,7 @@ export class DurableObjectStateStore implements LifecycleStateStore {
   dedup: StateStore["dedup"] = {
     seen: async (key: string, ttlMs: number): Promise<boolean> =>
       this.stub(key).dedupSeen(key, ttlMs),
+    has: async (key: string): Promise<boolean> => this.stub(key).dedupHas(key),
   };
 
   queue: StateStore["queue"] = {

@@ -1,5 +1,9 @@
 /** Pure, runtime-neutral validation for the pinned harness /turn envelope. */
 
+import type { PermissionSnapshotV1 } from "../../src/permissions/contract.js";
+
+export type { PermissionSnapshotV1 } from "../../src/permissions/contract.js";
+
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 async function sha256HexUtf8(text: string): Promise<string> {
@@ -77,42 +81,6 @@ export interface TurnRequestBody {
     text: string;
     source: "workspace_admin";
   };
-}
-
-export interface PermissionSnapshotV1 {
-  version: 1;
-  scope: {
-    teamId: string;
-    channelId: string;
-    conversationKey?: string;
-    executionId?: string;
-    actorKind: "slack_user" | "slack_automation" | "operator";
-  };
-  channelAccess: {
-    bundleId: string;
-    metadataVisibility: "full_names" | "restricted";
-    allowedTools: string[];
-    deniedTools: string[];
-    policies: { allowMemoryWrite: boolean; allowTasks: boolean };
-    mcpEndpoints: Array<{ origin: string; path: string }>;
-    secretRefs: string[];
-  };
-  runtime: {
-    harnessType?: HarnessType;
-    model?: string;
-    harnessSource: "explicit" | "sticky" | "channel" | "deployment";
-    modelSource: "explicit" | "sticky" | "channel" | "deployment";
-    harnessConnected: boolean;
-  };
-  sandbox?: {
-    network: "denied_by_default";
-    credentialExposure: "sentinel_only";
-    allowedRepoHosts: string[];
-    allowedRepoOrgs: string[];
-    remoteGitApproved: boolean;
-    createPullRequest: boolean;
-  };
-  generatedAt: string;
 }
 
 export type TurnValidation =
@@ -211,6 +179,7 @@ export function validatePermissionSnapshot(
     !access ||
     !runtime ||
     !hasOnlyKeys(scope, [
+      "platform",
       "teamId",
       "channelId",
       "conversationKey",
@@ -233,6 +202,7 @@ export function validatePermissionSnapshot(
       "modelSource",
       "harnessConnected",
     ]) ||
+    scope.platform !== "slack" ||
     !["slack_user", "slack_automation", "operator"].includes(String(scope.actorKind)) ||
     !["full_names", "restricted"].includes(String(access.metadataVisibility)) ||
     !boundedUniqueSortedStrings(access.allowedTools) ||

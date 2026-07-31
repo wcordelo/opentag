@@ -16,7 +16,10 @@ import { KNOWLEDGE_LIMITS, type KnowledgeCitation } from "../memory/knowledge-co
 import { SupermemoryAdapter, SupermemoryAdapterError } from "../memory/supermemory-adapter.js";
 import { createSupermemoryClient } from "../memory/supermemory-client.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
-import type { PermissionSnapshotV1 } from "../permissions/contract.js";
+import {
+  assertPermissionSnapshotV1SlackOnly,
+  type PermissionSnapshotV1,
+} from "../permissions/contract.js";
 import { requireRequestContext } from "../request-context.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
 
@@ -56,6 +59,11 @@ function exactPermissionSnapshot(
   channelId: string,
 ): boolean {
   const snapshot = authorization.permissionSnapshot;
+  try {
+    assertPermissionSnapshotV1SlackOnly(snapshot);
+  } catch {
+    return false;
+  }
   return Object.isFrozen(snapshot) &&
     Object.isFrozen(snapshot.scope) &&
     Object.isFrozen(snapshot.channelAccess) &&

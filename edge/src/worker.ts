@@ -94,6 +94,7 @@ import {
   verifyKnowledgeSourceGrant,
   type KnowledgeSourceAction,
 } from "./config/knowledge-source-authorization.js";
+import { handleBuzzWakeHttp } from "./buzz/wake-http.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -326,6 +327,13 @@ app.get("/health", async (c) => {
   }, ok ? 200 : 503);
 });
 
+/**
+ * Buzz wake ingress mount. Receive deps (directory / dedupe / fetcher /
+ * runtime) are intentionally unset until signer custody + DO wiring land —
+ * the adapter fails closed with 503 and never touches dedupe or runtime.
+ */
+app.post("/buzz/wake", async () => handleBuzzWakeHttp(null, undefined));
+
 app.get("/debug/store", requireAdminAuth(), async (c) => {
   const store = createDurableObjectStore(c.env.BOT_STATE);
   const k = `debug:${crypto.randomUUID()}`;
@@ -337,11 +345,13 @@ app.get("/debug/store", requireAdminAuth(), async (c) => {
   if (lock) await store.lock.release(`${k}:lock`, lock.token);
   const firstSeen = await store.dedup.seen(`${k}:evt`, 5_000);
   const secondSeen = await store.dedup.seen(`${k}:evt`, 5_000);
+  const hasAfterSeen = await store.dedup.has(`${k}:evt`);
+  const hasUnseen = await store.dedup.has(`${k}:never`);
   return c.json({
     kv: got,
     list,
     lock: { acquired: lock !== null },
-    dedup: { firstSeen, secondSeen },
+    dedup: { firstSeen, secondSeen, hasAfterSeen, hasUnseen },
   });
 });
 

@@ -26,7 +26,10 @@
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import type { PreparedAttachment } from "../slack/download-files.js";
-import type { PermissionSnapshotV1 } from "../permissions/contract.js";
+import {
+  assertPermissionSnapshotV1SlackOnly,
+  type PermissionSnapshotV1,
+} from "../permissions/contract.js";
 import {
   collectExactSecretsFromEnv,
   emitRedactionTelemetry,
@@ -494,7 +497,10 @@ export async function runHarnessTurn(
   if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
   if (args.codingTask) body.codingTask = true;
   if (args.createPullRequest) body.createPullRequest = true;
-  if (args.permissionSnapshot) body.permissionSnapshot = args.permissionSnapshot;
+  if (args.permissionSnapshot) {
+    assertPermissionSnapshotV1SlackOnly(args.permissionSnapshot);
+    body.permissionSnapshot = args.permissionSnapshot;
+  }
   if (args.systemPromptOverlay) {
     body.contractVersion = 2;
     body.systemPromptOverlay = args.systemPromptOverlay;

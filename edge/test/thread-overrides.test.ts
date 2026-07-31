@@ -51,6 +51,9 @@ function memoryStore(): StateStore {
       async seen() {
         return false;
       },
+      async has() {
+        return false;
+      },
     },
     queue: {
       async enqueue() {

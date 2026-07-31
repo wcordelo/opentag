@@ -99,6 +99,19 @@ export function runStateStoreConformance(
         await new Promise((r) => setTimeout(r, 60));
         expect(await s.dedup.seen("e2", 30)).toBe(false);
       });
+      it("has is read-only: unseen false, after seen true, never inserts alone", async () => {
+        expect(await s.dedup.has("e3")).toBe(false);
+        // has must not create a claim — a subsequent seen is still first.
+        expect(await s.dedup.seen("e3", 1000)).toBe(false);
+        expect(await s.dedup.has("e3")).toBe(true);
+        expect(await s.dedup.seen("e3", 1000)).toBe(true);
+      });
+      it("has returns false after ttl expiry without refreshing", async () => {
+        expect(await s.dedup.seen("e4", 30)).toBe(false);
+        expect(await s.dedup.has("e4")).toBe(true);
+        await new Promise((r) => setTimeout(r, 60));
+        expect(await s.dedup.has("e4")).toBe(false);
+      });
     });
 
     describe("queue", () => {

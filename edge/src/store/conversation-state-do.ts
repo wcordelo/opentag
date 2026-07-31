@@ -1794,6 +1794,10 @@ export class ConversationStateDO extends DurableObject {
     return this.engine.dedupSeen(key, ttlMs);
   }
 
+  async dedupHas(key: string): Promise<boolean> {
+    return this.engine.dedupHas(key);
+  }
+
   async queueEnqueue(
     key: string,
     value: unknown,

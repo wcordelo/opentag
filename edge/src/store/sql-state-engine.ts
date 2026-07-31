@@ -295,6 +295,19 @@ export class SqlStateEngine {
     });
   }
 
+  /** Read-only: true when an unexpired claim exists. Does not write. */
+  dedupHas(key: string): boolean {
+    return this.tx(() => {
+      const cur = this.sql
+        .exec<{ expires_at: number }>(
+          `SELECT expires_at FROM dedup WHERE key = ?`,
+          key,
+        )
+        .toArray()[0];
+      return Boolean(cur && !this.expired(cur.expires_at));
+    });
+  }
+
   // ── queue ──────────────────────────────────────────────────────────────────
 
   queueEnqueue(

@@ -245,4 +245,28 @@ describe("resolveThreadOverrides", () => {
       model: "gpt-5.6-sol",
     });
   });
+
+  it("keeps sticky nanocodex when a later turn only updates the GPT model", async () => {
+    const store = memoryStore();
+    const key = "C1::1.0";
+
+    await resolveThreadOverrides(store, key, "--nanocodex --model gpt-5.6-sol Fix it");
+    const result = await resolveThreadOverrides(store, key, "--model gpt-5.6-sol-high-fast Ship it");
+
+    expect(result.effectiveHarnessType).toBe("nanocodex");
+    expect(result.effectiveModel).toBe("gpt-5.6-sol-high-fast");
+
+    const persisted = await store.kv.get(threadOverridesKey(key));
+    expect(persisted).toMatchObject({
+      harnessType: "nanocodex",
+      model: "gpt-5.6-sol-high-fast",
+    });
+  });
+
+  it("infers claudex for a fresh thread with only --model gpt-*", async () => {
+    const store = memoryStore();
+    const result = await resolveThreadOverrides(store, "C1::1.0", "--model gpt-5.6-sol Reply briefly");
+    expect(result.effectiveHarnessType).toBe("claudex");
+    expect(result.effectiveModel).toBe("gpt-5.6-sol");
+  });
 });

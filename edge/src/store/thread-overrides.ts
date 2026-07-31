@@ -42,6 +42,12 @@ export type ResolvedThreadOverrides = {
 
 const STICKY_TTL_MS = 30 * 86_400_000; // 30 days
 
+function inferHarnessTypeFromModel(model?: string): string | undefined {
+  if (!model) return undefined;
+  if (/^gpt-/i.test(model)) return "claudex";
+  return "claudecode";
+}
+
 export function threadOverridesKey(conversationKey: string): string {
   return `thread:overrides:${conversationKey}`;
 }
@@ -110,7 +116,8 @@ export async function resolveThreadOverrides(
   const effectiveHarnessType =
     messageOverride.harnessType ??
     sticky?.harnessType ??
-    channelDefaults?.harnessType;
+    channelDefaults?.harnessType ??
+    inferHarnessTypeFromModel(effectiveModel);
   return {
     cleanedText: messageOverride.cleanedText,
     hasMessageFlags,

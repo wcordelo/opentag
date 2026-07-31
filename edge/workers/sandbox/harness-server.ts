@@ -334,6 +334,7 @@ interface ClaudeStreamLine {
 
 export type MapStreamStats = {
   unknownEventCount: number;
+  nanocodexAssistantDeltaSeen?: boolean;
 };
 
 /**
@@ -536,12 +537,16 @@ export function mapNanocodexJsonlLine(
     case "assistant.delta": {
       const text = typeof payload.text === "string" ? payload.text : "";
       if (!text) return [];
+      if (stats) stats.nanocodexAssistantDeltaSeen = true;
       return [{ kind: "output", payload: { text } }];
     }
     case "assistant.message": {
       // Deltas already streamed the same text; keep the final message only when
       // no deltas arrived for sparse emitters.
-      return [];
+      if (stats?.nanocodexAssistantDeltaSeen) return [];
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (!text) return [];
+      return [{ kind: "output", payload: { text } }];
     }
     case "tool.call": {
       const tool = typeof payload.tool === "string" && payload.tool ? payload.tool : "tool";
@@ -680,6 +685,7 @@ export function buildNanocodexArgs(opts: {
 export function buildNanocodexEnv(
   source: NodeJS.ProcessEnv,
   opts: {
+    model?: string;
     repo?: RepoSpec;
     sessionId?: string;
     executionId?: string;
@@ -705,6 +711,7 @@ export function buildNanocodexEnv(
   env.GH_TOKEN = "opentag-egress-injected-not-a-secret";
   env.NANOCODEX_RESPONSES_TRANSPORT = "https";
   env.OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+  if (opts.model) env.NANOCODEX_MODEL = opts.model;
   if (opts.executionHome) {
     env.HOME = opts.executionHome;
     env.USERPROFILE = opts.executionHome;
@@ -2001,6 +2008,7 @@ export async function runTurnStreaming(
   try {
     env = useNanocodex
       ? buildNanocodexEnv(process.env, {
+          model: effectiveModel,
           repo: body.repo,
           sessionId: body.sessionId,
           executionId: body.executionId,
@@ -2084,10 +2092,11 @@ export async function runTurnStreaming(
   timeout.unref();
 
   if (child.stdout) {
+    const nanocodexStats: MapStreamStats = { unknownEventCount: 0 };
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
       const mapped = useNanocodex
-        ? mapNanocodexJsonlLine(line)
+        ? mapNanocodexJsonlLine(line, nanocodexStats)
         : mapStreamJsonLine(line);
       for (const event of mapped) {
         // A successful terminal event is held until git/PR postconditions pass.

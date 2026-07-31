@@ -99,7 +99,9 @@ export function extractMessageOverrides(text: string): MessageOverrides {
     if (value.includes('/')) {
       errors.push(`provider-qualified model ${value} is unsupported; use --claudex with a GPT model or --claude with a Claude model`)
     }
-    harnessType = /^gpt-/i.test(value) ? 'claudex' : 'claudecode'
+    if (!/^gpt-/i.test(value)) {
+      harnessType = 'claudecode'
+    }
     cleaned = stripMatch(cleaned, modelMatch)
   }
 

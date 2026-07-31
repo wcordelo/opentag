@@ -9,9 +9,9 @@ describe('overrides', () => {
       expect(result.cleanedText).toBe('Use ChatGPT')
     })
 
-    it('--model gpt-* implies Claudex', () => {
+    it('--model gpt-* does not override harnessType at parse time', () => {
       const result = extractMessageOverrides('--model gpt-5.6-sol Reply briefly')
-      expect(result.harnessType).toBe('claudex')
+      expect(result.harnessType).toBeUndefined()
       expect(result.model).toBe('gpt-5.6-sol')
     })
   })

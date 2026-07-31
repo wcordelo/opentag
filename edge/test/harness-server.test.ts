@@ -670,6 +670,24 @@ describe("mapNanocodexJsonlLine — nanocodex JSONL -> NDJSON event mapping", ()
     ]);
   });
 
+  it("emits assistant.message text only when no deltas arrived", () => {
+    const stats = { unknownEventCount: 0 };
+    const message = JSON.stringify({
+      type: "assistant.message",
+      payload: { text: "final answer" },
+    });
+    expect(mapNanocodexJsonlLine(message)).toEqual([
+      { kind: "output", payload: { text: "final answer" } },
+    ]);
+    expect(
+      mapNanocodexJsonlLine(
+        JSON.stringify({ type: "assistant.delta", payload: { text: "partial" } }),
+        stats,
+      ),
+    ).toEqual([{ kind: "output", payload: { text: "partial" } }]);
+    expect(mapNanocodexJsonlLine(message, stats)).toEqual([]);
+  });
+
   it("maps tool.call and tool.result to output + progress", () => {
     expect(
       mapNanocodexJsonlLine(
@@ -769,6 +787,14 @@ describe("buildNanocodexArgs / buildNanocodexEnv", () => {
     expect(args).toContain("--web-search");
     expect(args).toContain("false");
     expect(args.at(-1)).toBe("fix the bug");
+  });
+
+  it("forwards the requested model through NANOCODEX_MODEL env", () => {
+    const env = buildNanocodexEnv(
+      { HARNESS_AUTH_TOKEN: "secret" },
+      { model: "gpt-5.6-sol-high-fast", executionHome: "/work/exec/home" },
+    );
+    expect(env.NANOCODEX_MODEL).toBe("gpt-5.6-sol-high-fast");
   });
 
   it("injects OpenAI sentinel credentials and execution HOME", () => {

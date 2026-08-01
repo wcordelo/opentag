@@ -671,7 +671,7 @@ describe("production Slack remote-git ingress", () => {
         }),
       },
     });
-    expect(appendEvent).not.toHaveBeenCalled();
+    expect(appendEvent.mock.calls.map(([args]) => (args as { kind?: string }).kind)).toEqual(["router"]);
     // This mock returns after the final renderer would already have committed;
     // it intentionally does not fake a second lifecycle-clear RPC.
     expect(store.obligation.clear).not.toHaveBeenCalled();

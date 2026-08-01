@@ -229,19 +229,15 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
     }
   });
 
-  it("does not duplicate publish when reply claim finalize fails after publish", async () => {
+  it("does not duplicate publish when forensic claim write fails after publish (F1)", async () => {
     const { store, close } = makeSqliteStateStore();
     try {
       let publishes = 0;
       const replyKey = buzzRuntimeReplyKey(TENANT, EVENT);
       const origSet = store.kv.set.bind(store.kv);
-      let replySetCalls = 0;
       store.kv.set = async (key, value, ttl) => {
         if (key === replyKey) {
-          replySetCalls += 1;
-          if (replySetCalls === 2) {
-            throw new Error("kv_finalize_failed");
-          }
+          throw new Error("kv_finalize_failed");
         }
         return origSet(key, value, ttl);
       };
@@ -263,18 +259,16 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
         rootEventId: EVENT,
         mentionPubkeys: [] as const,
       };
-      await expect(
-        runtime.admit({
-          tenantId: TENANT,
-          conversationKey: `ck:${EVENT}`,
-          policyAuditMarker: "m1",
-          inbound,
-        }),
-      ).rejects.toThrow("kv_finalize_failed");
-      expect(publishes).toBe(1);
-      expect(await store.kv.get(replyKey)).toMatchObject({
-        reply_event_id: "",
+      // Publish succeeds; forensic kv.set fails — admit still resolves (reservation holds).
+      await runtime.admit({
+        tenantId: TENANT,
+        conversationKey: `ck:${EVENT}`,
+        policyAuditMarker: "m1",
+        inbound,
       });
+      expect(publishes).toBe(1);
+      expect(await store.kv.get(replyKey)).toBeUndefined();
+      expect(await store.dedup.has(replyKey)).toBe(true);
 
       await runtime.admit({
         tenantId: TENANT,
@@ -288,9 +282,10 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
     }
   });
 
-  it("does not write reply claim when publish throws", async () => {
+  it("releases reservation on transient publish failure so retry can publish", async () => {
     const { store, close } = makeSqliteStateStore();
     try {
+      const replyKey = buzzRuntimeReplyKey(TENANT, EVENT);
       const runtime = createBuzzRuntimeAdmit(store, {
         nowMs: () => 7,
         replyPublisher: {
@@ -317,7 +312,52 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
       ).rejects.toThrow(BUZZ_REPLY_PUBLISH_FAILED);
       // Marker still written (receive pipeline forgets authoritative on throw).
       expect(await store.kv.get(buzzRuntimeAdmitKey(TENANT, EVENT))).toBeDefined();
-      expect(await store.kv.get(buzzRuntimeReplyKey(TENANT, EVENT))).toBeUndefined();
+      expect(await store.kv.get(replyKey)).toBeUndefined();
+      expect(await store.dedup.has(replyKey)).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("keeps reservation on permanent reply reject without throwing (F2)", async () => {
+    const { store, close } = makeSqliteStateStore();
+    try {
+      let publishes = 0;
+      const replyKey = buzzRuntimeReplyKey(TENANT, EVENT);
+      const runtime = createBuzzRuntimeAdmit(store, {
+        nowMs: () => 9,
+        replyPublisher: {
+          async publishAdmitReply() {
+            publishes += 1;
+            throw new Error(BUZZ_REPLY_AUTH_REJECTED);
+          },
+        },
+      });
+      const inbound = {
+        eventId: EVENT,
+        authorPubkey: AUTHOR,
+        createdAt: NOW,
+        channelId: CHANNEL,
+        content: "hi",
+        rootEventId: EVENT,
+        mentionPubkeys: [] as const,
+      };
+      await runtime.admit({
+        tenantId: TENANT,
+        conversationKey: `ck:${EVENT}`,
+        policyAuditMarker: "m1",
+        inbound,
+      });
+      expect(publishes).toBe(1);
+      expect(await store.dedup.has(replyKey)).toBe(true);
+
+      await runtime.admit({
+        tenantId: TENANT,
+        conversationKey: `ck:${EVENT}`,
+        policyAuditMarker: "m1",
+        inbound,
+      });
+      expect(publishes).toBe(1);
     } finally {
       close();
     }

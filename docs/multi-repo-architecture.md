@@ -208,9 +208,34 @@ Current local validation:
 - `npm run validate:deploy-config` passed.
 - `git diff --check` passed.
 
-The branch is ready for the authorized OpenTag PR and Cloudflare rollout. The
-deployment result and live health/canary evidence are recorded in the handoff
-after those external actions complete.
+Publication and deployment evidence:
+
+- OpenTag PR [#28](https://github.com/wcordelo/opentag/pull/28) contains this
+  implementation. The branch is `codex/end-to-end-architecture-local` at
+  `df958fb` and is clean after the push.
+- The harness container built successfully with the pinned toolchain and was
+  applied to Cloudflare application
+  `opentag-harness-harnesscontainer` as version
+  `6327fccc-f016-4932-ac24-fc708a13299e`, image digest
+  `sha256:dd6b31be13352b6c2b5c38921b1117c983c3a8781f315cc755eb0d963938309c`.
+- The bot Worker deployed as version
+  `3f7da920-18a6-4a8a-bdde-b1aeff7a70d1`.
+- `GET https://opentag-bot.williamlopezc.workers.dev/health` returned HTTP 200.
+  It reported all durable stores, the harness service binding, native
+  Nanocodex capability, knowledge actor-token configuration, Buzz relay
+  configuration, and tenant durability as ready. It correctly reported
+  external reconciliation as not configured and trusted rich mentions as
+  disabled.
+- Cloudflare Secrets were configured for the authorized rollout, including
+  the harness `OPENAI_API_KEY` and bot
+  `KNOWLEDGE_ACTOR_TOKEN_SECRET`; secret values were never written to source
+  or logs.
+
+The live Worker health rollout is verified. A real Slack/model-response
+canary was not executed because no designated test channel or public harness
+route was supplied; the deployed harness is private and reachable through the
+Worker service binding. The implementation therefore does not claim a
+successful end-to-end provider turn until that bounded canary is run.
 
 The source-only backfill reports and Notion destinations remain isolated by
 project. Notion is a review index; this Markdown report and the OpenTag source

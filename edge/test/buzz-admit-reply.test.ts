@@ -229,6 +229,65 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
     }
   });
 
+  it("does not duplicate publish when reply claim finalize fails after publish", async () => {
+    const { store, close } = makeSqliteStateStore();
+    try {
+      let publishes = 0;
+      const replyKey = buzzRuntimeReplyKey(TENANT, EVENT);
+      const origSet = store.kv.set.bind(store.kv);
+      let replySetCalls = 0;
+      store.kv.set = async (key, value, ttl) => {
+        if (key === replyKey) {
+          replySetCalls += 1;
+          if (replySetCalls === 2) {
+            throw new Error("kv_finalize_failed");
+          }
+        }
+        return origSet(key, value, ttl);
+      };
+      const runtime = createBuzzRuntimeAdmit(store, {
+        nowMs: () => 42,
+        replyPublisher: {
+          async publishAdmitReply() {
+            publishes += 1;
+            return { replyEventId: "e".repeat(64) };
+          },
+        },
+      });
+      const inbound = {
+        eventId: EVENT,
+        authorPubkey: AUTHOR,
+        createdAt: NOW,
+        channelId: CHANNEL,
+        content: "hi",
+        rootEventId: EVENT,
+        mentionPubkeys: [] as const,
+      };
+      await expect(
+        runtime.admit({
+          tenantId: TENANT,
+          conversationKey: `ck:${EVENT}`,
+          policyAuditMarker: "m1",
+          inbound,
+        }),
+      ).rejects.toThrow("kv_finalize_failed");
+      expect(publishes).toBe(1);
+      expect(await store.kv.get(replyKey)).toMatchObject({
+        reply_event_id: "",
+      });
+
+      await runtime.admit({
+        tenantId: TENANT,
+        conversationKey: `ck:${EVENT}`,
+        policyAuditMarker: "m1",
+        inbound,
+      });
+      expect(publishes).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
   it("does not write reply claim when publish throws", async () => {
     const { store, close } = makeSqliteStateStore();
     try {

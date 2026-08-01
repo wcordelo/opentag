@@ -59,7 +59,8 @@ export function buzzRuntimeReplyKey(
  * and, when `replyPublisher` is set, posts a kind-9 ack (idempotent via reply
  * claim KV). Reply publish failure throws after the marker write so the
  * receive pipeline can forget the authoritative claim and retry; the reply
- * claim is only written after a successful publish.
+ * claim is written before publish (deleted on publish failure) so a crash or
+ * KV error after a successful relay POST cannot lose the idempotency slot.
  */
 export function createBuzzRuntimeAdmit(
   store: Pick<StateStore, "kv">,
@@ -103,16 +104,29 @@ export function createBuzzRuntimeAdmit(
         return;
       }
 
-      const published = await replyPublisher.publishAdmitReply({
-        inbound: input.inbound,
-      });
-
-      const claim: BuzzRuntimeReplyClaim = Object.freeze({
+      const claimedAt = nowMs();
+      const pendingClaim: BuzzRuntimeReplyClaim = Object.freeze({
         v: 1,
         tenant_id: input.tenantId,
         inbound_event_id: input.inbound.eventId,
+        reply_event_id: "",
+        claimed_at: claimedAt,
+      });
+      await store.kv.set(replyKey, pendingClaim, ttlMs);
+
+      let published: Readonly<{ replyEventId: string }>;
+      try {
+        published = await replyPublisher.publishAdmitReply({
+          inbound: input.inbound,
+        });
+      } catch (error) {
+        await store.kv.delete(replyKey);
+        throw error;
+      }
+
+      const claim: BuzzRuntimeReplyClaim = Object.freeze({
+        ...pendingClaim,
         reply_event_id: published.replyEventId,
-        claimed_at: nowMs(),
       });
       await store.kv.set(replyKey, claim, ttlMs);
     },

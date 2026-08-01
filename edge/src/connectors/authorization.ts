@@ -263,7 +263,7 @@ function credentialIsActive(credential: CredentialReference, now: number): void 
   }
 }
 
-function matchingGrant(
+export function matchingGrant(
   bundle: AccessBundle,
   connectorId: string,
   action: string,

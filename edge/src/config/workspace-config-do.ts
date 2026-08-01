@@ -19,8 +19,8 @@ import {
 } from "./access-bundle.js";
 import {
   accessBundleRevisionOf,
-  connectorGrantsOf,
   issueConnectorAuthorization,
+  matchingGrant,
   parseConnectorAccessGrant,
   parseCredentialReference,
   verifyConnectorAuthorizationCurrent,
@@ -533,6 +533,35 @@ export class WorkspaceConfigDO extends DurableObject {
         null,
         new Date().toISOString(),
       );
+    } else {
+      const defaultRow = sql
+        .exec<{ tools_json: string; secret_refs_json: string }>(
+          "SELECT tools_json, secret_refs_json FROM access_bundles WHERE id = ?",
+          DEFAULT_BUNDLE.id,
+        )
+        .toArray()[0];
+      if (defaultRow) {
+        const storedTools = JSON.parse(defaultRow.tools_json) as string[];
+        const storedSecretRefs = JSON.parse(defaultRow.secret_refs_json) as string[];
+        const mergedTools = [...new Set([...storedTools, ...DEFAULT_BUNDLE.tools])];
+        const mergedSecretRefs = [
+          ...new Set([...storedSecretRefs, ...DEFAULT_BUNDLE.secretRefs]),
+        ];
+        if (
+          mergedTools.length !== storedTools.length ||
+          mergedSecretRefs.length !== storedSecretRefs.length
+        ) {
+          sql.exec(
+            `UPDATE access_bundles
+             SET tools_json = ?, secret_refs_json = ?, updated_at = ?
+             WHERE id = ?`,
+            JSON.stringify(mergedTools),
+            JSON.stringify(mergedSecretRefs),
+            new Date().toISOString(),
+            DEFAULT_BUNDLE.id,
+          );
+        }
+      }
     }
     this.migrated = true;
   }
@@ -1736,9 +1765,11 @@ export class WorkspaceConfigDO extends DurableObject {
           status: row.status,
           ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
         });
-        const grant = connectorGrantsOf(bundle).find((candidate) =>
-          candidate.connectorId === input.connectorId &&
-          candidate.actions.includes(input.action as string),
+        const grant = matchingGrant(
+          bundle,
+          input.connectorId,
+          input.action,
+          identity,
         );
         let credential: CredentialReference | undefined;
         if (grant?.credentialRef) {

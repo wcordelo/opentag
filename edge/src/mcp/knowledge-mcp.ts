@@ -169,7 +169,6 @@ async function authorizeMcp(
     return null;
   }
   if (!(await currentActorAclMatches(env, claims, input))) return null;
-  if (!(await consumeActorToken(env, claims))) return null;
   return { kind: "actor", actorId: claims.actor.id, jti: claims.jti, claims };
 }
 
@@ -246,6 +245,15 @@ export async function handleKnowledgeMcp(
       code: "audit_unavailable",
       message: "knowledge audit is unavailable",
     }, { status: 503 });
+  }
+  if (authorization.kind === "actor") {
+    if (!(await consumeActorToken(env, authorization.claims))) {
+      return Response.json({
+        status: "error",
+        code: "unauthorized",
+        message: "knowledge actor authorization failed",
+      }, { status: 401 });
+    }
   }
 
   const finish = async (response: Response, outcome: "ok" | "error", errorCode?: string): Promise<Response> => {

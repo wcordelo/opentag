@@ -119,7 +119,8 @@ describe("Slack turn pre-admission identity", () => {
     });
   });
 
-  it("covers DM and ordinary channel thread turns, including file_share", () => {
+  it("covers DM and file-share channel thread turns", () => {
+    const config = parseTrustedTriggerConfig("UBOT", undefined);
     expect(preAdmissionIdentityForEvent({
       team_id: "T1",
       event_id: "Ev-dm",
@@ -129,7 +130,39 @@ describe("Slack turn pre-admission identity", () => {
       team_id: "T1",
       event_id: "Ev-file",
       event: { type: "message", subtype: "file_share", channel: "C1", user: "U1", text: "", files: [{}], ts: "12.1", thread_ts: "12.0" },
-    })?.conversationKey).toBe("C1::12.0");
+    }, config)?.conversationKey).toBe("C1::12.0");
+  });
+
+  it("does not pre-admit an unmentioned channel thread reply", () => {
+    const config = parseTrustedTriggerConfig("UBOT", undefined);
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-unmentioned-thread",
+      event: {
+        type: "message",
+        channel: "C1",
+        user: "U1",
+        text: "follow up without mentioning the bot",
+        ts: "13.1",
+        thread_ts: "13.0",
+      },
+    }, config)).toBeUndefined();
+
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-explicit-mention",
+      event: {
+        type: "app_mention",
+        channel: "C1",
+        user: "U1",
+        text: "<@UBOT> follow up",
+        ts: "14.1",
+        thread_ts: "14.0",
+      },
+    }, config)).toMatchObject({
+      conversationKey: "C1::14.0",
+      eventId: "Ev-explicit-mention",
+    });
   });
 
   it("extracts every lifecycle command and uses trigger_id as immutable ingress ts", () => {
@@ -190,7 +223,7 @@ describe("Slack turn pre-admission identity", () => {
     const base = {
       type: "message",
       channel: "C1",
-      text: "OPENTAG_FORMAT_OK",
+      text: "<@UOPENTAG> OPENTAG_FORMAT_OK",
       ts: "2.0",
       thread_ts: "1.0",
     };

@@ -10,6 +10,7 @@ import { ACTIVE_TURN_TTL_MS, type ActiveTurnRecord } from "./active-turn-registr
 import { conversationKeyOf, DM_SCOPE, stripMentions } from "./channels-slack-lite.js";
 import { slackObligationThreadKey } from "./obligation-thread-key.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
+import { hasExplicitBotMention } from "./ingress-normalize.js";
 import {
   classifyTrustedRichTrigger,
   type TrustedTriggerConfig,
@@ -85,12 +86,20 @@ export function preAdmissionIdentityForEvent(
     event?.channel_type !== "im" &&
     typeof event?.thread_ts === "string" &&
     event.thread_ts.trim().length > 0;
+  const hasBotMention =
+    typeof event?.text === "string" &&
+    hasExplicitBotMention(event.text, trustedConfig?.botUserId);
+  const isFileShare = event?.subtype === "file_share";
   if (
     type !== "app_mention" &&
     !isDmMessage &&
     !isThreadReply &&
     !trusted
   ) return undefined;
+  // A late file-share repair is an internal continuation of an already
+  // admitted turn, not a new human text instruction. Preserve that path even
+  // when Slack's file event has no repeated bot mention.
+  if (isThreadReply && !trusted && !hasBotMention && !isFileShare) return undefined;
   if (
     event?.subtype &&
     event.subtype !== "file_share" &&

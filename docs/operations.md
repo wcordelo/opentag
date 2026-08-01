@@ -506,8 +506,8 @@ still produce an explicit retry/error surface rather than remain silent.
 
 ### Stop says nothing or appears stuck
 
-1. Confirm the message qualifies: threaded or DM stop, or a top-level channel
-   stop that mentions the bot.
+1. Confirm the message qualifies: an explicitly bot-mentioned threaded stop,
+   a DM stop, or a top-level channel stop that mentions the bot.
 2. Confirm execution and Stop derived the same thread key.
 3. Inspect the active-turn status: `cancelled`, `cancel_controlled`,
    `cancel_ack_in_flight`, or `cancel_confirmed`.
@@ -832,7 +832,8 @@ remain R1 runtime proofs rather than current operational facts.
 
 - [ ] Bot `/health` returns expected bindings/product metadata.
 - [ ] Mention receives a streaming answer and status clears.
-- [ ] Thread follow-up works without a new mention.
+- [ ] An explicitly bot-mentioned thread follow-up works; an unmentioned
+      reply remains history-only and is available to the next admitted mention.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
 - [ ] Supported `--model`/`--claudex`/`--claude` flags are stripped and saved
   only when the coding harness is connected; `-rsn`/unsupported harnesses fail visibly.

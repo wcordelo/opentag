@@ -212,6 +212,9 @@ async function processLateFileRepair(
     event_id: lateFileRepairDedupeKey(pending, { ...candidate, files }),
     event: {
       ...(callback.event as Record<string, unknown> | undefined),
+      // This is a synthetic continuation of the already admitted mention that
+      // arrived before Slack exposed its file metadata. Keep the file-share
+      // subtype so the internal repair path does not become a new text turn.
       type: "message",
       subtype: "file_share",
       channel: candidate.channelId,
@@ -1003,7 +1006,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
   // status/obligation instead. Anything that isn't a stop command (including
   // a message that merely fails the stop-phrase check) falls through to the
   // normal routing below, unchanged.
-  const stopEvent = extractStopCommandEvent(payload);
+  const stopEvent = extractStopCommandEvent(payload, trustedConfig.botUserId);
   if (stopEvent) {
     const runStop = () => handleStopCommand(c.env, stopEvent, payload.event_id);
     if (exec?.waitUntil) {

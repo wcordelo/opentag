@@ -527,7 +527,7 @@ describe("CloudflareSlackAdapter", () => {
     },
   );
 
-  it("thread_reply stores inbound ts so reactions can target it", async () => {
+  it("explicitly mentioned thread turns store inbound ts for reactions", async () => {
     const adapter = new CloudflareSlackAdapter({
       unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
@@ -560,11 +560,11 @@ describe("CloudflareSlackAdapter", () => {
         team_id: "T1",
         event_id: "EvThread",
         event: {
-          type: "message",
+          type: "app_mention",
           channel: "C1",
           channel_type: "channel",
           user: "U1",
-          text: "ok great thank you",
+          text: "<@UBOT> ok great thank you",
           ts: "55.5",
           thread_ts: "50.0",
         },
@@ -652,7 +652,7 @@ describe("CloudflareSlackAdapter", () => {
     }
   });
 
-  it("accepts channel thread replies without re-mention", async () => {
+  it("ignores unmentioned channel thread replies while preserving Slack history", async () => {
     const adapter = new CloudflareSlackAdapter({
       unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
@@ -660,19 +660,53 @@ describe("CloudflareSlackAdapter", () => {
     });
     const sink = makeSink();
     await adapter.start(sink);
-    const result = await adapter.handleEventsBody({
-      event_id: "EvThread",
-      event: {
-        type: "message",
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      const value = String(url);
+      if (value.includes("conversations.replies")) {
+        return Response.json({
+          ok: true,
+          messages: [
+            { text: "<@UBOT> start here", ts: "1.0", user: "U1" },
+            { text: "follow up without mention", ts: "2.0", user: "U1", thread_ts: "1.0" },
+          ],
+        });
+      }
+      if (value.includes("users.info")) {
+        return Response.json({
+          ok: true,
+          user: { id: "U1", real_name: "Ada", name: "ada" },
+        });
+      }
+      return Response.json({ ok: false });
+    }) as typeof fetch;
+    try {
+      const result = await adapter.handleEventsBody({
+        event_id: "EvThread",
+        event: {
+          type: "message",
+          channel: "C1",
+          channel_type: "channel",
+          user: "U1",
+          text: "follow up without mention",
+          ts: "2.0",
+          thread_ts: "1.0",
+        },
+      });
+      expect(result).toEqual({ handled: false });
+      expect(sink.turns).toHaveLength(0);
+
+      // The ignored event is still returned by the normal Slack history read
+      // used by a later explicitly mentioned turn; ingress never mutates it.
+      const history = await adapter.getMessages({
         channel: "C1",
-        channel_type: "channel",
-        user: "U1",
-        text: "follow up without mention",
-        ts: "2.0",
-        thread_ts: "1.0",
-      },
-    });
-    expect(result.handled).toBe(true);
-    expect(sink.turns).toHaveLength(1);
+        threadTs: "1.0",
+      });
+      expect(history.map((message) => message.text)).toContain(
+        "follow up without mention",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

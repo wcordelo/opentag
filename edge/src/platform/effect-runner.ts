@@ -147,11 +147,19 @@ function receiptReference(value: unknown): string | undefined {
 
 function normalizeAdapterFailure(error: unknown): EffectFailure {
   if (error instanceof PlatformEffectAdapterError) {
-    return {
-      errorCode: safeErrorCode(error.code),
-      retryable: error.retryable,
-      retryAfterSeconds: error.retryAfterSeconds,
-    };
+    try {
+      return {
+        errorCode: safeErrorCode(error.code),
+        retryable: error.retryable,
+        retryAfterSeconds: error.retryAfterSeconds,
+      };
+    } catch {
+      return {
+        errorCode: "effect_adapter_failed",
+        retryable: false,
+        retryAfterSeconds: 0,
+      };
+    }
   }
   // An adapter must explicitly classify a provider error before it can be
   // retried. Unknown exceptions are terminal so a broken adapter cannot
@@ -245,7 +253,14 @@ export async function runPlatformEffect(input: {
     return { status: "failed", adapterConfigured: true, receipt, errorCode: failure.errorCode };
   }
 
-  const externalReceiptRef = receiptReference(result.externalReceiptRef);
+  let externalReceiptRef: string | undefined;
+  try {
+    externalReceiptRef = receiptReference(result.externalReceiptRef);
+  } catch {
+    // Provider work already succeeded; drop an invalid ref instead of leaving
+    // the lease open or failing into a retry that could duplicate provider work.
+    externalReceiptRef = undefined;
+  }
   let completion: Awaited<ReturnType<PlatformEffectStateClient["complete"]>>;
   try {
     completion = await input.state.complete({

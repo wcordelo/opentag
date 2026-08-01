@@ -26,6 +26,7 @@ import {
   stateStoreBuzzEventDedupe,
   type BuzzWakeReceiveDeps,
 } from "./receive.js";
+import { createBuzzNip98EventsPublisher } from "./events-publisher.js";
 import { createBuzzNip98QueryFetcher } from "./query-fetcher.js";
 import { createBuzzRuntimeAdmit } from "./runtime-admit.js";
 import {
@@ -166,6 +167,14 @@ export function tryBuildBuzzWakeReceiveDeps(
       fetchImpl: options.fetchImpl,
       nowSeconds: options.nowSeconds,
     }),
-    runtime: createBuzzRuntimeAdmit(store),
+    runtime: createBuzzRuntimeAdmit(store, {
+      replyPublisher: createBuzzNip98EventsPublisher({
+        relayHttpBaseUrl: relayBase,
+        signer,
+        authTagJson,
+        fetchImpl: options.fetchImpl,
+        nowSeconds: options.nowSeconds,
+      }),
+    }),
   });
 }

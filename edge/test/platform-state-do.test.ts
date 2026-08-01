@@ -288,6 +288,26 @@ describe("PlatformStateDO", () => {
       expect(requested.response.status).toBe(200);
       expect(requested.body.status).toBe("requested");
       expect((await call(state, "/memory/deletion", deletion)).body.duplicate).toBe(true);
+      const receipt = {
+        schemaVersion: 1,
+        idempotencyKey: "memory-receipt-key-1",
+        requestId: deletion.requestId,
+        tenantId,
+        sourceKey: "slack:C-private:thread-1",
+        deletionEpoch: 1,
+        status: "deleted",
+        observedAt: now,
+        receiptRef: "memory:receipt-1",
+      };
+      const recordedReceipt = await call(state, "/memory/deletion/receipt", receipt);
+      expect(recordedReceipt.response.status).toBe(200);
+      expect(recordedReceipt.body.status).toBe("completed");
+      expect((await call(state, "/memory/deletion/receipt", receipt)).body.duplicate).toBe(true);
+      const completedDeletion = await call(state, "/memory/deletion/get", deletion.idempotencyKey);
+      expect(completedDeletion.body).toMatchObject({
+        status: "completed",
+        receipts: [expect.objectContaining({ sourceKey: receipt.sourceKey, status: "deleted" })],
+      });
 
       const effects = await call(state, "/effect/list", { scope: "tenant", tenantId });
       expect(effects.body.effects).toEqual(expect.arrayContaining([

@@ -108,6 +108,7 @@ service = "opentag-harness"
 
 [vars]
 ENVIRONMENT = "production"
+NANOCODEX_NATIVE_RESPONSES = "true"
 HARNESS_REPO_URL = "https://github.com/wcordelo/opentag"
 KNOWLEDGE_QUEUE_NAME = "opentag-knowledge"
 KNOWLEDGE_DLQ_NAME = "opentag-knowledge-dlq"
@@ -130,7 +131,10 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # KNOWLEDGE_BACKFILL_APPROVAL_KEY_ID. The Worker must never hold its private key.
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
-# ADMIN_SECRET, INTERNAL_SECRET
+# ADMIN_SECRET, INTERNAL_SECRET, KNOWLEDGE_ACTOR_TOKEN_SECRET,
+# SUPERMEMORY_API_KEY
+# SUPERMEMORY_URL is a deploy-time non-secret var; configure it through
+# OPENTAG_VAR_SUPERMEMORY_URL in scripts/deploy-opentag.mjs.
 #
 # Harness container (Phase A5). The active HARNESS service binding above means
 # opentag-harness must be deployed before this bot config:

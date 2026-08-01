@@ -9,6 +9,7 @@ import {
 import {
   signKnowledgeSourceGrant,
 } from "./helpers/knowledge-source-grant.js";
+import { tenantStub } from "../src/tenancy.js";
 
 const PATHS: Record<KnowledgeSourceAction, string> = {
   inspect: "inspect",
@@ -248,7 +249,7 @@ describe("signed tracked-knowledge source lifecycle routes", () => {
       authorization: { outcome: "conflicting_project_enabled" },
     });
 
-    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const effectToken = crypto.randomUUID();
     const effect = await stub.fetch("https://do/beginKnowledgeIngestionEffect", {
       method: "POST",

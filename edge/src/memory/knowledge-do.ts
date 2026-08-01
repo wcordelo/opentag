@@ -27,6 +27,11 @@ import {
   RAW_QUERY_SCHEMA_VERSION,
   type RawKnowledgeQueryResponse,
 } from "./raw-query-templates.js";
+import {
+  bindTenantIdentity,
+  bodyMatchesTenant,
+  tenantStub,
+} from "../tenancy.js";
 
 export type KnowledgeRecord = {
   id: string;
@@ -47,8 +52,37 @@ const DDL = [
   body TEXT NOT NULL,
   blob_key TEXT,
   updated_at TEXT NOT NULL
-)`,
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_team ON knowledge(team_id, channel_id)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_actor_token_replay (
+  jti TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  consumed_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS knowledge_actor_revisions (
+  team_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, actor_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS knowledge_mcp_audit (
+  id TEXT PRIMARY KEY,
+  jti TEXT NOT NULL,
+  auth_kind TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  outcome TEXT NOT NULL,
+  error_code TEXT,
+  created_at INTEGER NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_mcp_audit_created ON knowledge_mcp_audit(created_at)`,
 ];
 
 type KnowledgeDOEnv = {
@@ -56,9 +90,34 @@ type KnowledgeDOEnv = {
   KNOWLEDGE_QUEUE?: Queue<KnowledgeJob>;
 };
 
+export type KnowledgeActorTokenConsumeRequest = {
+  jti: string;
+  teamId: string;
+  actorId: string;
+  rev: number;
+  expiresAt: number;
+};
+
+export type KnowledgeMcpAuditEvent = {
+  id: string;
+  jti: string;
+  authKind: "operator" | "actor";
+  actorId: string;
+  teamId: string;
+  projectId: string;
+  tool: string;
+  resourceType?: string;
+  resourceId?: string;
+  outcome: "started" | "ok" | "error";
+  errorCode?: string;
+  createdAt: number;
+};
+
 const OUTBOX_BATCH_LIMIT = 10;
 const MAX_OUTBOX_BACKOFF_MS = 5 * 60_000;
 const UNBOUND_QUEUE_RETRY_MS = 60_000;
+const SECURITY_SWEEP_INTERVAL_MS = 24 * 60 * 60_000;
+const MCP_AUDIT_RETENTION_MS = 90 * 24 * 60 * 60_000;
 
 function mapRow(row: {
   id: string;
@@ -82,6 +141,7 @@ function mapRow(row: {
 
 export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
   private readonly ledger: KnowledgeLedger;
+  private tenantBinding: Promise<string | undefined> = Promise.resolve(undefined);
 
   constructor(ctx: DurableObjectState, env: KnowledgeDOEnv) {
     super(ctx, env);
@@ -101,15 +161,31 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
     return this.ctx.storage.sql as unknown as SqlExecutor;
   }
 
+  private bindTenant(request: Request): Promise<string | undefined> {
+    const next = this.tenantBinding.then(() => bindTenantIdentity(this.ctx.storage, request));
+    this.tenantBinding = next;
+    return next;
+  }
+
   private async armPendingOutbox(notBefore = Date.now()): Promise<void> {
     const pendingAt = this.ledger.earliestPendingAt();
-    if (pendingAt === undefined) return;
-    const target = Math.max(notBefore, pendingAt);
+    const target = pendingAt === undefined
+      ? Date.now() + SECURITY_SWEEP_INTERVAL_MS
+      : Math.max(notBefore, pendingAt);
     const current = await this.ctx.storage.getAlarm();
     if (current === null || target < current) await this.ctx.storage.setAlarm(target);
   }
 
   async alarm(): Promise<void> {
+    const securitySweepBefore = Date.now();
+    this.sql().exec(
+      "DELETE FROM knowledge_actor_token_replay WHERE expires_at < ?",
+      securitySweepBefore,
+    );
+    this.sql().exec(
+      "DELETE FROM knowledge_mcp_audit WHERE created_at < ?",
+      securitySweepBefore - MCP_AUDIT_RETENTION_MS,
+    );
     for (let processed = 0; processed < OUTBOX_BATCH_LIMIT; processed += 1) {
       const now = Date.now();
       const item = this.ledger.claimDueOutbox(now);
@@ -143,8 +219,184 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const tenantId = await this.bindTenant(request);
+    if (!tenantId || !(await bodyMatchesTenant(request, tenantId))) {
+      return Response.json({ error: "tenant_scope_invalid" }, { status: 403 });
+    }
     const url = new URL(request.url);
     const sql = this.sql();
+
+    if (url.pathname === "/actor-token/consume" && request.method === "POST") {
+      try {
+        const body = await request.json() as Partial<KnowledgeActorTokenConsumeRequest>;
+        const expiresAtRaw = body.expiresAt;
+        if (
+          typeof body.jti !== "string" || !body.jti || body.jti.length > 256 ||
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.actorId !== "string" || !body.actorId || body.actorId.length > 256 ||
+          typeof body.rev !== "number" || !Number.isSafeInteger(body.rev) || body.rev < 0 ||
+          typeof expiresAtRaw !== "number" || !Number.isSafeInteger(expiresAtRaw) || expiresAtRaw <= Date.now()
+        ) {
+          throw new Error("invalid actor token replay record");
+        }
+        const jti = body.jti;
+        const teamId = body.teamId;
+        const actorId = body.actorId;
+        const rev = body.rev as number;
+        const expiresAt = expiresAtRaw as number;
+        const result = this.ctx.storage.transactionSync(() => {
+          const revision = sql
+            .exec<{ revision: number }>(
+              "SELECT revision FROM knowledge_actor_revisions WHERE team_id = ? AND actor_id = ?",
+              teamId,
+              actorId,
+            )
+            .toArray()[0]?.revision;
+          if (revision !== undefined && rev !== revision) {
+            return { accepted: false as const, code: rev < revision ? "revoked" as const : "revision_mismatch" as const };
+          }
+          if (revision === undefined) {
+            sql.exec(
+              `INSERT INTO knowledge_actor_revisions (team_id, actor_id, revision, updated_at)
+               VALUES (?, ?, ?, ?)`,
+              teamId,
+              actorId,
+              rev,
+              Date.now(),
+            );
+          }
+          const existing = sql
+            .exec<{ jti: string }>("SELECT jti FROM knowledge_actor_token_replay WHERE jti = ?", jti)
+            .toArray();
+          if (existing.length > 0) return { accepted: false as const, code: "replayed" as const };
+          sql.exec(
+            `INSERT INTO knowledge_actor_token_replay (jti, team_id, actor_id, expires_at, consumed_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            jti,
+            teamId,
+            actorId,
+            expiresAt,
+            Date.now(),
+          );
+          return { accepted: true as const };
+        });
+        return Response.json(result, { status: result.accepted ? 200 : 409 });
+      } catch (error) {
+        return Response.json(
+          { accepted: false, code: "invalid_replay_record", error: error instanceof Error ? error.message : "invalid actor token replay record" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/actor-token/revoke" && request.method === "POST") {
+      try {
+        const body = await request.json() as { teamId?: unknown; actorId?: unknown };
+        if (
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.actorId !== "string" || !body.actorId || body.actorId.length > 256
+        ) {
+          throw new Error("invalid actor revision request");
+        }
+        const teamId = body.teamId;
+        const actorId = body.actorId;
+        const revision = this.ctx.storage.transactionSync(() => {
+          const current = sql
+            .exec<{ revision: number }>(
+              "SELECT revision FROM knowledge_actor_revisions WHERE team_id = ? AND actor_id = ?",
+              teamId,
+              actorId,
+            )
+            .toArray()[0]?.revision ?? 0;
+          const next = current + 1;
+          sql.exec(
+            `INSERT INTO knowledge_actor_revisions (team_id, actor_id, revision, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(team_id, actor_id) DO UPDATE SET revision = excluded.revision, updated_at = excluded.updated_at`,
+            teamId,
+            actorId,
+            next,
+            Date.now(),
+          );
+          return next;
+        });
+        return Response.json({ revoked: true, revision });
+      } catch (error) {
+        return Response.json(
+          { revoked: false, error: error instanceof Error ? error.message : "invalid actor revision request" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/mcp-audit" && request.method === "POST") {
+      try {
+        const event = await request.json() as Partial<KnowledgeMcpAuditEvent>;
+        const createdAtRaw = event.createdAt;
+        if (
+          typeof event.id !== "string" || !event.id || event.id.length > 256 ||
+          typeof event.jti !== "string" || !event.jti || event.jti.length > 256 ||
+          (event.authKind !== "operator" && event.authKind !== "actor") ||
+          typeof event.actorId !== "string" || !event.actorId || event.actorId.length > 256 ||
+          typeof event.teamId !== "string" || !event.teamId || event.teamId.length > 256 ||
+          typeof event.projectId !== "string" || !event.projectId || event.projectId.length > 256 ||
+          typeof event.tool !== "string" || !event.tool || event.tool.length > 128 ||
+          (event.resourceType !== undefined && (typeof event.resourceType !== "string" || event.resourceType.length > 64)) ||
+          (event.resourceId !== undefined && (typeof event.resourceId !== "string" || event.resourceId.length > 256)) ||
+          (event.outcome !== "started" && event.outcome !== "ok" && event.outcome !== "error") ||
+          (event.errorCode !== undefined && (typeof event.errorCode !== "string" || event.errorCode.length > 128)) ||
+          !Number.isSafeInteger(createdAtRaw)
+        ) {
+          throw new Error("invalid MCP audit event");
+        }
+        const id = event.id;
+        const jti = event.jti;
+        const authKind = event.authKind;
+        const actorId = event.actorId;
+        const teamId = event.teamId;
+        const projectId = event.projectId;
+        const tool = event.tool;
+        const resourceType = event.resourceType;
+        const resourceId = event.resourceId;
+        const outcome = event.outcome;
+        const errorCode = event.errorCode;
+        const createdAt = createdAtRaw as number;
+        if (authKind === "actor") {
+          const replay = sql
+            .exec<{ team_id: string; actor_id: string }>(
+              "SELECT team_id, actor_id FROM knowledge_actor_token_replay WHERE jti = ?",
+              jti,
+            )
+            .toArray()[0];
+          if (!replay || replay.team_id !== teamId || replay.actor_id !== actorId) {
+            return Response.json({ recorded: false, error: "actor_token_not_consumed" }, { status: 403 });
+          }
+        }
+        sql.exec(
+          `INSERT OR IGNORE INTO knowledge_mcp_audit
+           (id, jti, auth_kind, actor_id, team_id, project_id, tool, resource_type, resource_id, outcome, error_code, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id,
+          jti,
+          authKind,
+          actorId,
+          teamId,
+          projectId,
+          tool,
+          resourceType ?? null,
+          resourceId ?? null,
+          outcome,
+          errorCode ?? null,
+          createdAt,
+        );
+        return Response.json({ recorded: true });
+      } catch (error) {
+        return Response.json(
+          { recorded: false, error: "invalid MCP audit event" },
+          { status: 400 },
+        );
+      }
+    }
 
     if (url.pathname === "/descriptor" && request.method === "POST") {
       try {
@@ -999,7 +1251,7 @@ export async function memorySearch(
   query: string,
   limit = 10,
 ): Promise<KnowledgeRecord[]> {
-  const stub = ns.get(ns.idFromName(teamId));
+  const stub = tenantStub(ns, teamId);
   return stub
     .fetch("https://do/search", {
       method: "POST",
@@ -1012,11 +1264,23 @@ export async function memoryWrite(
   ns: DurableObjectNamespace<KnowledgeDO>,
   record: KnowledgeRecord,
 ): Promise<KnowledgeRecord> {
-  const stub = ns.get(ns.idFromName(record.teamId));
+  const stub = tenantStub(ns, record.teamId);
   return stub
     .fetch("https://do/write", {
       method: "POST",
       body: JSON.stringify(record),
     })
     .then((r) => r.json()) as Promise<KnowledgeRecord>;
+}
+
+export async function revokeKnowledgeActor(
+  ns: DurableObjectNamespace<KnowledgeDO>,
+  teamId: string,
+  actorId: string,
+): Promise<boolean> {
+  const response = await tenantStub(ns, teamId).fetch("https://do/actor-token/revoke", {
+    method: "POST",
+    body: JSON.stringify({ teamId, actorId }),
+  });
+  return response.ok;
 }

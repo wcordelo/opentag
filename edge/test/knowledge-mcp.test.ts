@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleKnowledgeMcp, KNOWLEDGE_MCP_TOOLS } from "../src/mcp/knowledge-mcp.js";
+import { mintKnowledgeActorToken } from "../src/mcp/knowledge-actor-token.js";
 import type { Env } from "../src/env.js";
 
 function env(partial: Partial<Env> = {}): Env {
@@ -80,5 +81,103 @@ describe("knowledge MCP", () => {
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: "ok", template: "source_state" });
+  });
+
+  it("accepts a scoped actor token through the internal header and consumes it", async () => {
+    const calls: string[] = [];
+    const stub = {
+      fetch: async (url: string) => {
+        calls.push(url);
+        if (url.endsWith("/getTrackedKnowledgeSource")) {
+          return Response.json({
+            teamId: "T1",
+            projectId: "P1",
+            channelId: "C1",
+            enabled: true,
+            readerPolicyRef: "bundle:default",
+          });
+        }
+        return Response.json({ accepted: true, recorded: true });
+      },
+    };
+    const actorToken = await mintKnowledgeActorToken("actor-secret", {
+      jti: "jti-1",
+      teamId: "T1",
+      projectId: "P1",
+      actor: { kind: "slack_user", id: "U1" },
+      aclPolicyRef: "bundle:default",
+      scopes: { channelIds: ["C1"], spaceIds: [], repoIds: [], connectorIds: [] },
+      iat: Math.floor(Date.now() / 1_000),
+      exp: Math.floor(Date.now() / 1_000) + 120,
+    });
+    const response = await handleKnowledgeMcp(
+      new Request("https://bot.example/mcp/knowledge", {
+        method: "POST",
+        headers: { "x-opentag-knowledge-actor-token": actorToken, "content-type": "application/json" },
+        body: JSON.stringify({
+          tool: "search_slack",
+          teamId: "T1",
+          projectId: "P1",
+          query: "hello",
+          aclPolicyRef: "bundle:default",
+          channelId: "C1",
+        }),
+      }),
+      env({
+        KNOWLEDGE_ACTOR_TOKEN_SECRET: "actor-secret",
+        WORKSPACE_CONFIG: {
+          idFromName: () => "T1",
+          get: () => stub,
+        } as unknown as Env["WORKSPACE_CONFIG"],
+        KNOWLEDGE: {
+          idFromName: () => "T1",
+          get: () => stub,
+        } as unknown as Env["KNOWLEDGE"],
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(calls).toEqual([
+      "https://do/getTrackedKnowledgeSource",
+      "https://do/actor-token/consume",
+      "https://do/mcp-audit",
+      "https://do/mcp-audit",
+    ]);
+  });
+
+  it("does not consume an actor token outside its resource scope", async () => {
+    const stub = { fetch: async () => Response.json({ accepted: true }) };
+    const actorToken = await mintKnowledgeActorToken("actor-secret", {
+      jti: "jti-2",
+      teamId: "T1",
+      projectId: "P1",
+      actor: { kind: "slack_user", id: "U1" },
+      aclPolicyRef: "bundle:default",
+      scopes: { channelIds: ["C1"], spaceIds: [], repoIds: [], connectorIds: [] },
+      iat: Math.floor(Date.now() / 1_000),
+      exp: Math.floor(Date.now() / 1_000) + 120,
+    });
+    const response = await handleKnowledgeMcp(
+      new Request("https://bot.example/mcp/knowledge", {
+        method: "POST",
+        headers: { "x-opentag-knowledge-actor-token": actorToken, "content-type": "application/json" },
+        body: JSON.stringify({
+          tool: "search_slack",
+          teamId: "T1",
+          projectId: "P1",
+          query: "hello",
+          aclPolicyRef: "bundle:default",
+          channelId: "C2",
+        }),
+      }),
+      env({
+        KNOWLEDGE_ACTOR_TOKEN_SECRET: "actor-secret",
+        WORKSPACE_CONFIG: {
+          idFromName: () => "T1",
+          get: () => stub,
+        } as unknown as Env["WORKSPACE_CONFIG"],
+        KNOWLEDGE: { idFromName: () => "T1", get: () => stub } as unknown as Env["KNOWLEDGE"],
+      }),
+    );
+    expect(response.status).toBe(401);
   });
 });

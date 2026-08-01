@@ -53,7 +53,7 @@ function turn() {
   return {
     record: {
       channelId: "C1",
-      threadKey: "slack:C1:1.0",
+      threadKey: "tenant:T1:slack:C1:1.0",
       conversationKey: "conversation-1",
       executionId: "execution-1",
       registeredAt: 1,
@@ -117,7 +117,7 @@ function admittedSlackRequest(overrides: Record<string, unknown> = {}) {
     preAdmittedTurn: {
       record: {
         channelId: "C1",
-        threadKey: "slack:C1:1.0",
+        threadKey: "tenant:T1:slack:C1:1.0",
         conversationKey: "conversation-1",
         executionId: identity.executionId,
         registeredAt: 1,

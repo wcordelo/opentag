@@ -51,6 +51,11 @@ import {
 } from "./turn-contract.js";
 import { normalizeImageFile, isImageMime, sha256Hex } from "./image-normalization.js";
 import { redactJsonValue } from "./output-redaction.js";
+import {
+  NanocodexResponsesClient,
+  NanocodexResponsesSession,
+} from "./src/nanocodex-responses.js";
+import { resolveHarnessCapabilityProfile } from "../../src/harness/capability-profile.js";
 
 export {
   EXECUTION_BINDING_HEADER,
@@ -124,6 +129,8 @@ export type NdjsonEvent =
         modelEvidence: "requested" | "container_argument" | "provider_reported" | "unknown";
         promptOverlay?: { version: 1; revision: number; digest: string };
         contractVersion?: number;
+        providerState?: unknown;
+        capabilityProfile?: unknown;
       };
     }
   | {
@@ -2042,6 +2049,78 @@ export async function runTurnStreaming(
     });
     return;
   }
+
+  if (body.nativeResponses === true) {
+    const nativeSession = new NanocodexResponsesSession(
+      new NanocodexResponsesClient({ apiKey: env.OPENAI_API_KEY }),
+      { model: effectiveModel ?? NANOCODEX_DEFAULT_MODEL, instructions: systemPromptText },
+      body.providerState,
+    );
+    let streamedText = "";
+    try {
+      const result = await nativeSession.run({
+        input: prompt,
+        signal,
+        onEvent: async (event) => {
+          const delta = event.type === "response.output_text.delta" && typeof event.delta === "string"
+            ? event.delta
+            : "";
+          if (delta) {
+            streamedText += delta;
+            emit({ kind: "output", payload: { text: delta } });
+          }
+        },
+      });
+      if (!streamedText && result.text) emit({ kind: "output", payload: { text: result.text } });
+      emit({
+        kind: "context",
+        payload: {
+          version: 1,
+          harnessType: "nanocodex",
+          model: effectiveModel ?? NANOCODEX_DEFAULT_MODEL,
+          modelEvidence: "provider_reported",
+          providerState: nativeSession.snapshot(),
+          capabilityProfile: resolveHarnessCapabilityProfile({
+            harnessType: "nanocodex",
+            model: effectiveModel ?? NANOCODEX_DEFAULT_MODEL,
+            nativeResponses: true,
+            source: "provider_reported",
+          }),
+        },
+      });
+      await cleanupExecutionHome(WORK_ROOT, body.executionId);
+      emit({ kind: "done", payload: { ok: true, summary: "completed" } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "native Nanocodex Responses failed";
+      try {
+        emit({
+          kind: "context",
+          payload: {
+            version: 1,
+            harnessType: "nanocodex",
+            model: effectiveModel ?? NANOCODEX_DEFAULT_MODEL,
+            modelEvidence: "provider_reported",
+            providerState: nativeSession.snapshot(),
+            capabilityProfile: resolveHarnessCapabilityProfile({
+              harnessType: "nanocodex",
+              model: effectiveModel ?? NANOCODEX_DEFAULT_MODEL,
+              nativeResponses: true,
+              source: "provider_reported",
+            }),
+          },
+        });
+      } catch {
+      }
+      try {
+        await cleanupExecutionHome(WORK_ROOT, body.executionId);
+      } catch {
+      }
+      emit({ kind: "error", payload: { message: truncateSummary(message, 500) } });
+      emit({ kind: "done", payload: { ok: false, summary: signal.aborted ? "interrupted" : "nanocodex responses failed" } });
+    }
+    return;
+  }
+
   let agentResult: Extract<NdjsonEvent, { kind: "done" }> | undefined;
 
   let child: ReturnType<typeof spawn>;

@@ -103,6 +103,8 @@ export interface Env {
   SUPERMEMORY_URL?: string;
   /** Local bearer credential; never logged or accepted from tool callers. */
   SUPERMEMORY_API_KEY?: string;
+  /** Workers Secret used only to mint and verify short-lived internal knowledge actor tokens. */
+  KNOWLEDGE_ACTOR_TOKEN_SECRET?: string;
   /**
    * Exact gate for Local document update/delete. Only the string `verified`
    * enables mutations; unset/any other value keeps fail-closed unsupported_* paths.
@@ -132,6 +134,8 @@ export interface Env {
   HARNESS_URL?: string;
   /** Required bearer secret for the harness `/turn` endpoint. */
   HARNESS_AUTH_TOKEN?: string;
+  /** Exact `true` enables the native typed Nanocodex Responses adapter for non-coding turns. */
+  NANOCODEX_NATIVE_RESPONSES?: string;
   /**
    * Default repo to clone for a harness turn when the caller doesn't supply
    * one (SPEC.md §4.4). Forwarded as `repo.url` in the `/turn` POST body.

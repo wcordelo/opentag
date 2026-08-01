@@ -20,6 +20,7 @@ import { sharedSlackRateScheduler } from "../slack/web-api.js";
 import { normalizeSlackThread } from "./normalize-slack-thread.js";
 import type { KnowledgeDispatch, KnowledgeQueueEnv } from "./knowledge-jobs.js";
 import { isLocalMutationContractVerified } from "./local-mutation-contract.js";
+import { tenantStub } from "../tenancy.js";
 
 export const SUPERMEMORY_POLL = Object.freeze({
   deadlineMs: KNOWLEDGE_EXECUTION_BUDGETS.localPollWindowMs,
@@ -319,7 +320,7 @@ async function knowledgeDoCall<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+  const stub = tenantStub(env.KNOWLEDGE, teamId);
   const response = await stub.fetch(`https://do${path}`, { method: "POST", body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`knowledge_do_${path.replace("/", "")}_${response.status}`);
   return response.json() as Promise<T>;

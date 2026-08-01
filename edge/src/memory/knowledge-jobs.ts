@@ -14,6 +14,7 @@ import type { EnqueueKnowledgeResult } from "./knowledge-ledger.js";
 import type { KnowledgeDO } from "./knowledge-do.js";
 import type { WorkspaceConfigDO } from "../config/workspace-config-do.js";
 import type { Env } from "../env.js";
+import { tenantStub } from "../tenancy.js";
 
 const ENQUEUE_REASONS = new Set<EnqueueKnowledgeResult["reason"]>([
   "new",
@@ -210,7 +211,7 @@ async function exactSourcesForChannel(
   teamId: string,
   channelId: string,
 ): Promise<TrackedKnowledgeSource[]> {
-  const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+  const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
   const response = await stub.fetch("https://do/listTrackedKnowledgeSources", {
     method: "POST",
     body: JSON.stringify({ teamId, channelId }),
@@ -257,7 +258,7 @@ export async function scheduleKnowledgeFromSlackEvent(
       reason: candidate.reason,
       messageTs: candidate.messageTs,
     });
-    const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(source.teamId));
+    const stub = tenantStub(env.KNOWLEDGE, source.teamId);
     const response = await stub.fetch("https://do/descriptor", {
       method: "POST",
       body: JSON.stringify(job),
@@ -278,7 +279,7 @@ async function loadExactSource(
   env: KnowledgeQueueEnv,
   job: KnowledgeJob,
 ): Promise<TrackedKnowledgeSource | undefined> {
-  const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(job.teamId));
+  const stub = tenantStub(env.WORKSPACE_CONFIG, job.teamId);
   const response = await stub.fetch("https://do/getTrackedKnowledgeSource", {
     method: "POST",
     body: JSON.stringify({ teamId: job.teamId, projectId: job.projectId, channelId: job.channelId }),
@@ -293,7 +294,7 @@ async function workspaceDoRequest<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+  const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
   const response = await stub.fetch(`https://do${path}`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -308,7 +309,7 @@ async function knowledgeDoRequest<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+  const stub = tenantStub(env.KNOWLEDGE, teamId);
   const response = await stub.fetch(`https://do${path}`, {
     method: "POST",
     body: JSON.stringify(body),

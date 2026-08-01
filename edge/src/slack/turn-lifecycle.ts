@@ -380,6 +380,7 @@ export async function runSlackTurnLifecycle(
     replyTarget?.statusTs,
   );
   const obligationThreadKey = slackObligationThreadKey(
+    requestContext.teamId,
     channelId,
     statusThreadTs,
   );

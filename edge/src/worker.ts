@@ -38,6 +38,7 @@ import { postTurnRejectedFeedback } from "./slack/turn-lifecycle.js";
 import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
+import { buildRuntimeCapabilityEvidence } from "./runtime-evidence.js";
 import { handleKnowledgeMcp } from "./mcp/knowledge-mcp.js";
 import {
   hydrateLateFileRefs,
@@ -52,6 +53,7 @@ import {
 } from "./slack/late-file-repair.js";
 import { createSlackWebClient, sharedSlackRateScheduler } from "./slack/web-api.js";
 import { slackObligationThreadKey } from "./slack/obligation-thread-key.js";
+import { assertTenantId, tenantStub } from "./tenancy.js";
 import type { DeferredIngressJob } from "./deferred-ingress-do.js";
 import { loadTurnAccess, resolveAllowedTools } from "./config/workspace-config-do.js";
 import { ALL_EDGE_TOOL_NAMES } from "./tools/index.js";
@@ -82,6 +84,7 @@ import {
   KnowledgeBackfillApprovalError,
 } from "./memory/knowledge-backfill-authorization.js";
 import { dispatchKnowledgeToSupermemory } from "./memory/supermemory-adapter.js";
+import { revokeKnowledgeActor } from "./memory/knowledge-do.js";
 import type { KnowledgeJob } from "./memory/knowledge-contract.js";
 import {
   retryKnowledgeBatchWithoutParsing,
@@ -217,7 +220,7 @@ async function processLateFileRepair(
     : candidate.files;
   const idle = await waitForLateFileThreadIdle(async () => {
     const active = await store.activeTurn.get(
-      slackObligationThreadKey(candidate.channelId, pending.threadTs),
+      slackObligationThreadKey(candidate.teamId, candidate.channelId, pending.threadTs),
     );
     return Boolean(active);
   });
@@ -345,6 +348,7 @@ app.get("/health", async (c) => {
     store: "durable-object-sqlite",
     spine: ["BOT_STATE", "SESSION_EVENTS", "WORKSPACE_CONFIG", "KNOWLEDGE", "PLATFORM_STATE", "RESEARCH_TASKS"],
     checks: durability.checks,
+    runtime: buildRuntimeCapabilityEvidence(c.env),
     trustedRichMention,
     botEngine: await resolveBotEngineKind(),
   }, ok ? 200 : 503);
@@ -446,9 +450,7 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
       source?: string;
     };
   };
-  const stub = c.env.WORKSPACE_CONFIG.get(
-    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
-  );
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
 
   const hasChannelContext =
     body.channelContext !== undefined || body.systemPrompt !== undefined;
@@ -528,9 +530,7 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
 
 app.post("/admin/bundle", requireAdminAuth(), async (c) => {
   const body = (await c.req.json()) as AccessBundle & { teamId: string };
-  const stub = c.env.WORKSPACE_CONFIG.get(
-    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
-  );
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
   const response = await stub.fetch("https://do/putBundle", {
     method: "POST",
     body: JSON.stringify({
@@ -555,9 +555,7 @@ app.post("/admin/bundle/revoke", requireAdminAuth(), async (c) => {
   if (typeof body.teamId !== "string" || typeof body.id !== "string") {
     return c.json({ error: "teamId_and_bundle_id_required" }, 400);
   }
-  const stub = c.env.WORKSPACE_CONFIG.get(
-    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
-  );
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
   const response = await stub.fetch("https://do/revokeBundle", {
     method: "POST",
     body: JSON.stringify({ id: body.id }),
@@ -575,9 +573,7 @@ app.post("/admin/connector-credential", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as { teamId?: unknown } & Record<string, unknown>;
   if (typeof body.teamId !== "string") return c.json({ error: "teamId_required" }, 400);
   const { teamId, ...reference } = body;
-  const stub = c.env.WORKSPACE_CONFIG.get(
-    c.env.WORKSPACE_CONFIG.idFromName(teamId),
-  );
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, teamId);
   const response = await stub.fetch("https://do/putConnectorCredentialReference", {
     method: "POST",
     body: JSON.stringify(reference),
@@ -596,9 +592,7 @@ app.post("/admin/connector-credential/revoke", requireAdminAuth(), async (c) => 
   if (typeof body.teamId !== "string" || typeof body.ref !== "string") {
     return c.json({ error: "teamId_and_credential_ref_required" }, 400);
   }
-  const stub = c.env.WORKSPACE_CONFIG.get(
-    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
-  );
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
   const response = await stub.fetch("https://do/revokeConnectorCredentialReference", {
     method: "POST",
     body: JSON.stringify({ ref: body.ref }),
@@ -939,9 +933,7 @@ function knowledgeSourceActionHandler(action: KnowledgeSourceAction) {
           keyId: c.env.KNOWLEDGE_SOURCE_AUTH_KEY_ID,
         },
       );
-      const stub = c.env.WORKSPACE_CONFIG.get(
-        c.env.WORKSPACE_CONFIG.idFromName(request.teamId),
-      );
+      const stub = tenantStub(c.env.WORKSPACE_CONFIG, request.teamId);
       const response = await stub.fetch("https://do/authorizedTrackedKnowledgeSourceAction", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1034,6 +1026,22 @@ app.post("/admin/knowledge/reconcile", requireAdminAuth(), async (c) => {
       400,
       { "cache-control": "no-store" },
     );
+  }
+});
+
+app.post("/admin/knowledge/actors/revoke", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown; actorId?: unknown };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    if (typeof body.actorId !== "string" || !body.actorId.trim() || body.actorId.length > 256) {
+      return c.json({ error: "actor_id_invalid" }, 400, { "cache-control": "no-store" });
+    }
+    if (!(await revokeKnowledgeActor(c.env.KNOWLEDGE, teamId, body.actorId))) {
+      return c.json({ error: "actor_revoke_unavailable" }, 503, { "cache-control": "no-store" });
+    }
+    return c.json({ revoked: true }, 200, { "cache-control": "no-store" });
+  } catch {
+    return c.json({ error: "actor_revoke_invalid" }, 400, { "cache-control": "no-store" });
   }
 });
 
@@ -1424,7 +1432,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
           reason: "concurrent",
           channelId: identity.channelId,
           threadTs: identity.threadTs,
-          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+          threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
         });
         return;
       }
@@ -1531,7 +1539,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
           reason: "concurrent",
           channelId: identity.channelId,
           threadTs: identity.threadTs,
-          threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+          threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
         });
         return;
       }

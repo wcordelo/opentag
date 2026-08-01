@@ -1,7 +1,8 @@
 # Notion-derived OpenTag feature inventory
 
 Status: source audit completed 2026-08-01; implementation comparison is against
-OpenTag `origin/main` at `ff8d649` plus the local effecter branch at `18f8184`.
+OpenTag `origin/main` at `ff8d649` plus the isolated effecter branch
+`codex/weekly-platform-effecter` at `08d7a4c`.
 This is a repository report, not a write to the Notion baseline or daily-review
 database.
 
@@ -209,8 +210,8 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion; the
-  isolated branch also adds an authenticated effecter runner/Worker at commit
-  `18f8184` that fails closed when no provider adapter is configured.
+  isolated branch also adds an authenticated effecter runner/Worker that fails
+  closed when no provider adapter is configured.
 
 ### Still required before “everything” is live
 

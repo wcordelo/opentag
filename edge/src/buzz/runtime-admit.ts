@@ -12,6 +12,10 @@
  * reject), never drop the reservation — even if forensic metadata `kv.set`
  * fails — so redelivery cannot emit a second kind-9.
  *
+ * A separate `…:post-accepted` dedupe key is set immediately after relay
+ * POST succeeds so a crash between reservation and accept can be retried
+ * without double-publishing once accept is recorded.
+ *
  * Marker / reply-claim values contain only public event identity fields plus
  * a forensic policy audit stamp (never key/auth-tag material).
  *
@@ -69,6 +73,36 @@ export function buzzRuntimeReplyKey(
   return `buzz-reply:v1:${tenantId}:${inboundEventId}`;
 }
 
+export function buzzReplyPostAcceptedKey(replyKey: string): string {
+  return `${replyKey}:post-accepted`;
+}
+
+/** False when admission ran but the relay kind-9 publish is still incomplete. */
+export async function buzzReplyPublishIsComplete(
+  store: Pick<StateStore, "kv" | "dedup"> | undefined,
+  tenantId: string,
+  inboundEventId: string,
+): Promise<boolean> {
+  if (store === undefined) {
+    return true;
+  }
+  const replyKey = buzzRuntimeReplyKey(tenantId, inboundEventId);
+  const claim = await store.kv.get<BuzzRuntimeReplyClaim>(replyKey);
+  if ((claim?.reply_event_id ?? "") !== "") {
+    return true;
+  }
+  if (await store.dedup.has(buzzReplyPostAcceptedKey(replyKey))) {
+    return true;
+  }
+  const admitted = await store.kv.get<BuzzRuntimeAdmitRecord>(
+    buzzRuntimeAdmitKey(tenantId, inboundEventId),
+  );
+  if (admitted === undefined) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Build a {@link BuzzWakeRuntime} that persists a public admission marker
  * and, when `replyPublisher` is set, posts a kind-9 ack with §14.6-safe
@@ -111,10 +145,13 @@ export function createBuzzRuntimeAdmit(
         input.tenantId,
         input.inbound.eventId,
       );
-      // Atomic claim-or-skip — load-bearing for outbound idempotency.
-      const alreadyReserved = await store.dedup.seen(replyKey, ttlMs);
-      if (alreadyReserved) {
+      const postAcceptedKey = buzzReplyPostAcceptedKey(replyKey);
+      if (await store.dedup.has(postAcceptedKey)) {
         return;
+      }
+
+      if (!(await store.dedup.has(replyKey))) {
+        await store.dedup.seen(replyKey, ttlMs);
       }
 
       let replyEventId: string;
@@ -127,13 +164,15 @@ export function createBuzzRuntimeAdmit(
         const code = error instanceof Error ? error.message : "";
         if (PERMANENT_REPLY_CODES.has(code)) {
           // F2: keep reservation so webhook redelivery cannot hammer /events.
-          // Admit still succeeds (marker written); visible ack is skipped.
+          await store.dedup.seen(postAcceptedKey, ttlMs);
           return;
         }
         // Transient — release reservation so a later wake can retry publish.
         await store.dedup.forget(replyKey);
         throw error;
       }
+
+      await store.dedup.seen(postAcceptedKey, ttlMs);
 
       // Forensic metadata only — reservation already holds idempotency.
       // Never forget reservation if this write fails (F1).

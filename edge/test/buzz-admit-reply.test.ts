@@ -16,6 +16,7 @@ import { publicKeyHexFromPrivate, parsePrivateKeyHex, randomPrivateKeyHex } from
 import {
   buzzRuntimeAdmitKey,
   buzzRuntimeReplyKey,
+  BUZZ_RUNTIME_ADMIT_TTL_MS,
   createBuzzRuntimeAdmit,
 } from "../src/buzz/runtime-admit.js";
 import {
@@ -314,6 +315,50 @@ describe("createBuzzRuntimeAdmit with reply publisher", () => {
       expect(await store.kv.get(buzzRuntimeAdmitKey(TENANT, EVENT))).toBeDefined();
       expect(await store.kv.get(replyKey)).toBeUndefined();
       expect(await store.dedup.has(replyKey)).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("does not republish when reservation and publish-pending survive a crash", async () => {
+    const { store, close } = makeSqliteStateStore();
+    try {
+      let publishes = 0;
+      const replyKey = buzzRuntimeReplyKey(TENANT, EVENT);
+      await store.dedup.seen(replyKey, BUZZ_RUNTIME_ADMIT_TTL_MS);
+      await store.dedup.seen(
+        `${replyKey}:publish-pending`,
+        BUZZ_RUNTIME_ADMIT_TTL_MS,
+      );
+
+      const runtime = createBuzzRuntimeAdmit(store, {
+        nowMs: () => 42,
+        replyPublisher: {
+          async publishAdmitReply() {
+            publishes += 1;
+            return { replyEventId: "e".repeat(64) };
+          },
+        },
+      });
+      const inbound = {
+        eventId: EVENT,
+        authorPubkey: AUTHOR,
+        createdAt: NOW,
+        channelId: CHANNEL,
+        content: "hi",
+        rootEventId: EVENT,
+        mentionPubkeys: [] as const,
+      };
+      await runtime.admit({
+        tenantId: TENANT,
+        conversationKey: `ck:${EVENT}`,
+        policyAuditMarker: "m1",
+        inbound,
+      });
+      expect(publishes).toBe(0);
+      expect(
+        await store.dedup.has(`${replyKey}:post-accepted`),
+      ).toBe(true);
     } finally {
       close();
     }

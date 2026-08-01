@@ -197,6 +197,9 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
+- versioned tenant billing plans with half-open periods, per-metric limits,
+  idempotent meter acceptance, and fail-closed suspended/stale/over-limit
+  decisions; no payment provider is contacted.
 
 ### Still required before “everything” is live
 
@@ -211,9 +214,10 @@ change, not evidence that all earlier gaps are complete.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.
-4. **Billing:** choose the billing source of truth, plan/overage policy,
-   metering reconciliation, and enforcement behavior. Meter intents exist but
-   no billing provider is called.
+4. **Billing:** local plan/period/limit enforcement and meter decisions now
+   exist. Still choose the billing source of truth, invoice/overage policy,
+   reconciliation, payment provider, and enforcement owner; no billing
+   provider is called.
 5. **Memory deletion:** choose retention/compliance guarantees and deploy a
    deletion executor that can prove source-by-source completion. The ledger
    intentionally stays `requested` until that executor reports success.

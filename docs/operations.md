@@ -181,6 +181,8 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
+| `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
@@ -253,6 +255,13 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+Billing plans are configured through the admin-only platform route and are
+evaluated against the tenant's current UTC period. A plan revision must match
+the meter event, and a `block` overage policy rejects the meter before it is
+persisted or handed to the billing effecter. A plan is not a billing-provider
+subscription: configure a separately authenticated provider adapter only after
+source-of-truth, invoice, retry, and reconciliation decisions are approved.
 
 ## Deploy and connect the harness
 

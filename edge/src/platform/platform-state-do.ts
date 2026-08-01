@@ -1,5 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
+  BillingPlan,
+  BillingUsageCheck,
+  BillingUsageDecision,
   ConnectorMarketplaceEntry,
   ConnectorOAuthGrant,
   CredentialCustodyReference,
@@ -18,6 +21,8 @@ import type {
 import {
   PlatformFoundationError,
   REQUIRED_PROVISIONING_STEPS,
+  validateBillingPlan,
+  validateBillingUsageCheck,
   validateConnectorMarketplaceEntry,
   validateConnectorOAuthGrant,
   validateCredentialCustodyReference,
@@ -154,6 +159,16 @@ const PLATFORM_DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_platform_meter_execution
    ON usage_meter_events(tenant_id, execution_id, occurred_at)`,
+  `CREATE TABLE IF NOT EXISTS billing_plans (
+     tenant_id TEXT PRIMARY KEY,
+     plan_json TEXT NOT NULL,
+     plan_id TEXT NOT NULL,
+     revision INTEGER NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
+     period_start TEXT NOT NULL,
+     period_end TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS memory_governance (
      tenant_id TEXT PRIMARY KEY,
      policy_json TEXT NOT NULL,
@@ -1286,6 +1301,73 @@ export class PlatformStateEngine {
     });
   }
 
+  putBillingPlan(value: unknown): { ok: true; duplicate: boolean; plan: BillingPlan } {
+    const plan = validateBillingPlan(value);
+    return this.tx(() => {
+      assertProvisionedRow(this.provisioningByTenant(plan.tenantId), plan.tenantId);
+      const current = this.sql.exec<BillingPlanRow>(
+        `SELECT * FROM billing_plans WHERE tenant_id = ?`,
+        plan.tenantId,
+      ).toArray()[0];
+      const planJson = json(plan);
+      if (current) {
+        if (plan.revision < current.revision) {
+          throw new PlatformStateError("billing_plan_revision_not_monotonic", 409);
+        }
+        if (plan.revision === current.revision) {
+          if (current.plan_json !== planJson) throw new PlatformStateError("billing_plan_version_conflict", 409);
+          return { ok: true, duplicate: true, plan };
+        }
+      }
+      this.sql.exec(
+        `INSERT INTO billing_plans (
+           tenant_id, plan_json, plan_id, revision, status,
+           period_start, period_end, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id) DO UPDATE SET
+           plan_json = excluded.plan_json,
+           plan_id = excluded.plan_id,
+           revision = excluded.revision,
+           status = excluded.status,
+           period_start = excluded.period_start,
+           period_end = excluded.period_end,
+           updated_at = excluded.updated_at`,
+        plan.tenantId,
+        planJson,
+        plan.planId,
+        plan.revision,
+        plan.status,
+        plan.periodStart,
+        plan.periodEnd,
+        plan.updatedAt,
+      );
+      return { ok: true, duplicate: false, plan };
+    });
+  }
+
+  getBillingPlan(value: unknown): BillingPlan {
+    const tenantId = id(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).tenantId
+        : value,
+      "tenant_id",
+    );
+    const row = this.sql.exec<BillingPlanRow>(
+      `SELECT * FROM billing_plans WHERE tenant_id = ?`,
+      tenantId,
+    ).toArray()[0];
+    if (!row) throw new PlatformStateError("billing_plan_not_found", 404);
+    return parseJson<BillingPlan>(row.plan_json);
+  }
+
+  checkBillingUsage(value: unknown): BillingUsageDecision {
+    const check = validateBillingUsageCheck(value);
+    return this.tx(() => {
+      assertTenantActive(this.provisioningByTenant(check.tenantId), check.tenantId);
+      return this.billingDecisionInTransaction(check);
+    });
+  }
+
   recordMeter(value: unknown): { ok: true; duplicate: boolean; event: UsageMeterEvent } {
     const event = validateUsageMeterEvent(value);
     const expectedUnit = event.metric === "agent_tokens"
@@ -1310,6 +1392,17 @@ export class PlatformStateEngine {
         event.eventId,
       ).toArray()[0];
       if (sameEvent) throw new PlatformStateError("usage_event_id_conflict", 409);
+      const decision = this.billingDecisionInTransaction(event);
+      if (decision.action === "block") {
+        const errorCode = decision.reason === "plan_suspended"
+          ? "billing_plan_suspended"
+          : decision.reason === "plan_revision_mismatch"
+            ? "billing_plan_revision_mismatch"
+            : decision.reason === "period_out_of_bounds"
+              ? "billing_period_out_of_bounds"
+              : "billing_limit_exceeded";
+        throw new PlatformStateError(errorCode, 409);
+      }
       const recordedAt = nowIso(this.now);
       this.sql.exec(
         `INSERT INTO usage_meter_events (
@@ -1352,6 +1445,82 @@ export class PlatformStateEngine {
       );
       return { ok: true, duplicate: false, event };
     });
+  }
+
+  private billingDecisionInTransaction(
+    check: BillingUsageCheck,
+  ): BillingUsageDecision {
+    const evaluatedAt = nowIso(this.now);
+    const row = this.sql.exec<BillingPlanRow>(
+      `SELECT * FROM billing_plans WHERE tenant_id = ?`,
+      check.tenantId,
+    ).toArray()[0];
+    if (!row) {
+      return {
+        schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+        tenantId: check.tenantId,
+        metric: check.metric,
+        requestedQuantity: check.quantity,
+        consumedQuantity: 0,
+        projectedQuantity: check.quantity,
+        limit: null,
+        remainingQuantity: null,
+        planConfigured: false,
+        action: "allow",
+        reason: "plan_unconfigured",
+        evaluatedAt,
+      };
+    }
+    const plan = parseJson<BillingPlan>(row.plan_json);
+    const base = {
+      schemaVersion: PLATFORM_STATE_SCHEMA_VERSION as typeof PLATFORM_STATE_SCHEMA_VERSION,
+      tenantId: check.tenantId,
+      metric: check.metric,
+      requestedQuantity: check.quantity,
+      planConfigured: true,
+      planRevision: plan.revision,
+      evaluatedAt,
+    };
+    const currentQuantity = (): number => {
+      const result = this.sql.exec<{ total: number | null }>(
+        `SELECT COALESCE(SUM(quantity), 0) AS total
+         FROM usage_meter_events
+         WHERE tenant_id = ? AND metric = ? AND occurred_at >= ? AND occurred_at < ?`,
+        check.tenantId,
+        check.metric,
+        plan.periodStart,
+        plan.periodEnd,
+      ).toArray()[0];
+      return result?.total ?? 0;
+    };
+    const consumedQuantity = currentQuantity();
+    const limit = plan.limits[check.metric];
+    const projectedQuantity = consumedQuantity + check.quantity;
+    const remainingQuantity = limit === null
+      ? null
+      : Math.max(0, limit - consumedQuantity);
+    if (plan.status !== "active") {
+      return { ...base, consumedQuantity, projectedQuantity, limit, remainingQuantity, action: "block", reason: "plan_suspended" };
+    }
+    if (check.planRevision !== plan.revision) {
+      return { ...base, consumedQuantity, projectedQuantity, limit, remainingQuantity, action: "block", reason: "plan_revision_mismatch" };
+    }
+    const occurredAt = Date.parse(check.occurredAt);
+    if (occurredAt < Date.parse(plan.periodStart) || occurredAt >= Date.parse(plan.periodEnd)) {
+      return { ...base, consumedQuantity, projectedQuantity, limit, remainingQuantity, action: "block", reason: "period_out_of_bounds" };
+    }
+    if (limit !== null && projectedQuantity > limit && plan.overagePolicy === "block") {
+      return { ...base, consumedQuantity, projectedQuantity, limit, remainingQuantity, action: "block", reason: "limit_exceeded" };
+    }
+    return {
+      ...base,
+      consumedQuantity,
+      projectedQuantity,
+      limit,
+      remainingQuantity,
+      action: "allow",
+      reason: limit !== null && projectedQuantity > limit ? "overage_allowed" : "within_limit",
+    };
   }
 
   listMeter(value: unknown): { events: UsageMeterEvent[] } {
@@ -1717,6 +1886,17 @@ type MeterRow = {
   recorded_at: string;
 };
 
+type BillingPlanRow = {
+  tenant_id: string;
+  plan_json: string;
+  plan_id: string;
+  revision: number;
+  status: BillingPlan["status"];
+  period_start: string;
+  period_end: string;
+  updated_at: string;
+};
+
 type MemoryPolicyRow = {
   tenant_id: string;
   policy_json: string;
@@ -1857,6 +2037,16 @@ export class PlatformStateDO extends DurableObject {
       }
       if (url.pathname === "/oauth/revoke" && request.method === "POST") {
         return Response.json(this.engine.revokeOAuthGrant(await readJson(request)));
+      }
+      if (url.pathname === "/billing/plan" && request.method === "POST") {
+        return Response.json(this.engine.putBillingPlan(await readJson(request)));
+      }
+      if (url.pathname === "/billing/plan/get" && request.method === "POST") {
+        const body = await readJson(request);
+        return Response.json(this.engine.getBillingPlan(body));
+      }
+      if (url.pathname === "/billing/check" && request.method === "POST") {
+        return Response.json(this.engine.checkBillingUsage(await readJson(request)));
       }
       if (url.pathname === "/meter" && request.method === "POST") {
         return Response.json(this.engine.recordMeter(await readJson(request)));

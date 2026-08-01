@@ -68,6 +68,8 @@ layer, not a fake provisioning service. It covers:
 - curated connector marketplace entries and OAuth grants;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
+- versioned tenant billing plans with bounded period/limit decisions before
+  meter acceptance;
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
   request contracts; and
 - secret-free external effect intents with idempotent leases, retries, and
@@ -119,6 +121,15 @@ The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
 delete knowledge.
+
+Billing plans are a separate metadata boundary. A tenant plan carries an
+explicit revision, half-open UTC billing period, per-metric bounded limits, and
+an `allow`/`block` overage policy. Meter writes re-check the current plan in
+the same SQLite transaction after idempotency checks; suspended plans, stale
+revisions, out-of-period events, and blocked overage fail closed. An absent
+plan remains explicitly `plan_unconfigured` and allows metering for migration
+compatibility. This is entitlement and reconciliation infrastructure only: no
+card, invoice, payment provider, or charge is performed.
 
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:

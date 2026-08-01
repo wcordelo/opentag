@@ -821,6 +821,24 @@ app.post("/admin/platform/oauth/revoke", requireAdminAuth(), async (c) => {
   return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth/revoke", body);
 });
 
+app.post("/admin/platform/billing/plan", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/billing/plan", body);
+});
+
+app.post("/admin/platform/billing/plan/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/billing/plan/get", body);
+});
+
+app.post("/admin/platform/billing/check", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/billing/check", body);
+});
+
 app.post("/admin/platform/meter", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);

@@ -103,6 +103,38 @@ async function readCredentialMetadata(
   return { tenantId, credential };
 }
 
+async function assertLabelsIntegrity(
+  labels: ReturnType<typeof validateCredentialBrokerRequest>["labels"],
+): Promise<void> {
+  const { digest, ...unsigned } = labels;
+  const payload = JSON.stringify([
+    unsigned.schemaVersion,
+    unsigned.workspaceId,
+    unsigned.projectId,
+    unsigned.channelId,
+    unsigned.connectorId,
+    unsigned.action,
+    unsigned.scope,
+    unsigned.requesterId,
+    unsigned.actorKind,
+    unsigned.executionId,
+    unsigned.threadKey,
+    unsigned.accessBundleId,
+    unsigned.accessBundleRevision,
+    unsigned.credentialRef ?? null,
+    unsigned.credentialVersion ?? null,
+    unsigned.issuedAt,
+    unsigned.expiresAt,
+  ]);
+  const computed = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+  const expected = `sha256:${[...new Uint8Array(computed)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+  if (expected !== digest) {
+    throw new CredentialBrokerError("connector_labels_tampered", 403);
+  }
+}
+
 function assertResolutionAllowed(
   request: ReturnType<typeof validateCredentialBrokerRequest>,
   tenantId: string,
@@ -110,6 +142,9 @@ function assertResolutionAllowed(
   policy: ConnectorPolicy,
 ): void {
   const now = Date.now();
+  if (!expiresAtAfter(now, request.labels.expiresAt)) {
+    throw new CredentialBrokerError("connector_authorization_expired", 403);
+  }
   if (credential.tenantId !== tenantId) {
     throw new CredentialBrokerError("credential_tenant_mismatch", 403);
   }
@@ -204,6 +239,7 @@ app.post("/resolve", async (c) => {
   try {
     requireAuth(c.env, c.req.header("authorization"));
     const request = validateCredentialBrokerRequest(await c.req.json());
+    await assertLabelsIntegrity(request.labels);
     const policy = policyFor(request);
     const { tenantId, credential } = await readCredentialMetadata(c.env, request);
     assertResolutionAllowed(request, tenantId, credential, policy);

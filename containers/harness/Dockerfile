@@ -23,7 +23,16 @@ WORKDIR /build
 COPY containers/harness/package.json containers/harness/package-lock.json ./
 RUN npm ci
 
-COPY edge/workers/sandbox/harness-server.ts edge/workers/sandbox/tool-host.ts edge/workers/sandbox/turn-contract.ts edge/workers/sandbox/image-normalization.ts edge/workers/sandbox/output-redaction.ts ./
+COPY edge/workers/sandbox/harness-server.ts ./edge/workers/sandbox/harness-server.ts
+COPY edge/workers/sandbox/tool-host.ts ./edge/workers/sandbox/tool-host.ts
+COPY edge/workers/sandbox/turn-contract.ts ./edge/workers/sandbox/turn-contract.ts
+COPY edge/workers/sandbox/image-normalization.ts ./edge/workers/sandbox/image-normalization.ts
+COPY edge/workers/sandbox/output-redaction.ts ./edge/workers/sandbox/output-redaction.ts
+COPY edge/workers/sandbox/src/nanocodex-responses.ts ./edge/workers/sandbox/src/nanocodex-responses.ts
+COPY edge/src/harness/capability-profile.ts ./edge/src/harness/capability-profile.ts
+COPY edge/src/permissions/contract.ts ./edge/src/permissions/contract.ts
+COPY edge/src/platform/contract.ts ./edge/src/platform/contract.ts
+COPY edge/src/store/active-turn-types.ts ./edge/src/store/active-turn-types.ts
 
 # Compile with the lockfile-pinned TypeScript version. Compiling to
 # ES2022/ESM (not CommonJS) keeps `import.meta` usable in the sources
@@ -38,7 +47,11 @@ RUN ./node_modules/.bin/tsc \
       --strict \
       --skipLibCheck \
       --outDir dist \
-      harness-server.ts tool-host.ts turn-contract.ts image-normalization.ts output-redaction.ts
+      edge/workers/sandbox/harness-server.ts \
+      edge/workers/sandbox/tool-host.ts \
+      edge/workers/sandbox/turn-contract.ts \
+      edge/workers/sandbox/image-normalization.ts \
+      edge/workers/sandbox/output-redaction.ts
 
 # Production deps for the runtime image (sharp native modules).
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS harness-deps
@@ -70,20 +83,19 @@ ARG TARGETARCH
 # ripgrep, jq, fd-find: SYSTEM_PROMPT.md's [Environment] promises these.
 #   Ubuntu packages the `fd-find` binary as `fdfind`; symlink it to `fd` so
 #   the prompt's guidance ("prefer `fd`") is actually true.
-# The timestamped Ubuntu archive freezes both package indexes and transitive
-# dependencies. Bootstrap from architecture-specific snapshot repositories over
-# plain HTTP so the base image does not need a pre-existing CA bundle just to
-# install `ca-certificates` and `curl`.
-ARG UBUNTU_SNAPSHOT=20260701T000000Z
+# Bootstrap from architecture-specific Ubuntu mirrors over plain HTTP so the
+# base image does not need a pre-existing CA bundle just to install
+# `ca-certificates` and `curl`. Every package remains version-pinned and apt
+# verifies the signed repository metadata.
 RUN case "$TARGETARCH" in \
-      amd64) snapshot_host="archive.ubuntu.com/ubuntu" ;; \
-      arm64) snapshot_host="ports.ubuntu.com/ubuntu-ports" ;; \
+      amd64) apt_host="archive.ubuntu.com/ubuntu" ;; \
+      arm64) apt_host="ports.ubuntu.com/ubuntu-ports" ;; \
       *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 64 ;; \
     esac \
     && printf '%s\n' \
-      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy main universe" \
-      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy-updates main universe" \
-      "deb [check-valid-until=no] http://snapshot.ubuntu.com/${snapshot_host}/${UBUNTU_SNAPSHOT} jammy-security main universe" \
+      "deb [check-valid-until=no] http://${apt_host} jammy main universe" \
+      "deb [check-valid-until=no] http://${apt_host} jammy-updates main universe" \
+      "deb [check-valid-until=no] http://${apt_host} jammy-security main universe" \
       > /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/* \
     && apt-get update \
@@ -254,15 +266,20 @@ RUN useradd -m -s /bin/bash -u 1001 harness \
 # "type": "module" makes Node treat the compiled .js as ESM, matching the
 # `--module ES2022` output above (and the `import.meta` main-module guard
 # in both sources).
-RUN mkdir -p /opt/harness \
+RUN mkdir -p /opt/harness/edge/workers/sandbox /opt/harness/edge/workers/sandbox/src \
+    /opt/harness/edge/src/harness /opt/harness/edge/src/permissions /opt/harness/edge/src/platform \
     && printf '{"type":"module"}\n' > /opt/harness/package.json \
-    && printf '#!/bin/sh\nexec node /opt/harness/tool-host.js "$@"\n' > /usr/local/bin/opentag-tool-host \
+    && printf '#!/bin/sh\nexec node /opt/harness/edge/workers/sandbox/tool-host.js "$@"\n' > /usr/local/bin/opentag-tool-host \
     && chmod 0755 /usr/local/bin/opentag-tool-host
-COPY --from=build /build/dist/harness-server.js /opt/harness/harness-server.js
-COPY --from=build /build/dist/tool-host.js /opt/harness/tool-host.js
-COPY --from=build /build/dist/turn-contract.js /opt/harness/turn-contract.js
-COPY --from=build /build/dist/image-normalization.js /opt/harness/image-normalization.js
-COPY --from=build /build/dist/output-redaction.js /opt/harness/output-redaction.js
+COPY --from=build /build/dist/workers/sandbox/harness-server.js /opt/harness/edge/workers/sandbox/harness-server.js
+COPY --from=build /build/dist/workers/sandbox/tool-host.js /opt/harness/edge/workers/sandbox/tool-host.js
+COPY --from=build /build/dist/workers/sandbox/turn-contract.js /opt/harness/edge/workers/sandbox/turn-contract.js
+COPY --from=build /build/dist/workers/sandbox/image-normalization.js /opt/harness/edge/workers/sandbox/image-normalization.js
+COPY --from=build /build/dist/workers/sandbox/output-redaction.js /opt/harness/edge/workers/sandbox/output-redaction.js
+COPY --from=build /build/dist/workers/sandbox/src/nanocodex-responses.js /opt/harness/edge/workers/sandbox/src/nanocodex-responses.js
+COPY --from=build /build/dist/src/harness/capability-profile.js /opt/harness/edge/src/harness/capability-profile.js
+COPY --from=build /build/dist/src/permissions/contract.js /opt/harness/edge/src/permissions/contract.js
+COPY --from=build /build/dist/src/platform/contract.js /opt/harness/edge/src/platform/contract.js
 COPY --from=harness-deps /opt/harness-deps/node_modules /opt/harness/node_modules
 COPY containers/harness/SYSTEM_PROMPT.md /opt/harness/SYSTEM_PROMPT.md
 
@@ -294,11 +311,11 @@ RUN mkdir -p /work \
     && find /opt/harness/node_modules -type f -perm /111 -exec chmod 0555 {} + \
     && chmod 0555 /opt/harness \
     && test "$(stat -c '%u:%g:%a' /opt/harness)" = "0:0:555" \
-    && test "$(stat -c '%u:%g:%a' /opt/harness/harness-server.js)" = "0:0:444" \
-    && test "$(stat -c '%u:%g:%a' /opt/harness/tool-host.js)" = "0:0:444" \
-    && test "$(stat -c '%u:%g:%a' /opt/harness/turn-contract.js)" = "0:0:444" \
-    && test "$(stat -c '%u:%g:%a' /opt/harness/image-normalization.js)" = "0:0:444" \
-    && test "$(stat -c '%u:%g:%a' /opt/harness/output-redaction.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/edge/workers/sandbox/harness-server.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/edge/workers/sandbox/tool-host.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/edge/workers/sandbox/turn-contract.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/edge/workers/sandbox/image-normalization.js)" = "0:0:444" \
+    && test "$(stat -c '%u:%g:%a' /opt/harness/edge/workers/sandbox/output-redaction.js)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/package.json)" = "0:0:444" \
     && test "$(stat -c '%u:%g:%a' /opt/harness/SYSTEM_PROMPT.md)" = "0:0:444" \
     && test -d /opt/harness/node_modules/sharp \
@@ -306,7 +323,7 @@ RUN mkdir -p /work \
     && ! setpriv --reuid=1001 --regid=1001 --init-groups \
       sh -c 'printf tamper >> /opt/harness/SYSTEM_PROMPT.md' \
     && ! setpriv --reuid=1001 --regid=1001 --init-groups \
-      sh -c 'printf tamper >> /opt/harness/harness-server.js' \
+      sh -c 'printf tamper >> /opt/harness/edge/workers/sandbox/harness-server.js' \
     && ! setpriv --reuid=1001 --regid=1001 --init-groups \
       sh -c 'rm /opt/harness/SYSTEM_PROMPT.md' \
     && ! setpriv --reuid=1001 --regid=1001 --init-groups \
@@ -348,7 +365,7 @@ cp /etc/cloudflare/certs/cloudflare-containers-ca.crt \
   /usr/local/share/ca-certificates/cloudflare-containers-ca.crt
 update-ca-certificates >/dev/null
 exec setpriv --reuid=1001 --regid=1001 --init-groups \
-  node /opt/harness/harness-server.js
+  node /opt/harness/edge/workers/sandbox/harness-server.js
 SH
 chmod 0755 /usr/local/bin/opentag-harness-entrypoint
 EOF

@@ -1288,6 +1288,22 @@ describe("security validation", () => {
     expect(await validateTurnRequest({ ...validTurn, harnessType: "nanocodex" }, repoPolicy)).toMatchObject({
       ok: true,
     });
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "nanocodex", nativeResponses: true }, repoPolicy)).toMatchObject({
+      ok: true,
+      body: { nativeResponses: true },
+    });
+    expect(await validateTurnRequest({ ...validTurn, nativeResponses: true }, repoPolicy)).toMatchObject({
+      ok: false,
+      error: "native_responses_requires_nanocodex",
+    });
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "nanocodex", nativeResponses: true, codingTask: true, repo: { url: "https://github.com/wcordelo/opentag" } }, repoPolicy)).toMatchObject({
+      ok: false,
+      error: "native_responses_coding_task_unsupported",
+    });
+    expect(await validateTurnRequest({ ...validTurn, harnessType: "nanocodex", nativeResponses: true, attachments: [{ id: "a", name: "a.txt", mimeType: "text/plain", size: 1, kind: "inline", dataBase64: "eA==" }] }, repoPolicy)).toMatchObject({
+      ok: false,
+      error: "native_responses_attachments_unsupported",
+    });
     expect(await validateTurnRequest({ ...validTurn, inputLines: [42] }, repoPolicy)).toMatchObject({
       ok: false,
       error: "invalid_input_lines",

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, it, expect } from "vitest";
 import { createDurableObjectStore } from "../src/store/index.js";
+import { tenantStub } from "../src/tenancy.js";
 import { runStateStoreConformance } from "./conformance.js";
 
 /**
@@ -21,9 +22,7 @@ describe("Durable Object integration", () => {
   it("persists and clears additive channel runtime defaults without changing other config", async () => {
     const teamId = `runtime-${crypto.randomUUID()}`;
     const channelId = "C-runtime";
-    const stub = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     expect((await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
       body: JSON.stringify({
@@ -108,9 +107,7 @@ describe("Durable Object integration", () => {
   it("preserves channel context when only runtimeDefaults are updated", async () => {
     const teamId = `runtime-only-${crypto.randomUUID()}`;
     const channelId = "C-runtime-only";
-    const stub = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     expect((await stub.fetch("https://do/putChannelContext", {
       method: "POST",
       body: JSON.stringify({
@@ -142,9 +139,7 @@ describe("Durable Object integration", () => {
   it("allows policy-only admin updates without overlay expectedRevision CAS", async () => {
     const teamId = `admin-partial-${crypto.randomUUID()}`;
     const channelId = "C-admin-partial";
-    const stub = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const first = await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
       body: JSON.stringify({
@@ -246,9 +241,7 @@ describe("Durable Object integration", () => {
   it("rejects overlay objects without text and non-monotonic revisions", async () => {
     const teamId = `overlay-guard-${crypto.randomUUID()}`;
     const channelId = "C-overlay-guard";
-    const stub = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     expect((await stub.fetch("https://do/putAdminConfig", {
       method: "POST",
       body: JSON.stringify({
@@ -341,9 +334,7 @@ describe("Durable Object integration", () => {
 
   it("rejects policy and overlay writes on legacy putConfig", async () => {
     const teamId = `legacy-${crypto.randomUUID()}`;
-    const stub = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     expect((await stub.fetch("https://do/putConfig", {
       method: "POST",
       body: JSON.stringify({

@@ -22,6 +22,7 @@ import {
 } from "../permissions/contract.js";
 import { requireRequestContext } from "../request-context.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
+import { tenantStub } from "../tenancy.js";
 
 export const SEARCH_SLACK_LIMITS = Object.freeze({
   maxQueryLength: 1_000,
@@ -88,7 +89,7 @@ async function currentTurnAccess(
   teamId: string,
   channelId: string,
 ): Promise<CurrentTurnAccess | undefined> {
-  const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+  const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
   const configResponse = await stub.fetch("https://do/getConfig", {
     method: "POST",
     body: JSON.stringify({ teamId, channelId }),
@@ -190,7 +191,7 @@ function sourceMatches(
 }
 
 async function enabledSource(env: Env, teamId: string, channelId: string): Promise<TrackedKnowledgeSource | undefined> {
-  const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+  const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
   const response = await stub.fetch("https://do/listTrackedKnowledgeSources", {
     method: "POST",
     body: JSON.stringify({ teamId, channelId }),
@@ -215,7 +216,7 @@ async function citationIsCurrent(
   citation: KnowledgeCitation,
   configVersion: number,
 ): Promise<boolean> {
-  const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+  const stub = tenantStub(env.KNOWLEDGE, teamId);
   const response = await stub.fetch("https://do/state", {
     method: "POST",
     body: JSON.stringify({ sourceKey: citation.sourceKey }),

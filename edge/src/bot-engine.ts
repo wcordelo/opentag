@@ -45,6 +45,7 @@ import {
   trustedTriggerReadiness,
 } from "./slack/trusted-trigger.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
+import type { RouterHeuristicDecision } from "./router/heuristics.js";
 
 export type BotEngineKind = "createBot";
 
@@ -141,6 +142,29 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
     stateStore,
     slackScheduler,
     deliveryMetrics: env.DELIVERY_METRICS,
+    routerShadow: (decision: RouterHeuristicDecision, context) => {
+      if (!env.DELIVERY_METRICS) return;
+      env.DELIVERY_METRICS.writeDataPoint({
+        blobs: [
+          "router_shadow",
+          context.teamId ?? "unknown",
+          context.channelId,
+          context.eventId ?? "unknown",
+          context.threadTs ?? "unknown",
+          decision.classifierPath,
+          decision.reason,
+          decision.matchedRule ?? "none",
+          decision.tierDecided === null ? "model" : String(decision.tierDecided),
+        ],
+        doubles: [
+          decision.surfaceFeatures.wordCount,
+          decision.surfaceFeatures.hasCodeBlock ? 1 : 0,
+          decision.surfaceFeatures.hasQuotedText ? 1 : 0,
+          decision.surfaceFeatures.tier3Flag ? 1 : 0,
+        ],
+        indexes: ["router_shadow"],
+      });
+    },
     trustedTriggerConfig,
     ...(env.SESSION_EVENTS ? { sessionEvents: env.SESSION_EVENTS } : {}),
     ...(env.BLOBS ? { blobs: env.BLOBS } : {}),
@@ -282,7 +306,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           .trim();
         const statusScope = conversationKey.split("::")[1];
         const threadTs = firstSlackTs(statusScope);
-        const researchThreadKey = slackObligationThreadKey(channelId, threadTs);
+        const researchThreadKey = slackObligationThreadKey(teamId, channelId, threadTs);
         const effect = await runShortcutEffect(adopted, "mention_research", () =>
           startTask(env, {
             type: "research",

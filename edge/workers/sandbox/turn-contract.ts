@@ -1,6 +1,7 @@
 /** Pure, runtime-neutral validation for the pinned harness /turn envelope. */
 
 import type { PermissionSnapshotV1 } from "../../src/permissions/contract.js";
+import { parseNanocodexProviderState, type NanocodexProviderState } from "./src/nanocodex-responses.js";
 
 export type { PermissionSnapshotV1 } from "../../src/permissions/contract.js";
 
@@ -71,6 +72,8 @@ export interface TurnRequestBody {
   codingTask?: boolean;
   remoteGitApproved?: boolean;
   createPullRequest?: boolean;
+  nativeResponses?: boolean;
+  providerState?: NanocodexProviderState;
   permissionSnapshot?: PermissionSnapshotV1;
   /** Additive v2 field; Container continues accepting v1 (absent). */
   contractVersion?: 1 | 2;
@@ -419,6 +422,24 @@ export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy)
   if (record.harnessType !== undefined && !isHarnessType(record.harnessType)) {
     return { ok: false, error: "invalid_harness_type" };
   }
+  if (record.nativeResponses !== undefined && typeof record.nativeResponses !== "boolean") {
+    return { ok: false, error: "invalid_native_responses" };
+  }
+  if (record.nativeResponses === true && record.harnessType !== "nanocodex") {
+    return { ok: false, error: "native_responses_requires_nanocodex" };
+  }
+  if (record.nativeResponses === true && record.codingTask === true) {
+    return { ok: false, error: "native_responses_coding_task_unsupported" };
+  }
+  if (record.nativeResponses === true && Array.isArray(record.attachments) && record.attachments.length > 0) {
+    return { ok: false, error: "native_responses_attachments_unsupported" };
+  }
+  let providerState: NanocodexProviderState | undefined;
+  if (record.providerState !== undefined) {
+    if (record.nativeResponses !== true) return { ok: false, error: "provider_state_requires_native_responses" };
+    providerState = parseNanocodexProviderState(record.providerState);
+    if (!providerState) return { ok: false, error: "invalid_provider_state" };
+  }
   if ((record.requesterContext !== undefined &&
        (typeof record.requesterContext !== "string" || record.requesterContext.length > 16_384)) ||
       (record.transcript !== undefined &&
@@ -532,6 +553,8 @@ export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy)
       "codingTask",
       "remoteGitApproved",
       "createPullRequest",
+      "nativeResponses",
+      "providerState",
       "permissionSnapshot",
       "contractVersion",
       "systemPromptOverlay",
@@ -558,6 +581,8 @@ export async function validateTurnRequest(body: unknown, repoPolicy: RepoPolicy)
       ...(record.codingTask === undefined ? {} : { codingTask: record.codingTask as boolean }),
       remoteGitApproved: record.remoteGitApproved === true,
       ...(record.createPullRequest === undefined ? {} : { createPullRequest: record.createPullRequest as boolean }),
+      ...(record.nativeResponses === undefined ? {} : { nativeResponses: record.nativeResponses as boolean }),
+      ...(providerState ? { providerState } : {}),
       ...(permissionSnapshot ? { permissionSnapshot } : {}),
       ...(contractVersion === undefined ? {} : { contractVersion }),
       ...(systemPromptOverlay ? { systemPromptOverlay } : {}),

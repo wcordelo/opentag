@@ -98,6 +98,7 @@ interface ExecutingSlot {
 }
 
 const KEY_CREATED = "session:created";
+const KEY_PROVIDER_STATE = "session:provider-state";
 /** Legacy compatibility keys: never read as source of truth. */
 const KEY_EXECUTING = "session:executing";
 const KEY_INTERRUPTED = "session:interrupted";
@@ -182,6 +183,7 @@ export class SessionEventEngine {
       await this.kv.delete(KEY_CREATED);
       await this.kv.delete(KEY_EXECUTING);
       await this.kv.delete(KEY_INTERRUPTED);
+      await this.kv.delete(KEY_PROVIDER_STATE);
 
       const sessionId = this.newId();
       await this.kv.put<CreatedSlot>(KEY_CREATED, {
@@ -201,6 +203,14 @@ export class SessionEventEngine {
       threadKey: args.threadKey,
     });
     return { sessionId, restarted: false };
+  }
+
+  async getProviderState(): Promise<unknown | undefined> {
+    return this.kv.get(KEY_PROVIDER_STATE);
+  }
+
+  async putProviderState(state: unknown): Promise<void> {
+    await this.kv.put(KEY_PROVIDER_STATE, state);
   }
 
   async execute(args: {
@@ -639,6 +649,14 @@ export class SessionEventDO extends DurableObject {
     model?: string;
   }): Promise<{ sessionId: string; restarted: boolean }> {
     return this.engine.create(args);
+  }
+
+  async getProviderState(): Promise<unknown | undefined> {
+    return this.engine.getProviderState();
+  }
+
+  async putProviderState(state: unknown): Promise<void> {
+    return this.engine.putProviderState(state);
   }
 
   /**

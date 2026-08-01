@@ -1,10 +1,11 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { tenantStub } from "../src/tenancy.js";
 
 describe("WorkspaceConfigDO tracked knowledge sources", () => {
   it("allows disabled-never-enabled first activation but blocks post-disable re-enable", async () => {
     const teamId = `knowledge-lifecycle-${crypto.randomUUID()}`;
-    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const scope = { teamId, projectId: "P1", channelId: "C1" };
     const staged = await stub.fetch("https://do/putTrackedKnowledgeSource", {
       method: "POST",
@@ -38,7 +39,7 @@ describe("WorkspaceConfigDO tracked knowledge sources", () => {
 
   it("serializes concurrent first enables and preserves one project per channel", async () => {
     const teamId = `knowledge-conflict-${crypto.randomUUID()}`;
-    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const responses = await Promise.all(["P1", "P2"].map((projectId) =>
       stub.fetch("https://do/putTrackedKnowledgeSource", {
         method: "POST",
@@ -56,7 +57,7 @@ describe("WorkspaceConfigDO tracked knowledge sources", () => {
 
   it("rejects disable and policy changes while a durable ingestion effect is active", async () => {
     const teamId = `knowledge-effect-${crypto.randomUUID()}`;
-    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const scope = { teamId, projectId: "P1", channelId: "C1" };
     const enabled = await stub.fetch("https://do/putTrackedKnowledgeSource", {
       method: "POST",
@@ -108,7 +109,7 @@ describe("WorkspaceConfigDO tracked knowledge sources", () => {
 
   it("does not inherit channel defaults and owns a monotonic exact-scope version", async () => {
     const teamId = `knowledge-${crypto.randomUUID()}`;
-    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const scope = { teamId, projectId: "P1", channelId: "C1" };
 
     const missing = await stub.fetch("https://do/getTrackedKnowledgeSource", {

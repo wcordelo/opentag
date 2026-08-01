@@ -1059,7 +1059,7 @@ describe("real /agent ingress and Stop lifecycle", () => {
     const turn = harnessTurns[0]!;
     const executionId = String(turn.executionId);
     const forwardedMessageId = String(turn.forwardedMessageId);
-    const threadKey = `slack:${channel}:${root}`;
+    const threadKey = `tenant:T1:slack:${channel}:${root}`;
     expect(executionId).toMatch(/^ot1e_[A-Za-z0-9_-]{43}$/);
     expect(forwardedMessageId).toMatch(/^ot1m_[A-Za-z0-9_-]{43}$/);
     expect(executionId).not.toBe(forwardedMessageId);

@@ -176,7 +176,7 @@ vi.mock("../src/request-context.js", () => ({
     preAdmittedTurn: {
       record: {
         channelId: "C1",
-        threadKey: "slack:C1:111.222",
+        threadKey: "tenant:T1:slack:C1:111.222",
         conversationKey: "C1::111.222",
         executionId: "slack:C1:111.333",
         threadTs: "111.222",
@@ -192,7 +192,7 @@ vi.mock("../src/request-context.js", () => ({
     preAdmittedTurn: {
       record: {
         channelId: "C1",
-        threadKey: "slack:C1:111.222",
+        threadKey: "tenant:T1:slack:C1:111.222",
         conversationKey: "C1::111.222",
         executionId: "slack:C1:111.333",
         threadTs: "111.222",
@@ -297,7 +297,7 @@ async function emitMention(
   const thread = makeThread(confirmed);
   await store.activeTurn.register({
     channelId: "C1",
-    threadKey: "slack:C1:111.222",
+    threadKey: "tenant:T1:slack:C1:111.222",
     conversationKey: "C1::111.222",
     executionId: "slack:C1:111.333",
     threadTs: "111.222",
@@ -370,7 +370,7 @@ describe("production Slack remote-git ingress", () => {
           reason: "concurrent",
           channelId: "C1",
           threadTs: "111.222",
-          threadKey: "slack:C1:111.222",
+          threadKey: "tenant:T1:slack:C1:111.222",
         },
       );
       expect(postedText).toContain("active turn");
@@ -424,7 +424,7 @@ describe("production Slack remote-git ingress", () => {
     const thread = makeThread(true);
     await store.activeTurn.register({
       channelId: "C1",
-      threadKey: "slack:C1:111.222",
+      threadKey: "tenant:T1:slack:C1:111.222",
       conversationKey: "C1::111.222",
       executionId: "slack:C1:111.333",
       threadTs: "111.222",
@@ -443,7 +443,7 @@ describe("production Slack remote-git ingress", () => {
     });
     await vi.waitFor(() => expect(memoryWriteMock).toHaveBeenCalledOnce());
     expect(await store.activeTurn.claimCancellation({
-      threadKey: "slack:C1:111.222",
+      threadKey: "tenant:T1:slack:C1:111.222",
       executionId: "slack:C1:111.333",
       stopEventId: "EvShortcutStop",
     })).toBe("effect_in_flight");
@@ -563,7 +563,7 @@ describe("production Slack remote-git ingress", () => {
     try {
       await store.activeTurn.register({
         channelId: "C1",
-        threadKey: "slack:C1:111.222",
+        threadKey: "tenant:T1:slack:C1:111.222",
         conversationKey: "C1::111.222",
         executionId: "slack:C1:111.333",
         threadTs: "111.222",
@@ -583,6 +583,7 @@ describe("production Slack remote-git ingress", () => {
         env,
         {
           type: "message",
+          team_id: "T1",
           channel: "C1",
           user: "U123",
           text: "stop",

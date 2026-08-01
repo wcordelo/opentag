@@ -18,13 +18,12 @@ import {
   TEST_KNOWLEDGE_BACKFILL_PUBLIC_KEY,
 } from "./helpers/knowledge-backfill-approval.js";
 import worker from "../src/worker.js";
+import { operatorStub, tenantStub } from "../src/tenancy.js";
 
 describe("KnowledgeDO additive descriptor ledger", () => {
   it("resumes a global-page-capped multi-channel discovery with empty exhaustion cursors", async () => {
     const teamId = `knowledge-discovery-${crypto.randomUUID()}`;
-    const config = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const config = tenantStub(env.WORKSPACE_CONFIG, teamId);
     for (const channelId of ["C1", "C2"]) {
       const configured = await config.fetch(
         "https://do/putTrackedKnowledgeSource",
@@ -127,9 +126,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
   it("resumes a caller-known manifest after the first Slack page fails", async () => {
     const teamId = `knowledge-discovery-first-failure-${crypto.randomUUID()}`;
     const manifestId = `manifest-${crypto.randomUUID()}`;
-    const config = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const config = tenantStub(env.WORKSPACE_CONFIG, teamId);
     expect((await config.fetch(
       "https://do/putTrackedKnowledgeSource",
       {
@@ -197,9 +194,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
 
   it("permanently blocks a resumed discovery after authoritative source config drift", async () => {
     const teamId = `knowledge-discovery-drift-${crypto.randomUUID()}`;
-    const config = env.WORKSPACE_CONFIG.get(
-      env.WORKSPACE_CONFIG.idFromName(teamId),
-    );
+    const config = tenantStub(env.WORKSPACE_CONFIG, teamId);
     const put = (readerPolicyRef: string) => config.fetch(
       "https://do/putTrackedKnowledgeSource",
       {
@@ -249,9 +244,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
       ...env,
       SLACK_BOT_TOKEN: "xoxb-test",
     }, input)).rejects.toThrow("config drifted");
-    const knowledge = env.KNOWLEDGE.get(
-      env.KNOWLEDGE.idFromName(teamId),
-    );
+    const knowledge = tenantStub(env.KNOWLEDGE, teamId);
     const persisted = await knowledge.fetch(
       "https://do/backfill/discovery/get",
       {
@@ -304,7 +297,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
       "before_terminal",
     ] as const) {
       const teamId = `knowledge-interleave-${phase}-${crypto.randomUUID()}`;
-      const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+      const stub = tenantStub(env.KNOWLEDGE, teamId);
       const original = createKnowledgeJob({
         teamId,
         projectId: "P1",
@@ -422,7 +415,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
 
   it("preserves manual memory rows while descriptors converge in the additive ledger", async () => {
     const teamId = `knowledge-ledger-${crypto.randomUUID()}`;
-    const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
     const manual = {
       id: "manual-1",
       teamId,
@@ -477,7 +470,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
 
   it("holds an uncommitted reconciliation page across continuation/restart", async () => {
     const teamId = `knowledge-reconcile-${crypto.randomUUID()}`;
-    const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
     const post = async <T>(path: string, body: unknown): Promise<T> => {
       const response = await stub.fetch(`https://do${path}`, {
         method: "POST",
@@ -523,9 +516,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
   });
 
   it("durably fences one scheduled reconciliation coordinator cycle", async () => {
-    const stub = env.KNOWLEDGE.get(
-      env.KNOWLEDGE.idFromName(`knowledge-coordinator-${crypto.randomUUID()}`),
-    );
+    const stub = operatorStub(env.KNOWLEDGE, `knowledge-coordinator-${crypto.randomUUID()}`);
     const post = async <T>(path: string, body: unknown): Promise<T> => {
       const response = await stub.fetch(`https://do${path}`, {
         method: "POST",
@@ -577,9 +568,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
   });
 
   it("persists observable DLQ records and permits one exact replay claim", async () => {
-    const stub = env.KNOWLEDGE.get(
-      env.KNOWLEDGE.idFromName(`knowledge-dlq-${crypto.randomUUID()}`),
-    );
+    const stub = operatorStub(env.KNOWLEDGE, `knowledge-dlq-${crypto.randomUUID()}`);
     const post = (path: string, body: unknown) => stub.fetch(`https://do${path}`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -658,7 +647,7 @@ describe("KnowledgeDO additive descriptor ledger", () => {
 
   it("persists complete discovery, one-use external P1 evidence, and partial page dispositions", async () => {
     const teamId = `knowledge-backfill-${crypto.randomUUID()}`;
-    const stub = env.KNOWLEDGE.get(env.KNOWLEDGE.idFromName(teamId));
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
     const manifestId = "manifest-1";
     const scope: KnowledgeBackfillScope = {
       schemaVersion: 2,

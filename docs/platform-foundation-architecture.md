@@ -1,7 +1,8 @@
 # Platform and routing foundation
 
-Status: local implementation on the goal worktree; no production deployment
-or hosted-platform activation has been performed.
+Status: local implementation on the goal worktree; the effect ledger is
+validated but no hosted platform effecter or connector credential broker is
+deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -64,7 +65,9 @@ layer, not a fake provisioning service. It covers:
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
-  request contracts.
+  request contracts; and
+- secret-free external effect intents with idempotent leases, retries, and
+  terminal completion/cancellation.
 
 `edge/src/platform/platform-state-do.ts` now provides the durable metadata
 ledger for those contracts. Tenant records are sharded by a deterministic
@@ -80,6 +83,33 @@ one reserved object. The ledger provides:
 - execution-linked, idempotent usage-meter receipts with bounded listing; and
 - monotonic memory policies plus deletion requests that remain `requested`
   until an approved external deletion worker completes them.
+
+## External effect handoff
+
+`platform_effect_intents` is the only durable handoff between the metadata
+ledger and an external provisioning, custody, OAuth, marketplace, billing, or
+memory worker. An intent contains only a bounded target reference and sorted
+metadata; recursive validation rejects provider tokens, OAuth codes, prompts,
+queries, bodies, and other secret-shaped fields.
+
+The lifecycle is:
+
+1. A state transition records its own metadata and an idempotent effect intent
+   in the same SQLite transaction.
+2. An effect worker claims the intent with a short lease and receives the
+   validated intent metadata plus an opaque lease token.
+3. The worker performs the provider call outside the Durable Object, then
+   reports `complete` with a bounded external receipt reference or `failed`
+   with a safe error code and retry policy.
+4. A revoked or superseded operation can cancel the intent; an expired lease
+   is reclaimable, while an active lease cannot be double-claimed.
+
+Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
+marketplace curation/revocation, billing meter events, and memory deletion
+requests now create these intents automatically.
+The ledger still does not perform the external effect. That boundary must be
+implemented by a separately authenticated worker after custody, provider, and
+billing decisions are approved.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
@@ -112,9 +142,10 @@ reported complete.
 - The router remains dark until the shadow dataset is measured and the Tier 1
   knowledge gate, Tier 1 synthesis/fallback path, escalation affordance, and
   misroute ledger are implemented.
-- The platform-state migration and admin routes are locally validated, but the
-  production bootstrap authority, tenant locator integration, identity/key
-  custody worker, Slack OAuth callback, marketplace trust review process,
-  billing/plan enforcement, and memory deletion executor are not live.
+- The platform-state migration, effect leases, and admin routes are locally
+  validated, but the production bootstrap authority, tenant locator
+  integration, identity/key custody worker, Slack OAuth callback, marketplace
+  trust review process, billing/plan enforcement, memory deletion executor,
+  and credential broker are not live.
 - Cloudflare deployment is a separate explicit gate; local typechecks and
   tests do not authorize `wrangler deploy`.

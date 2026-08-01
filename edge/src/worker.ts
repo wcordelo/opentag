@@ -644,6 +644,26 @@ async function forwardPlatformState(
   });
 }
 
+function platformEffectObjectName(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const input = body as Record<string, unknown>;
+  if (input.scope === "platform") return PLATFORM_MARKETPLACE_OBJECT_NAME;
+  if (input.scope === "tenant" && typeof input.tenantId === "string") {
+    return platformTenantObjectName(input.tenantId);
+  }
+  return undefined;
+}
+
+async function forwardPlatformEffect(
+  c: Context<AppEnv>,
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const objectName = platformEffectObjectName(body);
+  if (!objectName) return c.json({ error: "effect_scope_and_tenant_required" }, 400);
+  return forwardPlatformState(c, objectName, path, body);
+}
+
 app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
   const body = await c.req.json();
   let request: ReturnType<typeof validateProvisioningRequest>;
@@ -666,6 +686,34 @@ app.post("/admin/platform/provision/get", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
   return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/provision/get", body);
+});
+
+app.post("/admin/platform/effect/enqueue", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/enqueue", await c.req.json());
+});
+
+app.post("/admin/platform/effect/get", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/get", await c.req.json());
+});
+
+app.post("/admin/platform/effect/list", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/list", await c.req.json());
+});
+
+app.post("/admin/platform/effect/claim", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/claim", await c.req.json());
+});
+
+app.post("/admin/platform/effect/complete", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/complete", await c.req.json());
+});
+
+app.post("/admin/platform/effect/fail", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/fail", await c.req.json());
+});
+
+app.post("/admin/platform/effect/cancel", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/cancel", await c.req.json());
 });
 
 app.post("/admin/platform/identity", requireAdminAuth(), async (c) => {

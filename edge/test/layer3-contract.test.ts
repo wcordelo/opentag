@@ -7,6 +7,7 @@ import {
   validateCredentialCustodyReference,
   validateMemoryDeletionRequest,
   validateMemoryGovernancePolicy,
+  validatePlatformEffectIntent,
   validateProvisioningRequest,
   validateUsageMeterEvent,
 } from "../src/platform/layer3-contract.js";
@@ -54,6 +55,19 @@ describe("Layer 3 platform contracts", () => {
       status: "active",
       issuedAt: now,
       accessToken: "never",
+    })).toThrow("secret_material_forbidden");
+    expect(() => validateCredentialCustodyReference({
+      schemaVersion: 1,
+      tenantId: "T1",
+      credentialRef: "credential:x:y",
+      backend: "external_kms",
+      provider: "x",
+      subject: "s",
+      scopes: [],
+      version: 1,
+      status: "active",
+      issuedAt: now,
+      Authorization: "never",
     })).toThrow("secret_material_forbidden");
   });
 
@@ -119,5 +133,45 @@ describe("Layer 3 platform contracts", () => {
       requestedAt: now,
       deletionEpoch: 2,
     })).toMatchObject({ sourceKeys: ["slack:T1:C1:123"] });
+  });
+
+  it("limits platform effects to bounded secret-free metadata", () => {
+    expect(validatePlatformEffectIntent({
+      schemaVersion: 1,
+      intentId: "effect-1",
+      idempotencyKey: "effect-key-1",
+      scope: "tenant",
+      tenantId: "T1",
+      kind: "memory_deletion",
+      targetRef: "memory-deletion:delete-1",
+      metadata: {
+        deletionEpoch: 2,
+        requestId: "delete-1",
+        nested: { sourceCount: 1 },
+      },
+      requestedAt: now,
+    })).toMatchObject({ kind: "memory_deletion", metadata: { deletionEpoch: 2 } });
+    expect(() => validatePlatformEffectIntent({
+      schemaVersion: 1,
+      intentId: "effect-2",
+      idempotencyKey: "effect-key-2",
+      scope: "tenant",
+      tenantId: "T1",
+      kind: "connector_oauth",
+      targetRef: "google_drive",
+      metadata: { nested: { accessToken: "never" } },
+      requestedAt: now,
+    })).toThrow("effect_metadata_key_invalid");
+    expect(() => validatePlatformEffectIntent({
+      schemaVersion: 1,
+      intentId: "effect-3",
+      idempotencyKey: "effect-key-3",
+      scope: "platform",
+      tenantId: "T1",
+      kind: "marketplace",
+      targetRef: "google_drive",
+      metadata: {},
+      requestedAt: now,
+    })).toThrow("effect_platform_tenant_forbidden");
   });
 });

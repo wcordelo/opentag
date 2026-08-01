@@ -110,10 +110,10 @@ function enumValue<T extends string | number>(value: unknown, allowed: readonly 
 function rejectSecretMaterial(value: unknown): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const forbidden = new Set([
-    "accessToken", "apiKey", "privateKey", "secret", "secretValue", "token", "value",
+    "accesstoken", "apikey", "authorization", "privatekey", "password", "secret", "secretvalue", "token", "value",
   ]);
   for (const key of Object.keys(value as Record<string, unknown>)) {
-    if (forbidden.has(key)) throw new PlatformFoundationError("secret_material_forbidden");
+    if (forbidden.has(key.toLowerCase())) throw new PlatformFoundationError("secret_material_forbidden");
   }
 }
 
@@ -353,6 +353,200 @@ export type MemoryDeletionRequest = Readonly<{
   requestedAt: string;
   deletionEpoch: number;
 }>;
+
+/**
+ * A secret-free handoff to an external platform effector.
+ *
+ * The PlatformStateDO records this intent before any provider call. An
+ * external worker claims it with a short lease, performs exactly the provider
+ * operation appropriate for `kind`, and completes or fails the intent. The
+ * metadata is deliberately not a generic payload: it is bounded, recursively
+ * validated, and rejects keys that could carry credentials or user content.
+ */
+export type PlatformEffectKind =
+  | "provisioning"
+  | "identity_custody"
+  | "credential_custody"
+  | "connector_oauth"
+  | "marketplace"
+  | "billing_meter"
+  | "memory_deletion";
+
+export type PlatformEffectScope = "tenant" | "platform";
+export type PlatformEffectMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly PlatformEffectMetadataValue[]
+  | { readonly [key: string]: PlatformEffectMetadataValue };
+export type PlatformEffectMetadata = Readonly<{
+  [key: string]: PlatformEffectMetadataValue;
+}>;
+
+export type PlatformEffectIntent = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  intentId: string;
+  idempotencyKey: string;
+  scope: PlatformEffectScope;
+  tenantId?: string;
+  kind: PlatformEffectKind;
+  targetRef: string;
+  metadata: PlatformEffectMetadata;
+  requestedAt: string;
+}>;
+
+export type PlatformEffectStatus =
+  | "pending"
+  | "leased"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type PlatformEffectReceipt = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  intentId: string;
+  idempotencyKey: string;
+  scope: PlatformEffectScope;
+  tenantId?: string;
+  kind: PlatformEffectKind;
+  targetRef: string;
+  status: PlatformEffectStatus;
+  attempts: number;
+  retryable: boolean;
+  availableAt: string;
+  lastErrorCode?: string;
+  externalReceiptRef?: string;
+  requestedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}>;
+
+export type PlatformEffectClaim = Readonly<{
+  intent: PlatformEffectIntent;
+  receipt: PlatformEffectReceipt;
+  leaseToken: string;
+  leaseOwner: string;
+  leaseExpiresAt: string;
+}>;
+
+const PLATFORM_EFFECT_KINDS: readonly PlatformEffectKind[] = [
+  "provisioning",
+  "identity_custody",
+  "credential_custody",
+  "connector_oauth",
+  "marketplace",
+  "billing_meter",
+  "memory_deletion",
+] as const;
+const PLATFORM_EFFECT_FORBIDDEN_METADATA_KEYS = new Set([
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "body",
+  "code",
+  "content",
+  "cookie",
+  "password",
+  "privatekey",
+  "prompt",
+  "query",
+  "secret",
+  "secretvalue",
+  "token",
+  "value",
+]);
+const PLATFORM_EFFECT_METADATA_MAX_DEPTH = 6;
+const PLATFORM_EFFECT_METADATA_MAX_NODES = 256;
+const PLATFORM_EFFECT_METADATA_MAX_STRING = 2048;
+
+function normalizePlatformEffectMetadata(value: unknown): PlatformEffectMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("effect_metadata_invalid");
+  }
+  let nodes = 0;
+  const walk = (current: unknown, depth: number): PlatformEffectMetadataValue => {
+    if (depth > PLATFORM_EFFECT_METADATA_MAX_DEPTH) {
+      throw new PlatformFoundationError("effect_metadata_depth_exceeded");
+    }
+    nodes += 1;
+    if (nodes > PLATFORM_EFFECT_METADATA_MAX_NODES) {
+      throw new PlatformFoundationError("effect_metadata_node_limit_exceeded");
+    }
+    if (current === null || typeof current === "boolean") return current;
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) throw new PlatformFoundationError("effect_metadata_number_invalid");
+      return current;
+    }
+    if (typeof current === "string") {
+      if (current.length > PLATFORM_EFFECT_METADATA_MAX_STRING || CONTROL_RE.test(current)) {
+        throw new PlatformFoundationError("effect_metadata_string_invalid");
+      }
+      return current;
+    }
+    if (Array.isArray(current)) {
+      if (current.length > 64) throw new PlatformFoundationError("effect_metadata_array_invalid");
+      return current.map((item) => walk(item, depth + 1));
+    }
+    if (typeof current !== "object") {
+      throw new PlatformFoundationError("effect_metadata_value_invalid");
+    }
+    const record = current as Record<string, unknown>;
+    const out: Record<string, PlatformEffectMetadataValue> = {};
+    for (const key of Object.keys(record).sort()) {
+      if (
+        key.length === 0 ||
+        key.length > 64 ||
+        CONTROL_RE.test(key) ||
+        PLATFORM_EFFECT_FORBIDDEN_METADATA_KEYS.has(key.toLowerCase())
+      ) {
+        throw new PlatformFoundationError("effect_metadata_key_invalid");
+      }
+      out[key] = walk(record[key], depth + 1);
+    }
+    return out;
+  };
+  return Object.freeze(walk(value, 0) as Record<string, PlatformEffectMetadataValue>);
+}
+
+export function validatePlatformEffectIntent(value: unknown): PlatformEffectIntent {
+  rejectSecretMaterial(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("effect_intent_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  if (input.schemaVersion !== PLATFORM_SCHEMA_VERSION) {
+    throw new PlatformFoundationError("platform_schema_invalid");
+  }
+  const scope = enumValue(input.scope, ["tenant", "platform"], "effect_scope");
+  const kind = enumValue(input.kind, PLATFORM_EFFECT_KINDS, "effect_kind");
+  const tenantId = input.tenantId === undefined
+    ? undefined
+    : identifier(input.tenantId, "tenant_id");
+  if (scope === "tenant" && !tenantId) {
+    throw new PlatformFoundationError("effect_tenant_id_required");
+  }
+  if (scope === "platform" && tenantId !== undefined) {
+    throw new PlatformFoundationError("effect_platform_tenant_forbidden");
+  }
+  if (kind === "marketplace" && scope !== "platform") {
+    throw new PlatformFoundationError("marketplace_effect_scope_invalid");
+  }
+  if (kind !== "marketplace" && scope !== "tenant") {
+    throw new PlatformFoundationError("tenant_effect_scope_required");
+  }
+  return Object.freeze({
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    intentId: identifier(input.intentId, "intent_id"),
+    idempotencyKey: identifier(input.idempotencyKey, "idempotency_key"),
+    scope,
+    ...(tenantId ? { tenantId } : {}),
+    kind,
+    targetRef: identifier(input.targetRef, "target_ref"),
+    metadata: normalizePlatformEffectMetadata(input.metadata),
+    requestedAt: timestamp(input.requestedAt, "requested_at"),
+  });
+}
 
 export function validateMemoryGovernancePolicy(value: unknown): MemoryGovernancePolicy {
   rejectSecretMaterial(value);

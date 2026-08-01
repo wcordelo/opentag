@@ -178,6 +178,7 @@ cd edge
 | `LINEAR_API_KEY` | Secret | Agent | Linear MCP |
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
+| `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
@@ -227,6 +228,29 @@ Slack Request URLs must point to the deployed bot Worker:
 After a Slack scope change, reinstall the app and refresh the bot token secret.
 The Linear requester-assignee flow requires `users:read.email` on the installed
 token, not only in the manifest.
+
+## Platform effect handoff
+
+The platform ledger does not call Slack, Google, Linear, a custody system, a
+billing provider, or a memory backend. State transitions create secret-free
+effect intents in the `PLATFORM_STATE` Durable Object. A separately deployed
+effect worker should claim them through the internal DO/service-binding path,
+perform the provider operation, and report one of:
+
+- `POST /effect/complete` with the lease token and a bounded external receipt
+  reference;
+- `POST /effect/fail` with a safe error code and explicit retryability; or
+- `POST /effect/cancel` when revocation or operator action supersedes it.
+
+Claims are leased and reclaimable after expiry. Completion and failure require
+the active lease, so a late worker cannot commit after a newer worker has
+reclaimed the intent. The admin-only forwarding equivalents are
+`/admin/platform/effect/{enqueue,get,list,claim,complete,fail,cancel}` and are
+for diagnosis/bootstrap only, not a substitute for a dedicated effect worker.
+Never put provider tokens, OAuth codes, prompts, query text, or deletion
+payloads in effect metadata. Marketplace updates and credential/OAuth
+rotations create separate intents so external revocation cannot be silently
+skipped when local metadata advances.
 
 ## Deploy and connect the harness
 

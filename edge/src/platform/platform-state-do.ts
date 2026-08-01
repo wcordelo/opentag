@@ -6,6 +6,10 @@ import type {
   IdentityCustodyReference,
   MemoryDeletionRequest,
   MemoryGovernancePolicy,
+  PlatformEffectClaim,
+  PlatformEffectIntent,
+  PlatformEffectReceipt,
+  PlatformEffectStatus,
   ProvisioningRequest,
   ProvisioningStatus,
   ProvisioningStep,
@@ -20,6 +24,7 @@ import {
   validateIdentityCustodyReference,
   validateMemoryDeletionRequest,
   validateMemoryGovernancePolicy,
+  validatePlatformEffectIntent,
   validateProvisioningRequest,
   validateUsageMeterEvent,
 } from "./layer3-contract.js";
@@ -63,6 +68,29 @@ const PLATFORM_DDL = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_provisioning_external
    ON provisioning(external_platform, external_tenant_id)`,
+  `CREATE TABLE IF NOT EXISTS platform_effect_intents (
+     intent_id TEXT PRIMARY KEY,
+     idempotency_key TEXT NOT NULL UNIQUE,
+     scope TEXT NOT NULL CHECK (scope IN ('tenant', 'platform')),
+     tenant_id TEXT,
+     kind TEXT NOT NULL,
+     target_ref TEXT NOT NULL,
+     intent_json TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('pending', 'leased', 'completed', 'failed', 'cancelled')),
+     attempts INTEGER NOT NULL DEFAULT 0,
+     retryable INTEGER NOT NULL DEFAULT 1 CHECK (retryable IN (0, 1)),
+     available_at TEXT NOT NULL,
+     lease_token TEXT,
+     lease_owner TEXT,
+     lease_expires_at TEXT,
+     last_error_code TEXT,
+     external_receipt_ref TEXT,
+     requested_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     completed_at TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_platform_effect_claimable
+   ON platform_effect_intents(scope, tenant_id, status, available_at)`,
   `CREATE TABLE IF NOT EXISTS identity_custody_refs (
      identity_ref TEXT PRIMARY KEY,
      tenant_id TEXT NOT NULL,
@@ -311,6 +339,93 @@ function provisioningReceipt(row: ProvisioningRow): {
   };
 }
 
+type PlatformEffectRow = {
+  intent_id: string;
+  idempotency_key: string;
+  scope: PlatformEffectIntent["scope"];
+  tenant_id: string | null;
+  kind: PlatformEffectIntent["kind"];
+  target_ref: string;
+  intent_json: string;
+  status: PlatformEffectStatus;
+  attempts: number;
+  retryable: number;
+  available_at: string;
+  lease_token: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  last_error_code: string | null;
+  external_receipt_ref: string | null;
+  requested_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+function effectIntentFromRow(row: PlatformEffectRow): PlatformEffectIntent {
+  try {
+    return validatePlatformEffectIntent(parseJson<unknown>(row.intent_json));
+  } catch (error) {
+    if (error instanceof PlatformStateError) throw error;
+    throw new PlatformStateError("platform_state_corrupt", 503);
+  }
+}
+
+function effectReceipt(row: PlatformEffectRow): PlatformEffectReceipt {
+  const intent = effectIntentFromRow(row);
+  return {
+    schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+    intentId: intent.intentId,
+    idempotencyKey: intent.idempotencyKey,
+    scope: intent.scope,
+    ...(intent.tenantId ? { tenantId: intent.tenantId } : {}),
+    kind: intent.kind,
+    targetRef: intent.targetRef,
+    status: row.status,
+    attempts: row.attempts,
+    retryable: row.retryable === 1,
+    availableAt: row.available_at,
+    ...(row.last_error_code ? { lastErrorCode: row.last_error_code } : {}),
+    ...(row.external_receipt_ref
+      ? { externalReceiptRef: row.external_receipt_ref }
+      : {}),
+    requestedAt: intent.requestedAt,
+    updatedAt: row.updated_at,
+    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+  };
+}
+
+function safeEffectErrorCode(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[a-z][a-z0-9_.-]{0,127}$/.test(value)
+  ) {
+    throw new PlatformStateError("effect_error_code_invalid", 400);
+  }
+  return value;
+}
+
+function effectLeaseSeconds(value: unknown): number {
+  if (value === undefined) return 300;
+  if (!Number.isSafeInteger(value) || (value as number) < 30 || (value as number) > 3_600) {
+    throw new PlatformStateError("effect_lease_seconds_invalid", 400);
+  }
+  return value as number;
+}
+
+function effectRetryAfterSeconds(value: unknown): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 86_400) {
+    throw new PlatformStateError("effect_retry_after_invalid", 400);
+  }
+  return value as number;
+}
+
+function leaseIsActive(row: PlatformEffectRow, now: string): boolean {
+  return row.status === "leased" &&
+    typeof row.lease_expires_at === "string" &&
+    row.lease_expires_at > now;
+}
+
 export interface PlatformStateEngineDeps {
   sql: SqlExecutor;
   tx: TransactionRunner;
@@ -326,6 +441,263 @@ export class PlatformStateEngine {
     this.sql = deps.sql;
     this.tx = deps.tx;
     this.now = deps.now ?? (() => Date.now());
+  }
+
+  /** Enqueue a provider handoff without accepting a provider payload or secret. */
+  enqueueEffect(value: unknown): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
+    const intent = validatePlatformEffectIntent(value);
+    const updatedAt = nowIso(this.now);
+    return this.tx(() => this.insertEffectInTransaction(intent, updatedAt));
+  }
+
+  getEffect(value: unknown): PlatformEffectReceipt {
+    const intentId = id(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).intentId
+        : value,
+      "intent_id",
+    );
+    const row = this.effectById(intentId);
+    if (!row) throw new PlatformStateError("effect_not_found", 404);
+    return effectReceipt(row);
+  }
+
+  listEffects(value?: unknown): { effects: PlatformEffectReceipt[] } {
+    const input = value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+    const scope = input.scope === undefined
+      ? undefined
+      : input.scope === "tenant" || input.scope === "platform"
+        ? input.scope
+        : (() => { throw new PlatformStateError("effect_scope_invalid", 400); })();
+    const tenantId = input.tenantId === undefined ? undefined : id(input.tenantId, "tenant_id");
+    if (scope === "tenant" && !tenantId) {
+      throw new PlatformStateError("effect_tenant_id_required", 400);
+    }
+    if (scope === "platform" && tenantId) {
+      throw new PlatformStateError("effect_platform_tenant_forbidden", 400);
+    }
+    const rawStatus = input.status;
+    const status = rawStatus === undefined
+      ? undefined
+      : rawStatus === "pending" ||
+          rawStatus === "leased" ||
+          rawStatus === "completed" ||
+          rawStatus === "failed" ||
+          rawStatus === "cancelled"
+        ? rawStatus
+        : (() => { throw new PlatformStateError("effect_status_invalid", 400); })();
+    const limit = positiveLimit(input.limit);
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (scope) {
+      clauses.push("scope = ?");
+      params.push(scope);
+    }
+    if (tenantId) {
+      clauses.push("tenant_id = ?");
+      params.push(tenantId);
+    }
+    if (status) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.sql.exec<PlatformEffectRow>(
+      `SELECT * FROM platform_effect_intents ${where} ORDER BY updated_at ASC LIMIT ?`,
+      ...params,
+      limit,
+    ).toArray();
+    return { effects: rows.map(effectReceipt) };
+  }
+
+  /** Claim a pending or expired lease; the returned token is the only effect capability. */
+  claimEffect(value: unknown): PlatformEffectClaim {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_claim_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const workerId = id(input.workerId, "worker_id");
+    const leaseSeconds = effectLeaseSeconds(input.leaseSeconds);
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      const now = nowIso(this.now);
+      if (current.status === "completed" || current.status === "cancelled") {
+        throw new PlatformStateError("effect_not_claimable", 409);
+      }
+      if (leaseIsActive(current, now)) {
+        throw new PlatformStateError("effect_lease_active", 409);
+      }
+      if (current.status === "failed" && current.retryable !== 1) {
+        throw new PlatformStateError("effect_failure_not_retryable", 409);
+      }
+      if (current.available_at > now) {
+        throw new PlatformStateError("effect_not_available", 409);
+      }
+      const leaseToken = crypto.randomUUID();
+      const leaseExpiresAt = new Date(this.now() + leaseSeconds * 1_000).toISOString();
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET status = 'leased', attempts = attempts + 1, lease_token = ?,
+             lease_owner = ?, lease_expires_at = ?, last_error_code = NULL,
+             updated_at = ?
+         WHERE intent_id = ?`,
+        leaseToken,
+        workerId,
+        leaseExpiresAt,
+        now,
+        intentId,
+      );
+      const updated = this.effectById(intentId)!;
+      return {
+        intent: effectIntentFromRow(updated),
+        receipt: effectReceipt(updated),
+        leaseToken,
+        leaseOwner: workerId,
+        leaseExpiresAt,
+      };
+    });
+  }
+
+  completeEffect(value: unknown): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_complete_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const leaseToken = id(input.leaseToken, "lease_token", 256);
+    const externalReceiptRef = input.externalReceiptRef === undefined
+      ? undefined
+      : id(input.externalReceiptRef, "external_receipt_ref");
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      if (current.status === "completed") {
+        return { ok: true, duplicate: true, receipt: effectReceipt(current) };
+      }
+      this.assertEffectLease(current, leaseToken);
+      const completedAt = nowIso(this.now);
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET status = 'completed', retryable = 0, lease_token = NULL,
+             lease_owner = NULL, lease_expires_at = NULL, last_error_code = NULL,
+             external_receipt_ref = ?, completed_at = ?, updated_at = ?
+         WHERE intent_id = ?`,
+        externalReceiptRef ?? null,
+        completedAt,
+        completedAt,
+        intentId,
+      );
+      return { ok: true, duplicate: false, receipt: effectReceipt(this.effectById(intentId)!) };
+    });
+  }
+
+  failEffect(value: unknown): { ok: true; receipt: PlatformEffectReceipt } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_fail_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const leaseToken = id(input.leaseToken, "lease_token", 256);
+    const errorCode = safeEffectErrorCode(input.errorCode);
+    if (typeof input.retryable !== "boolean") {
+      throw new PlatformStateError("effect_retryable_invalid", 400);
+    }
+    const retryAfter = effectRetryAfterSeconds(input.retryAfterSeconds);
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      this.assertEffectLease(current, leaseToken);
+      const updatedAt = nowIso(this.now);
+      const availableAt = new Date(this.now() + retryAfter * 1_000).toISOString();
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET status = 'failed', retryable = ?, available_at = ?,
+             lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+             last_error_code = ?, external_receipt_ref = NULL, updated_at = ?
+         WHERE intent_id = ?`,
+        input.retryable ? 1 : 0,
+        availableAt,
+        errorCode,
+        updatedAt,
+        intentId,
+      );
+      return { ok: true, receipt: effectReceipt(this.effectById(intentId)!) };
+    });
+  }
+
+  cancelEffect(value: unknown): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_cancel_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const reasonCode = safeEffectErrorCode(input.reasonCode ?? "effect_cancelled");
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      if (current.status === "cancelled") {
+        return { ok: true, duplicate: true, receipt: effectReceipt(current) };
+      }
+      if (current.status === "completed") {
+        throw new PlatformStateError("effect_already_completed", 409);
+      }
+      const updatedAt = nowIso(this.now);
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET status = 'cancelled', retryable = 0, lease_token = NULL,
+             lease_owner = NULL, lease_expires_at = NULL, last_error_code = ?,
+             updated_at = ?
+         WHERE intent_id = ?`,
+        reasonCode,
+        updatedAt,
+        intentId,
+      );
+      return { ok: true, duplicate: false, receipt: effectReceipt(this.effectById(intentId)!) };
+    });
+  }
+
+  private insertEffectInTransaction(
+    intent: PlatformEffectIntent,
+    updatedAt: string,
+  ): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
+    const intentJson = json(intent);
+    const currentByKey = this.sql.exec<PlatformEffectRow>(
+      `SELECT * FROM platform_effect_intents WHERE idempotency_key = ?`,
+      intent.idempotencyKey,
+    ).toArray()[0];
+    if (currentByKey) {
+      if (currentByKey.intent_json !== intentJson) {
+        throw new PlatformStateError("effect_idempotency_conflict", 409);
+      }
+      return { ok: true, duplicate: true, receipt: effectReceipt(currentByKey) };
+    }
+    const currentById = this.effectById(intent.intentId);
+    if (currentById) {
+      throw new PlatformStateError("effect_intent_id_conflict", 409);
+    }
+    this.sql.exec(
+      `INSERT INTO platform_effect_intents (
+         intent_id, idempotency_key, scope, tenant_id, kind, target_ref,
+         intent_json, status, attempts, retryable, available_at, lease_token,
+         lease_owner, lease_expires_at, last_error_code, external_receipt_ref,
+         requested_at, updated_at, completed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 1, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)`,
+      intent.intentId,
+      intent.idempotencyKey,
+      intent.scope,
+      intent.tenantId ?? null,
+      intent.kind,
+      intent.targetRef,
+      intentJson,
+      updatedAt,
+      intent.requestedAt,
+      updatedAt,
+    );
+    return { ok: true, duplicate: false, receipt: effectReceipt(this.effectById(intent.intentId)!) };
   }
 
   async provision(value: unknown): Promise<ReturnType<typeof provisioningReceipt>> {
@@ -378,6 +750,26 @@ export class PlatformStateEngine {
         request.isolationMode,
         request.custodyBackend,
         request.requestedAt,
+        timestamp,
+      );
+      this.insertEffectInTransaction(
+        validatePlatformEffectIntent({
+          schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+          intentId: `effect:provisioning:${request.idempotencyKey}`,
+          idempotencyKey: `provisioning:${request.idempotencyKey}`,
+          scope: "tenant",
+          tenantId,
+          kind: "provisioning",
+          targetRef: `provision:${request.idempotencyKey}`,
+          metadata: {
+            externalPlatform: request.externalPlatform,
+            externalTenantId: request.externalTenantId,
+            isolationMode: request.isolationMode,
+            custodyBackend: request.custodyBackend,
+            requestId: request.requestId,
+          },
+          requestedAt: request.requestedAt,
+        }),
         timestamp,
       );
       return provisioningReceipt(this.provisioningByKey(request.idempotencyKey)!);
@@ -550,6 +942,20 @@ export class PlatformStateEngine {
         revokedAt,
         identityRef,
       );
+      this.insertEffectInTransaction(
+        validatePlatformEffectIntent({
+          schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+          intentId: `effect:identity-revoke:${identityRef}:${current.version}`,
+          idempotencyKey: `identity-revoke:${identityRef}:${current.version}`,
+          scope: "tenant",
+          tenantId: current.tenant_id,
+          kind: "identity_custody",
+          targetRef: identityRef,
+          metadata: { operation: "revoke", version: current.version },
+          requestedAt: revokedAt,
+        }),
+        revokedAt,
+      );
       return { ok: true, status: "revoked", revokedAt };
     });
   }
@@ -581,7 +987,26 @@ export class PlatformStateEngine {
       }
       const updatedAt = nowIso(this.now);
       if (current && reference.version > current.version) {
-        this.revokeOAuthGrantsForCredential(reference.credentialRef, updatedAt);
+        this.revokeOAuthGrantsForCredential(reference.credentialRef, updatedAt, "credential_rotation");
+        this.insertEffectInTransaction(
+          validatePlatformEffectIntent({
+            schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+            intentId: `effect:credential-rotate:${reference.credentialRef}:${reference.version}`,
+            idempotencyKey: `credential-rotate:${reference.credentialRef}:${reference.version}`,
+            scope: "tenant",
+            tenantId: reference.tenantId,
+            kind: "credential_custody",
+            targetRef: reference.credentialRef,
+            metadata: {
+              operation: "rotate",
+              previousVersion: current.version,
+              provider: reference.provider,
+              version: reference.version,
+            },
+            requestedAt: reference.issuedAt,
+          }),
+          updatedAt,
+        );
       }
       this.sql.exec(
         `INSERT INTO credential_custody_refs (
@@ -637,12 +1062,30 @@ export class PlatformStateEngine {
         return { ok: true, status: "revoked", revokedAt: current.revoked_at! };
       }
       const revokedAt = nowIso(this.now);
-      this.revokeOAuthGrantsForCredential(credentialRef, revokedAt);
+      this.revokeOAuthGrantsForCredential(credentialRef, revokedAt, "credential_revocation");
       this.sql.exec(
         `UPDATE credential_custody_refs SET status = 'revoked', revoked_at = ?, updated_at = ? WHERE credential_ref = ?`,
         revokedAt,
         revokedAt,
         credentialRef,
+      );
+      this.insertEffectInTransaction(
+        validatePlatformEffectIntent({
+          schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+          intentId: `effect:credential-revoke:${credentialRef}:${current.version}`,
+          idempotencyKey: `credential-revoke:${credentialRef}:${current.version}`,
+          scope: "tenant",
+          tenantId: current.tenant_id,
+          kind: "credential_custody",
+          targetRef: credentialRef,
+          metadata: {
+            operation: "revoke",
+            provider: current.provider,
+            version: current.version,
+          },
+          requestedAt: revokedAt,
+        }),
+        revokedAt,
       );
       return { ok: true, status: "revoked", revokedAt };
     });
@@ -674,6 +1117,7 @@ export class PlatformStateEngine {
         entry.status,
         updatedAt,
       );
+      this.insertMarketplaceEffect(entry, updatedAt, entry.status === "deprecated" ? "deprecate" : "curate");
       return { ok: true, duplicate: false, entry };
     });
   }
@@ -727,6 +1171,7 @@ export class PlatformStateEngine {
         connectorId,
         version,
       );
+      this.insertMarketplaceEffect(revoked, updatedAt, "revoke");
       return { ok: true, status: "revoked", updatedAt };
     });
   }
@@ -758,6 +1203,13 @@ export class PlatformStateEngine {
         return { ok: true, duplicate: true, grant };
       }
       const updatedAt = nowIso(this.now);
+      if (current && grant.version > current.version) {
+        this.insertOAuthRevokeEffect(
+          parseJson<ConnectorOAuthGrant>(current.grant_json),
+          updatedAt,
+          "grant_rotation",
+        );
+      }
       this.sql.exec(
         `INSERT INTO connector_oauth_grants (
            tenant_id, principal_id, connector_id, grant_json, credential_ref,
@@ -829,6 +1281,7 @@ export class PlatformStateEngine {
         key.principalId,
         key.connectorId,
       );
+      this.insertOAuthRevokeEffect(grant, revokedAt, "explicit_revoke");
       return { ok: true, status: "revoked", revokedAt };
     });
   }
@@ -874,6 +1327,27 @@ export class PlatformStateEngine {
         event.unit,
         event.planRevision,
         event.occurredAt,
+        recordedAt,
+      );
+      this.insertEffectInTransaction(
+        validatePlatformEffectIntent({
+          schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+          intentId: `effect:billing-meter:${event.idempotencyKey}`,
+          idempotencyKey: `billing-meter:${event.idempotencyKey}`,
+          scope: "tenant",
+          tenantId: event.tenantId,
+          kind: "billing_meter",
+          targetRef: event.eventId,
+          metadata: {
+            executionId: event.executionId,
+            metric: event.metric,
+            planRevision: event.planRevision,
+            quantity: event.quantity,
+            tier: event.tier,
+            unit: event.unit,
+          },
+          requestedAt: event.occurredAt,
+        }),
         recordedAt,
       );
       return { ok: true, duplicate: false, event };
@@ -987,6 +1461,23 @@ export class PlatformStateEngine {
         request.requestedAt,
         updatedAt,
       );
+      this.insertEffectInTransaction(
+        validatePlatformEffectIntent({
+          schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+          intentId: `effect:memory-deletion:${request.idempotencyKey}`,
+          idempotencyKey: `memory-deletion:${request.idempotencyKey}`,
+          scope: "tenant",
+          tenantId: request.tenantId,
+          kind: "memory_deletion",
+          targetRef: `memory-deletion:${request.idempotencyKey}`,
+          metadata: {
+            deletionEpoch: request.deletionEpoch,
+            requestId: request.requestId,
+          },
+          requestedAt: request.requestedAt,
+        }),
+        updatedAt,
+      );
       return { ok: true, duplicate: false, status: "requested", request };
     });
   }
@@ -999,6 +1490,23 @@ export class PlatformStateEngine {
     ).toArray()[0];
     if (!row) throw new PlatformStateError("memory_deletion_not_found", 404);
     return { ...parseJson<MemoryDeletionRequest>(row.request_json), status: row.status };
+  }
+
+  private effectById(intentId: string): PlatformEffectRow | undefined {
+    return this.sql.exec<PlatformEffectRow>(
+      `SELECT * FROM platform_effect_intents WHERE intent_id = ?`,
+      intentId,
+    ).toArray()[0];
+  }
+
+  private assertEffectLease(row: PlatformEffectRow, leaseToken: string): void {
+    if (row.status !== "leased" || row.lease_token !== leaseToken) {
+      throw new PlatformStateError("effect_lease_mismatch", 409);
+    }
+    const now = nowIso(this.now);
+    if (!row.lease_expires_at || row.lease_expires_at <= now) {
+      throw new PlatformStateError("effect_lease_expired", 409);
+    }
   }
 
   private provisioningByKey(key: string): ProvisioningRow | undefined {
@@ -1015,7 +1523,66 @@ export class PlatformStateEngine {
     ).toArray()[0];
   }
 
-  private revokeOAuthGrantsForCredential(credentialRef: string, revokedAt: string): void {
+  private insertMarketplaceEffect(
+    entry: ConnectorMarketplaceEntry,
+    requestedAt: string,
+    operation: "curate" | "deprecate" | "revoke",
+  ): void {
+    this.insertEffectInTransaction(
+      validatePlatformEffectIntent({
+        schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+        intentId: `effect:marketplace:${entry.connectorId}:${entry.version}:${operation}`,
+        idempotencyKey: `marketplace:${entry.connectorId}:${entry.version}:${operation}`,
+        scope: "platform",
+        kind: "marketplace",
+        targetRef: `${entry.connectorId}:${entry.version}`,
+        metadata: {
+          authMode: entry.authMode,
+          connectorId: entry.connectorId,
+          operation,
+          provider: entry.provider,
+          status: entry.status,
+          trustReviewRef: entry.trustReviewRef,
+          version: entry.version,
+        },
+        requestedAt,
+      }),
+      requestedAt,
+    );
+  }
+
+  private insertOAuthRevokeEffect(
+    grant: ConnectorOAuthGrant,
+    requestedAt: string,
+    operation: "credential_revocation" | "credential_rotation" | "explicit_revoke" | "grant_rotation",
+  ): void {
+    this.insertEffectInTransaction(
+      validatePlatformEffectIntent({
+        schemaVersion: PLATFORM_STATE_SCHEMA_VERSION,
+        intentId: `effect:oauth-revoke:${grant.tenantId}:${grant.principalId}:${grant.connectorId}:${grant.version}`,
+        idempotencyKey: `oauth-revoke:${grant.tenantId}:${grant.principalId}:${grant.connectorId}:${grant.version}`,
+        scope: "tenant",
+        tenantId: grant.tenantId,
+        kind: "connector_oauth",
+        targetRef: grant.connectorId,
+        metadata: {
+          connectorId: grant.connectorId,
+          credentialRef: grant.credentialRef,
+          operation,
+          principalId: grant.principalId,
+          version: grant.version,
+        },
+        requestedAt,
+      }),
+      requestedAt,
+    );
+  }
+
+  private revokeOAuthGrantsForCredential(
+    credentialRef: string,
+    revokedAt: string,
+    operation: "credential_revocation" | "credential_rotation",
+  ): void {
     const rows = this.sql.exec<OAuthRow>(
       `SELECT * FROM connector_oauth_grants WHERE credential_ref = ? AND status != 'revoked'`,
       credentialRef,
@@ -1033,6 +1600,7 @@ export class PlatformStateEngine {
         row.principal_id,
         row.connector_id,
       );
+      this.insertOAuthRevokeEffect(grant, revokedAt, operation);
     }
   }
 }
@@ -1208,6 +1776,27 @@ export class PlatformStateDO extends DurableObject {
     try {
       if (url.pathname === "/health" && request.method === "GET") {
         return Response.json(await this.healthCheck());
+      }
+      if (url.pathname === "/effect/enqueue" && request.method === "POST") {
+        return Response.json(this.engine.enqueueEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/get" && request.method === "POST") {
+        return Response.json(this.engine.getEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/list" && request.method === "POST") {
+        return Response.json(this.engine.listEffects(await readJson(request)));
+      }
+      if (url.pathname === "/effect/claim" && request.method === "POST") {
+        return Response.json(this.engine.claimEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/complete" && request.method === "POST") {
+        return Response.json(this.engine.completeEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/fail" && request.method === "POST") {
+        return Response.json(this.engine.failEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/cancel" && request.method === "POST") {
+        return Response.json(this.engine.cancelEffect(await readJson(request)));
       }
       if (url.pathname === "/provision" && request.method === "POST") {
         return Response.json(await this.engine.provision(await readJson(request)));

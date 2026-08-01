@@ -175,7 +175,7 @@ describe("PlatformStateDO", () => {
     }
   });
 
-  it("records marketplace, OAuth, metering, and memory governance without effects", async () => {
+  it("records marketplace, OAuth, metering, memory governance, and effect intents", async () => {
     const { state, close } = makeState();
     try {
       const provisioned = await call(state, "/provision", request);
@@ -288,6 +288,113 @@ describe("PlatformStateDO", () => {
       expect(requested.response.status).toBe(200);
       expect(requested.body.status).toBe("requested");
       expect((await call(state, "/memory/deletion", deletion)).body.duplicate).toBe(true);
+
+      const effects = await call(state, "/effect/list", { scope: "tenant", tenantId });
+      expect(effects.body.effects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "provisioning", status: "pending" }),
+        expect.objectContaining({ kind: "connector_oauth", targetRef: "google_drive" }),
+        expect.objectContaining({ kind: "credential_custody", targetRef: credential.credentialRef }),
+        expect.objectContaining({ kind: "billing_meter", targetRef: meter.eventId }),
+        expect.objectContaining({ kind: "memory_deletion", targetRef: `memory-deletion:${deletion.idempotencyKey}` }),
+      ]));
+      const platformEffects = await call(state, "/effect/list", { scope: "platform" });
+      expect(platformEffects.body.effects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "marketplace", status: "pending", scope: "platform" }),
+      ]));
+    } finally {
+      close();
+    }
+  });
+
+  it("hands hosted effects across a leased, idempotent, secret-free boundary", async () => {
+    const { state, close } = makeState();
+    try {
+      const provisioned = await call(state, "/provision", {
+        ...request,
+        requestId: "request-effects",
+        idempotencyKey: "install-effects",
+        externalTenantId: "T-platform-effects",
+      });
+      const tenantId = provisioned.body.tenantId as string;
+      const listed = await call(state, "/effect/list", { scope: "tenant", tenantId });
+      expect(listed.response.status).toBe(200);
+      expect(listed.body.effects).toEqual([
+        expect.objectContaining({
+          kind: "provisioning",
+          status: "pending",
+          attempts: 0,
+          tenantId,
+        }),
+      ]);
+      const intentId = (listed.body.effects as Array<{ intentId: string }>)[0]!.intentId;
+
+      const claimed = await call(state, "/effect/claim", {
+        intentId,
+        workerId: "provisioner-1",
+        leaseSeconds: 30,
+      });
+      expect(claimed.response.status).toBe(200);
+      expect(claimed.body.intent).toMatchObject({
+        kind: "provisioning",
+        metadata: { externalPlatform: "slack", custodyBackend: "external_kms" },
+      });
+      expect(claimed.body.receipt).toMatchObject({ status: "leased", attempts: 1 });
+      const leaseToken = claimed.body.leaseToken as string;
+      expect(leaseToken).toMatch(/^[0-9a-f-]{36}$/);
+
+      const activeClaim = await call(state, "/effect/claim", {
+        intentId,
+        workerId: "provisioner-2",
+      });
+      expect(activeClaim.response.status).toBe(409);
+      expect(activeClaim.body.error).toBe("effect_lease_active");
+
+      const wrongCompletion = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken: "wrong-token",
+      });
+      expect(wrongCompletion.response.status).toBe(409);
+      expect(wrongCompletion.body.error).toBe("effect_lease_mismatch");
+
+      const failed = await call(state, "/effect/fail", {
+        intentId,
+        leaseToken,
+        errorCode: "external_timeout",
+        retryable: true,
+        retryAfterSeconds: 0,
+      });
+      expect(failed.response.status).toBe(200);
+      expect(failed.body.receipt).toMatchObject({
+        status: "failed",
+        attempts: 1,
+        retryable: true,
+        lastErrorCode: "external_timeout",
+      });
+
+      const reclaimed = await call(state, "/effect/claim", {
+        intentId,
+        workerId: "provisioner-2",
+        leaseSeconds: 30,
+      });
+      expect(reclaimed.body.receipt).toMatchObject({ status: "leased", attempts: 2 });
+      const completed = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken: reclaimed.body.leaseToken,
+        externalReceiptRef: "cloud-resource:tenant-effects",
+      });
+      expect(completed.response.status).toBe(200);
+      expect(completed.body.receipt).toMatchObject({
+        status: "completed",
+        attempts: 2,
+        externalReceiptRef: "cloud-resource:tenant-effects",
+      });
+
+      const duplicate = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken: "stale-token",
+      });
+      expect(duplicate.response.status).toBe(200);
+      expect(duplicate.body.duplicate).toBe(true);
     } finally {
       close();
     }

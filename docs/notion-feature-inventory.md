@@ -59,7 +59,7 @@ Cloudflare architecture and is not an omitted implementation requirement.
 
 - **Migrate — Google Drive full-text search.** Centaur added bounded
   `fullText contains` search, escaping, and tests. OpenTag now has a bounded
-  Drive connector and citation output in the local branch, but live use still
+  Drive connector and citation output on merged main, but live use still
   requires a deployed credential broker, Google OAuth/custody, ACL policy, and
   a non-production validation workspace.
 - **Migrate — secret-shaped harness-output redaction.** This is implemented in
@@ -95,7 +95,7 @@ Cloudflare architecture and is not an omitted implementation requirement.
   bounded pagination/media/reference normalization, item-level errors, and
   citation/ACL tests.
 - **Evaluate — immutable connector-policy labels.** This foundation is now
-  implemented locally in `edge/src/connectors/authorization.ts`, with
+  implemented on merged main in `edge/src/connectors/authorization.ts`, with
   credential references, access-bundle revisions, revocation, and citation
   binding. A real broker and custody service remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
@@ -104,8 +104,8 @@ Cloudflare architecture and is not an omitted implementation requirement.
 
 ### Jul 24 — one Evaluate, three N/A
 
-- **Evaluate — generic client-credentials token broker.** The local branch now
-  has a secret-free broker client and a durable effect handoff, but no broker
+- **Evaluate — generic client-credentials token broker.** Merged main now has
+  a secret-free broker client and durable effect handoff, but no broker
   Worker, encrypted provider store, rotation scheduler, or approved custody
   backend. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
   or access bundles.
@@ -119,7 +119,7 @@ Cloudflare architecture and is not an omitted implementation requirement.
 ### Jul 25 — one Migrate, one Evaluate, three N/A
 
 - **Migrate — Claude Opus 5 shortcuts and effective-selection footnote.** The
-  local branch includes `opus-5` and `opus-5-fast` aliases and effective
+  merged line includes `opus-5` and `opus-5-fast` aliases and effective
   harness/model provenance in the harness progress path. A live Slack smoke
   remains useful after the next deployment.
 - **Evaluate — deterministic controlled rollout/provenance.** OpenTag has
@@ -132,7 +132,7 @@ Cloudflare architecture and is not an omitted implementation requirement.
 ### Jul 28 — two Migrate, two Covered, three N/A
 
 - **Migrate — preserve Linear project/milestone through confirmed writes.** The
-  local branch implements project and milestone fields in the durable approval,
+  merged line implements project and milestone fields in the durable approval,
   exact digest, Linear mutation, and tests. It remains disabled for production
   until a broker/OAuth grant and test workspace are available.
 - **Migrate — terminal skips for inaccessible Slack knowledge sources.** The
@@ -171,8 +171,8 @@ change, not evidence that all earlier gaps are complete.
 
 ### Jul 31 — one Evaluate, three Covered, one N/A
 
-- **Evaluate — authorized bounded raw knowledge/context queries.** The local
-  branch implements named, server-owned `query_template` operations with fixed
+- **Evaluate — authorized bounded raw knowledge/context queries.** The merged
+  line implements named, server-owned `query_template` operations with fixed
   statements, bounded results, verified team scope, and redacted lease tokens.
   Arbitrary SQL, table names, filters, ordering, and caller-chosen addressing
   remain prohibited.

@@ -231,7 +231,7 @@ export async function runPlatformEffect(input: {
   if (!claimMatchesRequest) {
     const receipt = await reportFailure(input.state, claim, {
       errorCode: "effect_scope_mismatch",
-      retryable: false,
+      retryable: true,
       retryAfterSeconds: 0,
     });
     return { status: "failed", adapterConfigured: false, receipt, errorCode: "effect_scope_mismatch" };

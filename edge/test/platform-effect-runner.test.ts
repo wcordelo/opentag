@@ -167,7 +167,7 @@ describe("platform effect runner", () => {
       adapters: {},
     });
     expect(mismatched).toMatchObject({ status: "failed", errorCode: "effect_scope_mismatch" });
-    expect(calls.fail.at(-1)).toMatchObject({ errorCode: "effect_scope_mismatch", retryable: false });
+    expect(calls.fail.at(-1)).toMatchObject({ errorCode: "effect_scope_mismatch", retryable: true });
   });
 
   it("bounds runner requests and does not retry unknown adapter exceptions", async () => {

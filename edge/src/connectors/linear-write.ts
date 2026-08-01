@@ -415,6 +415,7 @@ export async function createLinearIssue(input: {
   draft: unknown;
   fetchImpl?: typeof fetch;
   revalidate?: () => Promise<void>;
+  onIssueCreated?: () => Promise<void>;
   now?: number;
 }): Promise<LinearIssueCreateResult> {
   const draft = normalizeLinearIssueDraft(input.draft);
@@ -471,6 +472,9 @@ export async function createLinearIssue(input: {
     title: stringValue(issue.title, "issue_title", LINEAR_WRITE_LIMITS.maxTitleLength),
     ...(typeof issue.url === "string" && issue.url.length <= 2_048 ? { url: issue.url } : {}),
   });
+  if (input.onIssueCreated) {
+    await input.onIssueCreated();
+  }
   if (input.revalidate) {
     await input.revalidate();
   } else {

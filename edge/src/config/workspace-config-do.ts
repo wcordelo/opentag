@@ -1722,19 +1722,20 @@ export class WorkspaceConfigDO extends DurableObject {
             revoked_at: string | null;
           }>("SELECT * FROM access_bundles WHERE id = ?", bundleId)
           .toArray()[0];
-        const bundle = row
-          ? parseAccessBundleInput({
-              id: row.id,
-              tools: JSON.parse(row.tools_json),
-              mcpEndpoints: JSON.parse(row.mcp_json),
-              secretRefs: JSON.parse(row.secret_refs_json),
-              connectorGrants: JSON.parse(row.connector_grants_json || "[]"),
-              schemaVersion: row.schema_version,
-              revision: row.revision,
-              status: row.status,
-              ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
-            })
-          : DEFAULT_BUNDLE;
+        if (!row) {
+          throw new ConnectorAuthorizationError("access_bundle_not_found");
+        }
+        const bundle = parseAccessBundleInput({
+          id: row.id,
+          tools: JSON.parse(row.tools_json),
+          mcpEndpoints: JSON.parse(row.mcp_json),
+          secretRefs: JSON.parse(row.secret_refs_json),
+          connectorGrants: JSON.parse(row.connector_grants_json || "[]"),
+          schemaVersion: row.schema_version,
+          revision: row.revision,
+          status: row.status,
+          ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+        });
         const grant = connectorGrantsOf(bundle).find((candidate) =>
           candidate.connectorId === input.connectorId &&
           candidate.actions.includes(input.action as string),

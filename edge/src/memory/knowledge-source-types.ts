@@ -8,13 +8,14 @@
 
 const MAX_IDENTIFIER_LENGTH = 128;
 
-export type KnowledgeSourceType = "slack" | "wiki" | "code" | "custom_db";
+export type KnowledgeSourceType = "slack" | "wiki" | "code" | "custom_db" | "drive";
 
 const SOURCE_TYPES: readonly KnowledgeSourceType[] = [
   "slack",
   "wiki",
   "code",
   "custom_db",
+  "drive",
 ];
 
 function identifier(value: string, field: string): string {
@@ -65,9 +66,14 @@ export function customDbSourceKey(
   return `custom_db:${identifier(teamId, "teamId")}:${identifier(connectorId, "connectorId")}:${sourcePart(rowId, "rowId")}`;
 }
 
+/** `drive:{teamId}:{projectId}:{fileId}` */
+export function driveSourceKey(teamId: string, projectId: string, fileId: string): string {
+  return `drive:${identifier(teamId, "teamId")}:${identifier(projectId, "projectId")}:${sourcePart(fileId, "fileId")}`;
+}
+
 /**
  * Derive sourceType from a stable sourceKey prefix.
- * Recognizes `slack:…`, `wiki:…`, `code:…`, and `custom_db:…`.
+ * Recognizes `slack:…`, `wiki:…`, `code:…`, `custom_db:…`, and `drive:…`.
  */
 export function parseSourceTypeFromKey(sourceKey: string): KnowledgeSourceType {
   if (typeof sourceKey !== "string" || sourceKey.length === 0) {

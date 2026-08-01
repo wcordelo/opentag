@@ -39,6 +39,14 @@ class_name = "DeferredIngressDO"
 name = "SLACK_RATE_LIMIT"
 class_name = "SlackRateLimitDO"
 
+[[durable_objects.bindings]]
+name = "PLATFORM_STATE"
+class_name = "PlatformStateDO"
+
+[[durable_objects.bindings]]
+name = "ROUTER_MEASUREMENTS"
+class_name = "RouterMeasurementDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -54,6 +62,14 @@ new_sqlite_classes = ["SessionEventDO"]
 [[migrations]]
 tag = "v4-durable-ingress-rate-limit"
 new_sqlite_classes = ["DeferredIngressDO", "SlackRateLimitDO"]
+
+[[migrations]]
+tag = "v5-platform-state"
+new_sqlite_classes = ["PlatformStateDO"]
+
+[[migrations]]
+tag = "v6-router-measurements"
+new_sqlite_classes = ["RouterMeasurementDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"

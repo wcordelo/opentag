@@ -67,8 +67,10 @@ keys — distinct from sandbox egress-proxy containers; see [`DECISIONS.md`](../
 
 - `LINEAR_TEAM_KEY` = team **display name** or ID (`Berendo`), not a bare issue
   prefix key like `CPK`.
-- After `confirm_write` returns APPROVED, the agent should call `save_issue`
-  immediately in the same turn, then `issue_card` with the URL.
+- After `confirm_write` returns APPROVED for a Linear issue, the agent must call
+  `save_linear_issue` immediately in the same turn with the returned approvalId
+  and exact title/description/team/assignee/project/milestone fields, then
+  `issue_card` with the returned URL. The Linear MCP surface remains read-only.
 
 ## Local iteration
 

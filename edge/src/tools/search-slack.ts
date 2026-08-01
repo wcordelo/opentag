@@ -12,6 +12,7 @@ import {
   readerPolicyRefForBundle,
 } from "../config/knowledge-config.js";
 import type { Env } from "../env.js";
+import { parseConnectorAccessGrant } from "../connectors/authorization.js";
 import { KNOWLEDGE_LIMITS, type KnowledgeCitation } from "../memory/knowledge-contract.js";
 import { SupermemoryAdapter, SupermemoryAdapterError } from "../memory/supermemory-adapter.js";
 import { createSupermemoryClient } from "../memory/supermemory-client.js";
@@ -114,6 +115,14 @@ async function currentTurnAccess(
   const tools = stringArray(rawBundle.tools);
   const mcpEndpoints = stringArray(rawBundle.mcpEndpoints);
   const secretRefs = stringArray(rawBundle.secretRefs);
+  let connectorGrants: AccessBundle["connectorGrants"] = [];
+  try {
+    connectorGrants = Array.isArray(rawBundle.connectorGrants)
+      ? rawBundle.connectorGrants.map(parseConnectorAccessGrant)
+      : [];
+  } catch {
+    return undefined;
+  }
   if (
     rawBundle.id !== rawConfig.accessBundleId ||
     !tools ||
@@ -134,7 +143,13 @@ async function currentTurnAccess(
     tools,
     mcpEndpoints,
     secretRefs,
+    connectorGrants,
+    schemaVersion: rawBundle.schemaVersion === 1 ? 1 : undefined,
+    revision: typeof rawBundle.revision === "number" ? rawBundle.revision : 1,
+    status: rawBundle.status === "revoked" ? "revoked" : "active",
+    ...(typeof rawBundle.revokedAt === "string" ? { revokedAt: rawBundle.revokedAt } : {}),
   };
+  if (bundle.status === "revoked") return undefined;
   return {
     config: rawConfig as WorkspaceChannelConfig,
     bundle,
@@ -171,6 +186,9 @@ function accessMatches(
   const bundleShape = (access: CurrentTurnAccess) => JSON.stringify({
     id: access.bundle.id,
     tools: [...new Set(access.bundle.tools)].sort(),
+    revision: access.bundle.revision ?? 1,
+    status: access.bundle.status ?? "active",
+    connectorGrants: access.bundle.connectorGrants ?? [],
   });
   return current.config.updatedAt === expected.config.updatedAt &&
     current.config.accessBundleId === expected.config.accessBundleId &&

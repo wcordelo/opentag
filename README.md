@@ -261,7 +261,7 @@ deliver back to the originating Slack thread. Cancellation requires
 | `/research` | Implemented | Effect-fenced task start |
 | DMs & assistant threads | Implemented | Stable `DM_SCOPE`, status, title, Stop |
 | Durable HITL | Implemented | `choiceId` persistence + poll |
-| Linear create | Implemented | Structured card; Slack-email assignee |
+| Linear create | Guarded edge path | Durable human approval, immutable connector labels, and project/milestone carriage; broker/OAuth and live validation still required |
 | Thread overrides | Implemented | Sticky model/harness |
 | Quick actions | Implemented | Synthetic turns authored by the clicker |
 | Never-silent recovery | Implemented | Obligations + SessionEventDO + DO alarms |
@@ -287,6 +287,8 @@ deliver back to the originating Slack thread. Cancellation requires
 
 - TanStack AI + OpenAI adapter (`runtime.ts` / `lib/triage-agent.ts`)
 - Linear and Notion MCP when credentials are present
+- Linear issue creation only through the guarded `save_linear_issue` edge tool;
+  MCP mutations remain unavailable
 - Thread transcript, requester timezone, and Slack profile email injected every turn
 - Local `pnpm runtime` on `:8200` is **dev-only** (iterate without rebuilding the Container)
 
@@ -297,6 +299,7 @@ deliver back to the originating Slack thread. Cancellation requires
 | `lookup_slack_user` | Resolve people |
 | `read_thread` | Fetch thread history |
 | `confirm_write` | HITL approve-before-write |
+| `save_linear_issue` | Fenced Linear issue creation after matching approval |
 | `issue_card` / `issue_list` | Linear-style issue UI |
 | `page_list` | Notion-style lists |
 | `show_status` / `show_links` / `show_incident` | Ops cards |
@@ -477,6 +480,7 @@ Operations, deploy order, metrics, and troubleshooting:
 | `AGENT_RUNTIME` | bot binding | Service binding to `opentag-agent` |
 | `OPENAI_API_KEY` | agent | Triage model |
 | `LINEAR_API_KEY` / `LINEAR_TEAM_KEY` | agent | Linear MCP (team = **display name**) |
+| `CONNECTOR_CREDENTIALS` | bot binding | Short-lived Linear/Drive credential resolution; never a token in the bot |
 | `NOTION_*` | agent | Optional Notion MCP |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | bot (+ research) | Admin routes / research forward |
 | `HARNESS` / `HARNESS_AUTH_TOKEN` | bot ↔ harness | Coding plane auth |

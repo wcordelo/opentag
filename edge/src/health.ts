@@ -7,6 +7,7 @@ export interface DurabilityHealth {
     sessionEvents: "ok" | "timeout" | "error";
     deferredIngress: "ok" | "timeout" | "error";
     slackRateLimit: "ok" | "timeout" | "error";
+    platformState?: "ok" | "timeout" | "error";
   };
 }
 
@@ -28,7 +29,7 @@ async function boundedCheck(call: () => Promise<unknown>, timeoutMs: number) {
 export async function probeDurabilityHealth(
   env: Pick<
     Env,
-    "BOT_STATE" | "SESSION_EVENTS" | "DEFERRED_INGRESS" | "SLACK_RATE_LIMIT"
+    "BOT_STATE" | "SESSION_EVENTS" | "DEFERRED_INGRESS" | "SLACK_RATE_LIMIT" | "PLATFORM_STATE"
   >,
   timeoutMs = 1_500,
 ): Promise<DurabilityHealth> {
@@ -48,7 +49,12 @@ export async function probeDurabilityHealth(
         env.SLACK_RATE_LIMIT.idFromName("__health"),
       ) as unknown as { healthCheck(): Promise<unknown> }
     : undefined;
-  const [bot, session, deferred, rateLimit] = await Promise.all([
+  const platformState = env.PLATFORM_STATE
+    ? env.PLATFORM_STATE.get(
+        env.PLATFORM_STATE.idFromName("__health"),
+      ) as unknown as { healthCheck(): Promise<unknown> }
+    : undefined;
+  const [bot, session, deferred, rateLimit, platform] = await Promise.all([
     boundedCheck(() => botState.healthCheck(), timeoutMs),
     boundedCheck(() => sessionEvents.healthCheck(), timeoutMs),
     deferredIngress
@@ -57,18 +63,23 @@ export async function probeDurabilityHealth(
     slackRateLimit
       ? boundedCheck(() => slackRateLimit.healthCheck(), timeoutMs)
       : Promise.resolve("error" as const),
+    platformState
+      ? boundedCheck(() => platformState.healthCheck(), timeoutMs)
+      : Promise.resolve(undefined),
   ]);
   return {
     ok:
       bot === "ok" &&
       session === "ok" &&
       deferred === "ok" &&
-      rateLimit === "ok",
+      rateLimit === "ok" &&
+      (platform === undefined || platform === "ok"),
     checks: {
       botState: bot,
       sessionEvents: session,
       deferredIngress: deferred,
       slackRateLimit: rateLimit,
+      ...(platform !== undefined ? { platformState: platform } : {}),
     },
   };
 }

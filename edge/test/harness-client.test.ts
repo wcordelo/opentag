@@ -339,6 +339,12 @@ describe("runHarnessTurn", () => {
     expect(new Headers(fetchCalls[0]!.init!.headers).get("Authorization")).toBe(
       "Bearer test-token",
     );
+    expect(new Headers(fetchCalls[0]!.init!.headers).get("x-opentag-trace-id")).toBe(
+      "slack:C1:1.4",
+    );
+    expect(new Headers(fetchCalls[0]!.init!.headers).get("x-opentag-thread-key")).toBe(
+      "slack:C1:1.0",
+    );
     const body = JSON.parse(String(fetchCalls[0]!.init!.body)) as Record<string, unknown>;
     expect(body.threadKey).toBe("slack:C1:1.0");
     expect(body.executionId).toBe("slack:C1:1.4");

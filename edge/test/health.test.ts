@@ -43,6 +43,19 @@ describe("durability health", () => {
       },
     });
   });
+
+  it("probes the platform-state binding when it is configured", async () => {
+    await expect(probeDurabilityHealth({
+      BOT_STATE: namespace(async () => ({ ok: true })) as never,
+      SESSION_EVENTS: namespace(async () => ({ ok: true })) as never,
+      DEFERRED_INGRESS: namespace(async () => ({ ok: true })) as never,
+      SLACK_RATE_LIMIT: namespace(async () => ({ ok: true })) as never,
+      PLATFORM_STATE: namespace(async () => ({ ok: true })) as never,
+    }, 10)).resolves.toMatchObject({
+      ok: true,
+      checks: { platformState: "ok" },
+    });
+  });
 });
 
 describe("runtime capability evidence", () => {

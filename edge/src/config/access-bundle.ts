@@ -3,11 +3,22 @@
  */
 import { harnessModelMismatchError } from "../slack/overrides.js";
 import { expandClaudeModelAlias } from "../slack/model-aliases.js";
+import type { ConnectorAccessGrant } from "../connectors/authorization.js";
+
+export type AccessBundleStatus = "active" | "revoked";
 export type AccessBundle = {
   id: string;
   tools: string[];
   mcpEndpoints: string[];
+  /** Legacy process-level secret names; never treated as connector credentials. */
   secretRefs: string[];
+  /** Versioned, connector-scoped grants. Empty means no credentialed connector access. */
+  connectorGrants?: ConnectorAccessGrant[];
+  /** Additive metadata; omitted on legacy rows and normalized to revision 1/active. */
+  schemaVersion?: 1;
+  revision?: number;
+  status?: AccessBundleStatus;
+  revokedAt?: string;
 };
 
 export type ChannelRuntimeDefaults = {
@@ -50,6 +61,7 @@ export const DEFAULT_BUNDLE: AccessBundle = {
     "lookup_slack_user",
     "read_thread",
     "confirm_write",
+    "save_linear_issue",
     "issue_card",
     "issue_list",
     "page_list",
@@ -70,6 +82,10 @@ export const DEFAULT_BUNDLE: AccessBundle = {
     "LINEAR_API_KEY",
     "NOTION_MCP_AUTH_TOKEN",
   ],
+  connectorGrants: [],
+  schemaVersion: 1,
+  revision: 1,
+  status: "active",
 };
 
 export const DEFAULT_SYSTEM_PROMPT =

@@ -45,6 +45,10 @@ import {
   trustedTriggerReadiness,
 } from "./slack/trusted-trigger.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
+import {
+  createTraceCorrelation,
+  withTraceHeaders,
+} from "./observability/trace-correlation.js";
 import type { RouterHeuristicDecision } from "./router/heuristics.js";
 
 export type BotEngineKind = "createBot";
@@ -56,11 +60,11 @@ type BotHandle = {
   adapter: CloudflareSlackAdapter;
 };
 
-function findExecutionId(value: unknown): string | undefined {
+function findExecutionContext(value: unknown): { executionId: string; threadKey?: string } | undefined {
   if (!value || typeof value !== "object") return undefined;
   if (Array.isArray(value)) {
     for (const child of value) {
-      const hit = findExecutionId(child);
+      const hit = findExecutionContext(child);
       if (hit) return hit;
     }
     return undefined;
@@ -71,12 +75,17 @@ function findExecutionId(value: unknown): string | undefined {
     typeof record.value === "string"
   ) {
     try {
-      const parsed = JSON.parse(record.value) as { executionId?: unknown };
-      if (typeof parsed.executionId === "string") return parsed.executionId;
+      const parsed = JSON.parse(record.value) as { executionId?: unknown; threadKey?: unknown };
+      if (typeof parsed.executionId === "string") {
+        return {
+          executionId: parsed.executionId,
+          ...(typeof parsed.threadKey === "string" ? { threadKey: parsed.threadKey } : {}),
+        };
+      }
     } catch { /* malformed context is ignored */ }
   }
   for (const child of Object.values(record)) {
-    const hit = findExecutionId(child);
+    const hit = findExecutionContext(child);
     if (hit) return hit;
   }
   return undefined;
@@ -85,7 +94,23 @@ function findExecutionId(value: unknown): string | undefined {
 export function agentExecutionIdFromRequest(init: RequestInit): string | undefined {
   if (typeof init.body !== "string") return undefined;
   try {
-    return findExecutionId(JSON.parse(init.body));
+    return findExecutionContext(JSON.parse(init.body))?.executionId;
+  } catch {
+    return undefined;
+  }
+}
+
+export function agentTraceCorrelationFromRequest(
+  init: RequestInit,
+): ReturnType<typeof createTraceCorrelation> | undefined {
+  if (typeof init.body !== "string") return undefined;
+  try {
+    const context = findExecutionContext(JSON.parse(init.body));
+    if (!context?.threadKey) return undefined;
+    return createTraceCorrelation({
+      executionId: context.executionId,
+      threadKey: context.threadKey,
+    });
   } catch {
     return undefined;
   }
@@ -189,10 +214,11 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   // workers.dev fetch is blocked). AGENT_URL still supplies the request URL/path.
   const agentFetch = env.AGENT_RUNTIME
     ? (url: string, init: RequestInit) => {
-        const executionId = agentExecutionIdFromRequest(init);
-        const headers = new Headers(init.headers);
-        if (executionId) headers.set("x-opentag-execution-id", executionId);
-        return env.AGENT_RUNTIME!.fetch(url, { ...init, headers });
+        const trace = agentTraceCorrelationFromRequest(init);
+        const forwardedHeaders = trace
+          ? withTraceHeaders(init.headers, trace)
+          : new Headers(init.headers);
+        return env.AGENT_RUNTIME!.fetch(url, { ...init, headers: forwardedHeaders });
       }
     : undefined;
 
@@ -224,7 +250,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           "and (2) Claude Code harness (claudecode / claudex) for repository coding when selected or implied.",
           "Do not invent a third product named an 'OpenTag Slack bot harness'.",
           "Each turn also includes an 'OpenTag runtime identity' context block — trust that over guesses.",
-          "Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write,",
+          "Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, save_linear_issue,",
           "issue_card, issue_list, page_list, show_status, show_links, show_incident, show_permissions,",
           "memory_search, memory_write, start_task, research_progress, react_message, search_slack (when allowed).",
           "Use show_permissions to explain effective access; its output is informational, not authorization.",

@@ -161,7 +161,7 @@ export interface SessionEventsRpc {
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
     executionId: string;
-    kind: "output" | "error" | "done";
+    kind: "output" | "error" | "done" | "router";
     payload: unknown;
   }): Promise<{ id: number }>;
   compact(args: { safeThroughEventId: number }): Promise<{

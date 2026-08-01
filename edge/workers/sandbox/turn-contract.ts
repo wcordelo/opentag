@@ -145,6 +145,26 @@ function boundedUniqueSortedStrings(value: unknown): value is string[] {
     value.every((item, index) => index === 0 || value[index - 1]! < item);
 }
 
+function boundedConnectorGrants(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 200) return false;
+  return value.every((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const grant = item as Record<string, unknown>;
+    if (!hasOnlyKeys(grant, ["connectorId", "actions", "scope", "projectId", "channelId", "credentialRef"])) return false;
+    if (
+      typeof grant.connectorId !== "string" || grant.connectorId.length === 0 || grant.connectorId.length > 256 ||
+      !boundedUniqueSortedStrings(grant.actions) ||
+      !["workspace", "project", "channel"].includes(String(grant.scope))
+    ) return false;
+    for (const field of ["projectId", "channelId", "credentialRef"]) {
+      if (grant[field] !== undefined && (typeof grant[field] !== "string" || (grant[field] as string).length > 512)) return false;
+    }
+    if (grant.scope === "project" && typeof grant.projectId !== "string") return false;
+    if (grant.scope === "channel" && typeof grant.channelId !== "string") return false;
+    return true;
+  });
+}
+
 export function validatePermissionSnapshot(
   value: unknown,
 ): { ok: true; snapshot: PermissionSnapshotV1 } | { ok: false; error: string } {
@@ -191,12 +211,15 @@ export function validatePermissionSnapshot(
     ]) ||
     !hasOnlyKeys(access, [
       "bundleId",
+      "bundleRevision",
+      "bundleStatus",
       "metadataVisibility",
       "allowedTools",
       "deniedTools",
       "policies",
       "mcpEndpoints",
       "secretRefs",
+      "connectorGrants",
     ]) ||
     !hasOnlyKeys(runtime, [
       "harnessType",
@@ -211,6 +234,10 @@ export function validatePermissionSnapshot(
     !boundedUniqueSortedStrings(access.allowedTools) ||
     !boundedUniqueSortedStrings(access.deniedTools) ||
     !boundedUniqueSortedStrings(access.secretRefs) ||
+    (access.bundleRevision !== undefined &&
+      (typeof access.bundleRevision !== "number" || !Number.isSafeInteger(access.bundleRevision) || access.bundleRevision < 1)) ||
+    (access.bundleStatus !== undefined && !["active", "revoked"].includes(String(access.bundleStatus))) ||
+    (access.connectorGrants !== undefined && !boundedConnectorGrants(access.connectorGrants)) ||
     !PERMISSION_SOURCES.has(String(runtime.harnessSource)) ||
     !PERMISSION_SOURCES.has(String(runtime.modelSource)) ||
     typeof runtime.harnessConnected !== "boolean" ||

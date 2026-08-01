@@ -60,4 +60,5 @@ export const CONNECTOR_REGISTRY: Partial<
   wiki: { implemented: true },
   code: { implemented: true },
   custom_db: { implemented: true },
+  drive: { implemented: true },
 };

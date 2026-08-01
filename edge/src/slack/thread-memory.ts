@@ -50,6 +50,8 @@ export type TicketDraft = {
   title?: string;
   description?: string;
   email?: string;
+  project?: string;
+  milestone?: string;
 };
 
 export type LastCreatedIssue = {
@@ -70,6 +72,8 @@ const CANONICAL_LABELS = [
   "assignee",
   "priority",
   "team",
+  "project",
+  "milestone",
 ] as const;
 
 type CanonicalLabel = (typeof CANONICAL_LABELS)[number];
@@ -141,6 +145,8 @@ export function parseLabeledFields(text: string): TicketDraft {
       canon === "title" ||
       canon === "description" ||
       canon === "email" ||
+      canon === "project" ||
+      canon === "milestone" ||
       hasSep;
     if (!highConfidence) continue;
     hits.push({
@@ -171,7 +177,8 @@ export function parseLabeledFields(text: string): TicketDraft {
     else if (hit.label === "email" || hit.label === "assignee") {
       const email = value.match(EMAIL_RE)?.[0];
       if (email) draft.email = email.toLowerCase();
-    }
+    } else if (hit.label === "project") draft.project = value;
+    else if (hit.label === "milestone") draft.milestone = value;
   }
 
   if (!draft.email) {
@@ -231,6 +238,8 @@ export function parseTicketDraft(
     if (parsed.title) draft.title = parsed.title;
     if (parsed.description) draft.description = parsed.description;
     if (parsed.email) draft.email = parsed.email;
+    if (parsed.project) draft.project = parsed.project;
+    if (parsed.milestone) draft.milestone = parsed.milestone;
 
     if (!parsed.email) {
       const emailMatch = text.match(EMAIL_RE);
@@ -253,7 +262,7 @@ export function candidateFieldLines(
     if (!text) continue;
     if (
       EMAIL_RE.test(text) ||
-      /\b(title|desc|description|email|assign|priority|team)\b/i.test(text) ||
+      /\b(title|desc|description|email|assign|priority|team|project|milestone)\b/i.test(text) ||
       /:/.test(text)
     ) {
       out.push(text);
@@ -303,7 +312,7 @@ export function formatDraftContext(
     "Only ask a clarifying question when a field is genuinely missing after",
     "reading the whole thread — never because of a typo.",
     "When ready, call confirm_write with structured title, description,",
-    "assigneeEmail, and team — never mash description into title.",
+    "assigneeEmail, team, project, and milestone — never mash description into title.",
     "If Linear assignee email is in context, pass it as assigneeEmail and do not ask for email.",
   ];
   if (candidates.length > 0) {
@@ -312,12 +321,14 @@ export function formatDraftContext(
       lines.push(`  • ${c}`);
     }
   }
-  if (draft.title || draft.description || draft.email) {
+  if (draft.title || draft.description || draft.email || draft.project || draft.milestone) {
     lines.push(
       "Parsed fields (prefer these when they look right):",
       `  title = ${JSON.stringify(draft.title ?? "")}`,
       `  description = ${JSON.stringify(draft.description ?? "")}`,
       `  assignee email = ${JSON.stringify(draft.email ?? "")}`,
+      `  project = ${JSON.stringify(draft.project ?? "")}`,
+      `  milestone = ${JSON.stringify(draft.milestone ?? "")}`,
     );
   }
   return lines.join("\n");
@@ -332,7 +343,7 @@ export function formatLastIssueContext(issue: LastCreatedIssue): string {
     issue.title ? `title: ${issue.title}` : undefined,
     `url: ${url}`,
     "If the user asks for the link / URL / ticket, reply with this URL only.",
-    "Do NOT call confirm_write or save_issue again unless they ask to create another.",
+    "Do NOT call confirm_write or save_linear_issue again unless they ask to create another.",
   ]
     .filter(Boolean)
     .join("\n");

@@ -20,13 +20,19 @@ import { CodeSearchAdapter } from "../memory/connectors/code-connector.js";
 import { CustomDbSearchAdapter } from "../memory/connectors/custom-db-connector.js";
 import { SupermemoryAdapter } from "../memory/supermemory-adapter.js";
 import { unifiedKnowledgeSearch } from "../memory/retrieval/unified-search.js";
+import {
+  parseRawKnowledgeQuery,
+  type RawKnowledgeQuery,
+  type RawKnowledgeQueryResponse,
+} from "../memory/raw-query-templates.js";
 
 export type KnowledgeMcpToolName =
   | "search"
   | "search_slack"
   | "search_wiki"
   | "search_code"
-  | "search_custom";
+  | "search_custom"
+  | "query_template";
 
 export const KNOWLEDGE_MCP_TOOLS: readonly KnowledgeMcpToolName[] = [
   "search",
@@ -34,23 +40,26 @@ export const KNOWLEDGE_MCP_TOOLS: readonly KnowledgeMcpToolName[] = [
   "search_wiki",
   "search_code",
   "search_custom",
+  "query_template",
 ] as const;
 
 export type KnowledgeMcpRequest = {
   tool: KnowledgeMcpToolName;
   teamId: string;
-  projectId: string;
-  query: string;
+  projectId?: string;
+  query?: string;
   limit?: number;
   channelId?: string;
   spaceId?: string;
   repoId?: string;
   connectorId?: string;
   aclPolicyRef: string;
+  rawQuery?: RawKnowledgeQuery;
 };
 
 export type KnowledgeMcpResponse =
   | { status: "ok"; citations: KnowledgeCitationBase[] }
+  | ({ status: "ok" } & RawKnowledgeQueryResponse)
   | { status: "error"; code: string; message: string };
 
 type McpAuthorization =
@@ -197,7 +206,6 @@ export async function handleKnowledgeMcp(
   if (!hasAdminAuthorization(request, env) && !request.headers.get(KNOWLEDGE_ACTOR_TOKEN_HEADER)) {
     return Response.json({ status: "error", code: "unauthorized", message: "bearer required" }, { status: 401 });
   }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -223,13 +231,16 @@ export async function handleKnowledgeMcp(
   if (!authorization) {
     return Response.json({ status: "error", code: "unauthorized", message: "knowledge actor authorization failed" }, { status: 401 });
   }
+  if (input.tool === "query_template" && authorization.kind !== "operator") {
+    return Response.json({ status: "error", code: "unauthorized", message: "query_template requires operator authorization" }, { status: 401 });
+  }
   const resource = resourceForRequest(input);
   const auditBase = {
     jti: authorization.jti,
     authKind: authorization.kind,
     actorId: authorization.actorId,
     teamId: input.teamId,
-    projectId: input.projectId,
+    projectId: input.projectId ?? "query_template",
     tool: input.tool,
     ...(resource ? { resourceType: resource.type, resourceId: resource.id } : {}),
   } satisfies Omit<KnowledgeMcpAuditEvent, "id" | "outcome" | "createdAt">;
@@ -274,6 +285,43 @@ export async function handleKnowledgeMcp(
     return response;
   };
 
+  if (input.tool === "query_template") {
+    if (!env.KNOWLEDGE || !input.rawQuery) {
+      return finish(Response.json({
+        status: "error",
+        code: "knowledge_unavailable",
+        message: "KnowledgeDO is not configured",
+      }, { status: 503 }), "error", "knowledge_unavailable");
+    }
+    try {
+      const stub = tenantStub(env.KNOWLEDGE, input.rawQuery.teamId);
+      const rawResponse = await stub.fetch("https://do/raw-query", {
+        method: "POST",
+        body: JSON.stringify(input.rawQuery),
+      });
+      if (!rawResponse.ok) {
+        return finish(Response.json({
+          status: "error",
+          code: "invalid_request",
+          message: "raw query template was rejected",
+        }, { status: rawResponse.status === 400 ? 400 : 503 }), "error", "invalid_request");
+      }
+      const payload = await rawResponse.json() as RawKnowledgeQueryResponse;
+      return finish(Response.json({ status: "ok", ...payload } satisfies KnowledgeMcpResponse), "ok");
+    } catch (error) {
+      return finish(Response.json({
+        status: "error",
+        code: "knowledge_unavailable",
+        message: error instanceof Error ? error.message : "raw query failed",
+      }, { status: 503 }), "error", "knowledge_unavailable");
+    }
+  }
+
+  if (!input.query || !input.projectId) {
+    return finish(Response.json({ status: "error", code: "invalid_request", message: "projectId and query are required" }, { status: 400 }), "error", "invalid_request");
+  }
+  const projectId = input.projectId;
+  const queryText = input.query;
   if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
     return finish(Response.json({
       status: "error",
@@ -300,10 +348,10 @@ export async function handleKnowledgeMcp(
         }
         citations = await new SupermemoryAdapter(client).searchSlack({
           teamId: input.teamId,
-          projectId: input.projectId,
+          projectId,
           channelId: input.channelId,
           aclPolicyRef: input.aclPolicyRef,
-          query: input.query,
+          query: queryText,
           limit,
         });
         break;
@@ -314,10 +362,10 @@ export async function handleKnowledgeMcp(
         }
         citations = await new WikiSearchAdapter(client).search({
           teamId: input.teamId,
-          projectId: input.projectId,
+          projectId,
           spaceId: input.spaceId,
           aclPolicyRef: input.aclPolicyRef,
-          query: input.query,
+          query: queryText,
           limit,
         });
         break;
@@ -328,10 +376,10 @@ export async function handleKnowledgeMcp(
         }
         citations = await new CodeSearchAdapter(client).search({
           teamId: input.teamId,
-          projectId: input.projectId,
+          projectId,
           repoId: input.repoId,
           aclPolicyRef: input.aclPolicyRef,
-          query: input.query,
+          query: queryText,
           limit,
         });
         break;
@@ -342,10 +390,10 @@ export async function handleKnowledgeMcp(
         }
         citations = await new CustomDbSearchAdapter(client).search({
           teamId: input.teamId,
-          projectId: input.projectId,
+          projectId,
           connectorId: input.connectorId,
           aclPolicyRef: input.aclPolicyRef,
-          query: input.query,
+          query: queryText,
           limit,
         });
         break;
@@ -357,7 +405,7 @@ export async function handleKnowledgeMcp(
           lists.push(async (q: string, lim: number) => {
             const rows = await slack.searchSlack({
               teamId: input.teamId,
-              projectId: input.projectId,
+              projectId,
               channelId: input.channelId!,
               aclPolicyRef: input.aclPolicyRef,
               query: q,
@@ -371,7 +419,7 @@ export async function handleKnowledgeMcp(
           lists.push(async (q: string, lim: number) => {
             const rows = await wiki.search({
               teamId: input.teamId,
-              projectId: input.projectId,
+              projectId,
               spaceId: input.spaceId!,
               aclPolicyRef: input.aclPolicyRef,
               query: q,
@@ -385,7 +433,7 @@ export async function handleKnowledgeMcp(
           lists.push(async (q: string, lim: number) => {
             const rows = await code.search({
               teamId: input.teamId,
-              projectId: input.projectId,
+              projectId,
               repoId: input.repoId!,
               aclPolicyRef: input.aclPolicyRef,
               query: q,
@@ -399,7 +447,7 @@ export async function handleKnowledgeMcp(
           lists.push(async (q: string, lim: number) => {
             const rows = await custom.search({
               teamId: input.teamId,
-              projectId: input.projectId,
+              projectId,
               connectorId: input.connectorId!,
               aclPolicyRef: input.aclPolicyRef,
               query: q,
@@ -416,7 +464,7 @@ export async function handleKnowledgeMcp(
           }, { status: 400 }), "error", "invalid_request");
         }
         citations = await unifiedKnowledgeSearch({
-          query: input.query,
+          query: queryText,
           lists,
           rrfK: 60,
           finalLimit: limit,
@@ -444,7 +492,52 @@ function parseMcpRequest(body: unknown): { ok: true; value: KnowledgeMcpRequest 
   if (typeof raw.tool !== "string" || !(KNOWLEDGE_MCP_TOOLS as readonly string[]).includes(raw.tool)) {
     return { ok: false, message: "tool must be a known knowledge MCP tool" };
   }
-  for (const field of ["teamId", "projectId", "query", "aclPolicyRef"] as const) {
+  for (const field of ["teamId", "aclPolicyRef"] as const) {
+    if (
+      typeof raw[field] !== "string" ||
+      !(raw[field] as string).trim() ||
+      (raw[field] as string).length > 256 ||
+      /[\u0000-\u001f\u007f]/.test(raw[field] as string)
+    ) {
+      return { ok: false, message: `${field} is required` };
+    }
+  }
+  if (raw.tool === "query_template") {
+    const allowedTemplateFields = new Set([
+      "tool", "teamId", "aclPolicyRef", "schemaVersion", "template",
+      "channelId", "recordId", "sourceKey", "limit",
+    ]);
+    const unknownTemplateField = Object.keys(raw).find((key) => !allowedTemplateFields.has(key));
+    if (unknownTemplateField) {
+      return { ok: false, message: `field ${unknownTemplateField} is not accepted by query_template` };
+    }
+    for (const forbidden of ["sql", "table", "where", "filters", "orderBy"]) {
+      if (forbidden in raw) return { ok: false, message: `${forbidden} is not accepted; choose a named template` };
+    }
+    try {
+      const rawQuery = parseRawKnowledgeQuery({
+        ...(typeof raw.schemaVersion === "number" ? { schemaVersion: raw.schemaVersion } : {}),
+        template: raw.template,
+        teamId: raw.teamId,
+        ...(typeof raw.channelId === "string" ? { channelId: raw.channelId } : {}),
+        ...(typeof raw.recordId === "string" ? { recordId: raw.recordId } : {}),
+        ...(typeof raw.sourceKey === "string" ? { sourceKey: raw.sourceKey } : {}),
+        ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
+      });
+      return {
+        ok: true,
+        value: {
+          tool: "query_template",
+          teamId: raw.teamId as string,
+          aclPolicyRef: raw.aclPolicyRef as string,
+          rawQuery,
+        },
+      };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "raw query is invalid" };
+    }
+  }
+  for (const field of ["projectId", "query"] as const) {
     if (
       typeof raw[field] !== "string" ||
       !(raw[field] as string).trim() ||

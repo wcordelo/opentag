@@ -103,6 +103,12 @@ import {
   handleBuzzWakeHttp,
   readBuzzWakeJsonBody,
 } from "./buzz/wake-http.js";
+import {
+  deriveInternalTenantId,
+  PLATFORM_MARKETPLACE_OBJECT_NAME,
+  platformTenantObjectName,
+} from "./platform/platform-state-do.js";
+import { validateProvisioningRequest } from "./platform/layer3-contract.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -110,8 +116,17 @@ export { KnowledgeDO } from "./memory/knowledge-do.js";
 export { SessionEventDO } from "./store/session-event-do.js";
 export { DeferredIngressDO } from "./deferred-ingress-do.js";
 export { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
+export { PlatformStateDO } from "./platform/platform-state-do.js";
+export { RouterMeasurementDO } from "./router/measurement-do.js";
 
 const app = new Hono<AppEnv>();
+
+function adminForwardStatus(status: number): 400 | 404 | 409 | 503 {
+  if (status >= 500) return 503;
+  if (status === 409) return 409;
+  if (status === 404) return 404;
+  return 400;
+}
 
 function deferredIngressStub(env: AppEnv["Bindings"], jobId: string) {
   if (!env.DEFERRED_INGRESS) {
@@ -331,7 +346,7 @@ app.get("/health", async (c) => {
     ok,
     product: "claude-tag-cf",
     store: "durable-object-sqlite",
-    spine: ["BOT_STATE", "SESSION_EVENTS", "WORKSPACE_CONFIG", "KNOWLEDGE", "RESEARCH_TASKS"],
+    spine: ["BOT_STATE", "SESSION_EVENTS", "WORKSPACE_CONFIG", "KNOWLEDGE", "PLATFORM_STATE", "RESEARCH_TASKS"],
     checks: durability.checks,
     runtime: buildRuntimeCapabilityEvidence(c.env),
     trustedRichMention,
@@ -516,16 +531,330 @@ app.post("/admin/config", requireAdminAuth(), async (c) => {
 app.post("/admin/bundle", requireAdminAuth(), async (c) => {
   const body = (await c.req.json()) as AccessBundle & { teamId: string };
   const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
-  await stub.fetch("https://do/putBundle", {
+  const response = await stub.fetch("https://do/putBundle", {
     method: "POST",
     body: JSON.stringify({
       id: body.id,
       tools: body.tools ?? [],
       mcpEndpoints: body.mcpEndpoints ?? [],
       secretRefs: body.secretRefs ?? [],
+      ...(body.connectorGrants !== undefined ? { connectorGrants: body.connectorGrants } : {}),
     } satisfies AccessBundle),
   });
-  return c.json({ ok: true });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/bundle/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown; id?: unknown };
+  if (typeof body.teamId !== "string" || typeof body.id !== "string") {
+    return c.json({ error: "teamId_and_bundle_id_required" }, 400);
+  }
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
+  const response = await stub.fetch("https://do/revokeBundle", {
+    method: "POST",
+    body: JSON.stringify({ id: body.id }),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/connector-credential", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown } & Record<string, unknown>;
+  if (typeof body.teamId !== "string") return c.json({ error: "teamId_required" }, 400);
+  const { teamId, ...reference } = body;
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, teamId);
+  const response = await stub.fetch("https://do/putConnectorCredentialReference", {
+    method: "POST",
+    body: JSON.stringify(reference),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/connector-credential/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown; ref?: unknown };
+  if (typeof body.teamId !== "string" || typeof body.ref !== "string") {
+    return c.json({ error: "teamId_and_credential_ref_required" }, 400);
+  }
+  const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
+  const response = await stub.fetch("https://do/revokeConnectorCredentialReference", {
+    method: "POST",
+    body: JSON.stringify({ ref: body.ref }),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+function platformStateStub(
+  env: AppEnv["Bindings"],
+  objectName: string,
+): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } | undefined {
+  if (!env.PLATFORM_STATE) return undefined;
+  return env.PLATFORM_STATE.get(
+    env.PLATFORM_STATE.idFromName(objectName),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+}
+
+async function forwardPlatformState(
+  c: Context<AppEnv>,
+  objectName: string,
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const stub = platformStateStub(c.env, objectName);
+  if (!stub) return c.json({ error: "platform_state_unavailable" }, 503);
+  const response = await stub.fetch(`https://platform-state${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return new Response(text, {
+    status: response.ok ? 200 : adminForwardStatus(response.status),
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+function platformEffectObjectName(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const input = body as Record<string, unknown>;
+  if (input.scope === "platform") return PLATFORM_MARKETPLACE_OBJECT_NAME;
+  if (input.scope === "tenant" && typeof input.tenantId === "string") {
+    return platformTenantObjectName(input.tenantId);
+  }
+  return undefined;
+}
+
+async function forwardPlatformEffect(
+  c: Context<AppEnv>,
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const objectName = platformEffectObjectName(body);
+  if (!objectName) return c.json({ error: "effect_scope_and_tenant_required" }, 400);
+  return forwardPlatformState(c, objectName, path, body);
+}
+
+function routerMeasurementStub(
+  env: AppEnv["Bindings"],
+  workspaceId: string,
+): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } | undefined {
+  if (!env.ROUTER_MEASUREMENTS) return undefined;
+  return env.ROUTER_MEASUREMENTS.get(
+    env.ROUTER_MEASUREMENTS.idFromName(workspaceId),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+}
+
+async function forwardRouterMeasurement(
+  c: Context<AppEnv>,
+  path: string,
+): Promise<Response> {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.workspaceId !== "string" || body.workspaceId.trim() === "") {
+    return c.json({ error: "workspace_id_required" }, 400);
+  }
+  const stub = routerMeasurementStub(c.env, body.workspaceId);
+  if (!stub) return c.json({ error: "router_measurements_unavailable" }, 503);
+  const response = await stub.fetch(`https://router-measurement${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return new Response(text, {
+    status: response.ok ? 200 : adminForwardStatus(response.status),
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+app.post("/admin/router/summary", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/summary"));
+
+app.post("/admin/router/dispatch/list", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/dispatch/list"));
+
+app.post("/admin/router/feedback/list", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/feedback/list"));
+
+app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
+  const body = await c.req.json();
+  let request: ReturnType<typeof validateProvisioningRequest>;
+  try {
+    request = validateProvisioningRequest(body);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "provisioning_request_invalid" }, 400);
+  }
+  const tenantId = await deriveInternalTenantId(request);
+  return forwardPlatformState(c, platformTenantObjectName(tenantId), "/provision", body);
+});
+
+app.post("/admin/platform/provision/step", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/provision/step", body);
+});
+
+app.post("/admin/platform/provision/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/provision/get", body);
+});
+
+app.post("/admin/platform/effect/enqueue", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/enqueue", await c.req.json());
+});
+
+app.post("/admin/platform/effect/get", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/get", await c.req.json());
+});
+
+app.post("/admin/platform/effect/list", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/list", await c.req.json());
+});
+
+app.post("/admin/platform/effect/claim", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/claim", await c.req.json());
+});
+
+app.post("/admin/platform/effect/complete", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/complete", await c.req.json());
+});
+
+app.post("/admin/platform/effect/fail", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/fail", await c.req.json());
+});
+
+app.post("/admin/platform/effect/cancel", requireAdminAuth(), async (c) => {
+  return forwardPlatformEffect(c, "/effect/cancel", await c.req.json());
+});
+
+app.post("/admin/platform/identity", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity", body);
+});
+
+app.post("/admin/platform/identity/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity/get", body);
+});
+
+app.post("/admin/platform/identity/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity/revoke", body);
+});
+
+app.post("/admin/platform/credential", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/credential", body);
+});
+
+app.post("/admin/platform/credential/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/credential/get", body);
+});
+
+app.post("/admin/platform/credential/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/credential/revoke", body);
+});
+
+app.post("/admin/platform/marketplace", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace", await c.req.json());
+});
+
+app.post("/admin/platform/marketplace/list", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace/list", await c.req.json());
+});
+
+app.post("/admin/platform/marketplace/revoke", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace/revoke", await c.req.json());
+});
+
+app.post("/admin/platform/oauth", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth", body);
+});
+
+app.post("/admin/platform/oauth/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth/get", body);
+});
+
+app.post("/admin/platform/oauth/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth/revoke", body);
+});
+
+app.post("/admin/platform/meter", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/meter", body);
+});
+
+app.post("/admin/platform/meter/list", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/meter/list", body);
+});
+
+app.post("/admin/platform/memory/policy", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/policy", body);
+});
+
+app.post("/admin/platform/memory/policy/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/policy/get", body);
+});
+
+app.post("/admin/platform/memory/deletion", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/deletion", body);
+});
+
+app.post("/admin/platform/memory/deletion/get", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/deletion/get", body);
 });
 
 app.get("/admin/permissions", requireAdminAuth(), async (c) => {

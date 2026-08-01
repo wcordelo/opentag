@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   effectSequence: 0,
   confirmEffectBarrier: undefined as Promise<void> | undefined,
   effectConfirmationEntered: undefined as (() => void) | undefined,
+  approvals: new Map<string, unknown>(),
   exact: { threadKey: "slack:C1:1.0", executionId: "exec-tools" },
 }));
 
@@ -101,8 +102,8 @@ const store = {
     },
   },
   kv: {
-    async get() { return undefined; },
-    async set() {},
+    async get(key: string) { return state.approvals.get(key); },
+    async set(key: string, value: unknown) { state.approvals.set(key, value); },
     async delete() {},
   },
 };
@@ -212,6 +213,7 @@ describe("exact execution tool guards", () => {
     state.effectSequence = 0;
     state.confirmEffectBarrier = undefined;
     state.effectConfirmationEntered = undefined;
+    state.approvals.clear();
     resetTurnExecutionContext();
     resetRequestContext();
     resetPermissionSnapshots();
@@ -241,6 +243,35 @@ describe("exact execution tool guards", () => {
       { action: "Create Linear issue", title: "T" },
       { thread, platform: "slack" } as never,
     )).rejects.toThrow("active_turn_tool_suppressed");
+  });
+
+  it("persists the exact approved Linear fields for the guarded write tool", async () => {
+    const { thread } = choiceThread();
+    const result = await tool("confirm_write").handler(
+      {
+        action: "Create Linear issue",
+        connectorId: "linear",
+        operation: "create_issue",
+        title: "T",
+        description: "D",
+        team: "Berendo",
+        project: "Launch",
+        milestone: "Beta",
+      },
+      { thread, platform: "slack" } as never,
+    );
+    expect(String(result)).toContain("save_linear_issue");
+    expect(String(result)).toContain("approvalId=");
+    const stored = [...state.approvals.entries()].find(([key]) =>
+      key.startsWith("linear-write-approval:"),
+    )?.[1] as { draft?: Record<string, unknown> } | undefined;
+    expect(stored?.draft).toEqual({
+      title: "T",
+      description: "D",
+      team: "Berendo",
+      project: "Launch",
+      milestone: "Beta",
+    });
   });
 
   it("Stop during confirm_write denies the stale affirmative and suppresses the next tool", async () => {

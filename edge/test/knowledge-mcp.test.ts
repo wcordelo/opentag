@@ -55,6 +55,34 @@ describe("knowledge MCP", () => {
     expect(body.code).toBe("forbidden_addressing");
   });
 
+  it("routes a named raw query template without requiring Supermemory", async () => {
+    const fetch = async () => Response.json({
+      schemaVersion: 1,
+      template: "source_state",
+      rows: [],
+    });
+    const knowledge = {
+      idFromName: () => "T1",
+      get: () => ({ fetch }),
+    } as unknown as Env["KNOWLEDGE"];
+    const response = await handleKnowledgeMcp(
+      new Request("https://bot.example/mcp/knowledge", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+        body: JSON.stringify({
+          tool: "query_template",
+          teamId: "T1",
+          aclPolicyRef: "admin-template",
+          template: "source_state",
+          sourceKey: "slack:T1:C1:123",
+        }),
+      }),
+      env({ KNOWLEDGE: knowledge }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ status: "ok", template: "source_state" });
+  });
+
   it("accepts a scoped actor token through the internal header and consumes it", async () => {
     const calls: string[] = [];
     const stub = {

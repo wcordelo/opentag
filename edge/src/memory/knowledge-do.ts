@@ -22,6 +22,12 @@ import type {
   VerifiedKnowledgeBackfillApproval,
 } from "./knowledge-backfill-authorization.js";
 import {
+  parseRawKnowledgeQuery,
+  RAW_QUERY_LIMITS,
+  RAW_QUERY_SCHEMA_VERSION,
+  type RawKnowledgeQueryResponse,
+} from "./raw-query-templates.js";
+import {
   bindTenantIdentity,
   bodyMatchesTenant,
   tenantStub,
@@ -1087,6 +1093,93 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
         ledger: this.ledger.get(body.sourceKey) ?? null,
         outbox: this.ledger.getOutbox(body.sourceKey) ?? null,
       });
+    }
+
+    if (url.pathname === "/raw-query" && request.method === "POST") {
+      try {
+        const query = parseRawKnowledgeQuery(await request.json());
+        if (query.template === "source_state") {
+          const ledger = this.ledger.get(query.sourceKey!);
+          // A source key is not a tenant selector. The resolved ledger row
+          // must prove the requested team before any state is returned.
+          if (!ledger || ledger.teamId !== query.teamId) {
+            return Response.json({
+              schemaVersion: RAW_QUERY_SCHEMA_VERSION,
+              template: query.template,
+              rows: [],
+            } satisfies RawKnowledgeQueryResponse);
+          }
+          const sourceKey = query.sourceKey!;
+          const safeLedger = { ...ledger };
+          delete safeLedger.leaseToken;
+          return Response.json({
+            schemaVersion: RAW_QUERY_SCHEMA_VERSION,
+            template: query.template,
+            rows: [{
+              kind: "source_state",
+              sourceKey,
+              ledger: safeLedger,
+              outbox: this.ledger.getOutbox(sourceKey),
+            }],
+          } satisfies RawKnowledgeQueryResponse);
+        }
+
+        const rows = query.template === "recent_channel_memory"
+          ? sql.exec<{
+              id: string;
+              team_id: string;
+              channel_id: string;
+              title: string;
+              body: string;
+              blob_key: string | null;
+              updated_at: string;
+            }>(
+              `SELECT id, team_id, channel_id, title, body, blob_key, updated_at
+               FROM knowledge
+               WHERE team_id = ? AND channel_id = ?
+               ORDER BY updated_at DESC
+               LIMIT ?`,
+              query.teamId,
+              query.channelId!,
+              Math.min(query.limit, RAW_QUERY_LIMITS.maxLimit),
+            ).toArray()
+          : sql.exec<{
+              id: string;
+              team_id: string;
+              channel_id: string;
+              title: string;
+              body: string;
+              blob_key: string | null;
+              updated_at: string;
+            }>(
+              `SELECT id, team_id, channel_id, title, body, blob_key, updated_at
+               FROM knowledge
+               WHERE team_id = ? AND id = ?
+                 AND (? = '' OR channel_id = ?)
+               LIMIT 1`,
+              query.teamId,
+              query.recordId!,
+              query.channelId ?? "",
+              query.channelId ?? "",
+            ).toArray();
+        return Response.json({
+          schemaVersion: RAW_QUERY_SCHEMA_VERSION,
+          template: query.template,
+          rows: rows.map((row) => ({
+            kind: "memory" as const,
+            id: row.id,
+            teamId: row.team_id,
+            channelId: row.channel_id || null,
+            title: row.title.slice(0, RAW_QUERY_LIMITS.maxBodyLength),
+            body: row.body.slice(0, RAW_QUERY_LIMITS.maxBodyLength),
+            updatedAt: row.updated_at,
+          })),
+        } satisfies RawKnowledgeQueryResponse);
+      } catch (error) {
+        return Response.json({
+          error: error instanceof Error ? error.message : "invalid raw knowledge query",
+        }, { status: 400 });
+      }
     }
 
     if (url.pathname === "/write" && request.method === "POST") {

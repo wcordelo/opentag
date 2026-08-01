@@ -18,6 +18,18 @@ import {
   type WorkspaceChannelConfig,
 } from "./access-bundle.js";
 import {
+  accessBundleRevisionOf,
+  issueConnectorAuthorization,
+  matchingGrant,
+  parseConnectorAccessGrant,
+  parseCredentialReference,
+  verifyConnectorAuthorizationCurrent,
+  ConnectorAuthorizationError,
+  type ImmutableConnectorLabels,
+  type ConnectorRequestIdentity,
+  type CredentialReference,
+} from "../connectors/authorization.js";
+import {
   disabledTrackedKnowledgeSource,
   parseKnowledgeSourceScope,
   parsePutTrackedKnowledgeSource,
@@ -61,7 +73,26 @@ const DDL = [
   id TEXT PRIMARY KEY,
   tools_json TEXT NOT NULL,
   mcp_json TEXT NOT NULL,
-  secret_refs_json TEXT NOT NULL
+  secret_refs_json TEXT NOT NULL,
+  connector_grants_json TEXT NOT NULL DEFAULT '[]',
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active',
+  revoked_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE TABLE IF NOT EXISTS connector_credential_refs (
+  ref TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+  scopes_json TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT,
+  revoked_at TEXT,
+  updated_at TEXT NOT NULL
   )`,
   // This is deliberately not channel_config: that table has an empty-channel
   // fallback and permissive synthesized defaults for turn configuration.
@@ -153,6 +184,76 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(hash)]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function stringList(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`${field}_invalid`);
+  }
+  return [...new Set(value as string[])];
+}
+
+function parseAccessBundleInput(value: unknown): AccessBundle {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("access_bundle_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  if (typeof input.id !== "string" || input.id.length === 0) {
+    throw new Error("access_bundle_id_invalid");
+  }
+  const connectorGrants = input.connectorGrants === undefined
+    ? []
+    : Array.isArray(input.connectorGrants)
+      ? input.connectorGrants.map(parseConnectorAccessGrant)
+      : (() => { throw new Error("connector_grants_invalid"); })();
+  if (input.schemaVersion !== undefined && input.schemaVersion !== 1) {
+    throw new Error("access_bundle_schema_invalid");
+  }
+  if (input.status !== undefined && input.status !== "active" && input.status !== "revoked") {
+    throw new Error("access_bundle_status_invalid");
+  }
+  const bundle: AccessBundle = {
+    id: input.id,
+    tools: stringList(input.tools ?? [], "access_bundle_tools"),
+    mcpEndpoints: stringList(input.mcpEndpoints ?? [], "access_bundle_mcp_endpoints"),
+    secretRefs: stringList(input.secretRefs ?? [], "access_bundle_secret_refs"),
+    connectorGrants,
+    schemaVersion: 1,
+    revision: input.revision === undefined ? 1 : input.revision as number,
+    status: input.status === "revoked" ? "revoked" : "active",
+    ...(typeof input.revokedAt === "string" ? { revokedAt: input.revokedAt } : {}),
+  };
+  accessBundleRevisionOf(bundle);
+  return bundle;
+}
+
+type CredentialReferenceRow = {
+  ref: string;
+  provider: string;
+  name: string;
+  version: number;
+  status: string;
+  scopes_json: string;
+  subject: string;
+  issued_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+
+function credentialReferenceFromRow(row: CredentialReferenceRow): CredentialReference {
+  return parseCredentialReference({
+    schemaVersion: 1,
+    ref: row.ref,
+    provider: row.provider,
+    name: row.name,
+    version: row.version,
+    status: row.status,
+    scopes: JSON.parse(row.scopes_json),
+    subject: row.subject,
+    issuedAt: row.issued_at,
+    ...(row.expires_at ? { expiresAt: row.expires_at } : {}),
+    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  });
 }
 
 function rowChannelContext(row: ChannelConfigRow): string {
@@ -352,6 +453,52 @@ export class WorkspaceConfigDO extends DurableObject {
          AND system_prompt IS NOT NULL
          AND system_prompt != ''`,
     );
+    const accessBundleColumns = new Set(
+      sql
+        .exec<{ name: string }>("PRAGMA table_info(access_bundles)")
+        .toArray()
+        .map((row) => row.name),
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "connector_grants_json",
+      "ALTER TABLE access_bundles ADD COLUMN connector_grants_json TEXT NOT NULL DEFAULT '[]'",
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "schema_version",
+      "ALTER TABLE access_bundles ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1",
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "revision",
+      "ALTER TABLE access_bundles ADD COLUMN revision INTEGER NOT NULL DEFAULT 1",
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "status",
+      "ALTER TABLE access_bundles ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "revoked_at",
+      "ALTER TABLE access_bundles ADD COLUMN revoked_at TEXT",
+    );
+    addColumnIfMissing(
+      sql,
+      accessBundleColumns,
+      "updated_at",
+      "ALTER TABLE access_bundles ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    );
+    sql.exec(
+      `UPDATE access_bundles SET updated_at = ? WHERE updated_at = ''`,
+      new Date().toISOString(),
+    );
     const trackedColumns = new Set(
       sql
         .exec<{ name: string }>("PRAGMA table_info(tracked_knowledge_sources)")
@@ -383,12 +530,50 @@ export class WorkspaceConfigDO extends DurableObject {
       .toArray();
     if (existing.length === 0) {
       sql.exec(
-        `INSERT INTO access_bundles (id, tools_json, mcp_json, secret_refs_json) VALUES (?, ?, ?, ?)`,
+        `INSERT INTO access_bundles (
+           id, tools_json, mcp_json, secret_refs_json, connector_grants_json,
+           schema_version, revision, status, revoked_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         DEFAULT_BUNDLE.id,
         JSON.stringify(DEFAULT_BUNDLE.tools),
         JSON.stringify(DEFAULT_BUNDLE.mcpEndpoints),
         JSON.stringify(DEFAULT_BUNDLE.secretRefs),
+        JSON.stringify(DEFAULT_BUNDLE.connectorGrants ?? []),
+        DEFAULT_BUNDLE.schemaVersion ?? 1,
+        DEFAULT_BUNDLE.revision ?? 1,
+        DEFAULT_BUNDLE.status ?? "active",
+        null,
+        new Date().toISOString(),
       );
+    } else {
+      const defaultRow = sql
+        .exec<{ tools_json: string; secret_refs_json: string }>(
+          "SELECT tools_json, secret_refs_json FROM access_bundles WHERE id = ?",
+          DEFAULT_BUNDLE.id,
+        )
+        .toArray()[0];
+      if (defaultRow) {
+        const storedTools = JSON.parse(defaultRow.tools_json) as string[];
+        const storedSecretRefs = JSON.parse(defaultRow.secret_refs_json) as string[];
+        const mergedTools = [...new Set([...storedTools, ...DEFAULT_BUNDLE.tools])];
+        const mergedSecretRefs = [
+          ...new Set([...storedSecretRefs, ...DEFAULT_BUNDLE.secretRefs]),
+        ];
+        if (
+          mergedTools.length !== storedTools.length ||
+          mergedSecretRefs.length !== storedSecretRefs.length
+        ) {
+          sql.exec(
+            `UPDATE access_bundles
+             SET tools_json = ?, secret_refs_json = ?, updated_at = ?
+             WHERE id = ?`,
+            JSON.stringify(mergedTools),
+            JSON.stringify(mergedSecretRefs),
+            new Date().toISOString(),
+            DEFAULT_BUNDLE.id,
+          );
+        }
+      }
     }
     this.migrated = true;
   }
@@ -1436,32 +1621,364 @@ export class WorkspaceConfigDO extends DurableObject {
           tools_json: string;
           mcp_json: string;
           secret_refs_json: string;
+          connector_grants_json: string;
+          schema_version: number;
+          revision: number;
+          status: string;
+          revoked_at: string | null;
+          updated_at: string;
         }>(`SELECT * FROM access_bundles WHERE id = ?`, id)
         .toArray();
       const row = rows[0];
       if (!row) return Response.json(DEFAULT_BUNDLE);
-      return Response.json({
-        id: row.id,
-        tools: JSON.parse(row.tools_json) as string[],
-        mcpEndpoints: JSON.parse(row.mcp_json) as string[],
-        secretRefs: JSON.parse(row.secret_refs_json) as string[],
-      } satisfies AccessBundle);
+      try {
+        const bundle = parseAccessBundleInput({
+          id: row.id,
+          tools: JSON.parse(row.tools_json),
+          mcpEndpoints: JSON.parse(row.mcp_json),
+          secretRefs: JSON.parse(row.secret_refs_json),
+          connectorGrants: JSON.parse(row.connector_grants_json || "[]"),
+          schemaVersion: row.schema_version,
+          revision: row.revision,
+          status: row.status,
+          ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+        });
+        return Response.json({
+          ...bundle,
+          updatedAt: row.updated_at,
+        } satisfies AccessBundle & { updatedAt: string });
+      } catch {
+        return Response.json({ error: "access_bundle_corrupt" }, { status: 503 });
+      }
     }
 
     if (url.pathname === "/putBundle" && request.method === "POST") {
-      const bundle = (await request.json()) as AccessBundle;
+      let bundle: AccessBundle;
+      try {
+        bundle = parseAccessBundleInput(await request.json());
+        if (bundle.status === "revoked") throw new Error("access_bundle_revocation_requires_dedicated_endpoint");
+        accessBundleRevisionOf(bundle);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "access_bundle_invalid" },
+          { status: 400 },
+        );
+      }
+      const current = sql
+        .exec<{ revision: number; status: string }>(
+          "SELECT revision, status FROM access_bundles WHERE id = ?",
+          bundle.id,
+        )
+        .toArray()[0];
+      if (current?.status === "revoked") {
+        return Response.json({ error: "access_bundle_revoked" }, { status: 409 });
+      }
+      const revision = current ? current.revision + 1 : 1;
+      const updatedAt = new Date().toISOString();
       sql.exec(
-        `INSERT INTO access_bundles (id, tools_json, mcp_json, secret_refs_json) VALUES (?, ?, ?, ?)
+        `INSERT INTO access_bundles (
+           id, tools_json, mcp_json, secret_refs_json, connector_grants_json,
+           schema_version, revision, status, revoked_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?)
          ON CONFLICT(id) DO UPDATE SET
            tools_json = excluded.tools_json,
            mcp_json = excluded.mcp_json,
-           secret_refs_json = excluded.secret_refs_json`,
+           secret_refs_json = excluded.secret_refs_json,
+           connector_grants_json = excluded.connector_grants_json,
+           schema_version = excluded.schema_version,
+           revision = excluded.revision,
+           status = 'active',
+           revoked_at = NULL,
+           updated_at = excluded.updated_at`,
         bundle.id,
         JSON.stringify(bundle.tools),
         JSON.stringify(bundle.mcpEndpoints),
         JSON.stringify(bundle.secretRefs),
+        JSON.stringify(bundle.connectorGrants ?? []),
+        1,
+        revision,
+        updatedAt,
       );
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, revision, status: "active" });
+    }
+
+    if (url.pathname === "/revokeBundle" && request.method === "POST") {
+      const input = await request.json() as { id?: unknown };
+      if (typeof input.id !== "string" || input.id.length === 0) {
+        return Response.json({ error: "access_bundle_id_invalid" }, { status: 400 });
+      }
+      const current = sql
+        .exec<{ revision: number; status: string }>(
+          "SELECT revision, status FROM access_bundles WHERE id = ?",
+          input.id,
+        )
+        .toArray()[0];
+      if (!current) return Response.json({ error: "access_bundle_not_found" }, { status: 404 });
+      if (current.status === "revoked") {
+        return Response.json({ ok: true, revision: current.revision, status: "revoked" });
+      }
+      const revokedAt = new Date().toISOString();
+      const revision = current.revision + 1;
+      sql.exec(
+        `UPDATE access_bundles
+         SET status = 'revoked', revoked_at = ?, revision = ?, updated_at = ?
+         WHERE id = ?`,
+        revokedAt,
+        revision,
+        revokedAt,
+        input.id,
+      );
+      return Response.json({ ok: true, revision, status: "revoked", revokedAt });
+    }
+
+    if (url.pathname === "/issueConnectorAuthorization" && request.method === "POST") {
+      try {
+        const input = await request.json() as Record<string, unknown>;
+        const workspaceId = typeof input.workspaceId === "string"
+          ? input.workspaceId
+          : input.teamId;
+        const identity = {
+          workspaceId,
+          projectId: input.projectId,
+          channelId: input.channelId,
+          requesterId: input.requesterId,
+          actorKind: input.actorKind,
+          executionId: input.executionId,
+          threadKey: input.threadKey,
+        } as ConnectorRequestIdentity;
+        if (typeof workspaceId !== "string" || typeof input.channelId !== "string") {
+          throw new Error("connector_identity_scope_invalid");
+        }
+        if (typeof input.connectorId !== "string" || typeof input.action !== "string") {
+          throw new Error("connector_request_invalid");
+        }
+        const configRow = this.readRow(sql, workspaceId, input.channelId);
+        const bundleId = configRow?.access_bundle_id ?? DEFAULT_BUNDLE.id;
+        const row = sql
+          .exec<{
+            id: string;
+            tools_json: string;
+            mcp_json: string;
+            secret_refs_json: string;
+            connector_grants_json: string;
+            schema_version: number;
+            revision: number;
+            status: string;
+            revoked_at: string | null;
+          }>("SELECT * FROM access_bundles WHERE id = ?", bundleId)
+          .toArray()[0];
+        if (!row) {
+          throw new ConnectorAuthorizationError("access_bundle_not_found");
+        }
+        const bundle = parseAccessBundleInput({
+          id: row.id,
+          tools: JSON.parse(row.tools_json),
+          mcpEndpoints: JSON.parse(row.mcp_json),
+          secretRefs: JSON.parse(row.secret_refs_json),
+          connectorGrants: JSON.parse(row.connector_grants_json || "[]"),
+          schemaVersion: row.schema_version,
+          revision: row.revision,
+          status: row.status,
+          ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+        });
+        const grant = matchingGrant(
+          bundle,
+          input.connectorId,
+          input.action,
+          identity,
+        );
+        let credential: CredentialReference | undefined;
+        if (grant?.credentialRef) {
+          const credentialRow = sql
+            .exec<CredentialReferenceRow>(
+              "SELECT * FROM connector_credential_refs WHERE ref = ?",
+              grant.credentialRef,
+            )
+            .toArray()[0];
+          if (!credentialRow) throw new ConnectorAuthorizationError("credential_reference_not_found");
+          credential = credentialReferenceFromRow(credentialRow);
+        }
+        const issued = await issueConnectorAuthorization({
+          bundle,
+          credential,
+          identity,
+          connectorId: input.connectorId,
+          action: input.action,
+          lifetimeMs: input.lifetimeMs as number | undefined,
+        });
+        return Response.json(issued);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "connector_authorization_invalid";
+        return Response.json(
+          { error: code },
+          { status: error instanceof ConnectorAuthorizationError ? 403 : 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/verifyConnectorAuthorization" && request.method === "POST") {
+      try {
+        const input = await request.json() as { labels?: unknown };
+        if (!input.labels || typeof input.labels !== "object" || Array.isArray(input.labels)) {
+          throw new Error("connector_labels_invalid");
+        }
+        const labels = input.labels as ImmutableConnectorLabels;
+        const configRow = this.readRow(sql, labels.workspaceId, labels.channelId);
+        const configuredBundleId = configRow?.access_bundle_id ?? DEFAULT_BUNDLE.id;
+        if (configuredBundleId !== labels.accessBundleId) {
+          throw new ConnectorAuthorizationError("access_bundle_changed");
+        }
+        const row = sql
+          .exec<{
+            id: string;
+            tools_json: string;
+            mcp_json: string;
+            secret_refs_json: string;
+            connector_grants_json: string;
+            schema_version: number;
+            revision: number;
+            status: string;
+            revoked_at: string | null;
+          }>("SELECT * FROM access_bundles WHERE id = ?", labels.accessBundleId)
+          .toArray()[0];
+        const bundle = row
+          ? parseAccessBundleInput({
+              id: row.id,
+              tools: JSON.parse(row.tools_json),
+              mcpEndpoints: JSON.parse(row.mcp_json),
+              secretRefs: JSON.parse(row.secret_refs_json),
+              connectorGrants: JSON.parse(row.connector_grants_json || "[]"),
+              schemaVersion: row.schema_version,
+              revision: row.revision,
+              status: row.status,
+              ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+            })
+          : DEFAULT_BUNDLE;
+        let credential: CredentialReference | undefined;
+        if (labels.credentialRef) {
+          const credentialRow = sql
+            .exec<CredentialReferenceRow>(
+              "SELECT * FROM connector_credential_refs WHERE ref = ?",
+              labels.credentialRef,
+            )
+            .toArray()[0];
+          if (!credentialRow) throw new ConnectorAuthorizationError("credential_reference_not_found");
+          credential = credentialReferenceFromRow(credentialRow);
+        }
+        await verifyConnectorAuthorizationCurrent({ labels, bundle, credential });
+        return Response.json({ ok: true });
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "connector_authorization_invalid";
+        return Response.json(
+          { error: code },
+          { status: error instanceof ConnectorAuthorizationError ? 403 : 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/getConnectorCredentialReference" && request.method === "POST") {
+      const input = await request.json() as { ref?: unknown };
+      if (typeof input.ref !== "string" || input.ref.length === 0) {
+        return Response.json({ error: "credential_reference_invalid" }, { status: 400 });
+      }
+      const row = sql
+        .exec<{
+          ref: string;
+          provider: string;
+          name: string;
+          version: number;
+          status: string;
+          scopes_json: string;
+          subject: string;
+          issued_at: string;
+          expires_at: string | null;
+          revoked_at: string | null;
+        }>("SELECT * FROM connector_credential_refs WHERE ref = ?", input.ref)
+        .toArray()[0];
+      if (!row) return Response.json({ error: "credential_reference_not_found" }, { status: 404 });
+      try {
+        return Response.json(credentialReferenceFromRow(row));
+      } catch {
+        return Response.json({ error: "credential_reference_corrupt" }, { status: 503 });
+      }
+    }
+
+    if (url.pathname === "/putConnectorCredentialReference" && request.method === "POST") {
+      let reference: CredentialReference;
+      try {
+        reference = parseCredentialReference(await request.json());
+        if (reference.status !== "active") throw new Error("credential_reference_reactivation_not_allowed");
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "credential_reference_invalid" },
+          { status: 400 },
+        );
+      }
+      const current = sql
+        .exec<{ version: number; status: string }>(
+          "SELECT version, status FROM connector_credential_refs WHERE ref = ?",
+          reference.ref,
+        )
+        .toArray()[0];
+      if (current?.status === "revoked") {
+        return Response.json({ error: "credential_reference_revoked" }, { status: 409 });
+      }
+      if (current && reference.version <= current.version) {
+        return Response.json({ error: "credential_reference_version_not_monotonic" }, { status: 409 });
+      }
+      const updatedAt = new Date().toISOString();
+      sql.exec(
+        `INSERT INTO connector_credential_refs (
+           ref, provider, name, version, status, scopes_json, subject,
+           issued_at, expires_at, revoked_at, updated_at
+         ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, ?)
+         ON CONFLICT(ref) DO UPDATE SET
+           provider = excluded.provider,
+           name = excluded.name,
+           version = excluded.version,
+           status = 'active',
+           scopes_json = excluded.scopes_json,
+           subject = excluded.subject,
+           issued_at = excluded.issued_at,
+           expires_at = excluded.expires_at,
+           revoked_at = NULL,
+           updated_at = excluded.updated_at`,
+        reference.ref,
+        reference.provider,
+        reference.name,
+        reference.version,
+        JSON.stringify(reference.scopes),
+        reference.subject,
+        reference.issuedAt,
+        reference.expiresAt ?? null,
+        updatedAt,
+      );
+      return Response.json({ ok: true, ref: reference.ref, version: reference.version, status: "active" });
+    }
+
+    if (url.pathname === "/revokeConnectorCredentialReference" && request.method === "POST") {
+      const input = await request.json() as { ref?: unknown };
+      if (typeof input.ref !== "string" || input.ref.length === 0) {
+        return Response.json({ error: "credential_reference_invalid" }, { status: 400 });
+      }
+      const current = sql
+        .exec<{ version: number; status: string }>(
+          "SELECT version, status FROM connector_credential_refs WHERE ref = ?",
+          input.ref,
+        )
+        .toArray()[0];
+      if (!current) return Response.json({ error: "credential_reference_not_found" }, { status: 404 });
+      if (current.status === "revoked") return Response.json({ ok: true, status: "revoked", version: current.version });
+      const revokedAt = new Date().toISOString();
+      sql.exec(
+        `UPDATE connector_credential_refs
+         SET status = 'revoked', revoked_at = ?, updated_at = ?
+         WHERE ref = ?`,
+        revokedAt,
+        revokedAt,
+        input.ref,
+      );
+      return Response.json({ ok: true, status: "revoked", version: current.version, revokedAt });
     }
 
     return Response.json({ error: "not_found" }, { status: 404 });
@@ -1491,5 +2008,50 @@ export async function loadTurnAccess(
       body: JSON.stringify({ id: config.accessBundleId }),
     })
     .then((r) => r.json())) as AccessBundle;
+  if (bundle.status === "revoked") throw new Error("access_bundle_revoked");
   return { config, bundle };
+}
+
+/**
+ * Issue a connector authorization from the authoritative workspace DO. The
+ * caller supplies only verified turn identity; bundle and credential metadata
+ * are resolved inside the DO so a caller cannot pair stale policy with a new
+ * credential reference.
+ */
+export async function loadConnectorAuthorization(
+  ns: DurableObjectNamespace<WorkspaceConfigDO>,
+  input: ConnectorRequestIdentity & {
+    connectorId: string;
+    action: string;
+    lifetimeMs?: number;
+  },
+): Promise<{ labels: ImmutableConnectorLabels; credential?: CredentialReference }> {
+  const stub = ns.get(ns.idFromName(input.workspaceId));
+  const response = await stub.fetch("https://do/issueConnectorAuthorization", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? "connector_authorization_unavailable");
+  }
+  return await response.json() as {
+    labels: ImmutableConnectorLabels;
+    credential?: CredentialReference;
+  };
+}
+
+export async function verifyConnectorAuthorization(
+  ns: DurableObjectNamespace<WorkspaceConfigDO>,
+  labels: ImmutableConnectorLabels,
+): Promise<void> {
+  const stub = ns.get(ns.idFromName(labels.workspaceId));
+  const response = await stub.fetch("https://do/verifyConnectorAuthorization", {
+    method: "POST",
+    body: JSON.stringify({ labels }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? "connector_authorization_unavailable");
+  }
 }

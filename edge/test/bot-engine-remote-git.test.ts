@@ -657,7 +657,7 @@ describe("production Slack remote-git ingress", () => {
   });
 
   it("does not attempt a second done after the harness persisted its terminal", async () => {
-    const appendEvent = vi.fn(async () => undefined);
+    const appendEvent = vi.fn(async (_args: { kind?: string }) => undefined);
     runBundledAgentTurn.mockResolvedValue({
       status: "completed",
       terminalPersisted: true,
@@ -672,7 +672,7 @@ describe("production Slack remote-git ingress", () => {
         }),
       },
     });
-    expect(appendEvent).not.toHaveBeenCalled();
+    expect(appendEvent.mock.calls.map(([args]) => args?.kind)).toEqual(["router"]);
     // This mock returns after the final renderer would already have committed;
     // it intentionally does not fake a second lifecycle-clear RPC.
     expect(store.obligation.clear).not.toHaveBeenCalled();

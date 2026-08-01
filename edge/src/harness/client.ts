@@ -38,6 +38,11 @@ import {
   malformedNdjsonDigest,
   sanitizeValue,
 } from "./redaction.js";
+import {
+  createTraceCorrelation,
+  logTraceEvent,
+  withTraceHeaders,
+} from "../observability/trace-correlation.js";
 
 /** SPEC.md §3.6: transcript re-feed is truncated to 24k chars from the most recent end. */
 const TRANSCRIPT_MAX_CHARS = 24_000;
@@ -45,6 +50,8 @@ const TRANSCRIPT_MAX_CHARS = 24_000;
 export interface RunHarnessTurnArgs {
   /** Deterministic per-thread key, e.g. `slack:{channel}:{threadTs}` — also the SessionEventDO idFromName seed. */
   threadKey: string;
+  /** Workspace/team identifier used only for bounded trace correlation. */
+  workspaceId?: string;
   /** Not part of the /turn wire body (threadKey + sessionId already identify the session) — reserved for caller-side logging/telemetry. */
   conversationKey: string;
   /** Stable identity supplied by Slack ingress; reused across redelivery. */
@@ -174,7 +181,7 @@ interface SessionEventsFullRpc extends SessionEventsRpc {
   putProviderState(state: unknown): Promise<void>;
   appendEvent(args: {
     executionId: string;
-    kind: HarnessEventKind;
+    kind: HarnessEventKind | "router";
     payload: unknown;
   }): Promise<{ id: number }>;
 }
@@ -209,17 +216,24 @@ function truncateTranscript(transcript: string | undefined): string | undefined 
  */
 function harnessFetcher(
   env: Env,
+  correlation?: ReturnType<typeof createTraceCorrelation>,
 ): ((init: RequestInit) => Promise<Response>) | undefined {
   const path = "/turn";
   if (env.HARNESS) {
     const url = env.HARNESS_URL
       ? new URL(path, env.HARNESS_URL).toString()
       : `https://harness${path}`;
-    return (init) => env.HARNESS!.fetch(url, init);
+    return (init) => env.HARNESS!.fetch(
+      url,
+      correlation ? { ...init, headers: withTraceHeaders(init.headers, correlation) } : init,
+    );
   }
   if (env.HARNESS_URL) {
     const url = new URL(path, env.HARNESS_URL).toString();
-    return (init) => fetch(url, init);
+    return (init) => fetch(
+      url,
+      correlation ? { ...init, headers: withTraceHeaders(init.headers, correlation) } : init,
+    );
   }
   return undefined;
 }
@@ -243,6 +257,14 @@ export async function interruptHarnessTurn(
     },
     body: JSON.stringify(args),
   };
+  try {
+    init.headers = withTraceHeaders(
+      init.headers,
+      createTraceCorrelation(args),
+    );
+  } catch {
+    return { accepted: false, interrupted: false };
+  }
   const response = env.HARNESS
     ? await env.HARNESS.fetch(url, init)
     : await fetch(url, init);
@@ -416,12 +438,28 @@ export async function runHarnessTurn(
   args: RunHarnessTurnArgs,
 ): Promise<RunHarnessTurnResult> {
   const harnessType = args.harnessType ?? "claudecode";
+  let correlation: ReturnType<typeof createTraceCorrelation>;
+  try {
+    correlation = createTraceCorrelation({
+      executionId: args.executionId,
+      threadKey: args.threadKey,
+      ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    });
+  } catch {
+    return failed("setup", "trace_correlation_invalid");
+  }
+  logTraceEvent({
+    correlation,
+    component: "harness",
+    event: "harness_turn_started",
+    attributes: { harnessType },
+  });
   const nativeResponses =
     harnessType === "nanocodex" &&
     (args.nativeResponses === true || env.NANOCODEX_NATIVE_RESPONSES === "true") &&
     args.codingTask !== true &&
     !args.attachments?.length;
-  const fetcher = harnessFetcher(env);
+  const fetcher = harnessFetcher(env, correlation);
   if (!fetcher || !env.SESSION_EVENTS || !env.HARNESS_AUTH_TOKEN) {
     return failed("unavailable", "harness_unavailable");
   }

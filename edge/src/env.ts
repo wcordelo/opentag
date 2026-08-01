@@ -11,6 +11,8 @@ import type { KnowledgeDO } from "./memory/knowledge-do.js";
 import type { SessionEventDO } from "./store/session-event-do.js";
 import type { DeferredIngressDO } from "./deferred-ingress-do.js";
 import type { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
+import type { PlatformStateDO } from "./platform/platform-state-do.js";
+import type { RouterMeasurementDO } from "./router/measurement-do.js";
 
 /**
  * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
@@ -35,6 +37,10 @@ export interface Env {
   DEFERRED_INGRESS?: DurableObjectNamespace<DeferredIngressDO>;
   /** Per-channel cross-isolate Slack dispatch reservations. */
   SLACK_RATE_LIMIT?: DurableObjectNamespace<SlackRateLimitDO>;
+  /** Optional until the platform-state migration is deployed to every bot. */
+  PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
+  /** Workspace-scoped, shadow-only router measurements and misroute feedback. */
+  ROUTER_MEASUREMENTS?: DurableObjectNamespace<RouterMeasurementDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
   DELIVERY_METRICS: AnalyticsEngineDataset;
   BLOBS?: R2Bucket;
@@ -49,6 +55,13 @@ export interface Env {
    * Worker→Worker fetch via workers.dev returns Cloudflare 1042 on the same zone.
    */
   AGENT_RUNTIME?: Fetcher;
+
+  /**
+   * Optional internal credential-reference resolver. It returns short-lived
+   * material only for a verified authorization digest; the bot never stores
+   * provider tokens in Durable Objects or access bundles.
+   */
+  CONNECTOR_CREDENTIALS?: Fetcher;
 
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;

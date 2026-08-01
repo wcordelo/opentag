@@ -5,7 +5,10 @@ import {
   verifySessionViewToken,
 } from "../src/slack/session-link.js";
 import { interruptAguiTurn } from "../src/slack/stop-routing.js";
-import { agentExecutionIdFromRequest } from "../src/bot-engine.js";
+import {
+  agentExecutionIdFromRequest,
+  agentTraceCorrelationFromRequest,
+} from "../src/bot-engine.js";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {} }));
 
@@ -38,10 +41,18 @@ describe("exact AG-UI control", () => {
       body: JSON.stringify({
         context: [{
           description: "OpenTag execution control",
-          value: JSON.stringify({ executionId: "exec-wire" }),
+          value: JSON.stringify({ executionId: "exec-wire", threadKey: "slack:C1:1.0" }),
         }],
       }),
     })).toBe("exec-wire");
+    expect(agentTraceCorrelationFromRequest({
+      body: JSON.stringify({
+        context: [{
+          description: "OpenTag execution control",
+          value: JSON.stringify({ executionId: "exec-wire", threadKey: "slack:C1:1.0" }),
+        }],
+      }),
+    })).toMatchObject({ traceId: "exec-wire", threadKey: "slack:C1:1.0" });
     expect(agentExecutionIdFromRequest({ body: "{}" })).toBeUndefined();
   });
 

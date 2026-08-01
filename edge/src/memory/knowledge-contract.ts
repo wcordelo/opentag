@@ -1,6 +1,7 @@
 /** Pure, server-derived contracts shared by future knowledge ingestion/search. */
 
 import type { KnowledgeSourceScope } from "../config/knowledge-config.js";
+import type { ImmutableConnectorLabels } from "../connectors/authorization.js";
 import type { KnowledgeSourceType } from "./knowledge-source-types.js";
 
 export type { KnowledgeSourceType } from "./knowledge-source-types.js";
@@ -74,6 +75,9 @@ export type KnowledgeDocumentMetadata = KnowledgeDocumentMetadataBase & {
   threadTs?: string;
   spaceId?: string;
   pageId?: string;
+  fileId?: string;
+  mimeType?: string;
+  sourceUrl?: string;
   repoId?: string;
   path?: string;
   connectorId?: string;
@@ -121,11 +125,50 @@ export type KnowledgeCitationBase = {
   threadTs?: string;
   spaceId?: string;
   pageId?: string;
+  fileId?: string;
+  mimeType?: string;
+  sourceUrl?: string;
   repoId?: string;
   path?: string;
   connectorId?: string;
   rowId?: string;
+  /** Server-derived proof that the result was returned under one authorization snapshot. */
+  authorization?: KnowledgeCitationAuthorization;
 };
+
+export type KnowledgeCitationAuthorization = Readonly<{
+  schemaVersion: typeof KNOWLEDGE_SCHEMA_VERSION;
+  digest: string;
+  accessBundleId: string;
+  accessBundleRevision: number;
+  connectorId: string;
+  action: string;
+  credentialVersion?: number;
+}>;
+
+/** Bind provenance to a citation without exposing credential values. */
+export function bindCitationAuthorization(
+  citation: KnowledgeCitationBase,
+  labels: ImmutableConnectorLabels,
+): KnowledgeCitationBase {
+  if (!citation.sourceKey || !citation.contentRevision || !citation.retrievedAt) {
+    throw new Error("citation is missing stable provenance");
+  }
+  return Object.freeze({
+    ...citation,
+    authorization: Object.freeze({
+      schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+      digest: labels.digest,
+      accessBundleId: labels.accessBundleId,
+      accessBundleRevision: labels.accessBundleRevision,
+      connectorId: labels.connectorId,
+      action: labels.action,
+      ...(labels.credentialVersion !== undefined
+        ? { credentialVersion: labels.credentialVersion }
+        : {}),
+    }),
+  });
+}
 
 /** Slack citation — channelId and threadTs remain required for search_slack. */
 export type KnowledgeCitation = KnowledgeCitationBase & {

@@ -1204,7 +1204,10 @@ export async function runBundledAgentTurn(
   if (executionIdentity?.executionId) {
     toolContext.push({
       description: "OpenTag execution control",
-      value: JSON.stringify({ executionId: executionIdentity.executionId }),
+      value: JSON.stringify({
+        executionId: executionIdentity.executionId,
+        ...(exact?.threadKey ? { threadKey: exact.threadKey } : {}),
+      }),
     });
   }
 
@@ -1260,6 +1263,7 @@ export async function runBundledAgentTurn(
     }
     const harnessResult = await runHarnessTurn(env, {
       threadKey: harnessThreadKey,
+      workspaceId: teamId,
       conversationKey,
       executionId: identity.executionId,
       forwardedMessageId: identity.forwardedMessageId,

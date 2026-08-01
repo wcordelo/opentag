@@ -257,8 +257,23 @@ export function normalizeSlackEvent(
     // unmentioned threaded `message` is history-only and must not become a
     // second turn path. Match the exact configured bot user before treating
     // this as the duplicate of an explicit `app_mention`.
-    if (!hasExplicitBotMention(text, botUserId)) return undefined;
-    return undefined;
+    if (hasExplicitBotMention(text, botUserId)) return undefined;
+    // Late file-share repair and deferred file_turn continuations are admitted
+    // without a repeated bot mention; mirror pre-admission so handoff succeeds.
+    if ((event as { subtype?: string }).subtype !== "file_share") return undefined;
+    return {
+      kind: "turn",
+      source: "thread_reply",
+      channel,
+      threadTs: event.thread_ts,
+      ts: event.ts,
+      userText: stripMentions(text),
+      senderUserId: event.user,
+      actor: { kind: "slack_user", userId: event.user ?? "" },
+      eventId,
+      hasFiles,
+      files: hasFiles ? event.files : undefined,
+    };
   }
 
   return undefined;

@@ -5,6 +5,7 @@
  * Docker, git, or a real `claude` binary.
  */
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
   buildNanocodexArgs,
   buildNanocodexEnv,
   cleanupExecutionHome,
+  composeSystemPromptWithOverlay,
   createExecutionTracker,
   createChildTerminator,
   createHarnessServer,
@@ -1083,6 +1085,41 @@ describe("loadAuthoritativeSystemPrompt", () => {
       loadAuthoritativeSystemPrompt(promptPath, 1024, new AbortController().signal),
     ).rejects.toThrow();
     fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("administrator system prompt composition", () => {
+  it("keeps the image-owned base before the channel overlay and returns provenance", async () => {
+    const overlay = "Follow the workspace's coding conventions.";
+    const digest = `sha256:${createHash("sha256").update(overlay, "utf8").digest("hex")}`;
+    await expect(
+      composeSystemPromptWithOverlay("Image-owned base", {
+        version: 1,
+        revision: 4,
+        digest,
+        text: overlay,
+        source: "workspace_admin",
+      }),
+    ).resolves.toEqual({
+      text: "Image-owned base\n\n[OpenTag administrator overlay]\nFollow the workspace's coding conventions.",
+      overlayMeta: { version: 1, revision: 4, digest },
+    });
+  });
+
+  it("rejects a repository-controlled overlay source", async () => {
+    const overlay = {
+      version: 1,
+      revision: 1,
+      digest: `sha256:${createHash("sha256").update("repo instructions", "utf8").digest("hex")}`,
+      text: "repo instructions",
+      source: "repository",
+    };
+    expect(
+      await validateTurnRequest(
+        { ...validTurn, contractVersion: 2, systemPromptOverlay: overlay },
+        repoPolicy,
+      ),
+    ).toEqual({ ok: false, error: "invalid_system_prompt_overlay" });
   });
 });
 

@@ -69,10 +69,16 @@ were inspected for schema, historical context, and architecture boundaries.
 
 ### Jul 23 — one Migrate, two Evaluate, two N/A
 
-- **Migrate — bounded administrator prompt composition for coding.** OpenTag
-  still needs an administrator-owned, bounded prompt overlay for coding turns,
-  with explicit base/deployment/channel precedence, repository-source rejection,
-  size limits, and injection tests.
+- **Migrate — bounded administrator prompt composition for coding.** This gap is
+  already implemented on OpenTag `origin/main` and covered by the current
+  branch's contract/worker tests. The image-owned `SYSTEM_PROMPT.md` is the
+  deployment base; `/putAdminConfig` is the only overlay mutation path; the
+  channel-scoped overlay is tagged `workspace_admin`, digest-checked, revisioned,
+  bounded to 64 KiB, and appended after the base. `/putChannelContext` and the
+  legacy `/putConfig` path reject overlay writes, so repository/user content
+  cannot become authoritative harness instructions. No duplicate feature work
+  was selected; the inventory and tests were updated to record the existing
+  implementation accurately.
 - **Evaluate — scoped read-only X connector.** Only add this if X research is a
   product requirement. It would need connector grants, a broker, read-only
   bounded pagination/media/reference normalization, item-level errors, and
@@ -175,6 +181,8 @@ change, not evidence that all earlier gaps are complete.
 - explicit rich mention gating and terminal inaccessible-source skips;
 - secret-shaped harness output redaction;
 - Opus 5 aliases and effective runtime provenance;
+- administrator-owned, bounded coding prompt composition with base-before-channel
+  precedence, digest/revision checks, and source separation;
 - immutable connector labels, credential references, access-bundle revisions,
   terminal revocation, and citation authorization;
 - bounded Drive search after those foundations;
@@ -212,8 +220,10 @@ change, not evidence that all earlier gaps are complete.
 6. **Router rollout:** collect shadow measurements, add Tier 1 knowledge
    quality gates and fallback/synthesis behavior, escalation affordance,
    misroute ledger, and an explicit rollout gate before enabling dispatch.
-7. **Prompt composition:** implement and test the administrator-owned coding
-   overlay if the product requires channel/deployment prompt customization.
+7. **Prompt composition follow-up:** the current base-plus-channel overlay is
+   implemented. If a separate deployment text layer is required later, add it
+   only with an explicit source, precedence, CAS/revision, and rollout decision;
+   do not make repository files authoritative prompts.
 8. **Optional product decisions:** X connector, richer provider-neutral task
    events, and deterministic harness/model cohort rollout should remain
    decisions, not automatic ports.

@@ -25,6 +25,9 @@ export type PermissionSnapshotV1 = Readonly<{
   }>;
   channelAccess: Readonly<{
     bundleId: string;
+    /** Monotonic policy revision used by connector effect fencing. */
+    bundleRevision?: number;
+    bundleStatus?: "active" | "revoked";
     metadataVisibility: "full_names" | "restricted";
     allowedTools: readonly string[];
     deniedTools: readonly string[];
@@ -34,6 +37,15 @@ export type PermissionSnapshotV1 = Readonly<{
     }>;
     mcpEndpoints: ReadonlyArray<Readonly<{ origin: string; path: string }>>;
     secretRefs: readonly string[];
+    /** Safe metadata only; no credential values are ever included. */
+    connectorGrants?: ReadonlyArray<Readonly<{
+      connectorId: string;
+      actions: readonly string[];
+      scope: "workspace" | "project" | "channel";
+      projectId?: string;
+      channelId?: string;
+      credentialRef?: string;
+    }>>;
   }>;
   runtime: Readonly<{
     harnessType?: "claudecode" | "claudex" | "nanocodex";

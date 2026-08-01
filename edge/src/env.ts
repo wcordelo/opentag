@@ -50,6 +50,13 @@ export interface Env {
    */
   AGENT_RUNTIME?: Fetcher;
 
+  /**
+   * Optional internal credential-reference resolver. It returns short-lived
+   * material only for a verified authorization digest; the bot never stores
+   * provider tokens in Durable Objects or access bundles.
+   */
+  CONNECTOR_CREDENTIALS?: Fetcher;
+
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;
 

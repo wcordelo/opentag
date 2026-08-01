@@ -171,3 +171,192 @@ describe("WorkspaceConfigDO tracked knowledge sources", () => {
     expect(otherProject).toMatchObject({ enabled: false, configVersion: 0 });
   });
 });
+
+describe("WorkspaceConfigDO connector authorization metadata", () => {
+  it("versions and permanently revokes connector access bundles", async () => {
+    const teamId = `connector-bundle-${crypto.randomUUID()}`;
+    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const grant = {
+      connectorId: "google_drive",
+      actions: ["search"],
+      scope: "project",
+      projectId: "P1",
+      credentialRef: "credential:google:workspace-drive",
+    };
+    const first = await stub.fetch("https://do/putBundle", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "drive-readers",
+        tools: ["search"],
+        mcpEndpoints: [],
+        secretRefs: [],
+        connectorGrants: [grant],
+      }),
+    }).then((response) => response.json()) as { revision: number; status: string };
+    expect(first).toMatchObject({ revision: 1, status: "active" });
+
+    const stored = await stub.fetch("https://do/getBundle", {
+      method: "POST",
+      body: JSON.stringify({ id: "drive-readers" }),
+    }).then((response) => response.json()) as {
+      revision: number;
+      status: string;
+      connectorGrants: unknown[];
+    };
+    expect(stored).toMatchObject({ revision: 1, status: "active", connectorGrants: [grant] });
+
+    const second = await stub.fetch("https://do/putBundle", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "drive-readers",
+        tools: ["search"],
+        mcpEndpoints: [],
+        secretRefs: [],
+        connectorGrants: [{ ...grant, actions: ["search", "list"] }],
+      }),
+    }).then((response) => response.json()) as { revision: number; status: string };
+    expect(second).toMatchObject({ revision: 2, status: "active" });
+
+    const revoked = await stub.fetch("https://do/revokeBundle", {
+      method: "POST",
+      body: JSON.stringify({ id: "drive-readers" }),
+    }).then((response) => response.json()) as { revision: number; status: string };
+    expect(revoked).toMatchObject({ revision: 3, status: "revoked" });
+
+    const refused = await stub.fetch("https://do/putBundle", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "drive-readers",
+        tools: ["search"],
+        mcpEndpoints: [],
+        secretRefs: [],
+        connectorGrants: [grant],
+      }),
+    });
+    expect(refused.status).toBe(409);
+  });
+
+  it("stores only credential-reference metadata and closes revocation", async () => {
+    const teamId = `connector-credential-${crypto.randomUUID()}`;
+    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const reference = {
+      schemaVersion: 1,
+      ref: "credential:google:workspace-drive",
+      provider: "google",
+      name: "workspace-drive",
+      version: 1,
+      status: "active",
+      scopes: ["drive.readonly"],
+      subject: `workspace:${teamId}`,
+      issuedAt: "2026-08-01T19:00:00.000Z",
+      expiresAt: "2026-08-01T21:00:00.000Z",
+    };
+    const put = await stub.fetch("https://do/putConnectorCredentialReference", {
+      method: "POST",
+      body: JSON.stringify(reference),
+    });
+    expect(put.status).toBe(200);
+    const stored = await stub.fetch("https://do/getConnectorCredentialReference", {
+      method: "POST",
+      body: JSON.stringify({ ref: reference.ref }),
+    }).then((response) => response.json()) as Record<string, unknown>;
+    expect(stored).toMatchObject({ ref: reference.ref, version: 1, status: "active" });
+    expect(JSON.stringify(stored)).not.toContain("token");
+
+    const revoked = await stub.fetch("https://do/revokeConnectorCredentialReference", {
+      method: "POST",
+      body: JSON.stringify({ ref: reference.ref }),
+    }).then((response) => response.json()) as { status: string };
+    expect(revoked.status).toBe("revoked");
+    const refused = await stub.fetch("https://do/putConnectorCredentialReference", {
+      method: "POST",
+      body: JSON.stringify({ ...reference, version: 2 }),
+    });
+    expect(refused.status).toBe(409);
+  });
+
+  it("issues labels from the DO-owned bundle and credential snapshot", async () => {
+    const teamId = `connector-issue-${crypto.randomUUID()}`;
+    const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const ref = "credential:google:workspace-drive";
+    await stub.fetch("https://do/putConnectorCredentialReference", {
+      method: "POST",
+      body: JSON.stringify({
+        schemaVersion: 1,
+        ref,
+        provider: "google",
+        name: "workspace-drive",
+        version: 1,
+        status: "active",
+        scopes: ["drive.readonly"],
+        subject: `workspace:${teamId}`,
+        issuedAt: "2026-08-01T19:00:00.000Z",
+        expiresAt: "2026-08-01T21:00:00.000Z",
+      }),
+    });
+    await stub.fetch("https://do/putBundle", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "drive-readers",
+        tools: ["search"],
+        mcpEndpoints: [],
+        secretRefs: [],
+        connectorGrants: [{
+          connectorId: "google_drive",
+          actions: ["search"],
+          scope: "project",
+          projectId: "P1",
+          credentialRef: ref,
+        }],
+      }),
+    });
+    await stub.fetch("https://do/putAdminConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId, channelId: "C1", accessBundleId: "drive-readers" }),
+    });
+
+    const issued = await stub.fetch("https://do/issueConnectorAuthorization", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        projectId: "P1",
+        channelId: "C1",
+        requesterId: "U1",
+        actorKind: "human",
+        executionId: "exec-1",
+        threadKey: "thread-1",
+        connectorId: "google_drive",
+        action: "search",
+      }),
+    });
+    expect(issued.status).toBe(200);
+    expect(await issued.json()).toMatchObject({
+      labels: {
+        accessBundleId: "drive-readers",
+        credentialRef: ref,
+        credentialVersion: 1,
+      },
+    });
+
+    await stub.fetch("https://do/revokeBundle", {
+      method: "POST",
+      body: JSON.stringify({ id: "drive-readers" }),
+    });
+    const refused = await stub.fetch("https://do/issueConnectorAuthorization", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        projectId: "P1",
+        channelId: "C1",
+        requesterId: "U1",
+        actorKind: "human",
+        executionId: "exec-2",
+        threadKey: "thread-1",
+        connectorId: "google_drive",
+        action: "search",
+      }),
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: "access_bundle_revoked" });
+  });
+});

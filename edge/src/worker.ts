@@ -110,6 +110,13 @@ export { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 
 const app = new Hono<AppEnv>();
 
+function adminForwardStatus(status: number): 400 | 404 | 409 | 503 {
+  if (status >= 500) return 503;
+  if (status === 409) return 409;
+  if (status === 404) return 404;
+  return 400;
+}
+
 function deferredIngressStub(env: AppEnv["Bindings"], jobId: string) {
   if (!env.DEFERRED_INGRESS) {
     throw new Error("DEFERRED_INGRESS is required for durable Slack ingress");
@@ -516,16 +523,85 @@ app.post("/admin/bundle", requireAdminAuth(), async (c) => {
   const stub = c.env.WORKSPACE_CONFIG.get(
     c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
   );
-  await stub.fetch("https://do/putBundle", {
+  const response = await stub.fetch("https://do/putBundle", {
     method: "POST",
     body: JSON.stringify({
       id: body.id,
       tools: body.tools ?? [],
       mcpEndpoints: body.mcpEndpoints ?? [],
       secretRefs: body.secretRefs ?? [],
+      ...(body.connectorGrants !== undefined ? { connectorGrants: body.connectorGrants } : {}),
     } satisfies AccessBundle),
   });
-  return c.json({ ok: true });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/bundle/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown; id?: unknown };
+  if (typeof body.teamId !== "string" || typeof body.id !== "string") {
+    return c.json({ error: "teamId_and_bundle_id_required" }, 400);
+  }
+  const stub = c.env.WORKSPACE_CONFIG.get(
+    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
+  );
+  const response = await stub.fetch("https://do/revokeBundle", {
+    method: "POST",
+    body: JSON.stringify({ id: body.id }),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/connector-credential", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown } & Record<string, unknown>;
+  if (typeof body.teamId !== "string") return c.json({ error: "teamId_required" }, 400);
+  const { teamId, ...reference } = body;
+  const stub = c.env.WORKSPACE_CONFIG.get(
+    c.env.WORKSPACE_CONFIG.idFromName(teamId),
+  );
+  const response = await stub.fetch("https://do/putConnectorCredentialReference", {
+    method: "POST",
+    body: JSON.stringify(reference),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
+});
+
+app.post("/admin/connector-credential/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as { teamId?: unknown; ref?: unknown };
+  if (typeof body.teamId !== "string" || typeof body.ref !== "string") {
+    return c.json({ error: "teamId_and_credential_ref_required" }, 400);
+  }
+  const stub = c.env.WORKSPACE_CONFIG.get(
+    c.env.WORKSPACE_CONFIG.idFromName(body.teamId),
+  );
+  const response = await stub.fetch("https://do/revokeConnectorCredentialReference", {
+    method: "POST",
+    body: JSON.stringify({ ref: body.ref }),
+  });
+  if (!response.ok) {
+    return c.json(
+      { error: await response.text() },
+      adminForwardStatus(response.status),
+    );
+  }
+  return c.json(await response.json());
 });
 
 app.get("/admin/permissions", requireAdminAuth(), async (c) => {

@@ -97,6 +97,16 @@ export function buildPermissionSnapshot(
       ].sort((a, b) =>
         `${a.origin}${a.path}`.localeCompare(`${b.origin}${b.path}`),
       );
+  const connectorGrants = automation
+    ? []
+    : (args.bundle.connectorGrants ?? []).slice(0, MAX_ITEMS).map((grant) => ({
+        connectorId: bounded(grant.connectorId),
+        actions: boundedList(grant.actions),
+        scope: grant.scope,
+        ...(grant.projectId ? { projectId: bounded(grant.projectId) } : {}),
+        ...(grant.channelId ? { channelId: bounded(grant.channelId) } : {}),
+        ...(grant.credentialRef ? { credentialRef: bounded(grant.credentialRef) } : {}),
+      }));
   const snapshot = deepFreeze({
     version: 1 as const,
     scope: {
@@ -111,6 +121,8 @@ export function buildPermissionSnapshot(
     },
     channelAccess: {
       bundleId: bounded(args.bundle.id),
+      bundleRevision: typeof args.bundle.revision === "number" ? args.bundle.revision : 1,
+      bundleStatus: args.bundle.status === "revoked" ? ("revoked" as const) : ("active" as const),
       metadataVisibility: automation
         ? ("restricted" as const)
         : ("full_names" as const),
@@ -122,6 +134,7 @@ export function buildPermissionSnapshot(
       },
       mcpEndpoints: endpoints,
       secretRefs: automation ? [] : boundedList(args.bundle.secretRefs),
+      connectorGrants,
     },
     runtime: {
       ...(args.runtime.harnessType

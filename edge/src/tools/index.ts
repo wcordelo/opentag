@@ -48,6 +48,7 @@ import {
   createSearchCustomTool,
 } from "./search-multi-source.js";
 import { createSearchKnowledgeTool } from "./search-knowledge.js";
+import { createSearchDriveTool } from "./search-drive.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -577,6 +578,12 @@ export const searchKnowledgeTool = createSearchKnowledgeTool({
   assertActive: assertExactTurnActive,
 });
 
+export const searchDriveTool = createSearchDriveTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
 export const startTaskTool = defineBotTool({
   name: "start_task",
   description: "Start a long-running research task for the current thread.",
@@ -730,6 +737,7 @@ const RAW_EDGE_TOOLS = [
   searchCodeTool,
   searchCustomTool,
   searchKnowledgeTool,
+  searchDriveTool,
   startTaskTool,
   reactMessageTool,
 ] as const;

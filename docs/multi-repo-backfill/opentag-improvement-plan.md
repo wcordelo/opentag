@@ -15,12 +15,13 @@ This is the decision and implementation ledger produced from the complete-histor
 | P2 | Centaur parity ledger refresh | Current `docs/centaur-port.md` predates this backfill | Adapt | Add current source paths, SHAs, and explicit classifications to the existing parity ledger after the research PR is reviewed. | Review against the current OpenTag source and avoid duplicating this report. | Deferred to focused docs follow-up |
 | P2 | Layer 3 operator identity, grants, OAuth, and connectors | Centaur Console/connector contracts; Buzz provisioning/revocation; qm credential/connectors | Adapt | Port contracts only after tenancy and key custody are decided. Keep credentials outside model/harness processes and retain revocation/audit. | Product decisions in `VISION-SPEC.md` §10.1 and §10.4. | Blocked by explicit product gate |
 | P2 | Nanocodex provider-native history, retry, and branching | Nanocodex typed Responses transport and ownership model | Adapt | Add only if OpenTag needs provider-native branching beyond the current harness boundary; model it as a typed adapter, not a generic app-server rewrite. | Demonstrate a product use case and define ownership/replay semantics. | Deferred |
-| P3 | Quick static hosting, general workflows, media, extra ingress, and Kubernetes/Rails parity | Centaur/Buzz features coupled to their deployment products | Defer / Not Applicable | Preserve the portable lifecycle and security lessons, but do not import the product or infrastructure surface. | New OpenTag product decision. | Deferred |
+| P3 | Quick static hosting and general workflow orchestration | Centaur features coupled to its deployment product | Defer | Preserve the portable lifecycle and security lessons, but do not import the product surface without an OpenTag decision. | New OpenTag product decision. | Deferred |
+| P3 | Media, extra ingress, Mesh, and Kubernetes/Rails parity | Buzz and Centaur features coupled to their deployment products | Not Applicable | Preserve portable security lessons, but do not import these product or infrastructure surfaces into the current Slack-first Cloudflare architecture. | New OpenTag product decision. | Deferred |
 
 ## Current OpenTag invariants to preserve
 
 - Slack traffic terminates at the bot Worker.
-- Real credentials never enter the model process; harness requests use sentinels and an outer policy boundary.
+- Coding harness processes receive only sentinel credentials; the outer Worker controls real credential injection and egress for those harnesses. Other OpenTag runtime processes may receive configured runtime secrets under their existing bounded contracts, which future changes must preserve.
 - Git pushes and other external effects remain behind durable, exact approval scope.
 - Every turn ends in a visible answer, explicit error, or confirmed cancellation.
 - Stop controls all in-flight work and waits for quiescence before acknowledging completion.

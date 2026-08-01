@@ -28,6 +28,19 @@ Captured 2026-08-01 Pacific before the one-time sync backfill.
 
 The Nanocodex and Buzz fork defaults needed parent merges. Nanocodex was published as merge commit `e9ca9258cc00413bd0580e97979a9488fba9a67b` and Buzz as `40d1bebf5fefeeb57463973af9cd8a64026abc0c`. qm was already current. Centaur's fork contains the parent tip; its dirty primary checkout is preserved and the existing Centaur automation remains the sync owner.
 
+## OpenTag comparison provenance
+
+The deep dives compared against the local OpenTag checkout at `HEAD` `e10bd0d32d42d274d760c96941f941f04ccef50e`. At the comparison checkpoint, the local branch was `main`, `origin/main` was `2116501615387af89d6c7ff8391f45b56beaef3c`, and the local checkout was five commits behind the remote. The artifact PR is based on the newer remote head; the research comparison intentionally preserves the dirty local source checkpoint rather than silently changing it.
+
+The following comparison inputs were untracked local files, not tracked repository files:
+
+| File | Status | Git object hash |
+|---|---|---|
+| `HANDOFF.md` | untracked | `69f809764041540536a7aed39762e2c51e118eeb` |
+| `VISION-SPEC.md` | untracked | `9c684e50fe4506aa5a56f810b66003b113cca9f0` |
+
+Other pre-existing OpenTag untracked files were preserved. No dirty OpenTag file was staged, edited, or overwritten by the backfill artifact branch.
+
 ## Post-backfill fork heads
 
 | Project | Fork default | Result | Validation |

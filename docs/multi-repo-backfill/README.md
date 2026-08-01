@@ -8,12 +8,12 @@ This artifact records the complete-history backfill and architecture comparison 
 
 The requested one-time backfill ran immediately after the workflow was defined, using Pacific time for the review date.
 
-| Project | Parent | Fork default | Common ancestor | History reviewed | Backfill result |
-|---|---|---|---|---|---|
-| qm | `yc-software/qm` | `wcordelo/qm:main` | `7f2c9163` | 0 parent commits, 0 fork-only commits | Already current; no push |
-| Nanocodex | `gakonst/nanocodex` | `wcordelo/nanocodex:master` | `3d4548b0` | 53 parent commits, 3 fork-only commits | Parent merged and pushed as `e9ca9258cc00413bd0580e97979a9488fba9a67b` |
-| Buzz | `block/buzz` | `wcordelo/buzz:main` | `acfbb1bb` | 276 parent commits, 1 fork-only commit | Parent merged and pushed as `40d1bebf5fefeeb57463973af9cd8a64026abc0c` |
-| Centaur | `paradigmxyz/centaur` | `wcordelo/centaur:main` | `6d109198` | 0 parent commits, 64 fork-only commits | Parent tip already present; existing Centaur sync remains owner |
+| Project | Parent | Fork default | Common ancestor | Parent/fork delta | Architecture history reviewed | Backfill result |
+|---|---|---|---|---|---|---|
+| qm | `yc-software/qm` | `wcordelo/qm:main` | `7f2c9163` | 0 parent, 0 fork-only | 40 reachable commits from the fresh root through HEAD | Already current; no push |
+| Nanocodex | `gakonst/nanocodex` | `wcordelo/nanocodex:master` | `3d4548b0` | 53 parent, 3 fork-only | 53 parent commits, 3 fork-only commits, and the merge tip | Parent merged and pushed as `e9ca9258cc00413bd0580e97979a9488fba9a67b` |
+| Buzz | `block/buzz` | `wcordelo/buzz:main` | `acfbb1bb` | 276 parent, 1 fork-only | 278 reachable commits in the merged tree, including the merge | Parent merged and pushed as `40d1bebf5fefeeb57463973af9cd8a64026abc0c` |
+| Centaur | `paradigmxyz/centaur` | `wcordelo/centaur:main` | `6d109198` | 0 parent, 64 fork-only | 64 fork-only commits | Parent tip already present; existing Centaur sync remains owner |
 
 Nanocodex and Buzz were synced from detached temporary worktrees. Each merge passed whitespace validation and an exact remote-before-push check. Buzz also passed a conflict-marker scan that only treated actual `<<<<<<< `, `||||||| `, and `>>>>>>> ` prefixes as markers. The primary Centaur checkout had pre-existing `AGENTS.md` and `docs/public/md/capabilities.md` changes; those were preserved and not used as a write target.
 
@@ -30,7 +30,7 @@ Each report identifies the parent and fork remotes, default branches, common anc
 
 ## OpenTag baseline used for comparison
 
-The comparison was made against `/Users/will/Documents/opentag/HANDOFF.md`, `VISION-SPEC.md`, `ARCHITECTURE.md`, `PRODUCT.md`, the existing Centaur port ledger, the knowledge-base implementation specification, current `edge/` source, and affected tests.
+The comparison was made against `/Users/will/Documents/opentag/HANDOFF.md`, `VISION-SPEC.md`, `ARCHITECTURE.md`, `PRODUCT.md`, the existing Centaur port ledger, the knowledge-base implementation specification, current `edge/` source, and affected tests. The exact local commit, remote-head drift, dirty-file status, and hashes for the untracked handoff/spec files are pinned in [the source manifest](./source-manifest.md).
 
 The baseline matters:
 

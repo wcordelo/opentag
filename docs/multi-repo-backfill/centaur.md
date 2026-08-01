@@ -13,7 +13,7 @@ Review date: 2026-08-01. This is a read-only source, test, documentation, and hi
 - The reviewed fork ref is origin/main at acb5512ad4290e9d0e217fa295ba230915b353f9.
 - The reviewed parent ref is upstream/main at 6d109198a4dccfdcd4c6f8a3ee0834722e54a877.
 - The Centaur primary checkout is at an older local HEAD, 20e624c087276a7f0976cc2d094bd1b20afcce85, and is dirty. The current fork source was therefore inspected from the immutable origin/main remote tree with Git show/diff, while the primary checkout remained untouched.
-- OpenTag comparison was made against origin/main at e10bd0d32d42d274d760c96941f941f04ccef50e and its current source, tests, HANDOFF.md, VISION-SPEC.md, ARCHITECTURE.md, PRODUCT.md, and docs/centaur-port.md.
+- OpenTag comparison used the local HEAD at e10bd0d32d42d274d760c96941f941f04ccef50e and its current source, tests, HANDOFF.md, VISION-SPEC.md, ARCHITECTURE.md, PRODUCT.md, and docs/centaur-port.md. At review time origin/main was 2116501615387af89d6c7ff8391f45b56beaef3c, five commits ahead; the handoff/spec files were untracked local inputs, with their hashes and status pinned in the source manifest.
 
 ## Ancestry, reviewed range, and sync outcome
 

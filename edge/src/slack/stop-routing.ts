@@ -201,22 +201,33 @@ export async function handleStopCommand(
     const directThreadKey = teamId
       ? slackObligationThreadKey(teamId, channel, statusThreadTs)
       : slackObligationThreadKey(channel, statusThreadTs);
+    const legacyThreadKey = teamId
+      ? slackObligationThreadKey(channel, statusThreadTs)
+      : undefined;
     let activeTurn: ActiveTurnRecord | undefined;
     try {
       activeTurn = event.thread_ts || channel.startsWith("D")
         ? await getActiveTurnForThread(stateStore, directThreadKey)
         : await getLatestActiveTurn(stateStore, channel);
+      if (!activeTurn && legacyThreadKey && legacyThreadKey !== directThreadKey) {
+        activeTurn = await getActiveTurnForThread(stateStore, legacyThreadKey);
+      }
       if (!activeTurn && (event.thread_ts || channel.startsWith("D"))) {
-        const obligation = await stateStore.obligation.get(directThreadKey);
-        if (obligation) {
+        const obligationKeys = legacyThreadKey && legacyThreadKey !== directThreadKey
+          ? [directThreadKey, legacyThreadKey]
+          : [directThreadKey];
+        for (const threadKey of obligationKeys) {
+          const obligation = await stateStore.obligation.get(threadKey);
+          if (!obligation) continue;
           activeTurn = {
             channelId: channel,
-            threadKey: directThreadKey,
-            conversationKey: conversationKeyFromThreadKey(directThreadKey) ?? "",
+            threadKey,
+            conversationKey: conversationKeyFromThreadKey(threadKey) ?? "",
             executionId: obligation.executionId,
             threadTs: obligation.threadTs ?? statusThreadTs,
             registeredAt: 0,
           };
+          break;
         }
       }
     } catch (err) {

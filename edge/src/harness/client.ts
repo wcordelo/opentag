@@ -605,11 +605,26 @@ export async function runHarnessTurn(
         await args.onHarnessEvent?.({ kind: parsed.kind, payload: value });
       }
     } else if (parsed.kind === "done") {
+      const donePayload = parsed.payload ?? {};
+      const preSanitized = sanitizeValue(donePayload, { exactSecrets });
+      if (!preSanitized.ok) {
+        throw new EventSanitizationError(
+          `event_sanitization_failed:${preSanitized.reason}`,
+        );
+      }
+      const preValue = preSanitized.value as { ok?: boolean; summary?: string };
+      if (preValue.ok === true && pendingProviderState !== undefined) {
+        try {
+          await sessionDo.putProviderState(pendingProviderState);
+        } catch (err) {
+          throw new EventPersistenceError(`provider_state_write_failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       const { value } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         "done",
-        parsed.payload ?? {},
+        donePayload,
         exactSecrets,
       );
       const sanitized = value as { ok?: boolean; summary?: string };
@@ -618,13 +633,6 @@ export async function runHarnessTurn(
       sawDone = true;
       doneOk = sanitized.ok === true;
       doneSummary = sanitized.summary;
-      if (doneOk && pendingProviderState !== undefined) {
-        try {
-          await sessionDo.putProviderState(pendingProviderState);
-        } catch (err) {
-          throw new EventPersistenceError(`provider_state_write_failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
       return true;
     }
     // Unknown kinds are ignored — forward compatibility with new event types.

@@ -8,6 +8,11 @@
 
 import { BuzzContractError } from "./contract.js";
 import {
+  BUZZ_REPLY_AUTH_REJECTED,
+  BUZZ_REPLY_PUBLISH_FAILED,
+  BUZZ_REPLY_REJECTED,
+} from "./events-publisher.js";
+import {
   processBuzzWakeReceive,
   type BuzzWakeReceiveDeps,
   type BuzzWakeReceiveResult,
@@ -49,10 +54,16 @@ function mapReceiveResult(result: BuzzWakeReceiveResult): Response {
 const TRANSIENT_FETCH_CODES = new Set([
   "buzz_receive_fetch_failed",
   "buzz_receive_event_unverified",
+  BUZZ_REPLY_PUBLISH_FAILED,
 ]);
 
 /** Permanent relay auth rejection — distinct from transient fetch failure. */
 const AUTH_REJECTED_CODE = "buzz_receive_auth_rejected";
+
+const PERMANENT_REPLY_CODES = new Set([
+  BUZZ_REPLY_AUTH_REJECTED,
+  BUZZ_REPLY_REJECTED,
+]);
 
 /** Installation allowlist / policy misconfig — fail closed like unconfigured. */
 const ALLOWLIST_FAIL_CLOSED_CODES = new Set([
@@ -77,6 +88,9 @@ function mapError(error: unknown): Response {
   if (error instanceof Error && error.message === AUTH_REJECTED_CODE) {
     // Athena: 401/403 → 502 with distinct permanent code (not masked as fetch_failed).
     return jsonResponse({ status: "error", error: AUTH_REJECTED_CODE }, 502);
+  }
+  if (error instanceof Error && PERMANENT_REPLY_CODES.has(error.message)) {
+    return jsonResponse({ status: "error", error: error.message }, 502);
   }
   if (error instanceof Error && TRANSIENT_FETCH_CODES.has(error.message)) {
     return jsonResponse({ status: "error", error: error.message }, 502);

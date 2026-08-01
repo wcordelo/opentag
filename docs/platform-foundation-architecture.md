@@ -66,6 +66,26 @@ layer, not a fake provisioning service. It covers:
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
   request contracts.
 
+`edge/src/platform/platform-state-do.ts` now provides the durable metadata
+ledger for those contracts. Tenant records are sharded by a deterministic
+canonical internal tenant UUID; the platform-wide connector marketplace uses
+one reserved object. The ledger provides:
+
+- idempotent provisioning receipts and monotonic step advancement, becoming
+  `active` only after every required footprint is explicitly completed;
+- versioned identity and credential custody references with terminal
+  revocation;
+- curated marketplace versions and terminal connector revocation;
+- credential-linked OAuth grant versions with terminal revocation;
+- execution-linked, idempotent usage-meter receipts with bounded listing; and
+- monotonic memory policies plus deletion requests that remain `requested`
+  until an approved external deletion worker completes them.
+
+The Worker exposes these operations only behind the existing admin secret. The
+ledger is an audit/state boundary, not the effecter: it does not perform a
+Slack install, mint keys, run an OAuth callback, call a billing provider, or
+delete knowledge.
+
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
@@ -75,9 +95,11 @@ still required before these contracts become live product surfaces:
 4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
 5. retention/deletion guarantees and compliance requirements for hosted memory.
 
-No code silently chooses one of those alternatives, provisions a tenant, runs
-an OAuth callback, stores a provider token, charges a plan, or deletes live
-customer knowledge.
+No code silently chooses one of those alternatives, runs an OAuth callback,
+stores a provider token, charges a plan, or deletes live customer knowledge.
+The platform-state ledger records explicit bootstrap requests and externally
+verified receipts without marking a tenant active until the required steps are
+reported complete.
 
 ## Remaining activation gates
 
@@ -90,5 +112,9 @@ customer knowledge.
 - The router remains dark until the shadow dataset is measured and the Tier 1
   knowledge gate, Tier 1 synthesis/fallback path, escalation affordance, and
   misroute ledger are implemented.
+- The platform-state migration and admin routes are locally validated, but the
+  production bootstrap authority, tenant locator integration, identity/key
+  custody worker, Slack OAuth callback, marketplace trust review process,
+  billing/plan enforcement, and memory deletion executor are not live.
 - Cloudflare deployment is a separate explicit gate; local typechecks and
   tests do not authorize `wrangler deploy`.

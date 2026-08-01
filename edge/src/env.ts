@@ -11,6 +11,7 @@ import type { KnowledgeDO } from "./memory/knowledge-do.js";
 import type { SessionEventDO } from "./store/session-event-do.js";
 import type { DeferredIngressDO } from "./deferred-ingress-do.js";
 import type { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
+import type { PlatformStateDO } from "./platform/platform-state-do.js";
 
 /**
  * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
@@ -35,6 +36,8 @@ export interface Env {
   DEFERRED_INGRESS?: DurableObjectNamespace<DeferredIngressDO>;
   /** Per-channel cross-isolate Slack dispatch reservations. */
   SLACK_RATE_LIMIT?: DurableObjectNamespace<SlackRateLimitDO>;
+  /** Optional until the platform-state migration is deployed to every bot. */
+  PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
   DELIVERY_METRICS: AnalyticsEngineDataset;
   BLOBS?: R2Bucket;

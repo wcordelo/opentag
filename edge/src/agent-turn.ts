@@ -45,6 +45,7 @@ import {
   firstSlackTs,
   slackObligationThreadKey,
 } from "./slack/obligation-thread-key.js";
+import { resolveSessionEventThreadKey } from "./slack/session-partition.js";
 import { extractMessageOverrides, harnessModelMismatchError } from "./slack/overrides.js";
 import {
   resolveThreadOverrides,
@@ -952,7 +953,10 @@ export async function runBundledAgentTurn(
   let sessionHistory: ReturnType<typeof reconstructSessionHistory> = [];
   if (env.SESSION_EVENTS) {
     try {
-      const threadKey = deriveHarnessThreadKey(teamId, channelId, conversationKey, thread);
+      const threadKey = await resolveSessionEventThreadKey(
+        env,
+        deriveHarnessThreadKey(teamId, channelId, conversationKey, thread),
+      );
       const session = env.SESSION_EVENTS.get(env.SESSION_EVENTS.idFromName(threadKey)) as unknown as {
         replay(afterEventId?: number): Promise<Parameters<typeof reconstructSessionHistory>[0]>;
       };

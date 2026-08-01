@@ -29,6 +29,7 @@ describe("Slack turn pre-admission identity", () => {
       { accepted: false, duplicate: false },
     ];
     const stub = {
+      activeTurnGet: async () => undefined,
       activeTurnRegisterWithObligation: async () => outcomes.shift()!,
     };
     const env = {

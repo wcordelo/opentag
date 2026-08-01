@@ -25,6 +25,7 @@
  */
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
+import { resolveSessionEventThreadKey } from "../slack/session-partition.js";
 import type { PreparedAttachment } from "../slack/download-files.js";
 import type { NanocodexProviderState } from "../../workers/sandbox/src/nanocodex-responses.js";
 import {
@@ -425,14 +426,15 @@ export async function runHarnessTurn(
     return failed("unavailable", "harness_unavailable");
   }
 
+  const threadKey = await resolveSessionEventThreadKey(env, args.threadKey);
   const sessionDo = env.SESSION_EVENTS.get(
-    env.SESSION_EVENTS.idFromName(args.threadKey),
+    env.SESSION_EVENTS.idFromName(threadKey),
   ) as unknown as SessionEventsFullRpc;
 
   let created: { sessionId: string; restarted: boolean };
   try {
     created = await sessionDo.create({
-      threadKey: args.threadKey,
+      threadKey,
       harnessType,
       model: args.model,
     });
@@ -498,7 +500,7 @@ export async function runHarnessTurn(
     sessionId: created.sessionId,
     executionId,
     forwardedMessageId: args.forwardedMessageId,
-    threadKey: args.threadKey,
+    threadKey,
     inputLines: [args.prompt],
     harnessType,
     remoteGitApproved: args.remoteGitApproved === true,

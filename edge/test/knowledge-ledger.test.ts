@@ -752,6 +752,26 @@ describe("KnowledgeLedger", () => {
       .toEqual({ decision: "noop", reason: "permanent_failure" });
   });
 
+  it("persists the exact Slack terminal skip code and blocks reconciliation leases", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "slack_terminal_skip",
+      errorCode: "not_in_channel",
+    }, 2_100)).toBe(true);
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "permanent_failure",
+      lastErrorClass: "slack_terminal_skip",
+      lastErrorCode: "not_in_channel",
+    });
+    expect(ledger.acquireLease(descriptor, 3, "lease-2", 3_000, 60_000))
+      .toEqual({ decision: "noop", reason: "permanent_failure" });
+  });
+
   it("clears add_started after a retryable add failure with no Local ID", () => {
     const ledger = makeLedger();
     const descriptor = job(3, "2026-07-19T01:00:00.000Z");

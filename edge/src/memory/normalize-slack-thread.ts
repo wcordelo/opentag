@@ -1,6 +1,7 @@
 import type {
   IncompleteThread,
   KnowledgeThreadFetchOutcome,
+  SkippedThread,
   SlackThreadMessage,
 } from "../slack/knowledge-thread-fetcher.js";
 
@@ -38,7 +39,10 @@ export type NormalizedSlackThread = {
   bytes: number;
 };
 
-export type SlackThreadNormalizationOutcome = NormalizedSlackThread | IncompleteThread;
+export type SlackThreadNormalizationOutcome =
+  | NormalizedSlackThread
+  | IncompleteThread
+  | SkippedThread;
 
 const encoder = new TextEncoder();
 const ALLOWED_SUBTYPES = new Set(["", "file_share", "thread_broadcast"]);
@@ -171,12 +175,12 @@ async function sha256(value: string): Promise<`sha256:${string}`> {
     .join("")}`;
 }
 
-/** Incomplete fetches are passed through and can never become complete writes. */
+/** Non-complete fetches are passed through and can never become complete writes. */
 export async function normalizeSlackThread(
   fetched: KnowledgeThreadFetchOutcome,
   context: SlackThreadNormalizationContext,
 ): Promise<SlackThreadNormalizationOutcome> {
-  if (fetched.status === "incomplete") return fetched;
+  if (fetched.status !== "complete") return fetched;
   const canonical = {
     schemaVersion: 1 as const,
     workspaceId: context.teamId,

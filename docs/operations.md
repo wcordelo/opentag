@@ -623,7 +623,12 @@ and the DLQ name must use it. Any Queue delivery with missing, identical,
 swapped, or unknown names is retried and throws before a message body is parsed.
 Missing Slack or Local runtime configuration is recorded as retryable
 degradation; it must not delay Slack acknowledgement or cause a turn to call
-ingestion. During a turn, only the bounded `search_slack` tool may call Local.
+ingestion. Slack source-level `ok:false` errors `not_in_channel`,
+`channel_not_found`, and `thread_not_found` are instead recorded as durable
+`permanent_failure` skips with the exact Slack error code; the Queue message is
+acknowledged and reconciliation blocks the source. Transport, rate-limit, and
+timeout failures remain retryable. During a turn, only the bounded
+`search_slack` tool may call Local.
 It returns `knowledge_unavailable` without failing the turn when Local is down,
 and it returns no citation after a source disable, policy/version change,
 tombstone, or ledger/revision mismatch.

@@ -48,6 +48,36 @@ describe("knowledge Slack thread pagination", () => {
     expect(calls).toEqual([undefined, "cursor-2"]);
   });
 
+  it.each(["not_in_channel", "channel_not_found", "thread_not_found"] as const)(
+    "classifies Slack %s as a terminal source skip",
+    async (reason) => {
+      const result = await fetchKnowledgeThread({
+        channel: "C1",
+        threadTs: "1.0",
+        readPage: async () => ({ ok: false, error: reason }),
+      });
+      expect(result).toEqual({
+        status: "skipped",
+        reason,
+        cursor: undefined,
+        pages: 1,
+        messages: 0,
+        bytes: 0,
+      });
+    },
+  );
+
+  it("classifies a Slack JSON error response without retrying the page", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: false, error: "not_in_channel" }));
+    const result = await fetchKnowledgeThread({
+      channel: "C1",
+      threadTs: "1.0",
+      readPage: createSlackKnowledgePageReader({ botToken: "xoxb-fixture", fetch: fetchMock }),
+    });
+    expect(result).toMatchObject({ status: "skipped", reason: "not_in_channel", pages: 1 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["cursor_missing", async () => ({ ok: true, messages: [], has_more: true })],
     ["cursor_loop", async ({ cursor }: { cursor?: string }) => ({

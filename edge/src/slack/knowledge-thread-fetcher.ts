@@ -22,6 +22,12 @@ export type SlackThreadPage = {
   response_metadata?: { next_cursor?: string };
 };
 
+/** Slack errors that make this exact knowledge source terminally unreadable. */
+export type KnowledgeThreadSkipReason =
+  | "not_in_channel"
+  | "channel_not_found"
+  | "thread_not_found";
+
 export type KnowledgeThreadIncompleteReason =
   | "page_cap"
   | "message_cap"
@@ -49,7 +55,16 @@ export type IncompleteThread = {
   bytes: number;
 };
 
-export type KnowledgeThreadFetchOutcome = CompleteThread | IncompleteThread;
+export type SkippedThread = {
+  status: "skipped";
+  reason: KnowledgeThreadSkipReason;
+  cursor?: string;
+  pages: number;
+  messages: number;
+  bytes: number;
+};
+
+export type KnowledgeThreadFetchOutcome = CompleteThread | IncompleteThread | SkippedThread;
 
 export type KnowledgeThreadPageReader = (args: {
   channel: string;
@@ -96,6 +111,23 @@ function messageBytes(message: SlackThreadMessage): number {
 function positiveInteger(value: number, field: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${field} must be a positive integer`);
   return value;
+}
+
+const TERMINAL_SLACK_KNOWLEDGE_ERRORS = new Set<string>([
+  "not_in_channel",
+  "channel_not_found",
+  "thread_not_found",
+]);
+
+/**
+ * Keep this allowlist narrow: source-level access/identity failures cannot be
+ * repaired by retrying the same Slack thread, while transport and rate-limit
+ * failures still need their existing retry behavior.
+ */
+export function classifySlackKnowledgeError(error: unknown): KnowledgeThreadSkipReason | undefined {
+  if (typeof error !== "string") return undefined;
+  if (!TERMINAL_SLACK_KNOWLEDGE_ERRORS.has(error)) return undefined;
+  return error as KnowledgeThreadSkipReason;
 }
 
 /**
@@ -167,6 +199,19 @@ export async function fetchKnowledgeThread(args: {
         return { status: "incomplete", reason, cursor, pages, messages: messages.length, bytes };
       }
       pages += 1;
+      if (page.ok === false) {
+        const skipReason = classifySlackKnowledgeError(page.error);
+        if (skipReason) {
+          return {
+            status: "skipped",
+            reason: skipReason,
+            cursor,
+            pages,
+            messages: messages.length,
+            bytes,
+          };
+        }
+      }
       if (!page.ok || !Array.isArray(page.messages)) {
         return { status: "incomplete", reason: "slack_error", cursor, pages, messages: messages.length, bytes };
       }

@@ -132,6 +132,14 @@ export interface Env {
    */
   BUZZ_OPEN_TAG_SIGNER_SECRET?: string;
   /**
+   * Optional NIP-OA owner-attestation tag JSON for the OpenTag signer pubkey.
+   * Cloudflare Worker secret ONLY. When set, `/query` sends `x-auth-tag`.
+   * Unset/empty → explicit NIP-98-only mode (standalone relay-member path).
+   * Present but malformed → `/buzz/wake` 503 `buzz_auth_tag_invalid_shape`
+   * (fail closed; never silently omit and hit a confusing relay 403).
+   */
+  BUZZ_OPEN_TAG_AUTH_TAG?: string;
+  /**
    * Absolute HTTPS origin of the Buzz community host (no trailing slash),
    * e.g. `https://berendo.communities.buzz.xyz`. Non-secret.
    */

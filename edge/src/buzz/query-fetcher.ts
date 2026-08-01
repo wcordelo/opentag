@@ -11,7 +11,10 @@
  */
 
 import type { BuzzCanonicalEventFetcher } from "./receive.js";
-import type { BuzzOpenTagSigner } from "./signer-secret.js";
+import {
+  BUZZ_OPEN_TAG_AUTH_TAG_HEADER,
+  type BuzzOpenTagSigner,
+} from "./signer-secret.js";
 import { buildNip98AuthorizationHeader } from "./nip98-auth.js";
 import { verifyNostrEvent } from "./nostr-crypto.js";
 
@@ -27,6 +30,14 @@ export const BUZZ_QUERY_DEFAULT_TIMEOUT_MS = 10_000;
 export type BuzzQueryFetcherOptions = Readonly<{
   relayHttpBaseUrl: string;
   signer: BuzzOpenTagSigner;
+  /**
+   * Optional NIP-OA auth-tag JSON for closed relays (owner-attested path).
+   * Sent as `x-auth-tag` when non-empty; omitted when unset/empty — that
+   * omission is the explicit standalone (NIP-98-only) mode. Callers must
+   * reject malformed secrets before constructing the fetcher so mis-sets
+   * never reach this path as a silent omit.
+   */
+  authTagJson?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   nowSeconds?: () => number;
@@ -84,17 +95,22 @@ export function createBuzzNip98QueryFetcher(
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
 
+      const headers: Record<string, string> = {
+        "content-type": "application/json; charset=utf-8",
+        accept: "application/json",
+        authorization,
+      };
+      if (options.authTagJson !== undefined && options.authTagJson.length > 0) {
+        headers[BUZZ_OPEN_TAG_AUTH_TAG_HEADER] = options.authTagJson;
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let response: Response;
       try {
         response = await fetchImpl(queryUrl, {
           method: "POST",
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            accept: "application/json",
-            authorization,
-          },
+          headers,
           body: bodyText,
           signal: controller.signal,
         });

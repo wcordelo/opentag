@@ -22,8 +22,10 @@ import { createBuzzNip98QueryFetcher } from "./query-fetcher.js";
 import { createBuzzRuntimeAdmit } from "./runtime-admit.js";
 import {
   BUZZ_CHANNEL_TENANT_MAP_VAR,
+  BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME,
   BUZZ_OPEN_TAG_SIGNER_SECRET_NAME,
   BUZZ_RELAY_HTTP_BASE_URL_VAR,
+  loadBuzzOpenTagAuthTag,
   loadBuzzOpenTagSigner,
 } from "./signer-secret.js";
 import type { BuzzChannelTenantDirectory } from "./wake.js";
@@ -34,6 +36,7 @@ const CHANNEL_ID_RE =
 
 export type BuzzWakeEnvBindings = Readonly<{
   [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]?: string;
+  [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]?: string;
   [BUZZ_RELAY_HTTP_BASE_URL_VAR]?: string;
   [BUZZ_CHANNEL_TENANT_MAP_VAR]?: string;
 }>;
@@ -110,6 +113,13 @@ export function tryBuildBuzzWakeReceiveDeps(
     return undefined;
   }
 
+  // Optional owner-attested path. Unset → NIP-98 only (explicit). Malformed
+  // (incl. whitespace-only) throws opaque buzz_auth_tag_invalid_shape so the
+  // Worker can 503 without attempting a fetch that would look like auth 403.
+  const authTagJson = loadBuzzOpenTagAuthTag(
+    env[BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME],
+  );
+
   const directory = parseBuzzChannelTenantMap(mapJson);
   const dedupe = stateStoreBuzzEventDedupe(store);
 
@@ -120,6 +130,7 @@ export function tryBuildBuzzWakeReceiveDeps(
     fetcher: createBuzzNip98QueryFetcher({
       relayHttpBaseUrl: relayBase,
       signer,
+      authTagJson,
       fetchImpl: options.fetchImpl,
       nowSeconds: options.nowSeconds,
     }),

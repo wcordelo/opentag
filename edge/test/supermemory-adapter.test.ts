@@ -392,6 +392,92 @@ describe("Supermemory Queue dispatch configuration fence", () => {
     });
   });
 
+  it("persists a terminal Slack source skip without normalizing or writing an empty corpus", async () => {
+    const job = createKnowledgeJob({
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "1.0",
+      configVersion: 3,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    });
+    const source = {
+      schemaVersion: 1 as const,
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "C1",
+      enabled: true,
+      everEnabled: true,
+      readerPolicyRef: "bundle:readers",
+      retentionDays: null,
+      configVersion: 3,
+      updatedAt: "2026-07-19T00:00:00.000Z",
+    };
+    const outcomes: unknown[] = [];
+    const addSlackDocument = vi.fn();
+    const updateSlackDocument = vi.fn();
+    const deleteSlackDocument = vi.fn();
+    const pollDocument = vi.fn();
+    const fetchThread = vi.fn(async () => ({
+      status: "skipped" as const,
+      reason: "not_in_channel" as const,
+      pages: 1,
+      messages: 0,
+      bytes: 0,
+    }));
+    const dispatch = createKnowledgeSupermemoryDispatch({
+      fetchThread,
+      createAdapter: () => ({
+        addSlackDocument,
+        updateSlackDocument,
+        deleteSlackDocument,
+        pollDocument,
+      }),
+    });
+    const env = {
+      SLACK_BOT_TOKEN: "xoxb-fixture",
+      SUPERMEMORY_URL: "https://supermemory.example",
+      SUPERMEMORY_API_KEY: "sm_fixture",
+      SUPERMEMORY_MUTATION_CONTRACT: "verified",
+      KNOWLEDGE: {
+        idFromName: vi.fn(),
+        get: () => ({
+          fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/outcome") {
+              outcomes.push(JSON.parse(String(init?.body ?? "{}")));
+              return Response.json({ recorded: true });
+            }
+            return Response.json({ error: "not_found" }, { status: 404 });
+          }),
+        }),
+      },
+    } as unknown as KnowledgeQueueEnv;
+
+    await expect(dispatch(job, env, {
+      leaseToken: "lease-skip",
+      source,
+      effectToken: "effect-skip",
+      validateSource: vi.fn(async () => source),
+    })).resolves.toEqual({ status: "recorded_permanent" });
+    expect(fetchThread).toHaveBeenCalledWith(job, env);
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        sourceKey: "slack:T1:C1:1_0",
+        leaseToken: "lease-skip",
+        outcome: {
+          status: "permanent_failure",
+          errorClass: "slack_terminal_skip",
+          errorCode: "not_in_channel",
+        },
+      }),
+    ]);
+    expect(addSlackDocument).not.toHaveBeenCalled();
+    expect(updateSlackDocument).not.toHaveBeenCalled();
+    expect(pollDocument).not.toHaveBeenCalled();
+  });
+
   it("refetches a reply deletion and halts an indexed mutation without tombstoning", async () => {
     const job = createKnowledgeJob({
       teamId: "T1",

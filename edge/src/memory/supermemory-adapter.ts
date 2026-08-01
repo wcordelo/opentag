@@ -28,6 +28,8 @@ export const SUPERMEMORY_POLL = Object.freeze({
   maxPolls: 20,
 });
 
+const SLACK_TERMINAL_SKIP_ERROR_CLASS = "slack_terminal_skip";
+
 export type LocalOperationErrorCode =
   | "knowledge_unavailable"
   | "local_rejected"
@@ -483,6 +485,14 @@ export function createKnowledgeSupermemoryDispatch(
           scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
         }),
       });
+  if (fetched.status === "skipped") {
+    await recordFencedOutcome({
+      status: "permanent_failure",
+      errorClass: SLACK_TERMINAL_SKIP_ERROR_CLASS,
+      errorCode: fetched.reason,
+    });
+    return { status: "recorded_permanent" };
+  }
   if (fetched.status === "incomplete") {
     await recordFencedOutcome({
       status: "retryable_failure",

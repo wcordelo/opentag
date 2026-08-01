@@ -37,6 +37,13 @@ describe("knowledge reconciliation and DLQ operations", () => {
     expect(planKnowledgeReconciliation({
       ...source, status: "indexed", localDocumentId: "doc-1", desiredRevision: "sha256:new", indexedRevision: "sha256:old",
     }, "2026-07-19T01:00:00.000Z")).toMatchObject({ action: "blocked", reason: "unsupported_update_contract" });
+    expect(planKnowledgeReconciliation({
+      ...source, status: "permanent_failure", incompleteReason: "not_in_channel",
+    }, "2026-07-19T01:00:00.000Z")).toEqual({
+      action: "blocked",
+      sourceKey: "slack:T1:C1:1_0",
+      reason: "permanent_failure",
+    });
   });
 
   it("resumes the same known ID and retries incomplete fetches safely", () => {

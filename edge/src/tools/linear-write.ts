@@ -150,8 +150,8 @@ export function createSaveLinearIssueTool(dependencies: {
           revalidate: () => verifyConnectorAuthorization(env.WORKSPACE_CONFIG, authorization.labels),
         }),
       );
-      await store.kv.delete(linearWriteApprovalKey(approvalId));
       await dependencies.assertActive(thread);
+      await store.kv.delete(linearWriteApprovalKey(approvalId));
       return { status: "created", ...created };
     },
   }) as BotTool;

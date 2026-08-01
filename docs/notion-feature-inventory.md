@@ -2,7 +2,7 @@
 
 Status: source audit completed 2026-08-01; implementation comparison is against
 OpenTag `origin/main` at `ff8d649` plus the isolated effecter branch
-`codex/weekly-platform-effecter` at `08d7a4c`.
+`codex/weekly-platform-effecter` at `8d86c20`.
 This is a repository report, not a write to the Notion baseline or daily-review
 database.
 

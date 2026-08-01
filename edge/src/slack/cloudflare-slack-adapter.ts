@@ -83,6 +83,10 @@ import {
 } from "./quick-card.js";
 import type { TrustedTriggerConfig } from "./trusted-trigger.js";
 import {
+  classifyRouterHeuristics,
+  type RouterHeuristicDecision,
+} from "../router/heuristics.js";
+import {
   createHarnessProgressLiveRenderer,
   type HarnessProgressLiveRenderer,
 } from "./harness-progress-live.js";
@@ -162,6 +166,12 @@ type CloudflareSlackAdapterBaseOptions = {
   slackScheduler?: SlackRateScheduler;
   deliveryMetrics?: AnalyticsEngineDataset;
   trustedTriggerConfig?: TrustedTriggerConfig;
+  routerShadow?: (decision: RouterHeuristicDecision, context: {
+    teamId?: string;
+    channelId: string;
+    eventId?: string;
+    threadTs?: string;
+  }) => void;
   /** Bounded eventual-consistency reconciliation for ambiguous live posts. */
   liveReconcileAttempts?: number;
   liveReconcileDelayMs?: number;
@@ -592,6 +602,12 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     if (!normalized || normalized.kind !== "turn") {
       return { handled: false };
     }
+    this.opts.routerShadow?.(classifyRouterHeuristics(normalized.userText), {
+      teamId: this.teamId ?? bodyTeamId,
+      channelId: normalized.channel,
+      eventId: normalized.eventId,
+      threadTs: normalized.threadTs ?? normalized.ts,
+    });
 
     const isDm = normalized.source === "direct_message";
     // Top-level channel mentions scope on their OWN message ts, not the

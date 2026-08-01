@@ -9,6 +9,7 @@ import {
   resolveAllowedTools,
   type WorkspaceChannelConfig,
 } from "../config/access-bundle.js";
+import { tenantStub } from "../tenancy.js";
 import { ALL_EDGE_TOOL_NAMES } from "../tools/index.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
 import { loadTurnAccess } from "../config/workspace-config-do.js";
@@ -169,9 +170,7 @@ export const edgeCommands = [
           updatedAt: new Date().toISOString(),
         };
         const effect = await runShortcutEffect(adopted, "command_config", async () => {
-          const stub = env.WORKSPACE_CONFIG.get(
-            env.WORKSPACE_CONFIG.idFromName(teamId),
-          );
+          const stub = tenantStub(env.WORKSPACE_CONFIG, teamId);
           const response = await stub.fetch("https://do/putChannelContext", {
             method: "POST",
             body: JSON.stringify({
@@ -269,7 +268,7 @@ export const edgeCommands = [
           config.runtimeDefaults,
         );
         if (!(await shortcutStillPending(adopted))) return;
-        const threadKey = slackObligationThreadKey(channelId, threadTs);
+        const threadKey = slackObligationThreadKey(teamId, channelId, threadTs);
         const effect = await runShortcutEffect(adopted, "command_research", () =>
           startTask(env, {
             type: "research",

@@ -26,6 +26,7 @@
 import type { Env } from "../env.js";
 import type { SessionEventsRpc } from "../store/conversation-state-do.js";
 import type { PreparedAttachment } from "../slack/download-files.js";
+import type { NanocodexProviderState } from "../../workers/sandbox/src/nanocodex-responses.js";
 import {
   assertPermissionSnapshotV1SlackOnly,
   type PermissionSnapshotV1,
@@ -55,6 +56,7 @@ export interface RunHarnessTurnArgs {
   /** Omitted only by legacy/internal callers; production selection is explicit. */
   harnessType?: "claudecode" | "claudex" | "nanocodex";
   model?: string;
+  nativeResponses?: boolean;
   /** `[Requester Context]` block (SPEC §5-A5 item 5) — built by the caller (agent-turn.ts). */
   requesterContext?: string;
   /** Full thread transcript for a harness restart re-feed; truncated here regardless of who built it. */
@@ -167,6 +169,8 @@ interface SessionEventsFullRpc extends SessionEventsRpc {
     forwardedMessageId?: string;
     inputLines: string[];
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
+  getProviderState(): Promise<unknown | undefined>;
+  putProviderState(state: unknown): Promise<void>;
   appendEvent(args: {
     executionId: string;
     kind: HarnessEventKind;
@@ -411,6 +415,11 @@ export async function runHarnessTurn(
   args: RunHarnessTurnArgs,
 ): Promise<RunHarnessTurnResult> {
   const harnessType = args.harnessType ?? "claudecode";
+  const nativeResponses =
+    harnessType === "nanocodex" &&
+    (args.nativeResponses === true || env.NANOCODEX_NATIVE_RESPONSES === "true") &&
+    args.codingTask !== true &&
+    !args.attachments?.length;
   const fetcher = harnessFetcher(env);
   if (!fetcher || !env.SESSION_EVENTS || !env.HARNESS_AUTH_TOKEN) {
     return failed("unavailable", "harness_unavailable");
@@ -476,6 +485,15 @@ export async function runHarnessTurn(
     );
   }
 
+  let providerState: unknown | undefined;
+  if (nativeResponses) {
+    try {
+      providerState = await sessionDo.getProviderState();
+    } catch (err) {
+      return failed("persistence", `provider_state_read_failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const body: Record<string, unknown> = {
     sessionId: created.sessionId,
     executionId,
@@ -494,7 +512,7 @@ export async function runHarnessTurn(
   // about restart semantics.
   const transcript = truncateTranscript(args.transcript);
   if (transcript) body.transcript = transcript;
-  if (env.HARNESS_REPO_URL) body.repo = { url: env.HARNESS_REPO_URL };
+  if (env.HARNESS_REPO_URL && !nativeResponses) body.repo = { url: env.HARNESS_REPO_URL };
   if (args.codingTask) body.codingTask = true;
   if (args.createPullRequest) body.createPullRequest = true;
   if (args.permissionSnapshot) {
@@ -505,12 +523,17 @@ export async function runHarnessTurn(
     body.contractVersion = 2;
     body.systemPromptOverlay = args.systemPromptOverlay;
   }
+  if (nativeResponses) {
+    body.nativeResponses = true;
+    if (providerState !== undefined) body.providerState = providerState;
+  }
 
   let accumulatedText = "";
   let sawDone = false;
   let doneOk = false;
   let doneSummary: string | undefined;
   let lastHarnessError: string | undefined;
+  let pendingProviderState: NanocodexProviderState | undefined;
   const exactSecrets = collectExactSecretsFromEnv(
     env as unknown as Record<string, unknown>,
   );
@@ -553,13 +576,29 @@ export async function runHarnessTurn(
       const sanitized = value as { message?: unknown };
       if (typeof sanitized.message === "string") lastHarnessError = sanitized.message;
     } else if (parsed.kind === "context" || parsed.kind === "progress") {
+      let eventPayload = parsed.payload ?? {};
+      let providerStateFromEvent: unknown;
+      if (parsed.kind === "context" && eventPayload && typeof eventPayload === "object" && !Array.isArray(eventPayload)) {
+        const contextPayload = eventPayload as Record<string, unknown>;
+        providerStateFromEvent = contextPayload.providerState;
+        if (providerStateFromEvent !== undefined) {
+          const withoutState = { ...contextPayload };
+          delete withoutState.providerState;
+          eventPayload = withoutState;
+        }
+      }
       const { value, appended } = await sanitizeAndAppend(
         sessionDo,
         executionId,
         parsed.kind,
-        parsed.payload ?? {},
+        eventPayload,
         exactSecrets,
       );
+      if (providerStateFromEvent !== undefined) {
+        const sanitizedState = sanitizeValue(providerStateFromEvent, { exactSecrets });
+        if (!sanitizedState.ok) throw new EventSanitizationError("provider_state_sanitization_failed");
+        pendingProviderState = sanitizedState.value as NanocodexProviderState;
+      }
       // Skip live/UI callbacks when durable storage no-oped the event so
       // Slack context cannot diverge from the recoverable event log.
       if (appended) {
@@ -579,6 +618,13 @@ export async function runHarnessTurn(
       sawDone = true;
       doneOk = sanitized.ok === true;
       doneSummary = sanitized.summary;
+      if (doneOk && pendingProviderState !== undefined) {
+        try {
+          await sessionDo.putProviderState(pendingProviderState);
+        } catch (err) {
+          throw new EventPersistenceError(`provider_state_write_failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       return true;
     }
     // Unknown kinds are ignored — forward compatibility with new event types.

@@ -67,7 +67,7 @@ export function adaptVerifiedSlackRequestContext(input: Readonly<{
   const preAdmittedRecord = input.request.preAdmittedTurn.record;
   if (
     preAdmittedRecord.channelId !== input.channelId
-    || preAdmittedRecord.threadKey !== slackObligationThreadKey(input.channelId, input.threadId)
+    || preAdmittedRecord.threadKey !== slackObligationThreadKey(input.request.teamId, input.channelId, input.threadId)
     || preAdmittedRecord.executionId !== expectedExecutionId
   ) {
     throw new PlatformContractError("platform_slack_pre_admission_mismatch");

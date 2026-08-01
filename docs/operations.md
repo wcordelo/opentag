@@ -151,6 +151,8 @@ cd edge
 | `AGENT_URL` | Secret/string | Bot | AG-UI request URL/path |
 | `AGENT_RUNTIME` | Service binding | Bot | Same-zone call to `opentag-agent` |
 | `AGENT_AUTH_HEADER` | Secret | Bot + agent | Optional AG-UI authentication |
+| `SUPERMEMORY_API_KEY` | Secret | Bot | Knowledge retrieval provider credential |
+| `SUPERMEMORY_URL` | Deploy var | Bot | Knowledge retrieval provider origin |
 | `ADMIN_SECRET` | Secret | Bot | `/admin/*`, `/debug/*`, `/tasks/start` |
 | `SESSION_VIEWER_BASE_URL` | Var | Bot | Public bot origin for signed, expiring session links |
 | `QUICK_BASE_DOMAIN` | Var | Bot | Artifact host suffix eligible for final action cards |
@@ -313,6 +315,37 @@ npx wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml
 # configure HARNESS_REPO_URL as a non-secret var or deployment-specific value
 npm run deploy:bot
 ```
+
+For a new installation, the same order is available through the one-command
+installer. It reads secret values only from `OPENTAG_SECRET_*` environment
+variables, sends them to Wrangler over stdin, never writes them to the
+repository, deploys the harness first, and deploys the bot second:
+
+```bash
+cd edge
+OPENTAG_SECRET_OPENAI_API_KEY='...' \
+OPENTAG_SECRET_HARNESS_AUTH_TOKEN='...' \
+OPENTAG_SECRET_KNOWLEDGE_ACTOR_TOKEN_SECRET='...' \
+OPENTAG_SECRET_SLACK_BOT_TOKEN='...' \
+OPENTAG_SECRET_SLACK_SIGNING_SECRET='...' \
+OPENTAG_SECRET_AGENT_URL='...' \
+OPENTAG_SECRET_ADMIN_SECRET='...' \
+OPENTAG_SECRET_INTERNAL_SECRET='...' \
+OPENTAG_SECRET_SUPERMEMORY_API_KEY='...' \
+OPENTAG_VAR_SUPERMEMORY_URL='https://memory.example' \
+npm run deploy:one-click -- --require-secrets
+```
+
+Existing secrets can be left in place by omitting their corresponding
+environment variables. Use `npm run deploy:one-click -- --no-deploy` to
+configure only the supplied secrets, or `--dry-run` to inspect the Wrangler
+commands without sending values or deploying.
+
+`NANOCODEX_NATIVE_RESPONSES=true` enables the typed native Responses adapter
+for non-coding Nanocodex turns. Coding turns continue through the CLI harness
+because the native adapter deliberately exposes no shell, repository, or
+remote-git tools. The provider checkpoint and replay state is stored in the
+per-thread `SessionEventDO`; it is not kept only in the container process.
 
 6. Verify bot and proxy `/health`, a read-only Claudex turn, Stop during a live
    turn, a local commit-only coding turn, then a separately approved push/PR

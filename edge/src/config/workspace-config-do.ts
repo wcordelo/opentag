@@ -29,6 +29,11 @@ import {
   type KnowledgeSourceAction,
   type VerifiedKnowledgeSourceGrant,
 } from "./knowledge-source-authorization.js";
+import {
+  bindTenantIdentity,
+  bodyMatchesTenant,
+  tenantStub,
+} from "../tenancy.js";
 
 export {
   DEFAULT_BUNDLE,
@@ -275,6 +280,13 @@ function trackedKnowledgeAuthorizationFromRow(row: TrackedKnowledgeAuthorization
 
 export class WorkspaceConfigDO extends DurableObject {
   private migrated = false;
+  private tenantBinding: Promise<string | undefined> = Promise.resolve(undefined);
+
+  private bindTenant(request: Request): Promise<string | undefined> {
+    const next = this.tenantBinding.then(() => bindTenantIdentity(this.ctx.storage, request));
+    this.tenantBinding = next;
+    return next;
+  }
 
   private sql(): SqlExecutor {
     return this.ctx.storage.sql as unknown as SqlExecutor;
@@ -423,6 +435,10 @@ export class WorkspaceConfigDO extends DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const tenantId = await this.bindTenant(request);
+    if (!tenantId || !(await bodyMatchesTenant(request, tenantId))) {
+      return Response.json({ error: "tenant_scope_invalid" }, { status: 403 });
+    }
     this.migrate();
     const url = new URL(request.url);
     const sql = this.sql();
@@ -1458,7 +1474,7 @@ export async function loadTurnAccess(
   channelId: string | undefined,
   opts: { includeOverlayText?: boolean } = {},
 ): Promise<{ config: WorkspaceChannelConfig; bundle: AccessBundle }> {
-  const stub = ns.get(ns.idFromName(teamId));
+  const stub = tenantStub(ns, teamId);
   const config = (await stub
     .fetch("https://do/getConfig", {
       method: "POST",

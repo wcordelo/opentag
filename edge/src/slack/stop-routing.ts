@@ -69,6 +69,7 @@ export async function interruptAguiTurn(
 
 /** The subset of a Slack Events API `event` object this module reads. */
 export interface SlackStopEvent {
+  team_id?: string;
   type?: string;
   channel?: string;
   user?: string;
@@ -160,6 +161,7 @@ export function extractStopCommandEvent(
     return undefined;
   }
   if (!isSlackStopCommand({ text })) return undefined;
+  if (payload.team_id && !event.team_id) event.team_id = payload.team_id;
   return event;
 }
 
@@ -172,7 +174,7 @@ export function extractStopCommandEvent(
  *
  * Steps (GOAL.md Phase A2 Task 1):
  *  1. Derive `threadKey` using the same rule as `bot-engine.ts` obligation
- *     writes (`slack:{channel}:{statusThreadTs ?? channel}`), falling back
+ *     writes (`tenant:{team}:{slack:{channel}:{statusThreadTs ?? channel}}`), falling back
  *     to the channel's registered active turn when stop is sent outside a
  *     thread while a threaded turn is in flight.
  *  2. Atomically claim cancellation for this exact execution and Stop event.
@@ -190,12 +192,15 @@ export async function handleStopCommand(
 ): Promise<void> {
   try {
     const channel = event.channel;
+    const teamId = event.team_id?.trim();
     if (!channel) return;
 
     const stateStore = createBotStoreAdapter(env.BOT_STATE);
 
     const statusThreadTs = firstSlackTs(event.thread_ts, event.ts);
-    const directThreadKey = slackObligationThreadKey(channel, statusThreadTs);
+    const directThreadKey = teamId
+      ? slackObligationThreadKey(teamId, channel, statusThreadTs)
+      : slackObligationThreadKey(channel, statusThreadTs);
     let activeTurn: ActiveTurnRecord | undefined;
     try {
       activeTurn = event.thread_ts || channel.startsWith("D")

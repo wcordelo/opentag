@@ -205,7 +205,7 @@ export async function preAdmitSlackTurnResult(
   const { executionId } = slackTurnIdentitySync(context, identity.channelId);
   const record: ActiveTurnRecord = {
     channelId: identity.channelId,
-    threadKey: slackObligationThreadKey(identity.channelId, identity.threadTs),
+    threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
     conversationKey: identity.conversationKey,
     executionId,
     liveClientMessageId: stableSlackClientMessageId(executionId),

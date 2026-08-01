@@ -20,6 +20,7 @@ import {
   type TrackedKnowledgeSource,
 } from "../config/knowledge-config.js";
 import { routeKnowledgeQueueName } from "./knowledge-queue-routing.js";
+import { operatorStub, tenantStub } from "../tenancy.js";
 
 export const KNOWLEDGE_OPERATOR_DO_KEY = "knowledge-operator-control-v1";
 
@@ -122,11 +123,13 @@ async function doRequest<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const untyped = namespace as unknown as {
+  const tenantNamespace = namespace as unknown as {
     idFromName(name: string): unknown;
-    get(id: unknown): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    get(id: unknown): { fetch(input: string | Request, init?: RequestInit): Promise<Response> };
   };
-  const stub = untyped.get(untyped.idFromName(objectName));
+  const stub = objectName === KNOWLEDGE_OPERATOR_DO_KEY
+    ? operatorStub(tenantNamespace, objectName)
+    : tenantStub(tenantNamespace, objectName);
   const response = await stub.fetch(`https://do${path}`, {
     method: "POST",
     body: JSON.stringify(body),

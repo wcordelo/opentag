@@ -17,6 +17,7 @@ records. When documents disagree, use this precedence order:
 | [PRODUCT.md](../PRODUCT.md) | Product promise, surfaces, reliability and security contracts |
 | [ARCHITECTURE.md](../ARCHITECTURE.md) | Topology, sequence diagrams, state machines, ownership, recovery |
 | [centaur-port.md](./centaur-port.md) | What was ported, adapted, strengthened, or intentionally omitted |
+| [multi-repo-architecture.md](./multi-repo-architecture.md) | Complete-history qm, Nanocodex, Buzz, and Centaur deep dive plus the current OpenTag implementation ledger |
 | [extending.md](./extending.md) | How to add commands, tools, tasks, cards, runtimes, state, and egress |
 | [operations.md](./operations.md) | Local validation, Container builds, deploy order, metrics, troubleshooting |
 | [../setup.md](../setup.md) | Slack, Cloudflare, runtime, harness, and research setup |

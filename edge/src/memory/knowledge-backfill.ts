@@ -19,6 +19,7 @@ import {
   type KnowledgeBackfillApprovalVerifierConfig,
   type VerifiedKnowledgeBackfillApproval,
 } from "./knowledge-backfill-authorization.js";
+import { tenantStub } from "../tenancy.js";
 
 export const KNOWLEDGE_BACKFILL_LIMITS = Object.freeze({
   maxChannels: 50,
@@ -469,13 +470,11 @@ async function backfillDoRequest<T>(
   path: string,
   body: unknown,
 ): Promise<T> {
-  const untyped = namespace as unknown as {
+  const tenantNamespace = namespace as unknown as {
     idFromName(name: string): unknown;
-    get(id: unknown): {
-      fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-    };
+    get(id: unknown): { fetch(input: string | Request, init?: RequestInit): Promise<Response> };
   };
-  const stub = untyped.get(untyped.idFromName(objectName));
+  const stub = tenantStub(tenantNamespace, objectName);
   const response = await stub.fetch(`https://do${path}`, {
     method: "POST",
     body: JSON.stringify(body),

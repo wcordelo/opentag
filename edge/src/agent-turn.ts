@@ -456,6 +456,7 @@ export function buildRequesterContextBlock(
  * the same isolate can overwrite the latter (see `inbound-target.ts`).
  */
 function deriveHarnessThreadKey(
+  teamId: string,
   channelId: string,
   conversationKey: string,
   thread: object,
@@ -465,7 +466,7 @@ function deriveHarnessThreadKey(
   const threadTs = firstSlackTs(scope, inbound?.threadTs, inbound?.ts);
   // Same key the obligation writer / stop path derive — sessions, obligations
   // and stops must all land on the same SessionEventDO partition.
-  return slackObligationThreadKey(channelId, threadTs);
+  return slackObligationThreadKey(teamId, channelId, threadTs);
 }
 
 /** Text plus human-readable attachment names; binary content travels separately. */
@@ -951,7 +952,7 @@ export async function runBundledAgentTurn(
   let sessionHistory: ReturnType<typeof reconstructSessionHistory> = [];
   if (env.SESSION_EVENTS) {
     try {
-      const threadKey = deriveHarnessThreadKey(channelId, conversationKey, thread);
+      const threadKey = deriveHarnessThreadKey(teamId, channelId, conversationKey, thread);
       const session = env.SESSION_EVENTS.get(env.SESSION_EVENTS.idFromName(threadKey)) as unknown as {
         replay(afterEventId?: number): Promise<Parameters<typeof reconstructSessionHistory>[0]>;
       };
@@ -1019,6 +1020,14 @@ export async function runBundledAgentTurn(
             ? { model: env.AGENT_MODEL.trim(), modelSource: "deployment" as const }
             : {}),
         harnessConnected: harnessCapability(env).ok,
+        ...(env.ENVIRONMENT?.trim()
+          ? {
+              deployment: {
+                source: "configuration" as const,
+                environment: env.ENVIRONMENT.trim(),
+              },
+            }
+          : {}),
       }),
     },
     {
@@ -1198,6 +1207,7 @@ export async function runBundledAgentTurn(
   if (useHarness) {
     if (!(await exactTurnPending())) return { status: "interrupted" };
     const harnessThreadKey = deriveHarnessThreadKey(
+      teamId,
       channelId,
       conversationKey,
       thread,

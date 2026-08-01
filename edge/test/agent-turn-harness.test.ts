@@ -440,7 +440,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     async (barrier) => {
       const executionId = `ot1e_${barrier.padEnd(43, "A").slice(0, 43)}`;
       const forwardedMessageId = `ot1m_${barrier.padEnd(43, "B").slice(0, 43)}`;
-      const threadKey = "slack:C1:1111111111.009000";
+      const threadKey = "tenant:T1:slack:C1:1111111111.009000";
       let release!: () => void;
       const blocked = new Promise<void>((resolve) => { release = resolve; });
       const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.009000");
@@ -519,7 +519,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
       conversationKey: string;
       prompt: string;
     };
-    expect(harnessArgs.threadKey).toBe("slack:C1:1111111111.000100");
+    expect(harnessArgs.threadKey).toBe("tenant:T1:slack:C1:1111111111.000100");
     expect(harnessArgs.conversationKey).toBe("C1::1111111111.000100");
     expect(harnessArgs.prompt).toContain("Add a script");
     expect(harnessArgs.prompt).not.toContain("--claude");
@@ -645,7 +645,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
 
   it("suppresses success when exact Stop lands after durable done but before the visible post", async () => {
     const executionId = "ot1e_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    const threadKey = "slack:C1:1111111111.000150";
+    const threadKey = "tenant:T1:slack:C1:1111111111.000150";
     runHarnessTurnMock.mockImplementation(async () => {
       // Model the real barrier: SessionEventDO has already committed done and
       // runHarnessTurn is about to return, while Stop durably marks this exact
@@ -1008,7 +1008,7 @@ describe("runBundledAgentTurn — Phase A5 harness routing", () => {
     });
     const { thread, post, runAgent } = makeThreadSpies("C1::1111111111.000700");
     const executionId = "slack:C1:1111111111.000701";
-    const threadKey = "slack:C1:1111111111.000700";
+    const threadKey = "tenant:T1:slack:C1:1111111111.000700";
     bindTurnExecutionContext(thread, { threadKey, executionId });
     await store.activeTurn.register({
       channelId: "C1",

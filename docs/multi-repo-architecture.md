@@ -220,8 +220,8 @@ Publication and deployment evidence:
   `opentag-harness-harnesscontainer` as version
   `6327fccc-f016-4932-ac24-fc708a13299e`, image digest
   `sha256:dd6b31be13352b6c2b5c38921b1117c983c3a8781f315cc755eb0d963938309c`.
-- The bot Worker deployed as version
-  `3f7da920-18a6-4a8a-bdde-b1aeff7a70d1`.
+- The bot Worker was redeployed at the final branch tip as version
+  `d88c65d3-1117-4fd9-9241-e932682b054c`.
 - `GET https://opentag-bot.williamlopezc.workers.dev/health` returned HTTP 200.
   It reported all durable stores, the harness service binding, native
   Nanocodex capability, knowledge actor-token configuration, Buzz relay

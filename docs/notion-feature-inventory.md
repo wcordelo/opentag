@@ -1,9 +1,9 @@
 # Notion-derived OpenTag feature inventory
 
 Status: source audit completed 2026-08-01; implementation comparison is against
-OpenTag `origin/main` at `2116501` plus the local connector-foundation branch at
-`5997086`. This is a repository report, not a write to the Notion baseline or
-daily-review database.
+OpenTag `origin/main` at `ff8d649` plus the local effecter branch at `18f8184`.
+This is a repository report, not a write to the Notion baseline or daily-review
+database.
 
 ## Scope and source availability
 
@@ -41,6 +41,17 @@ The [daily database](https://app.notion.com/p/3f174eb0c9b24c51aa28beeae39de4ef),
 [historical baseline](https://app.notion.com/p/39d3444800948128b47cd1093c85e6fd),
 and [OpenTag parent plan](https://app.notion.com/p/39a344480094810c8ba1f84c89f7168d)
 were inspected for schema, historical context, and architecture boundaries.
+
+The broader OpenTag page was also inspected: the [single-agent architecture
+plan](https://app.notion.com/p/39a344480094810c8ba1f84c89f7168d), [vision
+spec](https://app.notion.com/p/3af34448009481d09af0c42ec4ef14fe), [three-tier
+router spec](https://app.notion.com/p/3af34448009481bcadfcdf87cb50355d),
+[porting priorities](https://app.notion.com/p/3a9344480094817884dedb90cfb8c988),
+[end-to-end implementation spec](https://app.notion.com/p/3ab34448009481ec96d0eebda0c30fa7),
+the legacy [Centaur-to-Edge migration spec](https://app.notion.com/p/38d34448009481f58864e58be2a71c97),
+and the qm, Nanocodex, and Buzz full-history review databases. The legacy
+Centaur-to-Edge actor/Wasm/Nix design is superseded by the single-agent
+Cloudflare architecture and is not an omitted implementation requirement.
 
 ## Every finding in the available window
 
@@ -193,10 +204,13 @@ change, not evidence that all earlier gaps are complete.
   outcome, and feedback measurement while dispatch remains Tier 2;
 - provisioning, identity/credential references, marketplace/OAuth, usage meter,
   memory-policy/deletion contracts; and
-- the new secret-free `platform_effect_intents` ledger with bounded leases,
+- the merged `platform-state` metadata ledger and the new secret-free
+  `platform_effect_intents` handoff with bounded leases,
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
-  rotation, marketplace changes, billing meters, and memory deletion.
+  rotation, marketplace changes, billing meters, and memory deletion; the
+  isolated branch also adds an authenticated effecter runner/Worker at commit
+  `18f8184` that fails closed when no provider adapter is configured.
 
 ### Still required before “everything” is live
 
@@ -205,9 +219,10 @@ change, not evidence that all earlier gaps are complete.
    provider OAuth/token rotation, scope checks, revocation propagation, and a
    safe non-production smoke. No credential store is currently configured.
 2. **Provisioning/identity:** choose the tenant locator and isolation model,
-   deploy the bootstrap/effect worker, establish identity/key custody, and only
-   mark provisioning active after every required DO, bundle, OAuth, and identity
-   step has an external receipt.
+   deploy the bootstrap/effect worker after an adapter is approved, establish
+   identity/key custody, and only mark provisioning active after every required
+   DO, bundle, OAuth, and identity step has an external receipt. The metadata
+   ledger and platform binding are deployed; the external worker is not.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

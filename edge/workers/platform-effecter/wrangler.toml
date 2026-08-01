@@ -1,0 +1,19 @@
+name = "opentag-platform-effecter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# This is a cross-Worker namespace binding to the metadata ledger owned by the
+# bot Worker. The effecter never gets a second copy of platform state.
+[[durable_objects.bindings]]
+name = "PLATFORM_STATE"
+class_name = "PlatformStateDO"
+script_name = "opentag-bot"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: EFFECTOR_AUTH_TOKEN. Do not put provider credentials in this Worker.
+# Provider-specific adapters and their custody bindings are separate, explicit
+# deployment decisions; no adapter is registered by this baseline Worker.

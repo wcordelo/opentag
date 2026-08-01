@@ -412,6 +412,7 @@ export async function createLinearIssue(input: {
   bundle: AccessBundle;
   credential: CredentialReference;
   credentialBroker?: CredentialBroker;
+  brokerAuthToken?: string;
   draft: unknown;
   fetchImpl?: typeof fetch;
   revalidate?: () => Promise<void>;
@@ -441,7 +442,12 @@ export async function createLinearIssue(input: {
     });
   };
   await verifyAtBoundary();
-  const token = await resolveCredentialBearer(input.credentialBroker, input.credential, input.labels);
+  const token = await resolveCredentialBearer(
+    input.credentialBroker,
+    input.credential,
+    input.labels,
+    { brokerAuthToken: input.brokerAuthToken },
+  );
   const fetchImpl = input.fetchImpl ?? fetch;
   const references = await resolveReferences({ token, draft, fetchImpl });
   const response = await graphql<{

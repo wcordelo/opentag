@@ -1,9 +1,9 @@
 # Notion-derived OpenTag feature inventory
 
 Status: source audit completed 2026-08-01; implementation comparison is against
-OpenTag `origin/main` at `2116501` plus the local connector-foundation branch at
-`5997086`. This is a repository report, not a write to the Notion baseline or
-daily-review database.
+OpenTag `origin/main` at `ff8d649` plus the isolated credential-broker branch.
+This is a repository report, not a write to the Notion baseline or daily-review
+database.
 
 ## Scope and source availability
 
@@ -48,7 +48,7 @@ were inspected for schema, historical context, and architecture boundaries.
 
 - **Migrate — Google Drive full-text search.** Centaur added bounded
   `fullText contains` search, escaping, and tests. OpenTag now has a bounded
-  Drive connector and citation output in the local branch, but live use still
+  Drive connector and citation output on merged main, but live use still
   requires a deployed credential broker, Google OAuth/custody, ACL policy, and
   a non-production validation workspace.
 - **Migrate — secret-shaped harness-output redaction.** This is implemented in
@@ -84,7 +84,7 @@ were inspected for schema, historical context, and architecture boundaries.
   bounded pagination/media/reference normalization, item-level errors, and
   citation/ACL tests.
 - **Evaluate — immutable connector-policy labels.** This foundation is now
-  implemented locally in `edge/src/connectors/authorization.ts`, with
+  implemented on merged main in `edge/src/connectors/authorization.ts`, with
   credential references, access-bundle revisions, revocation, and citation
   binding. A real broker and custody service remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
@@ -93,11 +93,13 @@ were inspected for schema, historical context, and architecture boundaries.
 
 ### Jul 24 — one Evaluate, three N/A
 
-- **Evaluate — generic client-credentials token broker.** The local branch now
-  has a secret-free broker client and a durable effect handoff, but no broker
-  Worker, encrypted provider store, rotation scheduler, or approved custody
-  backend. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
-  or access bundles.
+- **Evaluate — generic client-credentials token broker.** Merged main has the
+  secret-free broker client and durable effect handoff. The isolated branch
+  adds a fail-closed broker Worker with platform-state revalidation, provider
+  and scope policy, internal authentication, and an external `CUSTODY` binding.
+  It intentionally has no encrypted provider store, rotation scheduler, or
+  approved custody backend. Do not put provider tokens in OpenTag Durable
+  Objects, Wrangler vars, or access bundles.
 - **N/A — Kubernetes observable-resource labels.** No Kubernetes/iron-proxy
   equivalent is needed; Cloudflare structured logs and trace correlation are
   the adaptation.
@@ -108,7 +110,7 @@ were inspected for schema, historical context, and architecture boundaries.
 ### Jul 25 — one Migrate, one Evaluate, three N/A
 
 - **Migrate — Claude Opus 5 shortcuts and effective-selection footnote.** The
-  local branch includes `opus-5` and `opus-5-fast` aliases and effective
+  merged line includes `opus-5` and `opus-5-fast` aliases and effective
   harness/model provenance in the harness progress path. A live Slack smoke
   remains useful after the next deployment.
 - **Evaluate — deterministic controlled rollout/provenance.** OpenTag has
@@ -197,13 +199,16 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
+- the isolated credential-broker Worker boundary with internal authentication,
+  tenant/provider/scope revalidation, and an external custody service seam.
 
 ### Still required before “everything” is live
 
-1. **Credential broker and custody:** choose external KMS, wrapped Durable
-   Object envelope, or self-hosted custody; implement the broker Worker,
-   provider OAuth/token rotation, scope checks, revocation propagation, and a
-   safe non-production smoke. No credential store is currently configured.
+1. **Credential custody:** choose external KMS, wrapped Durable Object
+   envelope, or self-hosted custody; implement the external custody Worker,
+   provider OAuth/token rotation, revocation propagation, and a safe
+   non-production smoke. The broker boundary exists on the isolated branch,
+   but no credential store or custody adapter is configured.
 2. **Provisioning/identity:** choose the tenant locator and isolation model,
    deploy the bootstrap/effect worker, establish identity/key custody, and only
    mark provisioning active after every required DO, bundle, OAuth, and identity

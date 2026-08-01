@@ -1,8 +1,8 @@
 # Platform and routing foundation
 
-Status: local implementation on the goal worktree; the effect ledger and
-router measurement ledger are validated, but no hosted platform effecter or
-connector credential broker is deployed.
+Status: local implementation on the goal worktree; the effect ledger, router
+measurement ledger, and credential-broker boundary are validated, but no
+provider custody adapter or hosted platform effecter is deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -115,6 +115,24 @@ The ledger still does not perform the external effect. That boundary must be
 implemented by a separately authenticated worker after custody, provider, and
 billing decisions are approved.
 
+## Credential broker boundary
+
+`edge/workers/credential-broker/` is the last-mile resolver for connector
+tokens. It authenticates the bot service binding, derives the canonical Slack
+tenant id, re-reads public credential metadata from `PlatformStateDO`, and
+checks the credential version, tenant, provider, expiry, and connector scope
+before contacting custody. It supports only explicitly registered connector
+actions (`google_drive/search` and `linear/create_issue`) and fails closed for
+unknown actions.
+
+The broker forwards immutable labels and public credential metadata to an
+external `CUSTODY` service binding. It never stores or logs the returned bearer.
+The default Wrangler configuration intentionally omits that binding; until an
+approved KMS, envelope, or self-hosted custody Worker is selected,
+`credential_custody_unavailable` is the expected result. This makes the
+architecture deployable and testable without pretending that Drive or Linear
+credentials are live.
+
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
@@ -138,8 +156,8 @@ reported complete.
 ## Remaining activation gates
 
 - Drive search is implemented behind the connector authorization contract, but
-  needs a deployed `CONNECTOR_CREDENTIALS` broker and approved Google OAuth/key
-  custody path before it can run live.
+  needs the credential-broker Worker, an approved Google OAuth/key custody path,
+  and a non-production validation workspace before it can run live.
 - Knowledge MCP search still needs the existing Supermemory configuration and
   knowledge rollout gates. Raw templates use the local KnowledgeDO and do not
   imply that Supermemory ingestion is active.
@@ -148,10 +166,11 @@ reported complete.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, and admin routes are locally
-  validated, but the production bootstrap authority, tenant locator
-  integration, identity/key custody worker, Slack OAuth callback, marketplace
-  trust review process, billing/plan enforcement, memory deletion executor,
-  and credential broker are not live.
+- The platform-state migration, effect leases, admin routes, and
+  credential-broker boundary are locally validated, but the production
+  bootstrap authority, tenant locator integration, identity/key custody worker,
+  Slack OAuth callback, marketplace trust review process, billing/plan
+  enforcement, memory deletion executor, external custody binding, and
+  provider adapters are not live.
 - Cloudflare deployment is a separate explicit gate; local typechecks and
   tests do not authorize `wrangler deploy`.

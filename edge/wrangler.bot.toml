@@ -106,6 +106,13 @@ service = "opentag-agent"
 binding = "HARNESS"
 service = "opentag-harness"
 
+# Deploy opentag-credential-broker before activating connector credentials.
+# The broker remains fail-closed until its external CUSTODY binding is
+# configured; this binding never carries a provider token.
+[[services]]
+binding = "CONNECTOR_CREDENTIALS"
+service = "opentag-credential-broker"
+
 [vars]
 ENVIRONMENT = "production"
 NANOCODEX_NATIVE_RESPONSES = "true"
@@ -132,7 +139,7 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET, KNOWLEDGE_ACTOR_TOKEN_SECRET,
-# SUPERMEMORY_API_KEY
+# SUPERMEMORY_API_KEY, CONNECTOR_CREDENTIAL_BROKER_TOKEN
 # SUPERMEMORY_URL is a deploy-time non-secret var; configure it through
 # OPENTAG_VAR_SUPERMEMORY_URL in scripts/deploy-opentag.mjs.
 #

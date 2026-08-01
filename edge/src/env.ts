@@ -62,6 +62,8 @@ export interface Env {
    * provider tokens in Durable Objects or access bundles.
    */
   CONNECTOR_CREDENTIALS?: Fetcher;
+  /** Shared internal bearer for the credential-broker service binding. */
+  CONNECTOR_CREDENTIAL_BROKER_TOKEN?: string;
 
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;

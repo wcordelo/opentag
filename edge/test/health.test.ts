@@ -87,6 +87,10 @@ describe("runtime capability evidence", () => {
         repositoryConfigured: true,
         nativeNanocodexConfigured: false,
       },
+      credentialBroker: {
+        serviceBindingConfigured: false,
+        authConfigured: false,
+      },
       knowledge: {
         namespaceConfigured: false,
         queueDeliveryConfigured: true,
@@ -118,6 +122,13 @@ describe("runtime capability evidence", () => {
       reconciliationConfigured: false,
       searchEndpointConfigured: false,
       actorTokenConfigured: false,
+    });
+    expect(buildRuntimeCapabilityEvidence({
+      CONNECTOR_CREDENTIALS: {} as never,
+      CONNECTOR_CREDENTIAL_BROKER_TOKEN: "broker-secret",
+    }).credentialBroker).toEqual({
+      serviceBindingConfigured: true,
+      authConfigured: true,
     });
   });
 });

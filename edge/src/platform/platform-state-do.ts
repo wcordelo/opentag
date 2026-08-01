@@ -18,6 +18,7 @@ import type {
 import {
   PlatformFoundationError,
   REQUIRED_PROVISIONING_STEPS,
+  assertConnectorMarketplaceEntryActivatable,
   validateConnectorMarketplaceEntry,
   validateConnectorOAuthGrant,
   validateCredentialCustodyReference,
@@ -1093,6 +1094,7 @@ export class PlatformStateEngine {
 
   putMarketplace(value: unknown): { ok: true; duplicate: boolean; entry: ConnectorMarketplaceEntry } {
     const entry = validateConnectorMarketplaceEntry(value);
+    assertConnectorMarketplaceEntryActivatable(entry);
     if (entry.status === "revoked") {
       throw new PlatformStateError("marketplace_active_entry_required", 400);
     }
@@ -1163,6 +1165,11 @@ export class PlatformStateEngine {
       const entry = marketplaceFromRow(current);
       const revoked = validateConnectorMarketplaceEntry({ ...entry, status: "revoked" });
       const updatedAt = nowIso(this.now);
+      this.revokeOAuthGrantsForMarketplace(
+        entry.connectorId,
+        entry.version,
+        updatedAt,
+      );
       this.sql.exec(
         `UPDATE marketplace_entries SET entry_json = ?, status = 'revoked', updated_at = ?
          WHERE connector_id = ? AND version = ?`,
@@ -1178,9 +1185,25 @@ export class PlatformStateEngine {
 
   putOAuthGrant(value: unknown): { ok: true; duplicate: boolean; grant: ConnectorOAuthGrant } {
     const grant = validateConnectorOAuthGrant(value);
-    if (grant.status === "revoked") throw new PlatformStateError("oauth_active_grant_required", 400);
+    if (grant.status !== "active") throw new PlatformStateError("oauth_active_grant_required", 400);
     return this.tx(() => {
       assertTenantActive(this.provisioningByTenant(grant.tenantId), grant.tenantId);
+      const marketplace = this.sql.exec<MarketplaceRow>(
+        `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
+        grant.connectorId,
+        grant.marketplaceVersion,
+      ).toArray()[0];
+      if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
+      const marketplaceEntry = marketplaceFromRow(marketplace);
+      if (marketplaceEntry.status !== "curated") {
+        throw new PlatformStateError("oauth_marketplace_not_curated", 409);
+      }
+      if (marketplaceEntry.authMode !== "oauth2") {
+        throw new PlatformStateError("oauth_connector_not_oauth2", 409);
+      }
+      if (grant.scopes.some((scope) => !marketplaceEntry.oauthScopes.includes(scope))) {
+        throw new PlatformStateError("oauth_scope_not_allowed", 409);
+      }
       const credential = this.sql.exec<CredentialRow>(
         `SELECT * FROM credential_custody_refs WHERE credential_ref = ?`,
         grant.credentialRef,
@@ -1188,6 +1211,9 @@ export class PlatformStateEngine {
       if (!credential) throw new PlatformStateError("oauth_credential_not_found", 409);
       if (credential.tenant_id !== grant.tenantId) throw new PlatformStateError("oauth_credential_scope_mismatch", 409);
       if (credential.status !== "active") throw new PlatformStateError("oauth_credential_revoked", 409);
+      if (credential.provider !== marketplaceEntry.provider) {
+        throw new PlatformStateError("oauth_provider_mismatch", 409);
+      }
       const current = this.sql.exec<OAuthRow>(
         `SELECT * FROM connector_oauth_grants
          WHERE tenant_id = ? AND principal_id = ? AND connector_id = ?`,
@@ -1554,7 +1580,7 @@ export class PlatformStateEngine {
   private insertOAuthRevokeEffect(
     grant: ConnectorOAuthGrant,
     requestedAt: string,
-    operation: "credential_revocation" | "credential_rotation" | "explicit_revoke" | "grant_rotation",
+    operation: "credential_revocation" | "credential_rotation" | "explicit_revoke" | "grant_rotation" | "marketplace_revocation",
   ): void {
     this.insertEffectInTransaction(
       validatePlatformEffectIntent({
@@ -1570,6 +1596,7 @@ export class PlatformStateEngine {
           credentialRef: grant.credentialRef,
           operation,
           principalId: grant.principalId,
+          marketplaceVersion: grant.marketplaceVersion,
           version: grant.version,
         },
         requestedAt,
@@ -1601,6 +1628,33 @@ export class PlatformStateEngine {
         row.connector_id,
       );
       this.insertOAuthRevokeEffect(grant, revokedAt, operation);
+    }
+  }
+
+  private revokeOAuthGrantsForMarketplace(
+    connectorId: string,
+    marketplaceVersion: string,
+    revokedAt: string,
+  ): void {
+    const rows = this.sql.exec<OAuthRow>(
+      `SELECT * FROM connector_oauth_grants WHERE connector_id = ? AND status != 'revoked'`,
+      connectorId,
+    ).toArray();
+    for (const row of rows) {
+      const grant = parseJson<ConnectorOAuthGrant>(row.grant_json);
+      if (grant.marketplaceVersion !== marketplaceVersion) continue;
+      this.sql.exec(
+        `UPDATE connector_oauth_grants
+         SET grant_json = ?, status = 'revoked', revoked_at = ?, updated_at = ?
+         WHERE tenant_id = ? AND principal_id = ? AND connector_id = ?`,
+        json({ ...grant, status: "revoked" as const, revokedAt }),
+        revokedAt,
+        revokedAt,
+        row.tenant_id,
+        row.principal_id,
+        row.connector_id,
+      );
+      this.insertOAuthRevokeEffect(grant, revokedAt, "marketplace_revocation");
     }
   }
 }

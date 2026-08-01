@@ -1,9 +1,11 @@
 # Notion-derived OpenTag feature inventory
 
-Status: source audit completed 2026-08-01; implementation comparison is against
-OpenTag `origin/main` at `2116501` plus the local connector-foundation branch at
-`5997086`. This is a repository report, not a write to the Notion baseline or
-daily-review database.
+Status: source audit completed 2026-08-01; implementation comparison began
+against the merged OpenTag line and is being advanced in isolated weekly
+feature branches. This report is a repository artifact, not a write to the
+Notion baseline or daily-review database. The OAuth/marketplace branch adds a
+replay-safe state store and durable trust/version gates, but does not claim a
+provider callback, token exchange, or custody deployment.
 
 ## Scope and source availability
 
@@ -193,6 +195,9 @@ change, not evidence that all earlier gaps are complete.
   outcome, and feedback measurement while dispatch remains Tier 2;
 - provisioning, identity/credential references, marketplace/OAuth, usage meter,
   memory-policy/deletion contracts; and
+- replay-safe OAuth state/nonce hashing, explicit HTTPS redirect allowlisting,
+  curated marketplace trust gates, exact marketplace-version grant binding,
+  provider/scope checks, and revocation propagation;
 - the new secret-free `platform_effect_intents` ledger with bounded leases,
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
@@ -208,9 +213,10 @@ change, not evidence that all earlier gaps are complete.
    deploy the bootstrap/effect worker, establish identity/key custody, and only
    mark provisioning active after every required DO, bundle, OAuth, and identity
    step has an external receipt.
-3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
-   nonce/state handling, curated trust-review authority, and connector version
-   lifecycle. The ledger is ready; the external effecter is not.
+3. **OAuth/marketplace:** the local state and curation gates are now ready;
+   still choose callback ownership and production allowlisted origins, deploy
+   an independently authenticated provider effecter, perform code exchange
+   outside OpenTag, and return a custody reference. No provider token is live.
 4. **Billing:** choose the billing source of truth, plan/overage policy,
    metering reconciliation, and enforcement behavior. Meter intents exist but
    no billing provider is called.

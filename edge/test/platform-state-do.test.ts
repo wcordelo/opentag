@@ -213,16 +213,13 @@ describe("PlatformStateDO", () => {
         trustReviewRef: "review:google-drive:v1",
       };
       expect((await call(state, "/marketplace", marketplace)).response.status).toBe(200);
-      expect((await call(state, "/marketplace/revoke", {
-        connectorId: marketplace.connectorId,
-        version: marketplace.version,
-      })).response.status).toBe(200);
 
       const grant = {
         schemaVersion: 1,
         tenantId,
         principalId: "principal-1",
         connectorId: "google_drive",
+        marketplaceVersion: "v1",
         credentialRef: credential.credentialRef,
         providerSubject: "acct-1",
         scopes: ["drive.readonly"],
@@ -231,6 +228,16 @@ describe("PlatformStateDO", () => {
         issuedAt: now,
       };
       expect((await call(state, "/oauth", grant)).response.status).toBe(200);
+      expect((await call(state, "/marketplace/revoke", {
+        connectorId: marketplace.connectorId,
+        version: marketplace.version,
+      })).response.status).toBe(200);
+      const revokedByMarketplace = await call(state, "/oauth/get", {
+        tenantId,
+        principalId: grant.principalId,
+        connectorId: grant.connectorId,
+      });
+      expect(revokedByMarketplace.body.status).toBe("revoked");
       expect((await call(state, "/credential", { ...credential, version: 2 })).response.status).toBe(200);
       const revokedGrant = await call(state, "/oauth/get", {
         tenantId,

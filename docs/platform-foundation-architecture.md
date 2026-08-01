@@ -1,8 +1,9 @@
 # Platform and routing foundation
 
-Status: local implementation on the goal worktree; the effect ledger and
-router measurement ledger are validated, but no hosted platform effecter or
-connector credential broker is deployed.
+Status: local implementation on the goal worktree; the effect ledger, router
+measurement ledger, marketplace trust gates, and replay-safe OAuth state store
+are validated, but no hosted platform effecter or connector credential broker
+is deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -65,7 +66,8 @@ layer, not a fake provisioning service. It covers:
 - idempotent provisioning requests and the complete DO/Slack/default-bundle
   footprint;
 - opaque identity and credential custody references with public metadata only;
-- curated connector marketplace entries and OAuth grants;
+- curated connector marketplace entries and OAuth grants; active grants are
+  bound to the exact curated marketplace version, provider, and allowed scopes;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
@@ -83,7 +85,9 @@ one reserved object. The ledger provides:
 - versioned identity and credential custody references with terminal
   revocation;
 - curated marketplace versions and terminal connector revocation;
-- credential-linked OAuth grant versions with terminal revocation;
+- credential-linked OAuth grant versions with terminal revocation; revoking a
+  marketplace version revokes its dependent grants and emits revocation
+  effects;
 - execution-linked, idempotent usage-meter receipts with bounded listing; and
 - monotonic memory policies plus deletion requests that remain `requested`
   until an approved external deletion worker completes them.
@@ -119,6 +123,30 @@ The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
 delete knowledge.
+
+## OAuth state and marketplace activation
+
+`edge/src/platform/oauth-state-do.ts` is a separate SQLite Durable Object for
+browser-flow state. It stores only SHA-256 state/nonce hashes plus bounded
+tenant, principal, connector-version, redirect, scope, issue, expiry, and
+consumption metadata. `/issue` returns the random state and nonce once;
+`/consume` atomically marks a matching pair consumed and refuses replay. The
+state contract rejects authorization-code/token-shaped fields, requires an
+explicit HTTPS redirect-origin allowlist, and bounds state lifetime to 60–900
+seconds.
+
+The bot's `/admin/platform/oauth/state/issue` and `/consume` routes are
+admin-only architecture seams. They first require the exact marketplace
+version to be curated and OAuth-enabled. They are not public provider
+callbacks: no OAuth code, access token, refresh token, or provider exchange is
+accepted by OpenTag. An external effecter must own that exchange and custody
+boundary, then call the one-use consume seam with metadata only.
+
+Marketplace curation now requires a `review:` trust reference, at least one
+action, and auth-mode-consistent scopes. OAuth grants carry the exact
+`marketplaceVersion`; the ledger rejects uncurated/non-OAuth entries, provider
+mismatches, and scopes outside the reviewed entry. This is a durable safety
+gate, not proof that any provider OAuth integration is live.
 
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:

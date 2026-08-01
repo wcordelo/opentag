@@ -181,6 +181,8 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `OAUTH_STATE` | Durable Object binding | Bot | Hashed one-use OAuth state/nonce metadata; never provider codes or tokens |
+| `OAUTH_ALLOWED_REDIRECT_ORIGINS` | Deploy var | Bot/OAuth state | Explicit comma-separated HTTPS origin allowlist; unset keeps OAuth state fail-closed |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
@@ -253,6 +255,28 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+## OAuth state deployment gate
+
+`OAUTH_STATE` is a metadata-only Durable Object. Before any external OAuth
+effecter is enabled:
+
+1. Deploy the bot migration that creates `OAuthStateDO`.
+2. Configure `OAUTH_ALLOWED_REDIRECT_ORIGINS` with exact HTTPS origins; an
+   unset or malformed allowlist makes `/issue` and `/consume` fail closed.
+3. Keep `/admin/platform/oauth/state/issue` and `/consume` behind the admin
+   secret. They are internal seams, not provider callback URLs.
+4. Verify the bot health response reports `oauthState: ok` and the runtime
+   evidence shows both the state namespace and allowlist as configured.
+5. Only then connect an independently authenticated effecter that exchanges a
+   provider code outside OpenTag and returns an opaque custody reference. Do
+   not send a provider code, access token, refresh token, or client secret to
+   this Worker or its Durable Objects.
+
+Marketplace entries must have a `review:` trust reference, actions, and
+auth-mode-consistent scopes. OAuth grants must name the exact curated
+marketplace version and matching provider/scopes. Revoking that marketplace
+version revokes dependent grants through the effect ledger.
 
 ## Deploy and connect the harness
 

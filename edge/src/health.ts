@@ -8,6 +8,7 @@ export interface DurabilityHealth {
     deferredIngress: "ok" | "timeout" | "error";
     slackRateLimit: "ok" | "timeout" | "error";
     platformState?: "ok" | "timeout" | "error";
+    oauthState?: "ok" | "timeout" | "error";
   };
 }
 
@@ -30,6 +31,7 @@ export async function probeDurabilityHealth(
   env: Pick<
     Env,
     "BOT_STATE" | "SESSION_EVENTS" | "DEFERRED_INGRESS" | "SLACK_RATE_LIMIT" | "PLATFORM_STATE"
+    | "OAUTH_STATE"
   >,
   timeoutMs = 1_500,
 ): Promise<DurabilityHealth> {
@@ -53,8 +55,13 @@ export async function probeDurabilityHealth(
     ? env.PLATFORM_STATE.get(
         env.PLATFORM_STATE.idFromName("__health"),
       ) as unknown as { healthCheck(): Promise<unknown> }
+      : undefined;
+  const oauthState = env.OAUTH_STATE
+    ? env.OAUTH_STATE.get(
+        env.OAUTH_STATE.idFromName("__health"),
+      ) as unknown as { healthCheck(): Promise<unknown> }
     : undefined;
-  const [bot, session, deferred, rateLimit, platform] = await Promise.all([
+  const [bot, session, deferred, rateLimit, platform, oauth] = await Promise.all([
     boundedCheck(() => botState.healthCheck(), timeoutMs),
     boundedCheck(() => sessionEvents.healthCheck(), timeoutMs),
     deferredIngress
@@ -66,6 +73,9 @@ export async function probeDurabilityHealth(
     platformState
       ? boundedCheck(() => platformState.healthCheck(), timeoutMs)
       : Promise.resolve(undefined),
+    oauthState
+      ? boundedCheck(() => oauthState.healthCheck(), timeoutMs)
+      : Promise.resolve(undefined),
   ]);
   return {
     ok:
@@ -73,13 +83,15 @@ export async function probeDurabilityHealth(
       session === "ok" &&
       deferred === "ok" &&
       rateLimit === "ok" &&
-      (platform === undefined || platform === "ok"),
+      (platform === undefined || platform === "ok") &&
+      (oauth === undefined || oauth === "ok"),
     checks: {
       botState: bot,
       sessionEvents: session,
       deferredIngress: deferred,
       slackRateLimit: rateLimit,
       ...(platform !== undefined ? { platformState: platform } : {}),
+      ...(oauth !== undefined ? { oauthState: oauth } : {}),
     },
   };
 }

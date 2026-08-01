@@ -25,6 +25,10 @@ export type RuntimeCapabilityEvidence = Readonly<{
     relayConfigured: boolean;
     tenantDirectoryConfigured: boolean;
   }>;
+  oauth: Readonly<{
+    stateNamespaceConfigured: boolean;
+    allowedRedirectOriginsConfigured: boolean;
+  }>;
   durability: Readonly<{
     botStateConfigured: boolean;
     sessionEventsConfigured: boolean;
@@ -53,6 +57,8 @@ type RuntimeEvidenceEnv = Partial<Pick<
   | "KNOWLEDGE_ACTOR_TOKEN_SECRET"
   | "BUZZ_RELAY_HTTP_BASE_URL"
   | "BUZZ_CHANNEL_TENANT_MAP"
+  | "OAUTH_STATE"
+  | "OAUTH_ALLOWED_REDIRECT_ORIGINS"
   | "BOT_STATE"
   | "SESSION_EVENTS"
   | "DEFERRED_INGRESS"
@@ -97,6 +103,10 @@ export function buildRuntimeCapabilityEvidence(
     buzz: {
       relayConfigured: configured(env.BUZZ_RELAY_HTTP_BASE_URL),
       tenantDirectoryConfigured: configured(env.BUZZ_CHANNEL_TENANT_MAP),
+    },
+    oauth: {
+      stateNamespaceConfigured: Boolean(env.OAUTH_STATE),
+      allowedRedirectOriginsConfigured: configured(env.OAUTH_ALLOWED_REDIRECT_ORIGINS),
     },
     durability: {
       botStateConfigured: Boolean(env.BOT_STATE),

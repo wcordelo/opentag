@@ -77,12 +77,19 @@ export async function searchGoogleDrive(input: {
     throw new DriveConnectorError("drive_read_scope_missing", false);
   }
   const fetchImpl = input.fetchImpl ?? fetch;
-  await verifyConnectorAuthorizationCurrent({
-    labels: input.labels,
-    bundle: input.bundle,
-    credential: input.credential,
-    now: input.now,
-  }).catch((error) => {
+  const verifyAtBoundary = async () => {
+    if (input.revalidate) {
+      await input.revalidate();
+      return;
+    }
+    await verifyConnectorAuthorizationCurrent({
+      labels: input.labels,
+      bundle: input.bundle,
+      credential: input.credential,
+      now: input.now,
+    });
+  };
+  await verifyAtBoundary().catch((error) => {
     if (error instanceof Error && error.message === "credential_reference_revoked") {
       throw new DriveConnectorError(error.message, false);
     }
@@ -134,15 +141,6 @@ export async function searchGoogleDrive(input: {
     return bindCitationAuthorization(citation, input.labels);
   });
   // Close the revocation race before returning any result to the model.
-  if (input.revalidate) {
-    await input.revalidate();
-  } else {
-    await verifyConnectorAuthorizationCurrent({
-      labels: input.labels,
-      bundle: input.bundle,
-      credential: input.credential,
-      now: input.now,
-    });
-  }
+  await verifyAtBoundary();
   return citations;
 }

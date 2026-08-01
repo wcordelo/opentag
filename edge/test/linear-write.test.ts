@@ -174,7 +174,7 @@ describe("Linear guarded write contract", () => {
       revalidate: async () => { revalidated += 1; },
     });
     expect(result).toMatchObject({ identifier: "BER-42", title: "Incident" });
-    expect(revalidated).toBe(1);
+    expect(revalidated).toBe(2);
     expect(tokenRequests).toHaveLength(1);
     expect(tokenRequests[0]!.headers.get("x-opentag-connector-authorization")).toMatch(/^sha256:/);
     const body = JSON.parse(await requests[0]!.clone().text()) as {

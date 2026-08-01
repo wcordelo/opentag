@@ -113,7 +113,7 @@ describe("Google Drive connector", () => {
         credentialVersion: 1,
       },
     });
-    expect(revalidate).toHaveBeenCalledOnce();
+    expect(revalidate).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed without a read scope or credential broker", async () => {

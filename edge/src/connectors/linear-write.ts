@@ -428,12 +428,19 @@ export async function createLinearIssue(input: {
   if (!input.credential.scopes.includes("issues:create") && !input.credential.scopes.includes("write")) {
     throw new LinearConnectorError("linear_issue_create_scope_missing", false);
   }
-  await verifyConnectorAuthorizationCurrent({
-    labels: input.labels,
-    bundle: input.bundle,
-    credential: input.credential,
-    now: input.now,
-  });
+  const verifyAtBoundary = async () => {
+    if (input.revalidate) {
+      await input.revalidate();
+      return;
+    }
+    await verifyConnectorAuthorizationCurrent({
+      labels: input.labels,
+      bundle: input.bundle,
+      credential: input.credential,
+      now: input.now,
+    });
+  };
+  await verifyAtBoundary();
   const token = await resolveCredentialBearer(input.credentialBroker, input.credential, input.labels);
   const fetchImpl = input.fetchImpl ?? fetch;
   const references = await resolveReferences({ token, draft, fetchImpl });
@@ -475,15 +482,6 @@ export async function createLinearIssue(input: {
   if (input.onIssueCreated) {
     await input.onIssueCreated();
   }
-  if (input.revalidate) {
-    await input.revalidate();
-  } else {
-    await verifyConnectorAuthorizationCurrent({
-      labels: input.labels,
-      bundle: input.bundle,
-      credential: input.credential,
-      now: input.now,
-    });
-  }
+  await verifyAtBoundary();
   return result;
 }

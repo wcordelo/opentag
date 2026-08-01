@@ -33,6 +33,8 @@ function wakeEnv(overrides: Partial<Env> = {}): Env {
     AGENT_URL: "https://agent.example.test",
     BUZZ_OPEN_TAG_SIGNER_SECRET: randomPrivateKeyHex(),
     BUZZ_RELAY_HTTP_BASE_URL: "https://berendo.communities.buzz.xyz",
+    // Distinct grant — required alongside fetch base after allowlist land.
+    BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN: "https://berendo.communities.buzz.xyz",
     BUZZ_CHANNEL_TENANT_MAP: JSON.stringify({
       "80d210c7-6cf2-49b3-8dab-06cbee389c04":
         "11111111-1111-4111-8111-111111111111",

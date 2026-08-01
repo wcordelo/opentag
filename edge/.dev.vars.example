@@ -14,3 +14,10 @@ INTERNAL_SECRET=dev-internal-secret
 
 # Production note: set AGENT_URL to a publicly reachable runtime host.
 # Local wrangler default is localhost:8200 — fine for tunnel+local runtime only.
+
+# Buzz M1 wake (non-secret vars; signer is a wrangler secret):
+# BUZZ_RELAY_HTTP_BASE_URL=https://berendo.communities.buzz.xyz
+# BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN=https://berendo.communities.buzz.xyz
+#   ↑ must be provisioned independently of BUZZ_RELAY_HTTP_BASE_URL (never self-derived)
+# BUZZ_CHANNEL_TENANT_MAP={"80d210c7-6cf2-49b3-8dab-06cbee389c04":"<tenant-uuid>"}
+# wrangler secret put BUZZ_OPEN_TAG_SIGNER_SECRET

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  BUZZ_M1_POLICY_AUDIT_MARKER,
+  buildBuzzInstallationAllowlist,
+} from "../src/buzz/allowlist.js";
+import {
   BuzzContractError,
   buzzConversationKey,
   canonicalInternalTenantId,
@@ -32,6 +36,17 @@ const AUTHOR = "b".repeat(64);
 const ROOT = "c".repeat(64);
 const TENANT = canonicalInternalTenantId("11111111-1111-4111-8111-111111111111");
 const NOW = 1_785_424_252;
+const RELAY_ORIGIN = "https://berendo.communities.buzz.xyz";
+
+function matchingAllowlist(
+  overrides: Partial<{ allowed: string; live: string }> = {},
+) {
+  return buildBuzzInstallationAllowlist({
+    allowedRelayOriginRaw: overrides.allowed ?? RELAY_ORIGIN,
+    relayHttpBaseUrlRaw: overrides.live ?? RELAY_ORIGIN,
+    policyAuditMarker: BUZZ_M1_POLICY_AUDIT_MARKER,
+  });
+}
 
 function wake(overrides: Record<string, unknown> = {}) {
   return {
@@ -106,6 +121,7 @@ type TestDeps = BuzzWakeReceiveDeps & {
 
 function makeDeps(
   fetchImpl: () => Promise<unknown> = async () => verifiedEvent(),
+  allowlist = matchingAllowlist(),
 ): TestDeps {
   const wakeDedupe = memoryDedupe();
   const authoritativeDedupe = memoryEventDedupe();
@@ -115,6 +131,7 @@ function makeDeps(
     directory: directory(),
     wakeDedupe,
     authoritativeDedupe,
+    allowlist,
     admits,
     get fetches() {
       return fetches;
@@ -233,6 +250,7 @@ describe("Buzz wake receive pipeline", () => {
         directory: directory(),
         wakeDedupe: buzzDedupe,
         authoritativeDedupe: buzzDedupe,
+        allowlist: matchingAllowlist(),
         fetcher: {
           async fetchAndVerify() {
             fetches += 1;

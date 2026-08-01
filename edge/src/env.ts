@@ -145,6 +145,12 @@ export interface Env {
    */
   BUZZ_RELAY_HTTP_BASE_URL?: string;
   /**
+   * Distinct allowed relay origin for this installation (non-secret).
+   * Must be provisioned independently of `BUZZ_RELAY_HTTP_BASE_URL` — never
+   * derived from it. Compared at the wake→admit allowlist chokepoint.
+   */
+  BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN?: string;
+  /**
    * JSON object mapping Buzz channel UUID → canonical internal tenant UUID.
    * Server-side directory only; never populated from a wake body.
    */

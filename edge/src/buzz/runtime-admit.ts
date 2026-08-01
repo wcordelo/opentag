@@ -4,7 +4,10 @@
  * Records a durable, secret-free admission marker after the authoritative
  * event-ID claim succeeds. Does **not** invoke the Slack bot-engine turn path
  * — that stays a later slice. Marker values contain only public event identity
- * fields (never key/auth-tag material).
+ * fields plus a forensic policy audit stamp (never key/auth-tag material).
+ *
+ * `policy_audit_marker` is non-enforcing in M1 — forensic only, not
+ * versioning/revoke/monotonic authorization.
  */
 
 import type { BuzzWakeRuntime } from "./receive.js";
@@ -21,6 +24,8 @@ export type BuzzRuntimeAdmitRecord = Readonly<{
   author_pubkey: string;
   conversation_key: string;
   admitted_at: number;
+  /** Forensic non-enforcing stamp from the installation allowlist. */
+  policy_audit_marker: string;
 }>;
 
 export function buzzRuntimeAdmitKey(
@@ -49,6 +54,7 @@ export function createBuzzRuntimeAdmit(
         author_pubkey: input.inbound.authorPubkey,
         conversation_key: input.conversationKey,
         admitted_at: nowMs(),
+        policy_audit_marker: input.policyAuditMarker,
       });
       await store.kv.set(
         buzzRuntimeAdmitKey(input.tenantId, input.inbound.eventId),

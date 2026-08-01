@@ -1,6 +1,7 @@
 /**
  * Assemble {@link BuzzWakeReceiveDeps} from Worker env when the signer seam,
- * relay base URL, and channel→tenant directory are all configured.
+ * relay base URL, distinct allowed-origin grant, and channel→tenant directory
+ * are all configured.
  *
  * Returns `undefined` when any required piece is missing so `POST /buzz/wake`
  * stays fail-closed (503). Never logs or returns secret material.
@@ -9,6 +10,13 @@
  * free of `cloudflare:workers` so unit tests can import it under Node/vitest.
  */
 
+import {
+  BUZZ_M1_POLICY_AUDIT_MARKER,
+  BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR,
+  buildBuzzInstallationAllowlist,
+  enforceBuzzRelayOriginAllowlist,
+  loadBuzzAllowedRelayOrigin,
+} from "./allowlist.js";
 import {
   BuzzContractError,
   canonicalInternalTenantId,
@@ -38,6 +46,7 @@ export type BuzzWakeEnvBindings = Readonly<{
   [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]?: string;
   [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]?: string;
   [BUZZ_RELAY_HTTP_BASE_URL_VAR]?: string;
+  [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]?: string;
   [BUZZ_CHANNEL_TENANT_MAP_VAR]?: string;
 }>;
 
@@ -84,6 +93,9 @@ export function parseBuzzChannelTenantMap(
  * Missing optional/unset pieces → `undefined` (route stays 503).
  *
  * `store` must be a production StateStore (DO-backed in the Worker).
+ *
+ * Allowed origin is loaded from {@link BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR}
+ * independently of the fetch base — never derived from it.
  */
 export function tryBuildBuzzWakeReceiveDeps(
   env: BuzzWakeEnvBindings,
@@ -95,16 +107,25 @@ export function tryBuildBuzzWakeReceiveDeps(
 ): BuzzWakeReceiveDeps | undefined {
   const secret = env[BUZZ_OPEN_TAG_SIGNER_SECRET_NAME];
   const relayBase = env[BUZZ_RELAY_HTTP_BASE_URL_VAR];
+  const allowedOriginRaw = env[BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR];
   const mapJson = env[BUZZ_CHANNEL_TENANT_MAP_VAR];
   if (
     secret === undefined
     || secret.length === 0
     || relayBase === undefined
     || relayBase.length === 0
+    || allowedOriginRaw === undefined
+    || allowedOriginRaw.length === 0
     || mapJson === undefined
     || mapJson.length === 0
     || store === undefined
   ) {
+    return undefined;
+  }
+
+  // Shape-validate the distinct grant early (whitespace / malformed → throw).
+  const allowedLoaded = loadBuzzAllowedRelayOrigin(allowedOriginRaw);
+  if (allowedLoaded === undefined) {
     return undefined;
   }
 
@@ -120,6 +141,16 @@ export function tryBuildBuzzWakeReceiveDeps(
     env[BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME],
   );
 
+  const allowlist = buildBuzzInstallationAllowlist({
+    allowedRelayOriginRaw: allowedOriginRaw,
+    relayHttpBaseUrlRaw: relayBase,
+    policyAuditMarker: BUZZ_M1_POLICY_AUDIT_MARKER,
+  });
+  // Config-consistency fast-fail (Athena): mismatch is known at build time —
+  // fail closed here so a misprovisioned install 503s without a wasted fetch.
+  // Per-event enforceBuzzRelayOriginAllowlist in receive remains the load-bearing gate.
+  enforceBuzzRelayOriginAllowlist(allowlist);
+
   const directory = parseBuzzChannelTenantMap(mapJson);
   const dedupe = stateStoreBuzzEventDedupe(store);
 
@@ -127,6 +158,7 @@ export function tryBuildBuzzWakeReceiveDeps(
     directory,
     wakeDedupe: dedupe,
     authoritativeDedupe: dedupe,
+    allowlist,
     fetcher: createBuzzNip98QueryFetcher({
       relayHttpBaseUrl: relayBase,
       signer,

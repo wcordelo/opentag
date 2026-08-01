@@ -6,12 +6,13 @@
  * Run on the owner machine; pipe stdout into `wrangler secret put`.
  *
  * Usage:
- *   OWNER_SECRET=<64-hex-or-nsec-not-supported-use-hex> \
- *   node scripts/mint-nip-oa-auth-tag.mjs [agent-pubkey-hex] [conditions]
+ *   OWNER_SECRET=<64-hex> \
+ *   node scripts/mint-nip-oa-auth-tag.mjs <agent-pubkey-hex> [conditions]
  *
- * Defaults:
- *   agent   = OpenTag M1 test signer 3c56bed9…
- *   conditions = "" (empty — NIP-OA allows it)
+ * Agent pubkey is REQUIRED (no default). A silent default previously pointed
+ * at a non-deployed M1_TEST_SIGNER and broke Path-2 on remint.
+ * Live M1 signer on opentag-bot (2026-08-01): 
+ *   292a282b30fd3fbe7cac2a956a632273ce4bb46aef8bc822dc9167e7d985ca75
  *
  * Output: single-line JSON ["auth","<owner-pubkey>","<conditions>","<sig>"]
  */
@@ -19,9 +20,6 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-
-const M1_TEST_SIGNER =
-  "3c56bed9fd8ada962e6040cf971d759c8f8f48ef3e18e02451e4c27734128194";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -37,7 +35,14 @@ if (!HEX64.test(ownerRaw)) {
   );
 }
 
-const agent = (process.argv[2] || M1_TEST_SIGNER).trim().toLowerCase();
+const agentArg = process.argv[2];
+if (!agentArg) {
+  die(
+    "usage: OWNER_SECRET=<64-hex> node scripts/mint-nip-oa-auth-tag.mjs <agent-pubkey-hex> [conditions]\n" +
+      "agent pubkey is required (no default — pass the live BUZZ_OPEN_TAG_SIGNER_SECRET pubkey).",
+  );
+}
+const agent = agentArg.trim().toLowerCase();
 if (!HEX64.test(agent)) {
   die("agent pubkey must be 64-char lowercase hex");
 }

@@ -19,8 +19,10 @@ AGENT_PUBKEY="$(printf '%s' "${AGENT_PUBKEY}" | tr 'A-F' 'a-f')"
 
 printf 'paste nsec then Enter (hidden): ' >&2
 stty -echo
+trap 'stty echo' EXIT
 IFS= read -r NSEC
 stty echo
+trap - EXIT
 printf '\n' >&2
 
 if [[ -z "${NSEC}" ]]; then

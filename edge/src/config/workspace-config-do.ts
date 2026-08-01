@@ -1689,8 +1689,11 @@ export class WorkspaceConfigDO extends DurableObject {
     if (url.pathname === "/issueConnectorAuthorization" && request.method === "POST") {
       try {
         const input = await request.json() as Record<string, unknown>;
+        const workspaceId = typeof input.workspaceId === "string"
+          ? input.workspaceId
+          : input.teamId;
         const identity = {
-          workspaceId: input.teamId,
+          workspaceId,
           projectId: input.projectId,
           channelId: input.channelId,
           requesterId: input.requesterId,
@@ -1698,13 +1701,13 @@ export class WorkspaceConfigDO extends DurableObject {
           executionId: input.executionId,
           threadKey: input.threadKey,
         } as ConnectorRequestIdentity;
-        if (typeof input.teamId !== "string" || typeof input.channelId !== "string") {
+        if (typeof workspaceId !== "string" || typeof input.channelId !== "string") {
           throw new Error("connector_identity_scope_invalid");
         }
         if (typeof input.connectorId !== "string" || typeof input.action !== "string") {
           throw new Error("connector_request_invalid");
         }
-        const configRow = this.readRow(sql, input.teamId, input.channelId);
+        const configRow = this.readRow(sql, workspaceId, input.channelId);
         const bundleId = configRow?.access_bundle_id ?? DEFAULT_BUNDLE.id;
         const row = sql
           .exec<{

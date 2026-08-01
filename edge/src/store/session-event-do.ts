@@ -10,7 +10,7 @@ import type { SqlCursor, SqlExecutor, SqlValue, TransactionRunner } from "./sql.
  * need that *contract* — not the K8s-backed sandbox orchestration behind it.
  * This Durable Object reimplements the contract directly over DO SQLite:
  *
- *   - `events` table: an append-only log of `input | output | error | done | context | progress`
+ *   - `events` table: an append-only log of `input | output | error | done | context | progress | router`
  *     rows per `execution_id`, replayable from any `afterEventId` cursor —
  *     this is what lets a crashed Worker isolate reconstruct a thread's state
  *     (see the render-obligation alarm in `conversation-state-do.ts`).
@@ -41,7 +41,7 @@ const EVENTS_DDL = [
   `CREATE TABLE IF NOT EXISTS events (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      execution_id TEXT NOT NULL,
-     kind TEXT NOT NULL,      -- 'input' | 'output' | 'error' | 'done' | 'context' | 'progress'
+     kind TEXT NOT NULL,      -- 'input' | 'output' | 'error' | 'done' | 'context' | 'progress' | 'router'
      payload TEXT NOT NULL,   -- JSON
      created_at INTEGER NOT NULL
    )`,
@@ -71,7 +71,7 @@ function migrateEvents(sql: SqlExecutor): void {
 
 // ── KV slot shapes ──────────────────────────────────────────────────────────
 
-type EventKind = "input" | "output" | "error" | "done" | "context" | "progress";
+type EventKind = "input" | "output" | "error" | "done" | "context" | "progress" | "router";
 
 const MODEL_EVIDENCE_RANK: Record<string, number> = {
   unknown: 0,
@@ -668,7 +668,7 @@ export class SessionEventDO extends DurableObject {
    */
   async appendEvent(args: {
     executionId: string;
-    kind: "output" | "error" | "done" | "context" | "progress";
+    kind: "output" | "error" | "done" | "context" | "progress" | "router";
     payload: unknown;
   }): Promise<{ id: number }> {
     return this.engine.appendEvent(args);

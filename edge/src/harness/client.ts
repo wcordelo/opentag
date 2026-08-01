@@ -176,7 +176,7 @@ interface SessionEventsFullRpc extends SessionEventsRpc {
   }): Promise<{ accepted: boolean; duplicate: boolean; cancelled?: boolean }>;
   appendEvent(args: {
     executionId: string;
-    kind: HarnessEventKind;
+    kind: HarnessEventKind | "router";
     payload: unknown;
   }): Promise<{ id: number }>;
 }

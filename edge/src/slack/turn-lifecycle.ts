@@ -39,11 +39,29 @@ import {
   logTraceEvent,
 } from "../observability/trace-correlation.js";
 import { classifyRouterShadow } from "../router/shadow.js";
+import type { RouterShadowRecord } from "../router/shadow.js";
 
 const RENDER_OBLIGATION_TIMEOUT_MS = ACTIVE_TURN_TTL_MS;
 
 function logMetric(metric: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ metric, ...fields }));
+}
+
+async function persistRouterShadow(
+  env: Env,
+  threadKey: string,
+  executionId: string,
+  record: RouterShadowRecord,
+): Promise<void> {
+  if (!env.SESSION_EVENTS) return;
+  const sessionDo = env.SESSION_EVENTS.get(
+    env.SESSION_EVENTS.idFromName(threadKey),
+  ) as unknown as SessionEventsRpc;
+  await sessionDo.appendEvent({
+    executionId,
+    kind: "router",
+    payload: record,
+  });
 }
 
 function sessionInputLine(prompt: string | AgentContentPart[]): string {
@@ -438,7 +456,7 @@ export async function runSlackTurnLifecycle(
       threadKey: obligationThreadKey,
       executionId,
     });
-    classifyRouterShadow({
+    const routerShadow = classifyRouterShadow({
       message: sessionInputLine(prompt),
       hasAttachment: Array.isArray(prompt) && prompt.some((part) => Boolean(part.attachment)),
       activeSession: false,
@@ -502,6 +520,16 @@ export async function runSlackTurnLifecycle(
         { threadKey: obligationThreadKey, executionId },
       );
       return;
+    }
+    try {
+      await persistRouterShadow(env, obligationThreadKey, executionId, routerShadow);
+    } catch (error) {
+      // Router measurement is an optimization and must not make the status
+      // quo Tier 2 execution unavailable. The trace line remains available.
+      console.warn(
+        "[router] durable shadow record unavailable",
+        error instanceof Error ? error.message : error,
+      );
     }
     if (sessionAdmission === "duplicate") {
       await stateStore.activeTurn.abandonPristine({

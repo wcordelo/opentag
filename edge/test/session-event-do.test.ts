@@ -636,6 +636,26 @@ describe("SessionEventDO (RPC wrapper smoke test)", () => {
 });
 
 describe("SessionEventEngine context/progress", () => {
+  it("persists a category-only router shadow event", async () => {
+    const { engine } = makeEngine();
+    await engine.create({ threadKey: "thread-router", harnessType: "claudecode" });
+    await engine.execute({ executionId: "exec-router", inputLines: ["lookup"] });
+    const appended = await engine.appendEvent({
+      executionId: "exec-router",
+      kind: "router",
+      payload: {
+        routerSchema: 1,
+        shadow: true,
+        tierDecided: 1,
+        tierDispatched: 2,
+        matchedRule: "t1.01",
+      },
+    });
+    expect(appended.id).toBeGreaterThan(0);
+    expect((await engine.replay()).find((event) => event.kind === "router")?.payload)
+      .toMatchObject({ tierDecided: 1, tierDispatched: 2, shadow: true });
+  });
+
   it("allows monotonic context evidence upgrades and rejects downgrades", async () => {
     const { engine } = makeEngine();
     await engine.create({ threadKey: "thread-ctx", harnessType: "claudecode" });

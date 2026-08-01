@@ -108,6 +108,17 @@ function leaseSeconds(value: unknown): number | undefined {
   return value as number;
 }
 
+function boundedEffectRetryAfterSeconds(value: unknown): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) > 86_400
+  ) {
+    return 0;
+  }
+  return value as number;
+}
+
 export function validatePlatformEffectRunRequest(
   value: unknown,
 ): PlatformEffectRunRequest {
@@ -151,7 +162,7 @@ function normalizeAdapterFailure(error: unknown): EffectFailure {
       return {
         errorCode: safeErrorCode(error.code),
         retryable: error.retryable,
-        retryAfterSeconds: error.retryAfterSeconds,
+        retryAfterSeconds: boundedEffectRetryAfterSeconds(error.retryAfterSeconds),
       };
     } catch {
       return {

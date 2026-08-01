@@ -46,7 +46,6 @@ import {
   type BuzzWakeEnvelope,
 } from "./wake.js";
 import type { StateStore } from "../store/state-store-contract.js";
-import { buzzReplyPublishIsComplete } from "./runtime-admit.js";
 
 /**
  * Default TTL for authoritative post-fetch event-ID claims.
@@ -94,8 +93,6 @@ export type BuzzWakeReceiveDeps = Readonly<{
   allowlist: BuzzInstallationAllowlist;
   wakeDedupeTtlMs?: number;
   authoritativeDedupeTtlMs?: number;
-  /** Store for incomplete reply recovery on authoritative duplicate. */
-  admitStore?: Pick<StateStore, "kv" | "dedup">;
 }>;
 
 export type BuzzWakeReceiveResult =
@@ -235,21 +232,14 @@ export async function processBuzzWakeReceive(
       deps.authoritativeDedupe,
     );
     if (prior.claimed) {
-      const replyComplete = await buzzReplyPublishIsComplete(
-        deps.admitStore,
-        wakeClaim.tenantId,
-        wakeClaim.wake.messageId,
-      );
-      if (replyComplete) {
-        return Object.freeze({
-          status: "duplicate",
-          stage: "pre_fetch",
-          wake: wakeClaim.wake,
-          tenantId: wakeClaim.tenantId,
-          dedupeKey: wakeClaim.dedupeKey,
-          wakeClaim,
-        });
-      }
+      return Object.freeze({
+        status: "duplicate",
+        stage: "pre_fetch",
+        wake: wakeClaim.wake,
+        tenantId: wakeClaim.tenantId,
+        dedupeKey: wakeClaim.dedupeKey,
+        wakeClaim,
+      });
     }
     // Authoritative unseen → re-enter fetch/admit path below.
   }
@@ -276,22 +266,15 @@ export async function processBuzzWakeReceive(
   );
 
   if (authoritative.status === "duplicate") {
-    const replyComplete = await buzzReplyPublishIsComplete(
-      deps.admitStore,
-      wakeClaim.tenantId,
-      inbound.eventId,
-    );
-    if (replyComplete) {
-      return Object.freeze({
-        status: "duplicate",
-        stage: "authoritative",
-        wake: wakeClaim.wake,
-        tenantId: wakeClaim.tenantId,
-        dedupeKey: authoritative.dedupeKey,
-        wakeClaim,
-        inbound,
-      });
-    }
+    return Object.freeze({
+      status: "duplicate",
+      stage: "authoritative",
+      wake: wakeClaim.wake,
+      tenantId: wakeClaim.tenantId,
+      dedupeKey: authoritative.dedupeKey,
+      wakeClaim,
+      inbound,
+    });
   }
 
   try {

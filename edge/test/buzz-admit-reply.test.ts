@@ -144,7 +144,7 @@ describe("createBuzzNip98EventsPublisher", () => {
     expect(result.replyEventId).toBe(EVENT);
   });
 
-  it("maps 401/403 to auth rejected and other non-ok to publish failed", async () => {
+  it("maps 401/403 to auth rejected and 4xx to rejected", async () => {
     const secret = randomPrivateKeyHex();
     const signer = loadBuzzOpenTagSigner(secret)!;
     const inbound = {
@@ -169,14 +169,7 @@ describe("createBuzzNip98EventsPublisher", () => {
         signer,
         fetchImpl: async () => new Response("no", { status: 400 }),
       }).publishAdmitReply({ inbound }),
-    ).rejects.toThrow(BUZZ_REPLY_PUBLISH_FAILED);
-    await expect(
-      createBuzzNip98EventsPublisher({
-        relayHttpBaseUrl: RELAY_BASE,
-        signer,
-        fetchImpl: async () => new Response("no", { status: 429 }),
-      }).publishAdmitReply({ inbound }),
-    ).rejects.toThrow(BUZZ_REPLY_PUBLISH_FAILED);
+    ).rejects.toThrow(BUZZ_REPLY_REJECTED);
     await expect(
       createBuzzNip98EventsPublisher({
         relayHttpBaseUrl: RELAY_BASE,

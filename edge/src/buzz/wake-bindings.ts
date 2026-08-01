@@ -176,6 +176,5 @@ export function tryBuildBuzzWakeReceiveDeps(
         nowSeconds: options.nowSeconds,
       }),
     }),
-    admitStore: store,
   });
 }

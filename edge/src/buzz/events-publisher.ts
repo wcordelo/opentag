@@ -159,8 +159,11 @@ export function createBuzzNip98EventsPublisher(
       if (isAuthRejectedStatus(response.status)) {
         throwOpaque(BUZZ_REPLY_AUTH_REJECTED);
       }
-      if (!response.ok) {
+      if (response.status >= 500) {
         throwOpaque(BUZZ_REPLY_PUBLISH_FAILED);
+      }
+      if (!response.ok) {
+        throwOpaque(BUZZ_REPLY_REJECTED);
       }
 
       return Object.freeze({ replyEventId: signed.id });

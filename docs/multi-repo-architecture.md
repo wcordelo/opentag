@@ -212,7 +212,7 @@ Publication and deployment evidence:
 
 - OpenTag PR [#28](https://github.com/wcordelo/opentag/pull/28) contains this
   implementation. The branch is `codex/end-to-end-architecture-local` at
-  `df958fb` and is clean after the push.
+  `8025b6f02eb8d839fe639efff03497b22ad00e99` and is clean after the push.
 - The harness container built successfully with the pinned toolchain and was
   applied to Cloudflare application
   `opentag-harness-harnesscontainer` as version

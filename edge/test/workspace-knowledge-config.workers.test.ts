@@ -239,6 +239,8 @@ describe("WorkspaceConfigDO connector authorization metadata", () => {
   it("stores only credential-reference metadata and closes revocation", async () => {
     const teamId = `connector-credential-${crypto.randomUUID()}`;
     const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const issuedAt = new Date(Date.now() - 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
     const reference = {
       schemaVersion: 1,
       ref: "credential:google:workspace-drive",
@@ -248,8 +250,8 @@ describe("WorkspaceConfigDO connector authorization metadata", () => {
       status: "active",
       scopes: ["drive.readonly"],
       subject: `workspace:${teamId}`,
-      issuedAt: "2026-08-01T19:00:00.000Z",
-      expiresAt: "2026-08-01T21:00:00.000Z",
+      issuedAt,
+      expiresAt,
     };
     const put = await stub.fetch("https://do/putConnectorCredentialReference", {
       method: "POST",
@@ -278,6 +280,8 @@ describe("WorkspaceConfigDO connector authorization metadata", () => {
   it("issues labels from the DO-owned bundle and credential snapshot", async () => {
     const teamId = `connector-issue-${crypto.randomUUID()}`;
     const stub = env.WORKSPACE_CONFIG.get(env.WORKSPACE_CONFIG.idFromName(teamId));
+    const issuedAt = new Date(Date.now() - 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
     const ref = "credential:google:workspace-drive";
     await stub.fetch("https://do/putConnectorCredentialReference", {
       method: "POST",
@@ -290,8 +294,8 @@ describe("WorkspaceConfigDO connector authorization metadata", () => {
         status: "active",
         scopes: ["drive.readonly"],
         subject: `workspace:${teamId}`,
-        issuedAt: "2026-08-01T19:00:00.000Z",
-        expiresAt: "2026-08-01T21:00:00.000Z",
+        issuedAt,
+        expiresAt,
       }),
     });
     await stub.fetch("https://do/putBundle", {

@@ -1,7 +1,7 @@
 # Centaur to OpenTag core-spine port ledger
 
 Status: **A1-A5 core spine landed; remaining subfeatures are listed below**
-Updated: **2026-07-14**
+Updated: **2026-08-01**
 
 This status is not a claim that every planned subfeature is complete.
 Production harness enablement is an operator deployment step, and analytics
@@ -66,6 +66,9 @@ operating model.
 | Per-channel model/harness defaults | `WorkspaceConfigDO`, `thread-overrides.ts`, `/config runtime` | Adapted to Durable Objects | Implemented with explicit > sticky > channel > deployment provenance |
 | Redacted permission inspection | `permissions/*`, `show_permissions`, admin endpoint, harness CLI | Adapted without Rails/iron-proxy | Implemented as informational snapshots; authorization remains elsewhere |
 | Rich-payload bot mentions | `trusted-trigger.ts`, `rich-display-text.ts`, pre-admission | Stricter authorization adaptation | Disabled by default; exact actor + exact nested mention; non-human safe-tool ceiling |
+| Immutable connector labels and credential references | `edge/src/connectors/authorization.ts`, `credential-broker.ts`, `WorkspaceConfigDO` | Cloudflare-native authorization boundary | Implemented; tokens remain outside OpenTag state |
+| Guarded Linear issue creation | `edge/src/connectors/linear-write.ts`, `edge/src/tools/linear-write.ts`, durable HITL | Replaces read-only MCP mutation temptation with an explicit effect path | Implemented locally; broker/OAuth grant and live test workspace still required |
+| Drive search after connector foundations | `search-drive.ts`, `drive-connector.ts`, citation contract | Added only after label, bundle, revocation, and broker foundations | Implemented locally; credential broker and Google custody deployment still required |
 | Harness restart transcript re-feed | `agent-turn.ts`, harness client | Adapted | Last 24k characters passed to harness |
 | Quick cards | `quick-card.ts`, research Slack delivery | Generalized from Quick-site cards | Artifact actions plus final-research Retry/Dig deeper/Export |
 | Buttons become user-authored turns | `quick-actions.ts` | Adapted to OpenTag ingress | Implemented; inherits dedup and policy |

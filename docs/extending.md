@@ -152,7 +152,9 @@ Cards live in `edge/src/components/cards.ts` and return CopilotKit UI nodes.
 
 For an external write, the card should summarize the exact scope being
 approved. `RemoteGitApprovalCard` is the reference for repository and requester
-scope; `confirm_write` is the reference for Linear fields.
+scope; `confirm_write` is the reference for Linear title, description, team,
+assignee, project, and milestone fields. Its approved `save_linear_issue` call
+must carry the same normalized field digest across the active-turn effect fence.
 
 ## Add a quick action
 

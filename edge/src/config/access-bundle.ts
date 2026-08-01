@@ -61,6 +61,7 @@ export const DEFAULT_BUNDLE: AccessBundle = {
     "lookup_slack_user",
     "read_thread",
     "confirm_write",
+    "save_linear_issue",
     "issue_card",
     "issue_list",
     "page_list",

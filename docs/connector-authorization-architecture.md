@@ -82,3 +82,32 @@ service binding for short-lived token resolution; until that broker and the
 Google OAuth/custody flow are deployed, `search_drive` fails closed as
 `knowledge_unavailable`. The first Drive grant must use this contract rather
 than a connector-specific OAuth or permission shortcut.
+
+## Guarded Linear writes
+
+Linear MCP remains read-only. The edge `save_linear_issue` tool is the only
+current mutation path and is available only when the channel access bundle
+contains the tool and a `linear/create_issue` connector grant with an active
+credential reference. The flow is:
+
+1. `confirm_write` renders the exact title, description, team, assignee,
+   project, and project-milestone fields.
+2. A durable approval record is written only after the exact human click. It is
+   bound to the Slack workspace/channel, requester, execution, thread, a
+   normalized field digest, and a five-minute expiry. It contains no token.
+3. `save_linear_issue` must present that approval ID and the exact same fields.
+   The tool rejects missing, expired, cross-thread, automation, or mismatched
+   approvals before resolving a credential.
+4. The connector issues immutable `linear/create_issue` labels, resolves the
+   opaque credential through `CONNECTOR_CREDENTIALS`, calls the bounded Linear
+   GraphQL mutation, and revalidates the labels after the response. An
+   ambiguous network failure retains the active-turn effect fence so a retry
+   cannot silently create a duplicate issue.
+
+The current Slack ingress uses the stable connector-project slot `workspace`
+because it does not yet have a separate internal project directory. Linear's
+own `project` and `milestone` values remain exact user-approved selectors and
+are resolved to Linear IDs inside the connector. Enabling the path still
+requires the credential broker, Linear OAuth/custody provisioning, an active
+access-bundle grant, and a live validation against a non-production test
+workspace; this branch does not perform that external validation.

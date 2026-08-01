@@ -226,7 +226,7 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           "and (2) Claude Code harness (claudecode / claudex) for repository coding when selected or implied.",
           "Do not invent a third product named an 'OpenTag Slack bot harness'.",
           "Each turn also includes an 'OpenTag runtime identity' context block — trust that over guesses.",
-          "Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write,",
+          "Respect access bundles. Client tools available: lookup_slack_user, read_thread, confirm_write, save_linear_issue,",
           "issue_card, issue_list, page_list, show_status, show_links, show_incident, show_permissions,",
           "memory_search, memory_write, start_task, research_progress, react_message, search_slack (when allowed).",
           "Use show_permissions to explain effective access; its output is informational, not authorization.",

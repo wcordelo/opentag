@@ -49,6 +49,12 @@ import {
 } from "./search-multi-source.js";
 import { createSearchKnowledgeTool } from "./search-knowledge.js";
 import { createSearchDriveTool } from "./search-drive.js";
+import { createSaveLinearIssueTool } from "./linear-write.js";
+import {
+  createLinearWriteApproval,
+  linearWriteApprovalKey,
+  LINEAR_WRITE_APPROVAL_TTL_MS,
+} from "../connectors/linear-write.js";
 
 export { guardToolsByBundle } from "./guard.js";
 
@@ -181,6 +187,8 @@ function ConfirmWriteCard(props: {
   description?: string;
   assigneeEmail?: string;
   team?: string;
+  project?: string;
+  milestone?: string;
   choiceId: string;
 }) {
   const kids: unknown[] = [jsx(Header, { children: `📝 ${props.action}?` })];
@@ -195,6 +203,12 @@ function ConfirmWriteCard(props: {
   }
   if (props.team) {
     fields.push(jsx(Field, { children: `**Team**\n${props.team}` }));
+  }
+  if (props.project) {
+    fields.push(jsx(Field, { children: `**Project**\n${props.project}` }));
+  }
+  if (props.milestone) {
+    fields.push(jsx(Field, { children: `**Milestone**\n${props.milestone}` }));
   }
   if (props.assigneeEmail) {
     fields.push(
@@ -263,13 +277,40 @@ export const confirmWriteTool = defineBotTool({
       .string()
       .optional()
       .describe("Linear team display name when creating an issue"),
+    project: z
+      .string()
+      .optional()
+      .describe("Linear project UUID or exact project name when creating an issue"),
+    milestone: z
+      .string()
+      .optional()
+      .describe("Linear project milestone UUID or exact milestone name"),
+    connectorId: z
+      .string()
+      .optional()
+      .describe("Guarded connector to authorize, e.g. linear"),
+    operation: z
+      .string()
+      .optional()
+      .describe("Guarded connector operation, e.g. create_issue"),
     detail: z
       .string()
       .optional()
       .describe("Optional extra notes when structured fields do not apply"),
   }),
   async handler(
-    { action, title, description, assigneeEmail, team, detail },
+    {
+      action,
+      title,
+      description,
+      assigneeEmail,
+      team,
+      project,
+      milestone,
+      connectorId,
+      operation,
+      detail,
+    },
     { thread },
   ) {
     const fields = coerceTicketFields({ title, description });
@@ -290,6 +331,8 @@ export const confirmWriteTool = defineBotTool({
         description: fields.description,
         assigneeEmail,
         team,
+        project,
+        milestone,
         detail,
         choiceId,
       }),
@@ -308,9 +351,24 @@ export const confirmWriteTool = defineBotTool({
     // A click may have durably won immediately before Stop. Re-check the exact
     // execution after the waiter and before granting the next write tool.
     await assertExactTurnActive(thread);
-    // Immediate Slack feedback while the agent calls save_issue (LLM + MCP).
+    const inferredConnector = connectorId ?? (/\blinear\b/i.test(action) ? "linear" : undefined);
+    const inferredOperation = operation ??
+      (inferredConnector === "linear" && /\b(create|file|save)\b/i.test(action)
+        ? "create_issue"
+        : undefined);
+    if (inferredConnector !== "linear" || inferredOperation !== "create_issue") {
+      return [
+        "The user APPROVED the write, but no guarded connector implementation is available for this operation.",
+        "Do not call a mutating MCP tool or claim that the write succeeded.",
+      ].join(" ");
+    }
+    // Immediate Slack feedback while the agent calls the guarded connector tool.
     try {
-      await thread.post("⏳ Creating Linear issue…");
+      await thread.post(
+        inferredConnector === "linear"
+          ? "⏳ Creating Linear issue…"
+          : "⏳ Applying approved write…",
+      );
     } catch (err) {
       console.warn(
         "[confirm_write] creating ack failed",
@@ -319,12 +377,40 @@ export const confirmWriteTool = defineBotTool({
     }
     // The acknowledgement is fenced, but its historical best-effort catch
     // must not turn a Stop suppression into an approval result. Re-check after
-    // that await and fail the handler before the run loop can issue save_issue.
+    // that await and fail the handler before the run loop can issue a write.
     await assertExactTurnActive(thread);
+    const requestContext = requireRequestContext(thread);
+    if (requestContext.actor.kind !== "slack_user") {
+      return "The approved write cannot proceed because automation actors cannot authorize Linear mutations.";
+    }
+    const exact = getTurnExecutionContext(thread);
+    if (!exact) throw new Error("active_turn_context_required");
+    const approval = await createLinearWriteApproval({
+      approvalId: choiceId,
+      teamId: requestContext.teamId,
+      channelId: channelFromThread(thread),
+      requesterId: requestContext.requesterId,
+      executionId: exact.executionId,
+      threadKey: exact.threadKey,
+      draft: {
+        title: fields.title,
+        ...(fields.description ? { description: fields.description } : {}),
+        ...(team ? { team } : {}),
+        ...(assigneeEmail ? { assigneeEmail } : {}),
+        ...(project ? { project } : {}),
+        ...(milestone ? { milestone } : {}),
+      },
+    });
+    await requireStateStore().kv.set(
+      linearWriteApprovalKey(choiceId),
+      approval,
+      LINEAR_WRITE_APPROVAL_TTL_MS,
+    );
     const parts = [
       "The user APPROVED the write — proceed IMMEDIATELY.",
-      "In this same turn: call save_issue NOW with the fields below (do not ask anything, do not call list_teams first unless save_issue fails).",
-      "Then call issue_card with the new identifier + url. No extra prose before those tools.",
+      "In this same turn: call save_linear_issue NOW with approvalId and the exact fields below.",
+      "Then call issue_card with the returned identifier + url. No extra prose before those tools.",
+      `approvalId=${JSON.stringify(choiceId)}`,
       fields.title != null && fields.title !== ""
         ? `title=${JSON.stringify(fields.title)}`
         : null,
@@ -335,10 +421,19 @@ export const confirmWriteTool = defineBotTool({
         ? `assigneeEmail=${JSON.stringify(assigneeEmail)}`
         : null,
       team ? `team=${JSON.stringify(team)}` : null,
+      project ? `project=${JSON.stringify(project)}` : null,
+      milestone ? `milestone=${JSON.stringify(milestone)}` : null,
       "Use these exact field values; do not remix them.",
     ].filter(Boolean);
     return parts.join(" ");
   },
+});
+
+export const saveLinearIssueTool = createSaveLinearIssueTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+  runEffect: runExactTurnEffect,
 });
 
 export const lookupSlackUserTool = defineBotTool({
@@ -722,6 +817,7 @@ const RAW_EDGE_TOOLS = [
   lookupSlackUserTool,
   readThreadTool,
   confirmWriteTool,
+  saveLinearIssueTool,
   issueCardTool,
   issueListTool,
   pageListTool,

@@ -114,6 +114,7 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
 | `LINEAR_API_KEY` | agent secrets / root `.env` | Linear MCP |
 | `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `Berendo`) |
+| `CONNECTOR_CREDENTIALS` | bot service binding | Resolves approved opaque connector references into short-lived tokens |
 | `NOTION_*` | agent secrets / root `.env` | Optional Notion MCP sidecar |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |
 | `HARNESS` | `wrangler.bot.toml` service binding | Claude Code Worker |
@@ -132,13 +133,19 @@ See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.
 1. `@bot create a linear ticket for me` → bot asks for title/description only
    (assignee defaults to the requester’s Slack email).
 2. User sends fields (typos / missing colons OK) → `confirm_write` card with
-   structured Title / Description / Team / Assignee.
+   structured Title / Description / Team / Assignee / Project / Milestone.
 3. **Create** → durable HITL (`choiceId` in `BOT_STATE`) → immediate
-   `⏳ Creating Linear issue…` → agent `save_issue` + `issue_card` + URL.
+   `⏳ Creating Linear issue…` → the guarded `save_linear_issue` edge tool +
+   `issue_card` + URL. The approval record carries title, description, team,
+   assignee, project, and milestone exactly as displayed in the card.
 
 If Create seems dead: confirm bot deploy includes `edge/src/hitl/durable-choice.ts`
 and that you clicked a card from a **new** turn (old cards lack `choiceId`).
 If assignee is always asked for: token is missing `users:read.email` (reinstall).
+The guarded write path also requires an active `linear/create_issue` connector
+grant, a versioned Linear credential reference with `issues:create` or `write`,
+and a deployed credential broker. Without those foundations it fails closed;
+the repository does not claim a successful Linear write from MCP availability.
 
 ## 4. Integrations (runtime)
 

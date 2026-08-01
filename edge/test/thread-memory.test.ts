@@ -45,6 +45,16 @@ describe("parseTicketDraft", () => {
     });
   });
 
+  it("carries Linear project and milestone fields through the draft", () => {
+    expect(parseTicketDraft([
+      { text: "title: fix onboarding project: Launch milestone: Beta" },
+    ])).toMatchObject({
+      title: "fix onboarding",
+      project: "Launch",
+      milestone: "Beta",
+    });
+  });
+
   it("splits description typos without a colon", () => {
     expect(
       parseLabeledFields("title: test descripton test test"),

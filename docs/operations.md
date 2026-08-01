@@ -177,6 +177,7 @@ cd edge
 | `OPENAI_API_KEY` | Secret | Agent | Default AG-UI model |
 | `LINEAR_API_KEY` | Secret | Agent | Linear MCP |
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
+| `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and

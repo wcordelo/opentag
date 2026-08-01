@@ -47,6 +47,27 @@ export function slackObligationThreadKey(
   return tenantId ? `tenant:${encodeURIComponent(tenantId)}:${key}` : key;
 }
 
+/** Pre-tenant rollout partition id for the same channel/thread, when distinct. */
+export function legacySlackObligationThreadKey(
+  teamId: string,
+  channelId: string,
+  statusThreadTs?: string,
+): string | undefined {
+  const tenantKey = slackObligationThreadKey(teamId, channelId, statusThreadTs);
+  const legacyKey = slackObligationThreadKey(channelId, statusThreadTs);
+  return legacyKey !== tenantKey ? legacyKey : undefined;
+}
+
+/** Inverse of tenant qualification for an already-derived partition key. */
+export function legacySlackObligationThreadKeyFromKey(
+  threadKey: string,
+): string | undefined {
+  const match = /^(?:tenant:[^:]+:)?(slack:.+)$/.exec(threadKey);
+  if (!match) return undefined;
+  const legacyKey = match[1]!;
+  return legacyKey !== threadKey ? legacyKey : undefined;
+}
+
 /** Inverse of {@link slackObligationThreadKey} for abort routing when registry state is stale. */
 export function conversationKeyFromThreadKey(threadKey: string): string {
   const match = /^(?:tenant:[^:]+:)?slack:([^:]+):(.+)$/.exec(threadKey);

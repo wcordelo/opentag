@@ -110,8 +110,8 @@ describe("knowledge MCP", () => {
     expect(response.status).toBe(503);
     expect(calls).toEqual([
       "https://do/getTrackedKnowledgeSource",
-      "https://do/mcp-audit",
       "https://do/actor-token/consume",
+      "https://do/mcp-audit",
       "https://do/mcp-audit",
     ]);
   });

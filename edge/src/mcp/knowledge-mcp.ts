@@ -233,6 +233,15 @@ export async function handleKnowledgeMcp(
     tool: input.tool,
     ...(resource ? { resourceType: resource.type, resourceId: resource.id } : {}),
   } satisfies Omit<KnowledgeMcpAuditEvent, "id" | "outcome" | "createdAt">;
+  if (authorization.kind === "actor") {
+    if (!(await consumeActorToken(env, authorization.claims))) {
+      return Response.json({
+        status: "error",
+        code: "unauthorized",
+        message: "knowledge actor authorization failed",
+      }, { status: 401 });
+    }
+  }
   const startedAuditRecorded = await recordMcpAudit(env, {
     ...auditBase,
     id: crypto.randomUUID(),
@@ -245,15 +254,6 @@ export async function handleKnowledgeMcp(
       code: "audit_unavailable",
       message: "knowledge audit is unavailable",
     }, { status: 503 });
-  }
-  if (authorization.kind === "actor") {
-    if (!(await consumeActorToken(env, authorization.claims))) {
-      return Response.json({
-        status: "error",
-        code: "unauthorized",
-        message: "knowledge actor authorization failed",
-      }, { status: 401 });
-    }
   }
 
   const finish = async (response: Response, outcome: "ok" | "error", errorCode?: string): Promise<Response> => {

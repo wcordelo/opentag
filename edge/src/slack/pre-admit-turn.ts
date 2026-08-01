@@ -8,7 +8,10 @@ import {
 import { DurableObjectStateStore } from "../store/durable-object-state-store.js";
 import { ACTIVE_TURN_TTL_MS, type ActiveTurnRecord } from "./active-turn-registry.js";
 import { conversationKeyOf, DM_SCOPE, stripMentions } from "./channels-slack-lite.js";
-import { slackObligationThreadKey } from "./obligation-thread-key.js";
+import {
+  legacySlackObligationThreadKey,
+  slackObligationThreadKey,
+} from "./obligation-thread-key.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
 import { hasExplicitBotMention } from "./ingress-normalize.js";
 import {
@@ -203,9 +206,14 @@ export async function preAdmitSlackTurnResult(
   // This derivation is deliberately synchronous: the first await in this
   // function is the authoritative registration RPC below.
   const { executionId } = slackTurnIdentitySync(context, identity.channelId);
+  const threadKey = slackObligationThreadKey(
+    identity.teamId,
+    identity.channelId,
+    identity.threadTs,
+  );
   const record: ActiveTurnRecord = {
     channelId: identity.channelId,
-    threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
+    threadKey,
     conversationKey: identity.conversationKey,
     executionId,
     liveClientMessageId: stableSlackClientMessageId(executionId),
@@ -213,6 +221,27 @@ export async function preAdmitSlackTurnResult(
     registeredAt: Date.now(),
   };
   const store = new DurableObjectStateStore({ namespace: env.BOT_STATE });
+  const legacyThreadKey = legacySlackObligationThreadKey(
+    identity.teamId,
+    identity.channelId,
+    identity.threadTs,
+  );
+  if (legacyThreadKey) {
+    const legacySnapshot = await store.activeTurn.get(legacyThreadKey);
+    if (legacySnapshot?.record) {
+      const turn = Object.freeze({
+        record: Object.freeze(
+          legacySnapshot.record.executionId === executionId
+            ? legacySnapshot.record
+            : record,
+        ),
+      });
+      if (legacySnapshot.record.executionId === executionId) {
+        return Object.freeze({ status: "duplicate", turn });
+      }
+      return Object.freeze({ status: "concurrent" });
+    }
+  }
   // Registration and the never-silent obligation share one SQLite
   // transaction. Thus profile/config/file awaits can never run while Stop
   // sees an active shortcut with no recoverable obligation.

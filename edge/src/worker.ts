@@ -114,6 +114,7 @@ export { SessionEventDO } from "./store/session-event-do.js";
 export { DeferredIngressDO } from "./deferred-ingress-do.js";
 export { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 export { PlatformStateDO } from "./platform/platform-state-do.js";
+export { RouterMeasurementDO } from "./router/measurement-do.js";
 
 const app = new Hono<AppEnv>();
 
@@ -663,6 +664,50 @@ async function forwardPlatformEffect(
   if (!objectName) return c.json({ error: "effect_scope_and_tenant_required" }, 400);
   return forwardPlatformState(c, objectName, path, body);
 }
+
+function routerMeasurementStub(
+  env: AppEnv["Bindings"],
+  workspaceId: string,
+): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } | undefined {
+  if (!env.ROUTER_MEASUREMENTS) return undefined;
+  return env.ROUTER_MEASUREMENTS.get(
+    env.ROUTER_MEASUREMENTS.idFromName(workspaceId),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+}
+
+async function forwardRouterMeasurement(
+  c: Context<AppEnv>,
+  path: string,
+): Promise<Response> {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.workspaceId !== "string" || body.workspaceId.trim() === "") {
+    return c.json({ error: "workspace_id_required" }, 400);
+  }
+  const stub = routerMeasurementStub(c.env, body.workspaceId);
+  if (!stub) return c.json({ error: "router_measurements_unavailable" }, 503);
+  const response = await stub.fetch(`https://router-measurement${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return new Response(text, {
+    status: response.ok ? 200 : adminForwardStatus(response.status),
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+app.post("/admin/router/summary", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/summary"));
+
+app.post("/admin/router/dispatch/list", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/dispatch/list"));
+
+app.post("/admin/router/feedback/list", requireAdminAuth(), async (c) =>
+  forwardRouterMeasurement(c, "/feedback/list"));
 
 app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
   const body = await c.req.json();

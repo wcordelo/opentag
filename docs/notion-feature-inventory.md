@@ -189,8 +189,8 @@ change, not evidence that all earlier gaps are complete.
 - Linear project/milestone preservation through exact human approval;
 - trace correlation using durable execution identity;
 - bounded named raw KnowledgeDO query templates;
-- three-tier classifier in shadow mode with durable router events while dispatch
-  remains Tier 2;
+- three-tier classifier in shadow mode with workspace-scoped durable dispatch,
+  outcome, and feedback measurement while dispatch remains Tier 2;
 - provisioning, identity/credential references, marketplace/OAuth, usage meter,
   memory-policy/deletion contracts; and
 - the new secret-free `platform_effect_intents` ledger with bounded leases,
@@ -217,9 +217,11 @@ change, not evidence that all earlier gaps are complete.
 5. **Memory deletion:** choose retention/compliance guarantees and deploy a
    deletion executor that can prove source-by-source completion. The ledger
    intentionally stays `requested` until that executor reports success.
-6. **Router rollout:** collect shadow measurements, add Tier 1 knowledge
-   quality gates and fallback/synthesis behavior, escalation affordance,
-   misroute ledger, and an explicit rollout gate before enabling dispatch.
+6. **Router rollout:** collect enough shadow measurements, then add Tier 1
+   knowledge quality gates and fallback/synthesis behavior, product-facing
+   escalation affordance, and an explicit rollout gate before enabling
+   dispatch. The workspace-scoped measurement and misroute ledgers now exist;
+   they do not enable routing by themselves.
 7. **Prompt composition follow-up:** the current base-plus-channel overlay is
    implemented. If a separate deployment text layer is required later, add it
    only with an explicit source, precedence, CAS/revision, and rollout decision;

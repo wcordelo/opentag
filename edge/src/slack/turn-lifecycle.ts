@@ -40,6 +40,7 @@ import {
 } from "../observability/trace-correlation.js";
 import { classifyRouterShadow } from "../router/shadow.js";
 import type { RouterShadowRecord } from "../router/shadow.js";
+import { createRouterDispatchMeasurement } from "../router/measurement.js";
 
 const RENDER_OBLIGATION_TIMEOUT_MS = ACTIVE_TURN_TTL_MS;
 
@@ -49,19 +50,63 @@ function logMetric(metric: string, fields: Record<string, unknown>): void {
 
 async function persistRouterShadow(
   env: Env,
+  workspaceId: string,
   threadKey: string,
   executionId: string,
   record: RouterShadowRecord,
 ): Promise<void> {
-  if (!env.SESSION_EVENTS) return;
-  const sessionDo = env.SESSION_EVENTS.get(
-    env.SESSION_EVENTS.idFromName(threadKey),
-  ) as unknown as SessionEventsRpc;
-  await sessionDo.appendEvent({
-    executionId,
-    kind: "router",
-    payload: record,
+  if (env.SESSION_EVENTS) {
+    const sessionDo = env.SESSION_EVENTS.get(
+      env.SESSION_EVENTS.idFromName(threadKey),
+    ) as unknown as SessionEventsRpc;
+    await sessionDo.appendEvent({
+      executionId,
+      kind: "router",
+      payload: record,
+    });
+  }
+  if (env.ROUTER_MEASUREMENTS) {
+    const measurement = createRouterDispatchMeasurement({
+      workspaceId,
+      threadKey,
+      executionId,
+      shadowRecord: record,
+    });
+    const measurementDo = env.ROUTER_MEASUREMENTS.get(
+      env.ROUTER_MEASUREMENTS.idFromName(workspaceId),
+    ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    const response = await measurementDo.fetch("https://router-measurement/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(measurement),
+    });
+    if (!response.ok) {
+      throw new Error(`router_measurement_record_failed:${response.status}`);
+    }
+  }
+}
+
+async function persistRouterOutcome(
+  env: Env,
+  workspaceId: string,
+  executionId: string,
+  value: {
+    outcome: "answered" | "failed" | "cancelled";
+    outcomeReason?: string;
+  },
+): Promise<void> {
+  if (!env.ROUTER_MEASUREMENTS) return;
+  const measurementDo = env.ROUTER_MEASUREMENTS.get(
+    env.ROUTER_MEASUREMENTS.idFromName(workspaceId),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const response = await measurementDo.fetch("https://router-measurement/outcome", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId, executionId, ...value }),
   });
+  if (!response.ok) {
+    throw new Error(`router_measurement_outcome_failed:${response.status}`);
+  }
 }
 
 function sessionInputLine(prompt: string | AgentContentPart[]): string {
@@ -522,7 +567,13 @@ export async function runSlackTurnLifecycle(
       return;
     }
     try {
-      await persistRouterShadow(env, obligationThreadKey, executionId, routerShadow);
+      await persistRouterShadow(
+        env,
+        requestContext.teamId,
+        obligationThreadKey,
+        executionId,
+        routerShadow,
+      );
     } catch (error) {
       // Router measurement is an optimization and must not make the status
       // quo Tier 2 execution unavailable. The trace line remains available.
@@ -612,6 +663,22 @@ export async function runSlackTurnLifecycle(
       remoteGitApproved: remoteGit.remoteGitApproved,
       createPullRequest: remoteGit.createPullRequest,
     });
+    try {
+      await persistRouterOutcome(env, requestContext.teamId, executionId, {
+        outcome:
+          outcome.status === "completed"
+            ? "answered"
+            : outcome.status === "interrupted"
+              ? "cancelled"
+              : "failed",
+        ...(outcome.status === "rejected" ? { outcomeReason: outcome.reason } : {}),
+      });
+    } catch (error) {
+      console.warn(
+        "[router] durable outcome unavailable",
+        error instanceof Error ? error.message : error,
+      );
+    }
     if (outcome.status === "interrupted") {
       logMetric("turn_interrupted", {
         threadKey: obligationThreadKey,
@@ -660,6 +727,17 @@ export async function runSlackTurnLifecycle(
         ? "Check HARNESS / the Claude Code harness Worker — retry in a few seconds."
         : "Check AGENT_RUNTIME / opentag-agent — retry in a few seconds.";
     logMetric("turn_failed", { threadKey: obligationThreadKey, executionId });
+    try {
+      await persistRouterOutcome(env, requestContext.teamId, executionId, {
+        outcome: "failed",
+        outcomeReason: "lifecycle_exception",
+      });
+    } catch (measurementError) {
+      console.warn(
+        "[router] failed-outcome measurement unavailable",
+        measurementError instanceof Error ? measurementError.message : measurementError,
+      );
+    }
     console.error("[bot] Slack turn failed", msg);
     if (
       msg.startsWith("session_event_mirror_failed:") ||

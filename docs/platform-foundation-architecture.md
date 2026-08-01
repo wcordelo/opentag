@@ -1,8 +1,8 @@
 # Platform and routing foundation
 
-Status: local implementation on the goal worktree; the effect ledger is
-validated but no hosted platform effecter or connector credential broker is
-deployed.
+Status: local implementation on the goal worktree; the effect ledger and
+router measurement ledger are validated, but no hosted platform effecter or
+connector credential broker is deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -51,7 +51,11 @@ surface features, and classification latency while setting
 `tierDispatched: 2` for every request. The Slack lifecycle invokes it after a
 turn has a durable execution identity. No Tier 1 answer path, Tier 3 compute,
 model classifier, billing charge, or user-visible routing change is enabled
-by this implementation.
+by this implementation. `RouterMeasurementDO` now stores the category-only
+dispatch record per workspace, idempotently records the eventual Tier 2
+outcome, exposes bounded operator summaries/lists, and retains a separate
+30-day, 4 KiB-bounded misroute-feedback ledger for future Tier 1 escalation
+labels. It is measurement infrastructure only; it cannot dispatch a tier.
 
 ## Layer 3 contracts
 
@@ -141,7 +145,9 @@ reported complete.
   imply that Supermemory ingestion is active.
 - The router remains dark until the shadow dataset is measured and the Tier 1
   knowledge gate, Tier 1 synthesis/fallback path, escalation affordance, and
-  misroute ledger are implemented.
+  product-facing feedback controls are implemented. The workspace-scoped
+  measurement and misroute ledgers are now present, but Tier 1 is still not
+  enabled and no feedback control currently routes a user turn.
 - The platform-state migration, effect leases, and admin routes are locally
   validated, but the production bootstrap authority, tenant locator
   integration, identity/key custody worker, Slack OAuth callback, marketplace

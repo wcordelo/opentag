@@ -21,6 +21,10 @@ class_name = "KnowledgeDO"
 name = "PLATFORM_STATE"
 class_name = "PlatformStateDO"
 
+[[durable_objects.bindings]]
+name = "ROUTER_MEASUREMENTS"
+class_name = "RouterMeasurementDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -32,6 +36,10 @@ new_sqlite_classes = ["WorkspaceConfigDO", "KnowledgeDO"]
 [[migrations]]
 tag = "v3-platform-state"
 new_sqlite_classes = ["PlatformStateDO"]
+
+[[migrations]]
+tag = "v4-router-measurements"
+new_sqlite_classes = ["RouterMeasurementDO"]
 
 [vars]
 AGENT_URL = "http://localhost:8200/api/copilotkit/agent/triage/run"

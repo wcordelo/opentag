@@ -34,6 +34,11 @@ import { createSlackWebClient, sharedSlackRateScheduler } from "./web-api.js";
 import { firstSlackTs, slackObligationThreadKey } from "./obligation-thread-key.js";
 import { bindTurnExecutionContext } from "./turn-execution-context.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
+import {
+  createTraceCorrelation,
+  logTraceEvent,
+} from "../observability/trace-correlation.js";
+import { classifyRouterShadow } from "../router/shadow.js";
 
 const RENDER_OBLIGATION_TIMEOUT_MS = ACTIVE_TURN_TTL_MS;
 
@@ -428,6 +433,24 @@ export async function runSlackTurnLifecycle(
         isRepositoryCodingIntent(approvalOverrides.cleanedText),
     );
 
+    const trace = createTraceCorrelation({
+      workspaceId: requestContext.teamId,
+      threadKey: obligationThreadKey,
+      executionId,
+    });
+    classifyRouterShadow({
+      message: sessionInputLine(prompt),
+      hasAttachment: Array.isArray(prompt) && prompt.some((part) => Boolean(part.attachment)),
+      activeSession: false,
+      tier1Enabled: false,
+      correlation: trace,
+    });
+    logTraceEvent({
+      correlation: trace,
+      component: "slack-ingress",
+      event: "turn_started",
+      attributes: { actorKind: requestContext.actor.kind },
+    });
     logMetric("turn_started", { threadKey: obligationThreadKey, executionId });
     const existingObligation = await stateStore.obligation.get(obligationThreadKey);
     if (existingObligation?.executionId !== executionId) {

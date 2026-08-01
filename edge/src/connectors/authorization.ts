@@ -250,8 +250,10 @@ function scopeMatches(
   if (grant.projectId && grant.projectId !== identity.projectId) return false;
   if (grant.channelId && grant.channelId !== identity.channelId) return false;
   if (grant.scope === "workspace") return true;
-  if (grant.scope === "project") return identity.projectId.length > 0;
-  return identity.channelId.length > 0;
+  if (grant.scope === "project") {
+    return typeof identity.projectId === "string" && identity.projectId.length > 0;
+  }
+  return typeof identity.channelId === "string" && identity.channelId.length > 0;
 }
 
 function credentialIsActive(credential: CredentialReference, now: number): void {

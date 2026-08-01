@@ -479,9 +479,9 @@ export async function createLinearIssue(input: {
     title: stringValue(issue.title, "issue_title", LINEAR_WRITE_LIMITS.maxTitleLength),
     ...(typeof issue.url === "string" && issue.url.length <= 2_048 ? { url: issue.url } : {}),
   });
+  await verifyAtBoundary();
   if (input.onIssueCreated) {
     await input.onIssueCreated();
   }
-  await verifyAtBoundary();
   return result;
 }

@@ -1131,6 +1131,17 @@ export class PlatformStateEngine {
     const connectorId = input.connectorId === undefined
       ? undefined
       : id(input.connectorId, "connector_id");
+    const version = input.version === undefined
+      ? undefined
+      : id(input.version, "version");
+    if (connectorId && version) {
+      const row = this.sql.exec<MarketplaceRow>(
+        `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
+        connectorId,
+        version,
+      ).toArray()[0];
+      return { entries: row ? [marketplaceFromRow(row)] : [] };
+    }
     const limit = positiveLimit(input.limit);
     const rows = connectorId
       ? this.sql.exec<MarketplaceRow>(

@@ -849,19 +849,25 @@ async function ensureCuratedOAuthMarketplace(
     c,
     PLATFORM_MARKETPLACE_OBJECT_NAME,
     "/marketplace/list",
-    { connectorId: body.connectorId, limit: 100 },
+    { connectorId: body.connectorId, version: body.marketplaceVersion },
   );
   if (!marketplaceResponse.ok) return marketplaceResponse;
   const payload = await marketplaceResponse.json() as {
     entries?: Array<Record<string, unknown>>;
   };
-  const entry = payload.entries?.find((candidate) =>
-    candidate.connectorId === body.connectorId &&
-    candidate.version === body.marketplaceVersion,
-  );
+  const entry = payload.entries?.[0];
   if (!entry) return c.json({ error: "oauth_marketplace_not_found" }, 409);
   if (entry.status !== "curated") return c.json({ error: "oauth_marketplace_not_curated" }, 409);
   if (entry.authMode !== "oauth2") return c.json({ error: "oauth_connector_not_oauth2" }, 409);
+  if (Array.isArray(body.scopes)) {
+    const allowedScopes = Array.isArray(entry.oauthScopes)
+      ? entry.oauthScopes.filter((scope): scope is string => typeof scope === "string")
+      : [];
+    const requestedScopes = body.scopes.filter((scope): scope is string => typeof scope === "string");
+    if (requestedScopes.some((scope) => !allowedScopes.includes(scope))) {
+      return c.json({ error: "oauth_scope_not_allowed" }, 409);
+    }
+  }
   return undefined;
 }
 

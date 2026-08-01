@@ -632,6 +632,7 @@ describe("real /agent ingress and Stop lifecycle", () => {
     const env = {
       SLACK_SIGNING_SECRET: signingSecret,
       SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_BOT_USER_ID: "UBOT",
       AGENT_URL: "https://agent.test/run",
       AGENT_RUNTIME: { fetch: agentFetch },
       HARNESS: { fetch: harnessFetch },
@@ -1017,6 +1018,7 @@ describe("real /agent ingress and Stop lifecycle", () => {
     const env = {
       SLACK_SIGNING_SECRET: signingSecret,
       SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_BOT_USER_ID: "UBOT",
       AGENT_URL: "https://agent.test/run",
       HARNESS: harness,
       HARNESS_URL: "https://harness.test",
@@ -1082,13 +1084,12 @@ describe("real /agent ingress and Stop lifecycle", () => {
       event_id: `EvStop-${channel}`,
       team_id: "T1",
       event: {
-        // Remote stop-routing safety requires a real app mention for a
-        // top-level channel cancellation; threaded replies stay scoped and
-        // may use ordinary message events.
+        // Both top-level and threaded channel Stops explicitly mention the
+        // configured bot; only DMs retain no-mention Stop behavior.
         type: threadTs ? "message" : "app_mention",
         channel,
         user: "U1",
-        text: "stop",
+        text: threadTs ? "<@UBOT> stop" : "stop",
         ts: "1710000001.999900",
         ...(threadTs ? { thread_ts: threadTs } : {}),
       },

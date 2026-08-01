@@ -23,6 +23,21 @@ export const stripMentions = (text: string): string =>
   text.replace(MENTION_RE, "").replace(/\s+/g, " ").trim();
 
 /**
+ * Check for an exact mention of the configured bot user. A mention of another
+ * Slack user is not a channel-thread turn trigger.
+ */
+export function hasExplicitBotMention(
+  text: string,
+  botUserId: string | undefined,
+): boolean {
+  if (!botUserId) return false;
+  return (
+    text.includes(`<@${botUserId}>`) ||
+    text.includes(`<@${botUserId}|`)
+  );
+}
+
+/**
  * Derive a stable per-delivery id for inbound idempotency. Prefer the Events
  * API envelope `event_id` (stable across Slack's automatic retries), then the
  * message's `client_msg_id`, then a synthesized `${channel}:${ts}`. Returns
@@ -238,29 +253,12 @@ export function normalizeSlackEvent(
     }
     if (!event.thread_ts) return undefined; // top-level channel chatter
     // A threaded @-mention is delivered as BOTH an `app_mention` and this
-    // `message` event; app_mention handles it, so skip the duplicate here
-    // (mirrors the native Slack listener) to avoid a double response. Match
-    // both the plain `<@U…>` and labeled `<@U…|handle>` mention forms — same
-    // form set as MENTION_RE — so a labeled mention doesn't slip through.
-    if (
-      botUserId &&
-      (text.includes(`<@${botUserId}>`) || text.includes(`<@${botUserId}|`))
-    ) {
-      return undefined;
-    }
-    return {
-      kind: "turn",
-      source: "thread_reply",
-      channel,
-      threadTs: event.thread_ts,
-      ts: event.ts,
-      userText: stripMentions(text),
-      senderUserId: event.user,
-      actor: { kind: "slack_user", userId: event.user ?? "" },
-      eventId,
-      hasFiles,
-      files: hasFiles ? event.files : undefined,
-    };
+    // (mirrors the native Slack listener) to avoid a double response. An
+    // unmentioned threaded `message` is history-only and must not become a
+    // second turn path. Match the exact configured bot user before treating
+    // this as the duplicate of an explicit `app_mention`.
+    if (!hasExplicitBotMention(text, botUserId)) return undefined;
+    return undefined;
   }
 
   return undefined;

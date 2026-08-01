@@ -119,6 +119,13 @@ mentions must not share memory, sticky overrides, or one channel-wide turn
 lock, while a slash command has no message timestamp from which to create that
 thread identity.
 
+Channel-thread turn admission requires an exact mention of the configured bot.
+An unmentioned human `message` event is history-only: the Worker does not
+register or execute a turn, and it does not delete or mutate the Slack message.
+When a later explicit mention is admitted, the normal thread-history read can
+include those earlier replies. DMs and top-level slash commands retain their
+existing admission rules.
+
 Stable wire IDs use purpose-tagged SHA-256 values:
 
 - execution: `ot1e_<base64url digest>`
@@ -263,8 +270,9 @@ lease; alarms replace pod-startup scanning.
 
 ## Stop and cancellation
 
-Stop accepts natural stop/cancel phrases in a thread or DM. A top-level channel
-stop must mention the bot to avoid intercepting ordinary conversation.
+Stop accepts natural stop/cancel phrases in a channel thread only when the
+message explicitly mentions the bot, or without a mention in a DM. A top-level
+channel stop must mention the bot to avoid intercepting ordinary conversation.
 
 Production binds `SESSION_EVENTS`; exact durable interrupt is required there.
 In a reduced local/test configuration without that binding, Stop treats the

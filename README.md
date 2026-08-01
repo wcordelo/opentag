@@ -275,7 +275,7 @@ deliver back to the originating Slack thread. Cancellation requires
 
 ### Slack UX (bot Worker)
 
-- @mentions and thread continuity without re-mentioning
+- @mentions and explicitly mentioned thread follow-ups with durable history
 - Slash commands: `/agent`, `/config`, `/research`
 - Reactions over chat spam (thanks → ❤️; long turns → hourglass)
 - `react_message` tool when an emoji is better than text

@@ -165,6 +165,11 @@ uses its own message timestamp because that becomes the bot reply-thread root;
 a top-level slash command falls back to channel scope because Slack provides no
 message timestamp.
 
+Channel-thread replies and threaded Stop commands require an exact mention of
+the configured bot before admission or cancellation. Unmentioned human thread
+messages remain in Slack history and are read as context by a later admitted
+mention; they never acquire an active-turn row or interrupt an execution.
+
 ## 12. Exact render, effect, and rejection fences
 
 Every output/status/title from a running turn and every non-Slack production

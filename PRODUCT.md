@@ -34,7 +34,7 @@ A user should experience:
 
 | Surface | Status | Contract |
 | --- | --- | --- |
-| Mentions and thread replies | Implemented | Events API, incremental render, durable lifecycle |
+| Mentions and thread replies | Implemented | Explicit bot mentions admit channel-thread turns; unmentioned replies remain Slack history for later context |
 | `/agent` | Implemented | Same exact lifecycle as a mention |
 | `/config` | Implemented | Channel prompt update preserving bundles and policy |
 | `/research` | Implemented | Effect-fenced task start with exact cancellation |

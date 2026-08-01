@@ -26,9 +26,9 @@ export interface E2ECase {
   screenshots?: number[];
   /**
    * Optional follow-up turn that gets sent INTO the thread that this case's
-   * first prompt creates. Used to test thread-continuation without
-   * re-mentioning the bot. The follow-up has its own prompt + expectations
-   * and reuses the same sampleIntervalMs / maxWaitMs.
+   * first prompt creates. Used to test explicitly mentioned thread
+   * continuation. The follow-up has its own prompt + expectations and reuses
+   * the same sampleIntervalMs / maxWaitMs.
    */
   followUp?: {
     prompt: string;
@@ -225,12 +225,12 @@ export const CASES: E2ECase[] = [
 
   // ── D. Conversation state ─────────────────────────────────────────
   {
-    name: "D-state-1 — thread continuation without re-mention",
+    name: "D-state-1 — explicitly mentioned thread continuation",
     prompt: "<@U0B45V75NNR> say the single word ALPHA",
     expectations: { finalContains: ["ALPHA"] },
     followUp: {
       prompt:
-        "now say the single word BRAVO. no @mention; just reply in this thread.",
+        "<@U0B45V75NNR> now say the single word BRAVO in this thread.",
       expectations: { finalContains: ["BRAVO"] },
     },
   },
@@ -245,7 +245,7 @@ export const CASES: E2ECase[] = [
     maxWaitMs: 30_000,
     interrupt: {
       afterMs: 3500,
-      prompt: "actually never mind. just say PONG and nothing else.",
+      prompt: "<@U0B45V75NNR> actually never mind. just say PONG and nothing else.",
       // The first (interrupted) reply must carry the marker.
       firstExpectations: {
         finalContains: ["(interrupted)"],

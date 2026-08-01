@@ -7,6 +7,7 @@
  * command, here's what happened" or "let it flow to the bot engine".
  */
 import { isSlackStopCommand } from "./stop-command.js";
+import { hasExplicitBotMention } from "./ingress-normalize.js";
 import { createBotStoreAdapter } from "../create-bot-store.js";
 import {
   createSlackWebClient,
@@ -114,16 +115,19 @@ interface SessionInterruptRpc {
  *
  * Matches only `event_callback` payloads whose `event.type` is
  * `"app_mention"` or (for threaded replies and DMs) `"message"`, with a
- * non-empty `event.text`, and authored by an exact Slack user.
- * Top-level channel stops require an app mention. `event.subtype` is deliberately
- * not inspected — a stop message flows through this check the same way
- * regardless of subtype.
+ * non-empty `event.text`, and authored by an exact Slack user. Channel-thread
+ * messages must explicitly mention the configured bot; DMs retain their
+ * no-mention behavior, and top-level channel stops require an app mention.
+ * `event.subtype` is deliberately not inspected — a stop message flows
+ * through this check the same way regardless of subtype.
  *
  * Returns the matched event on a hit, or `undefined` if this payload must
- * flow to the bot engine unchanged (including: not a stop phrase at all).
+ * flow to the bot engine unchanged (including: not a stop phrase at all or
+ * an unmentioned channel-thread message).
  */
 export function extractStopCommandEvent(
   payload: SlackEventCallbackPayload,
+  botUserId?: string,
 ): SlackStopEvent | undefined {
   if (payload?.type !== "event_callback") return undefined;
   const event = payload.event;
@@ -148,6 +152,13 @@ export function extractStopCommandEvent(
   ) return undefined;
   const text = event.text;
   if (typeof text !== "string" || text.trim().length === 0) return undefined;
+  const isChannelThread =
+    event.type === "message" &&
+    Boolean(event.thread_ts) &&
+    !(typeof event.channel === "string" && event.channel.startsWith("D"));
+  if (isChannelThread && !hasExplicitBotMention(text, botUserId)) {
+    return undefined;
+  }
   if (!isSlackStopCommand({ text })) return undefined;
   return event;
 }

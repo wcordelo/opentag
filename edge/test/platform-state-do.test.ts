@@ -187,9 +187,12 @@ describe("PlatformStateDO", () => {
       const tenantId = provisioned.body.tenantId as string;
       for (const step of REQUIRED_PROVISIONING_STEPS) {
         await call(state, "/provision/step", {
+          schemaVersion: 1,
           idempotencyKey: "billing-install",
           step,
           outcome: "complete",
+          externalReceiptRef: `receipt:${step}`,
+          observedAt: now,
         });
       }
       const plan = {

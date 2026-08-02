@@ -189,6 +189,7 @@ cd edge
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
 | `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
+| `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
@@ -302,6 +303,13 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+Memory deletion is not complete when the request is accepted. An approved
+external executor must submit one epoch-matching receipt per requested source
+through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
+complete a source, while `failed` makes the request terminally failed. The
+Worker stores only the receipt metadata and opaque external reference. It does
+not delete, inspect, or accept memory contents.
 
 Billing plans are configured through the admin-only platform route and are
 evaluated against the tenant's current UTC period. A plan revision must match

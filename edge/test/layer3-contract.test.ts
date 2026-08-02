@@ -9,6 +9,7 @@ import {
   validateConnectorOAuthGrant,
   validateCredentialCustodyReference,
   validateMemoryDeletionRequest,
+  validateMemoryDeletionReceipt,
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
   validateProvisioningRequest,
@@ -216,6 +217,27 @@ describe("Layer 3 platform contracts", () => {
       requestedAt: now,
       deletionEpoch: 2,
     })).toMatchObject({ sourceKeys: ["slack:T1:C1:123"] });
+    expect(validateMemoryDeletionReceipt({
+      schemaVersion: 1,
+      idempotencyKey: "receipt-1",
+      requestId: "delete-1",
+      tenantId: "T1",
+      sourceKey: "slack:T1:C1:123",
+      deletionEpoch: 2,
+      status: "deleted",
+      observedAt: now,
+      receiptRef: "memory:receipt-1",
+    })).toMatchObject({ status: "deleted", sourceKey: "slack:T1:C1:123" });
+    expect(() => validateMemoryDeletionReceipt({
+      schemaVersion: 1,
+      idempotencyKey: "receipt-2",
+      requestId: "delete-1",
+      tenantId: "T1",
+      sourceKey: "slack:T1:C1:123",
+      deletionEpoch: 2,
+      status: "failed",
+      observedAt: now,
+    })).toThrow("memory_deletion_error_required");
   });
 
   it("limits platform effects to bounded secret-free metadata", () => {

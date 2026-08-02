@@ -869,6 +869,12 @@ app.post("/admin/platform/memory/deletion", requireAdminAuth(), async (c) => {
   return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/deletion", body);
 });
 
+app.post("/admin/platform/memory/deletion/receipt", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/memory/deletion/receipt", body);
+});
+
 app.post("/admin/platform/memory/deletion/get", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);

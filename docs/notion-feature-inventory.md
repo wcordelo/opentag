@@ -298,7 +298,12 @@ change, not evidence that all earlier gaps are complete.
 - receipt-bound provisioning step advancement; a tenant cannot become `active`
   from a bare outcome and each required footprint retains an opaque external
   receipt before activation; and a fail-closed, step-scoped bootstrap adapter
-  boundary that does not carry credentials or generic resource payloads.
+  boundary that does not carry credentials or generic resource payloads;
+- a server-owned, versioned external-platform tenant-locator registry with
+  read-only resolution, terminal revocation, collision/version-gap checks, and
+  registry-backed Slack context adaptation. The registry is source-complete in
+  the current implementation branch but is not included in the already-live
+  deployment until that branch is merged and deployed.
 
 ### Still required before “everything” is live
 
@@ -310,11 +315,13 @@ change, not evidence that all earlier gaps are complete.
    credential store or provider mapping is currently configured.
 2. **Provisioning/identity:** [PR #37](https://github.com/wcordelo/opentag/pull/37)
    and [PR #39](https://github.com/wcordelo/opentag/pull/39) add provider-independent
-   custody and receipt adapters. The local tenant ledger requires an external
-   receipt for every required provisioning step. Still choose the tenant
-   locator/isolation model, configure the bootstrap adapter, establish
-   identity/key custody, and supply real receipts for every DO, bundle, OAuth,
-   and identity step.
+   custody and receipt adapters. The server-owned tenant locator registry and
+   registry-backed Slack boundary are now source-complete, but the local tenant
+   ledger still requires an external receipt for every required provisioning
+   step. Still choose the isolation model, configure the bootstrap authority,
+   establish identity/key custody, populate the registry through the approved
+   install flow, and supply real receipts for every DO, bundle, OAuth, and
+   identity step.
 3. **OAuth/marketplace:** [PR #31](https://github.com/wcordelo/opentag/pull/31)
    and [PR #41](https://github.com/wcordelo/opentag/pull/41) add replay-safe state,
    curation gates, and exact scope/custody binding. Still choose callback
@@ -353,9 +360,11 @@ change, not evidence that all earlier gaps are complete.
    deletion ownership.
 2. Deploy and smoke-test the credential broker/effect worker against a test
    provider and test tenant; keep all live provider secrets outside OpenTag.
-3. Enable Drive and Linear only for explicitly granted test workspaces.
-4. Measure router shadow traffic and implement gates before changing dispatch.
-5. Revisit X, richer progress, prompt composition, and rollout cohorts based on
+3. Run the approved provisioning/bootstrap flow to populate and receipt-check
+   tenant locators before enabling any tenant-scoped connector.
+4. Enable Drive and Linear only for explicitly granted test workspaces.
+5. Measure router shadow traffic and implement gates before changing dispatch.
+6. Revisit X, richer progress, prompt composition, and rollout cohorts based on
    product demand.
 
 The historical baseline remains unchanged. The audit did not create another

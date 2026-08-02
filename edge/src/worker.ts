@@ -117,6 +117,7 @@ import {
   validateConnectorMarketplaceEntry,
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
+import { TENANT_LOCATOR_SCHEMA_VERSION } from "./platform/tenant-locator.js";
 import {
   enqueuePlatformEffectWakeup,
   handlePlatformEffectQueue,
@@ -786,6 +787,33 @@ app.post("/admin/router/dispatch/list", requireAdminAuth(), async (c) =>
 app.post("/admin/router/feedback/list", requireAdminAuth(), async (c) =>
   forwardRouterMeasurement(c, "/feedback/list"));
 
+app.post("/admin/platform/tenant-locator", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator",
+    await c.req.json(),
+  );
+});
+
+app.post("/admin/platform/tenant-locator/resolve", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator/resolve",
+    await c.req.json(),
+  );
+});
+
+app.post("/admin/platform/tenant-locator/revoke", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator/revoke",
+    await c.req.json(),
+  );
+});
+
 app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
   const body = await c.req.json();
   let request: ReturnType<typeof validateProvisioningRequest>;
@@ -795,6 +823,21 @@ app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
     return c.json({ error: error instanceof Error ? error.message : "provisioning_request_invalid" }, 400);
   }
   const tenantId = await deriveInternalTenantId(request);
+  const locatorResponse = await forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator",
+    {
+      schemaVersion: TENANT_LOCATOR_SCHEMA_VERSION,
+      platform: request.externalPlatform,
+      platformTenantId: request.externalTenantId,
+      tenantId,
+      version: 1,
+      status: "active",
+      updatedAt: request.requestedAt,
+    },
+  );
+  if (!locatorResponse.ok) return locatorResponse;
   return forwardPlatformState(c, platformTenantObjectName(tenantId), "/provision", body);
 });
 

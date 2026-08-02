@@ -94,6 +94,84 @@ const request = {
 } as const;
 
 describe("PlatformStateDO", () => {
+  it("keeps a server-owned tenant locator registry versioned and fail-closed", async () => {
+    const { state, close } = makeState();
+    try {
+      const tenantId = "11111111-1111-4111-8111-111111111111";
+      const active = {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: "T-locator",
+        tenantId,
+        version: 1,
+        status: "active",
+        updatedAt: now,
+      };
+      const first = await call(state, "/tenant-locator", active);
+      expect(first.response.status).toBe(200);
+      expect(first.body).toMatchObject({ duplicate: false, locator: active });
+      expect((await call(state, "/tenant-locator", active)).body.duplicate).toBe(true);
+
+      const resolved = await call(state, "/tenant-locator/resolve", {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: "T-locator",
+      });
+      expect(resolved.body).toMatchObject({
+        status: "resolved",
+        locator: { tenantId, version: 1, platformTenantId: "T-locator" },
+      });
+
+      const advanced = await call(state, "/tenant-locator", {
+        ...active,
+        version: 2,
+        updatedAt: "2026-08-01T20:01:00.000Z",
+      });
+      expect(advanced.body).toMatchObject({ duplicate: false, locator: { version: 2 } });
+      expect((await call(state, "/tenant-locator", {
+        ...active,
+        version: 4,
+        updatedAt: "2026-08-01T20:02:00.000Z",
+      })).body.error).toBe("tenant_locator_version_gap");
+
+      const conflictingTenant = await call(state, "/tenant-locator", {
+        ...active,
+        platformTenantId: "T-other",
+        version: 1,
+      });
+      expect(conflictingTenant.response.status).toBe(409);
+      expect(conflictingTenant.body.error).toBe("tenant_locator_tenant_conflict");
+
+      const revoked = await call(state, "/tenant-locator/revoke", {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: "T-locator",
+        version: 3,
+        revokedAt: "2026-08-01T20:03:00.000Z",
+      });
+      expect(revoked.body).toMatchObject({ duplicate: false, locator: { status: "revoked", version: 3 } });
+      expect((await call(state, "/tenant-locator/resolve", {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: "T-locator",
+      })).body).toEqual({ status: "inactive" });
+      expect((await call(state, "/tenant-locator/revoke", {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: "T-locator",
+        version: 3,
+        revokedAt: "2026-08-01T20:03:00.000Z",
+      })).body.duplicate).toBe(true);
+      expect((await call(state, "/tenant-locator", {
+        ...active,
+        version: 4,
+        updatedAt: "2026-08-01T20:04:00.000Z",
+      })).body.error).toBe("tenant_locator_revoked");
+    } finally {
+      close();
+    }
+  });
+
   it("durably advances provisioning and keeps retries idempotent", async () => {
     const { state, close } = makeState();
     try {

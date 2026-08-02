@@ -15,26 +15,25 @@ current status.
 
 | Evidence | Value |
 | --- | --- |
-| Merged OpenTag baseline at recorded deployment | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
-| Current merged main | `5b2a2f8` (`origin/main`, including the subsequently merged architecture PRs #29–#39 and #41–#43; PR #40 remains open) |
+| Merged OpenTag baseline at recorded deployment | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merge; includes the stacked platform, connector, router, and rollout-doc changes) |
+| Current merged main | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merged) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
+| Bot deployment | `opentag-bot`, version `5ef084fd-8f7c-461d-860c-30c495a1edff` — deployed from clean merged main `d075431` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; three consecutive live `/health` checks returned HTTP 200 |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
-| Bot health | `GET /health` returned HTTP 200 from the deployed main version with durable stores, service bindings, model and knowledge configuration, native Nanocodex, and Buzz directory readiness reported |
+| Bot health | `GET /health` returned HTTP 200 from the deployed main version with durable stores, service bindings, native Nanocodex, and Buzz directory readiness reported; model URL, broker auth, OAuth redirect origins, and knowledge reconciliation remain intentionally unconfigured |
 | Slack canary thread | [final routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
 | Slack passive-only canary | [top-level plus untagged `yo` remained silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
 | Stale-turn cleanup thread | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 | Cloudflare origin | `https://opentag-bot.williamlopezc.workers.dev` |
 
 The current deployment was performed from the clean detached deployment
-worktree at `/Users/will/Documents/opentag-worktrees/deploy-20260801` after
-`origin/main` advanced through the provisioning and memory-receipt merges.
-The recorded deployment is the earlier `498164f` baseline. `origin/main` has
-since advanced to `5b2a2f8` through the stacked architecture merges, but this
-conflict-resolution workflow did not deploy that newer main or PR #40. Provider
-adapters and custody integrations must not be treated as live solely because
-their source has merged.
+worktree at `/Users/will/Documents/opentag-worktrees/deploy-main-d075431`
+after `origin/main` reached the merged PR #40 tip. The tenant-locator
+foundation in the current implementation branch is not included in this
+deployment evidence until its branch is reviewed, merged, and redeployed.
+Provider adapters and custody integrations must not be treated as live solely
+because their source has merged.
 No secret value is recorded here.
 
 ## Status vocabulary
@@ -64,7 +63,7 @@ No secret value is recorded here.
 | Native typed Nanocodex Responses adapter | Live-verified | Slack marker `OPENTAG_NANOCODEX_NATIVE_OK` returned from `--nanocodex`; the typed adapter, provider state, replay, and completed-only commit are source-tested. A live reconnect/checkpoint replay drill remains open. |
 | Claudex model path through the private harness boundary | Live-verified | Slack marker `OPENTAG_CLAUDEX_HARNESS_OK` returned after the harness redeploy. This verifies the private Worker/service-binding path, not a public harness endpoint. |
 | Harness sandbox, egress, sentinels, remote-git postconditions | Source-complete; harness deployed | Harness image and Worker are deployed with the expected binding. No live repository push or PR was performed in this canary. |
-| Runtime/capability identity and deployment evidence | Live-verified | The deployed `/health` reports the current Worker version, `modelConfigured: true`, knowledge namespace/search/reconciliation/actor-token configuration, durable bindings, and native Nanocodex. Configuration presence is not treated as proof of a provider or authenticated Buzz effect; those paths remain separately gated. |
+| Runtime/capability identity and deployment evidence | Live-verified | The deployed `/health` reports the current Worker version, durable bindings, native Nanocodex, and configured service surfaces. It also reports `modelConfigured: false`, `credentialBroker.authConfigured: false`, `oauth.allowedRedirectOriginsConfigured: false`, and `knowledge.reconciliationConfigured: false`; those fail-closed gates are not treated as provider proof. |
 | Actor-bound knowledge/MCP authorization | Source-complete; synthetic/admin path only | Token, replay, team/project, ACL, audit, and source-authorization contracts are focused-tested. External MCP remains operator-only; no actor token or real external MCP call was exposed in this rollout. |
 | Slack knowledge search and ordinary retrieval | Live-verified with indexing caveat | An indexed historical marker returned four hits and a normal knowledge question returned a scoped answer. A newly posted marker returned zero exact hits immediately, so indexing latency/eventual consistency remains an explicit operational condition. |
 | Connector labels, opaque credential references, bundle revisions, revocation, citations | Synthetic-live | The synthetic platform run exercised reference writes/reads, grants, marketplace metadata, revocation, and effect creation. Tokens never entered OpenTag state. |

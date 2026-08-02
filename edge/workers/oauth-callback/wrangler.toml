@@ -1,0 +1,17 @@
+name = "opentag-oauth-callback"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# The callback Worker never exchanges a provider code itself. It forwards a
+# bounded, one-request handoff to a separately authenticated effecter.
+[[services]]
+binding = "OAUTH_EFFECTER"
+service = "opentag-oauth-effecter"
+
+[vars]
+# Set OAUTH_CALLBACK_ORIGIN only to the exact HTTPS origin registered with the
+# provider. The bearer is a secret configured with `wrangler secret put`.
+
+# Secret: OAUTH_EFFECTER_AUTH_TOKEN

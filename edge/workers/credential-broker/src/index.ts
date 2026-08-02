@@ -277,13 +277,15 @@ app.post("/resolve", async (c) => {
     const policy = policyFor(request);
     const { tenantId, credential } = await readCredentialMetadata(c.env, request);
     assertResolutionAllowed(request, tenantId, credential, policy);
-    return c.json(await resolveFromCustody(c.env, request, tenantId, credential));
+    return c.json(await resolveFromCustody(c.env, request, tenantId, credential), 200, {
+      "cache-control": "no-store",
+    });
   } catch (error) {
     if (error instanceof CredentialBrokerError) {
       return c.json({ error: error.code }, error.status);
     }
     if (error instanceof SyntaxError) return c.json({ error: "invalid_json" }, 400);
-    console.error("[credential-broker] request failed", error instanceof Error ? error.message : "unknown");
+    console.error("[credential-broker] request failed", "unexpected");
     return c.json({ error: "credential_broker_internal_error" }, 503);
   }
 });
@@ -291,7 +293,7 @@ app.post("/resolve", async (c) => {
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
 app.onError((error, c) => {
-  console.error("[credential-broker] request failed", error instanceof Error ? error.message : "unknown");
+  console.error("[credential-broker] request failed", "unexpected");
   return c.json({ error: "credential_broker_internal_error" }, 503);
 });
 

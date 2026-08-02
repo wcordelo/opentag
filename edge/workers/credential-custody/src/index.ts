@@ -68,6 +68,7 @@ class CustodyError extends Error {
 
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const BINDING_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const SAFE_ERROR_CODE_RE = /^[a-z][a-z0-9_.-]{0,127}$/;
 const app = new Hono<CustodyEnv>();
 
 function identifier(value: unknown, field: string, max = 512): string {
@@ -208,7 +209,9 @@ async function readCredentialMetadata(
   });
   const body = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
-    const code = typeof body.error === "string" ? body.error : "credential_metadata_unavailable";
+    const code = typeof body.error === "string" && SAFE_ERROR_CODE_RE.test(body.error)
+      ? body.error
+      : "credential_metadata_unavailable";
     const status = response.status === 404 ? 404 : response.status === 409 ? 409 : 503;
     throw new CustodyError(code, status);
   }
@@ -278,11 +281,40 @@ function boundedExpiry(
   return expiresAt.toISOString();
 }
 
+async function assertLabelsIntegrity(
+  request: CredentialCustodyResolveRequest,
+): Promise<void> {
+  try {
+    await assertConnectorLabelsIntegrity(request.labels);
+  } catch (error) {
+    if (error instanceof Error && error.message === "connector_labels_tampered") {
+      throw new CustodyError("connector_labels_tampered", 403);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Re-read every authorization source after secret resolution. The secret
+ * binding is not returned until this same-request second pass observes the
+ * same immutable labels, workspace grant, tenant metadata, and policy.
+ */
+async function revalidateAfterSecretRead(
+  env: CustodyBindings,
+  request: CredentialCustodyResolveRequest,
+): Promise<CredentialCustodyReference> {
+  await assertLabelsIntegrity(request);
+  await verifyConnectorAuthorization(env, request);
+  const policy = policyFor(request);
+  const credential = await readCredentialMetadata(env, request);
+  assertCredentialActive(request, credential, policy);
+  return credential;
+}
+
 async function resolveSecret(
   env: CustodyBindings,
   request: CredentialCustodyResolveRequest,
   binding: CustodyBindingConfig,
-  credential: CredentialCustodyReference,
 ): Promise<Response> {
   const candidate = env[binding.binding];
   if (!candidate || typeof candidate !== "object" ||
@@ -295,12 +327,13 @@ async function resolveSecret(
   } catch {
     throw new CustodyError("credential_custody_secret_unavailable", 503);
   }
+  const currentCredential = await revalidateAfterSecretRead(env, request);
   const response = validateCredentialBrokerResponse({
     schemaVersion: 1,
     ref: request.reference.ref,
     version: request.reference.version,
     accessToken,
-    expiresAt: boundedExpiry(request, binding.expiresAt, credential),
+    expiresAt: boundedExpiry(request, binding.expiresAt, currentCredential),
   });
   return Response.json(response, {
     headers: { "cache-control": "no-store" },
@@ -344,11 +377,11 @@ app.post("/resolve", async (c) => {
     const credential = await readCredentialMetadata(c.env, request);
     assertCredentialActive(request, credential, policy);
     const binding = configuredBinding(parseBindingConfig(c.env), request);
-    return await resolveSecret(c.env, request, binding, credential);
+    return await resolveSecret(c.env, request, binding);
   } catch (error) {
     if (error instanceof CustodyError) return c.json({ error: error.code }, error.status);
     if (error instanceof SyntaxError) return c.json({ error: "invalid_json" }, 400);
-    console.error("[credential-custody] request failed", error instanceof Error ? error.message : "unknown");
+    console.error("[credential-custody] request failed", "unexpected");
     return c.json({ error: "credential_custody_internal_error" }, 503);
   }
 });
@@ -356,7 +389,7 @@ app.post("/resolve", async (c) => {
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
 app.onError((error, c) => {
-  console.error("[credential-custody] request failed", error instanceof Error ? error.message : "unknown");
+  console.error("[credential-custody] request failed", "unexpected");
   return c.json({ error: "credential_custody_internal_error" }, 503);
 });
 

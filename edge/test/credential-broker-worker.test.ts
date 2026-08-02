@@ -128,6 +128,7 @@ describe("credential broker Worker", () => {
       },
     );
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toMatchObject({
       ref: reference.ref,
       version: reference.version,

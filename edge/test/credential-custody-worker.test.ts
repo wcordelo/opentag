@@ -35,10 +35,10 @@ const bundle = {
   }],
 };
 
-async function labels() {
+async function labels(credential = reference) {
   return (await issueConnectorAuthorization({
     bundle,
-    credential: reference,
+    credential,
     identity: {
       workspaceId: "T1",
       projectId: "P1",
@@ -57,6 +57,7 @@ async function labels() {
 async function requestBody(
   connectorLabels: Awaited<ReturnType<typeof labels>>,
   status: "active" | "revoked" = "active",
+  credential = reference,
 ) {
   const tenantId = await deriveInternalTenantId({
     externalPlatform: "slack",
@@ -65,44 +66,75 @@ async function requestBody(
   return {
     schemaVersion: 1,
     tenantId,
-    reference: { ref: reference.ref, version: reference.version },
+    reference: { ref: credential.ref, version: credential.version },
     labels: connectorLabels,
     credential: {
       schemaVersion: 1,
       tenantId,
-      credentialRef: reference.ref,
+      credentialRef: credential.ref,
       backend: "external_kms",
-      provider: "google",
-      subject: reference.subject,
-      scopes: ["drive.readonly"],
-      version: reference.version,
+      provider: credential.provider,
+      subject: credential.subject,
+      scopes: credential.scopes,
+      version: credential.version,
       status,
-      issuedAt: "2099-08-01T19:00:00.000Z",
+      issuedAt: credential.issuedAt,
+      ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
     },
   };
 }
 
-function metadata(tenantId: string, status: "active" | "revoked" = "active") {
+type MetadataOptions = Readonly<{
+  credentialRef?: string;
+  provider?: string;
+  scopes?: readonly string[];
+  version?: number;
+  expiresAt?: string;
+}>;
+
+function metadata(
+  tenantId: string,
+  status: "active" | "revoked" = "active",
+  options: MetadataOptions = {},
+) {
   return {
     schemaVersion: 1,
     tenantId,
-    credentialRef: reference.ref,
+    credentialRef: options.credentialRef ?? reference.ref,
     backend: "external_kms",
-    provider: "google",
+    provider: options.provider ?? "google",
     subject: reference.subject,
-    scopes: ["drive.readonly"],
-    version: reference.version,
+    scopes: options.scopes ?? ["drive.readonly"],
+    version: options.version ?? reference.version,
     status,
     issuedAt: "2099-08-01T19:00:00.000Z",
+    ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
   };
 }
 
-function durableObjects(tenantId: string, status: "active" | "revoked" = "active") {
+type CustodyTestOptions = Readonly<{
+  credential?: () => unknown;
+  authorization?: () => Response | Promise<Response>;
+  requestBodies?: unknown[];
+  bindingConfig?: readonly Record<string, unknown>[];
+}>;
+
+function durableObjects(
+  tenantId: string,
+  status: "active" | "revoked" = "active",
+  options: CustodyTestOptions = {},
+) {
   const workspaceStub = {
-    fetch: vi.fn(async () => Response.json({ ok: true })),
+    fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      options.requestBodies?.push(JSON.parse(String(init?.body)));
+      return await (options.authorization?.() ?? Response.json({ ok: true }));
+    }),
   };
   const stateStub = {
-    fetch: vi.fn(async () => Response.json(metadata(tenantId, status))),
+    fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      options.requestBodies?.push(JSON.parse(String(init?.body)));
+      return Response.json(options.credential?.() ?? metadata(tenantId, status));
+    }),
   };
   return {
     WORKSPACE_CONFIG: {
@@ -119,6 +151,7 @@ function durableObjects(tenantId: string, status: "active" | "revoked" = "active
 async function envBindings(
   secret: SecretsStoreSecret = { get: vi.fn(async () => "drive-token") },
   status: "active" | "revoked" = "active",
+  options: CustodyTestOptions = {},
 ) {
   const tenantId = await deriveInternalTenantId({
     externalPlatform: "slack",
@@ -126,22 +159,37 @@ async function envBindings(
   });
   return {
     CUSTODY_AUTH_TOKEN: "custody-secret",
-    CUSTODY_BINDINGS_JSON: JSON.stringify([{
+    CUSTODY_BINDINGS_JSON: JSON.stringify(options.bindingConfig ?? [{
       ref: reference.ref,
       version: reference.version,
       binding: "GOOGLE_DRIVE_TOKEN_V2",
       expiresAt: "2099-08-01T20:10:00.000Z",
     }]),
     GOOGLE_DRIVE_TOKEN_V2: secret,
-    ...durableObjects(tenantId, status),
+    ...durableObjects(tenantId, status, options),
   };
 }
 
 type SecretsStoreSecret = { get(): Promise<string> };
 
+async function resolveRequest(body: unknown, env: unknown): Promise<Response> {
+  return await credentialCustodyApp.fetch(
+    new Request("https://custody/resolve", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer custody-secret",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }),
+    env as never,
+  );
+}
+
 describe("credential custody Worker", () => {
   it("resolves a configured Secrets Store binding without accepting token material", async () => {
     const secret = { get: vi.fn(async () => "drive-token") };
+    const requestBodies: unknown[] = [];
     const body = await requestBody(await labels());
     const response = await credentialCustodyApp.fetch(
       new Request("https://custody/resolve", {
@@ -152,7 +200,7 @@ describe("credential custody Worker", () => {
         },
         body: JSON.stringify(body),
       }),
-      await envBindings(secret) as never,
+      await envBindings(secret, "active", { requestBodies }) as never,
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -165,6 +213,198 @@ describe("credential custody Worker", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(secret.get).toHaveBeenCalledOnce();
     expect(JSON.stringify(body)).not.toContain("drive-token");
+    expect(requestBodies).toHaveLength(4);
+    expect(JSON.stringify(requestBodies)).not.toContain("drive-token");
+  });
+
+  it("rejects a credential revoked after the Secrets Store read", async () => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: connectorLabels.workspaceId,
+    });
+    let status: "active" | "revoked" = "active";
+    const token = "revoked-during-resolution-token";
+    const secret = {
+      get: vi.fn(async () => {
+        status = "revoked";
+        return token;
+      }),
+    };
+    const requestBodies: unknown[] = [];
+    const response = await resolveRequest(
+      body,
+      await envBindings(secret, "active", {
+        requestBodies,
+        credential: () => metadata(tenantId, status),
+      }),
+    );
+    const responseText = await response.text();
+    expect(response.status).toBe(403);
+    expect(responseText).toBe(JSON.stringify({ error: "credential_revoked" }));
+    expect(responseText).not.toContain(token);
+    expect(secret.get).toHaveBeenCalledOnce();
+    expect(requestBodies).toHaveLength(4);
+    expect(JSON.stringify(requestBodies)).not.toContain(token);
+  });
+
+  it("rejects a credential rotated after the Secrets Store read", async () => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: connectorLabels.workspaceId,
+    });
+    let version = reference.version;
+    const token = "rotated-during-resolution-token";
+    const secret = {
+      get: vi.fn(async () => {
+        version += 1;
+        return token;
+      }),
+    };
+    const requestBodies: unknown[] = [];
+    const response = await resolveRequest(
+      body,
+      await envBindings(secret, "active", {
+        requestBodies,
+        credential: () => metadata(tenantId, "active", { version }),
+      }),
+    );
+    const responseText = await response.text();
+    expect(response.status).toBe(403);
+    expect(responseText).toBe(JSON.stringify({ error: "credential_version_mismatch" }));
+    expect(responseText).not.toContain(token);
+    expect(secret.get).toHaveBeenCalledOnce();
+    expect(requestBodies).toHaveLength(4);
+    expect(JSON.stringify(requestBodies)).not.toContain(token);
+  });
+
+  it.each([
+    ["provider", { provider: "linear" }, "credential_provider_mismatch"],
+    ["scope", { scopes: ["drive.metadata.readonly"] }, "credential_scope_missing"],
+  ] as const)("rejects a %s policy mismatch introduced during resolution", async (_kind, mismatch, expected) => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: connectorLabels.workspaceId,
+    });
+    let mismatched = false;
+    const secret = {
+      get: vi.fn(async () => {
+        mismatched = true;
+        return "policy-mismatch-token";
+      }),
+    };
+    const response = await resolveRequest(
+      body,
+      await envBindings(secret, "active", {
+        credential: () => metadata(tenantId, "active", mismatched ? mismatch : {}),
+      }),
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: expected });
+    expect(secret.get).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["ref", { ref: "credential:google:other", version: reference.version }],
+    ["version", { ref: reference.ref, version: reference.version + 1 }],
+  ] as const)("rejects a binding %s mismatch before reading the secret", async (_kind, binding) => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const secret = { get: vi.fn(async () => "unreachable-token") };
+    const response = await resolveRequest(
+      body,
+      await envBindings(secret, "active", {
+        bindingConfig: [{
+          ...binding,
+          binding: "GOOGLE_DRIVE_TOKEN_V2",
+          expiresAt: "2099-08-01T20:10:00.000Z",
+        }],
+      }),
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "credential_custody_binding_not_found" });
+    expect(secret.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["ref", { credentialRef: "credential:google:other" }, "credential_reference_mismatch"],
+    ["version", { version: reference.version + 1 }, "credential_version_mismatch"],
+  ] as const)("rejects an authoritative credential %s mismatch before reading the secret", async (_kind, mismatch, expected) => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: connectorLabels.workspaceId,
+    });
+    const secret = { get: vi.fn(async () => "unreachable-token") };
+    const response = await resolveRequest(
+      body,
+      await envBindings(secret, "active", {
+        credential: () => metadata(tenantId, "active", mismatch),
+      }),
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: expected });
+    expect(secret.get).not.toHaveBeenCalled();
+  });
+
+  it("bounds the returned token expiry by the current authorization and credential", async () => {
+    const expiringReference = parseCredentialReference({
+      ...reference,
+      expiresAt: "2099-08-01T20:00:30.000Z",
+    });
+    const connectorLabels = await labels(expiringReference);
+    const body = await requestBody(connectorLabels, "active", expiringReference);
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: connectorLabels.workspaceId,
+    });
+    const response = await resolveRequest(
+      body,
+      await envBindings(undefined, "active", {
+        credential: () => metadata(tenantId, "active", {
+          expiresAt: "2099-08-01T20:00:30.000Z",
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accessToken: "drive-token",
+      expiresAt: "2099-08-01T20:00:30.000Z",
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("redacts Secrets Store failures from responses, logs, and DO metadata", async () => {
+    const connectorLabels = await labels();
+    const body = await requestBody(connectorLabels);
+    const token = "secret-store-error-token";
+    const secret = {
+      get: vi.fn(async () => {
+        throw new Error(token);
+      }),
+    };
+    const requestBodies: unknown[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await resolveRequest(
+        body,
+        await envBindings(secret, "active", { requestBodies }),
+      );
+      const responseText = await response.text();
+      expect(response.status).toBe(503);
+      expect(responseText).toBe(JSON.stringify({ error: "credential_custody_secret_unavailable" }));
+      expect(responseText).not.toContain(token);
+      expect(JSON.stringify(requestBodies)).not.toContain(token);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("fails closed without custody auth or a binding map", async () => {

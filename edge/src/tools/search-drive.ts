@@ -5,10 +5,12 @@ import {
   loadTurnAccess,
   verifyConnectorAuthorization,
 } from "../config/workspace-config-do.js";
+import { ConnectorAuthorizationSnapshotError } from "../connectors/authorization-snapshot.js";
 import {
   isConnectorAuthorizationUnavailable,
   loadPlatformConnectorAuthorization,
 } from "../connectors/platform-authorization.js";
+import { PlatformContractError } from "../platform/contract.js";
 import { DriveConnectorError, DRIVE_SEARCH_LIMITS, searchGoogleDrive } from "../memory/connectors/drive-connector.js";
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
@@ -84,6 +86,12 @@ export function createSearchDriveTool(dependencies: {
         }
         if (isConnectorAuthorizationUnavailable(error)) {
           return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies SearchDriveResult;
+        }
+        if (
+          error instanceof ConnectorAuthorizationSnapshotError
+          || error instanceof PlatformContractError
+        ) {
+          return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;
         }
         if (error instanceof Error && /unauthorized|authorization|revoked|grant|policy|scope/.test(error.message)) {
           return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;

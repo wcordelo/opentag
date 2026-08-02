@@ -13,7 +13,10 @@ import {
   loadTurnAccess,
   verifyConnectorAuthorization,
 } from "../config/workspace-config-do.js";
-import { loadPlatformConnectorAuthorization } from "../connectors/platform-authorization.js";
+import {
+  isConnectorAuthorizationUnavailable,
+  loadPlatformConnectorAuthorization,
+} from "../connectors/platform-authorization.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
 import { requireRequestContext } from "../request-context.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
@@ -128,6 +131,13 @@ export function createSaveLinearIssueTool(dependencies: {
           action: "create_issue",
         })).authorization;
       } catch (error) {
+        if (isConnectorAuthorizationUnavailable(error)) {
+          return {
+            status: "unavailable",
+            retryable: true,
+            reason: error instanceof Error ? error.message : "connector_authorization_unavailable",
+          };
+        }
         return {
           status: "unauthorized",
           reason: error instanceof Error ? error.message : "connector_authorization_unavailable",

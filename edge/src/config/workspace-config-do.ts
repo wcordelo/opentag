@@ -2039,7 +2039,12 @@ export async function loadConnectorAuthorization(
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? "connector_authorization_unavailable");
+    throw new Error(
+      body.error
+        ?? (response.status >= 500
+          ? "connector_authorization_unavailable"
+          : "connector_authorization_denied"),
+    );
   }
   return await response.json() as {
     labels: ImmutableConnectorLabels;
@@ -2058,6 +2063,11 @@ export async function verifyConnectorAuthorization(
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? "connector_authorization_unavailable");
+    throw new Error(
+      body.error
+        ?? (response.status >= 500
+          ? "connector_authorization_unavailable"
+          : "connector_authorization_denied"),
+    );
   }
 }

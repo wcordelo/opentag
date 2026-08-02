@@ -249,5 +249,6 @@ describe("platform-bound connector authorization", () => {
   it("classifies an unavailable platform foundation as retryable", () => {
     expect(isConnectorAuthorizationUnavailable(new Error("platform_state_unavailable"))).toBe(true);
     expect(isConnectorAuthorizationUnavailable(new Error("connector_oauth_grant_inactive"))).toBe(false);
+    expect(isConnectorAuthorizationUnavailable(new Error("connector_authorization_denied"))).toBe(false);
   });
 });

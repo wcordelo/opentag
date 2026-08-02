@@ -260,8 +260,12 @@ Billing plans are configured through the admin-only platform route and are
 evaluated against the tenant's current UTC period. A plan revision must match
 the meter event, and a `block` overage policy rejects the meter before it is
 persisted or handed to the billing effecter. A plan is not a billing-provider
-subscription: configure a separately authenticated provider adapter only after
-source-of-truth, invoice, retry, and reconciliation decisions are approved.
+subscription. A billing adapter must map the intent through
+`edge/src/platform/billing-provider-contract.ts`, returning only an opaque
+`billing:` receipt; prices, payment methods, and provider credentials stay
+outside OpenTag. Configure a separately authenticated provider adapter only
+after source-of-truth, invoice, retry, and reconciliation decisions are
+approved.
 
 ## Deploy and connect the harness
 

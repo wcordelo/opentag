@@ -96,7 +96,12 @@ one reserved object. The ledger provides:
 ledger and an external provisioning, custody, OAuth, marketplace, billing, or
 memory worker. An intent contains only a bounded target reference and sorted
 metadata; recursive validation rejects provider tokens, OAuth codes, prompts,
-queries, bodies, and other secret-shaped fields.
+queries, bodies, and other secret-shaped fields. Billing adapters should map a
+`billing_meter` intent through
+`edge/src/platform/billing-provider-contract.ts`: only usage identity,
+quantity, unit, plan revision, and execution correlation cross the boundary,
+and completion requires an opaque `billing:` receipt. Prices, payment methods,
+cards, and provider credentials remain outside OpenTag.
 
 The lifecycle is:
 

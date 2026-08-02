@@ -904,11 +904,7 @@ app.post("/admin/platform/oauth/state/consume", requireAdminAuth(), async (c) =>
   const body = await c.req.json() as Record<string, unknown>;
   const blocked = await ensureCuratedOAuthMarketplace(c, body);
   if (blocked) return blocked;
-  const response = await forwardOAuthState(c, "/consume", body);
-  if (!response.ok) return response;
-  const postConsumeBlocked = await ensureCuratedOAuthMarketplace(c, body);
-  if (postConsumeBlocked) return postConsumeBlocked;
-  return response;
+  return forwardOAuthState(c, "/consume", body);
 });
 
 app.post("/admin/platform/oauth", requireAdminAuth(), async (c) => {

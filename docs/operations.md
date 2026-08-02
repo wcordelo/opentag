@@ -187,6 +187,7 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `opentag-billing-adapter` | Separate Worker | Effect runner | Authenticated, provider-independent billing meter/receipt boundary; provider binding is disabled by default |
 | `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
 | `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
@@ -321,6 +322,17 @@ subscription. A billing adapter must map the intent through
 outside OpenTag. Configure a separately authenticated provider adapter only
 after source-of-truth, invoice, retry, and reconciliation decisions are
 approved.
+
+The provider-independent handoff is implemented by the separate
+`edge/workers/billing-adapter/` Worker. Its `/meter` route accepts the fixed
+`billing-adapter-contract.ts` shape and requires an internal caller token. The
+optional provider service binding and its separate binding token must both be
+present before it forwards a request; otherwise it returns `503` without a
+provider call. The receipt must echo the intent, tenant, idempotency, event,
+execution, plan ID/revision, amount-minor, and currency fields. The adapter
+does not claim or complete platform effect leases, calculate prices, or store
+provider credentials; the generic platform effect runner and the approved
+billing authority retain those responsibilities.
 
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and

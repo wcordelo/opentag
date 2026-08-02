@@ -677,6 +677,7 @@ const PLATFORM_EFFECT_MUTATION_PATHS = new Set([
   "/meter",
   "/memory/deletion",
   "/effect/enqueue",
+  "/effect/complete",
   "/effect/fail",
   "/effect/cancel",
 ]);

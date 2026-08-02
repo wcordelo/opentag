@@ -146,6 +146,7 @@ export function createSaveLinearIssueTool(dependencies: {
           bundle: access.bundle,
           credential: authorization.credential!,
           credentialBroker: env.CONNECTOR_CREDENTIALS,
+          brokerAuthToken: env.CONNECTOR_CREDENTIAL_BROKER_TOKEN,
           draft: approval.draft,
           onIssueCreated: () => store.kv.delete(linearWriteApprovalKey(approvalId)),
           revalidate: () => verifyConnectorAuthorization(env.WORKSPACE_CONFIG, authorization.labels),

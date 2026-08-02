@@ -1,0 +1,35 @@
+name = "opentag-credential-broker"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Revalidate the authoritative access bundle and connector grant before the
+# broker reads custody metadata. A service caller must never outlive a bundle
+# revision or terminal revocation in WorkspaceConfigDO.
+[[durable_objects.bindings]]
+name = "WORKSPACE_CONFIG"
+class_name = "WorkspaceConfigDO"
+script_name = "opentag-bot"
+
+# The broker reads public credential metadata from the single platform ledger
+# owned by opentag-bot. It never gets a second copy of tenant state.
+[[durable_objects.bindings]]
+name = "PLATFORM_STATE"
+class_name = "PlatformStateDO"
+script_name = "opentag-bot"
+
+# The custody Worker is a separate last-mile boundary. It remains fail-closed
+# until its auth token and approved Secrets Store mapping are configured.
+[[services]]
+binding = "CUSTODY"
+service = "opentag-credential-custody"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets:
+# - BROKER_AUTH_TOKEN authenticates the opentag-bot service binding.
+# - CUSTODY_AUTH_TOKEN authenticates the custody service binding.
+# The custody Worker remains unconfigured until an operator supplies a
+# Secrets Store binding map; do not add provider tokens to this file.

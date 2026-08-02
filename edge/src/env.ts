@@ -13,6 +13,7 @@ import type { DeferredIngressDO } from "./deferred-ingress-do.js";
 import type { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 import type { PlatformStateDO } from "./platform/platform-state-do.js";
 import type { RouterMeasurementDO } from "./router/measurement-do.js";
+import type { PlatformEffectWakeup } from "./platform/effect-dispatch.js";
 
 /**
  * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
@@ -39,6 +40,14 @@ export interface Env {
   SLACK_RATE_LIMIT?: DurableObjectNamespace<SlackRateLimitDO>;
   /** Optional until the platform-state migration is deployed to every bot. */
   PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
+  /** Queue wakeups for pending metadata-only platform effects. */
+  PLATFORM_EFFECTS_QUEUE?: Queue<PlatformEffectWakeup>;
+  /** Exact Queue name used for platform-effect wakeups. */
+  PLATFORM_EFFECTS_QUEUE_NAME?: string;
+  /** Authenticated effecter boundary; absent means dispatch stays fail-closed. */
+  PLATFORM_EFFECTER?: Fetcher;
+  /** Bearer shared with the platform-effecter Worker for `POST /run`. */
+  EFFECTOR_AUTH_TOKEN?: string;
   /** Workspace-scoped, shadow-only router measurements and misroute feedback. */
   ROUTER_MEASUREMENTS?: DurableObjectNamespace<RouterMeasurementDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
@@ -62,6 +71,8 @@ export interface Env {
    * provider tokens in Durable Objects or access bundles.
    */
   CONNECTOR_CREDENTIALS?: Fetcher;
+  /** Shared internal bearer for the credential-broker service binding. */
+  CONNECTOR_CREDENTIAL_BROKER_TOKEN?: string;
 
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;

@@ -147,6 +147,14 @@ executor explicitly marks them retryable; the ledger never fabricates a
 successful Slack install, Durable Object creation, key-custody operation, or
 access-bundle result.
 
+The provider-independent `opentag-provisioning-adapter` Worker now provides a
+step-scoped boundary for that executor. It accepts only the selected required
+step, tenant/request metadata, isolation/custody modes, and requester subject;
+it forwards no credentials or generic resource payload. It validates the
+returned step receipt against the request's idempotency key and remains
+fail-closed until a reviewed tenant/bootstrap adapter and non-production
+namespace are configured.
+
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 

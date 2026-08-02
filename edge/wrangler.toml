@@ -75,6 +75,10 @@ new_sqlite_classes = ["RouterMeasurementDO"]
 binding = "BLOBS"
 bucket_name = "opentag-research-blobs"
 
+[[queues.producers]]
+binding = "PLATFORM_EFFECTS_QUEUE"
+queue = "opentag-platform-effects"
+
 # Research task Worker (wrangler.research.toml → name = "opentag-orchestrator").
 [[services]]
 binding = "RESEARCH_TASKS"
@@ -96,6 +100,7 @@ service = "opentag-edge"
 
 [vars]
 ENVIRONMENT = "development"
+PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # AGENT_URL is a wrangler secret (public runtime host). Do not put localhost
 # here — it would overwrite the secret on deploy and break production replies.
 # Local: set AGENT_URL in .dev.vars (http://localhost:8200/...).

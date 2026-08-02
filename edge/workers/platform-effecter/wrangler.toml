@@ -4,6 +4,10 @@ compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+[[queues.producers]]
+binding = "PLATFORM_EFFECTS_QUEUE"
+queue = "opentag-platform-effects"
+
 # This is a cross-Worker namespace binding to the metadata ledger owned by the
 # bot Worker. The effecter never gets a second copy of platform state.
 [[durable_objects.bindings]]

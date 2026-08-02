@@ -15,10 +15,16 @@ import {
   PLATFORM_MARKETPLACE_OBJECT_NAME,
   platformTenantObjectName,
 } from "../../../src/platform/platform-state-do.js";
+import {
+  enqueuePlatformEffectWakeup,
+  type PlatformEffectWakeup,
+} from "../../../src/platform/effect-dispatch.js";
+import type { Queue } from "@cloudflare/workers-types";
 
 type Env = {
   Bindings: {
     PLATFORM_STATE: DurableObjectNamespace<PlatformStateDO>;
+    PLATFORM_EFFECTS_QUEUE?: Queue<PlatformEffectWakeup>;
     EFFECTOR_AUTH_TOKEN?: string;
     ENVIRONMENT?: string;
   };
@@ -72,6 +78,7 @@ app.get("/health", (c) =>
     ok: true,
     role: "platform-effecter",
     configured: Boolean(c.env.EFFECTOR_AUTH_TOKEN),
+    effectQueueConfigured: Boolean(c.env.PLATFORM_EFFECTS_QUEUE),
     adapterKinds: [],
     providerEffectsEnabled: false,
   }),
@@ -104,6 +111,15 @@ app.post("/run", async (c) => {
       state: stateClient(stub),
       adapters: {},
     });
+    if (result.adapterConfigured && result.receipt.status === "failed" && result.receipt.retryable) {
+      await enqueuePlatformEffectWakeup(
+        c.env.PLATFORM_EFFECTS_QUEUE,
+        effectObjectName(request),
+        Math.min(900, Math.max(1, Math.ceil(
+          (Date.parse(result.receipt.availableAt) - Date.now()) / 1_000,
+        ))),
+      );
+    }
     return c.json(result);
   } catch (error) {
     if (error instanceof PlatformEffectRunnerError) {

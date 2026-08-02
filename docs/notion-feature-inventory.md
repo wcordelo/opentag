@@ -2,7 +2,7 @@
 
 Status: source audit completed 2026-08-01; implementation comparison is against
 OpenTag `origin/main` at `ff8d649` plus the isolated effecter branch
-`codex/weekly-platform-effecter` at `8d86c20`.
+`codex/weekly-platform-effecter` with queue-backed dispatch architecture.
 This is a repository report, not a write to the Notion baseline or daily-review
 database.
 
@@ -210,8 +210,9 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion; the
-  isolated branch also adds an authenticated effecter runner/Worker that fails
-  closed when no provider adapter is configured.
+  isolated branch also adds an authenticated effecter runner/Worker, a
+  metadata-only queue wakeup/retry path, and an admin recovery wake route. It
+  still fails closed when no provider adapter is configured.
 
 ### Still required before “everything” is live
 
@@ -220,7 +221,7 @@ change, not evidence that all earlier gaps are complete.
    provider OAuth/token rotation, scope checks, revocation propagation, and a
    safe non-production smoke. No credential store is currently configured.
 2. **Provisioning/identity:** choose the tenant locator and isolation model,
-   deploy the bootstrap/effect worker after an adapter is approved, establish
+   deploy the bootstrap/effect worker and queue after an adapter is approved, establish
    identity/key custody, and only mark provisioning active after every required
    DO, bundle, OAuth, and identity step has an external receipt. The metadata
    ledger and platform binding are deployed; the external worker is not.

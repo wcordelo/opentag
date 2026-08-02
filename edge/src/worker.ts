@@ -109,6 +109,13 @@ import {
   platformTenantObjectName,
 } from "./platform/platform-state-do.js";
 import { validateProvisioningRequest } from "./platform/layer3-contract.js";
+import {
+  enqueuePlatformEffectWakeup,
+  handlePlatformEffectQueue,
+  isPlatformEffectQueueName,
+  type PlatformEffectWakeup,
+} from "./platform/effect-dispatch.js";
+import type { MessageBatch } from "@cloudflare/workers-types";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -630,6 +637,23 @@ async function forwardPlatformState(
     body: JSON.stringify(body),
   });
   const text = await response.text();
+  if (response.ok && PLATFORM_EFFECT_MUTATION_PATHS.has(path)) {
+    if (c.env.PLATFORM_EFFECTS_QUEUE) {
+      c.executionCtx.waitUntil(
+        enqueuePlatformEffectWakeup(c.env.PLATFORM_EFFECTS_QUEUE, objectName).catch((error) => {
+          console.error(JSON.stringify({
+            metric: "platform_effect_wakeup_enqueue_failed",
+            errorCode: error instanceof Error ? error.message : "unknown",
+          }));
+        }),
+      );
+    } else {
+      console.error(JSON.stringify({
+        metric: "platform_effect_wakeup_queue_unconfigured",
+        path,
+      }));
+    }
+  }
   return new Response(text, {
     status: response.ok ? 200 : adminForwardStatus(response.status),
     headers: {
@@ -638,6 +662,24 @@ async function forwardPlatformState(
     },
   });
 }
+
+const PLATFORM_EFFECT_MUTATION_PATHS = new Set([
+  "/provision",
+  "/provision/step",
+  "/identity",
+  "/identity/revoke",
+  "/credential",
+  "/credential/revoke",
+  "/marketplace",
+  "/marketplace/revoke",
+  "/oauth",
+  "/oauth/revoke",
+  "/meter",
+  "/memory/deletion",
+  "/effect/enqueue",
+  "/effect/fail",
+  "/effect/cancel",
+]);
 
 function platformEffectObjectName(body: unknown): string | undefined {
   if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
@@ -729,6 +771,25 @@ app.post("/admin/platform/provision/get", requireAdminAuth(), async (c) => {
 
 app.post("/admin/platform/effect/enqueue", requireAdminAuth(), async (c) => {
   return forwardPlatformEffect(c, "/effect/enqueue", await c.req.json());
+});
+
+app.post("/admin/platform/effect/wake", requireAdminAuth(), async (c) => {
+  const body = await c.req.json();
+  const objectName = platformEffectObjectName(body);
+  if (!objectName) return c.json({ error: "effect_scope_and_tenant_required" }, 400);
+  if (!c.env.PLATFORM_EFFECTS_QUEUE) {
+    return c.json({ error: "platform_effect_queue_unconfigured" }, 503);
+  }
+  try {
+    await enqueuePlatformEffectWakeup(c.env.PLATFORM_EFFECTS_QUEUE, objectName);
+  } catch (error) {
+    console.error(JSON.stringify({
+      metric: "platform_effect_wakeup_enqueue_failed",
+      errorCode: error instanceof Error ? error.message : "unknown",
+    }));
+    return c.json({ error: "platform_effect_queue_unavailable" }, 503);
+  }
+  return c.json({ ok: true });
 });
 
 app.post("/admin/platform/effect/get", requireAdminAuth(), async (c) => {
@@ -1639,17 +1700,29 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
 });
 
 type QueueAndScheduledApp = typeof app & {
-  queue(batch: MessageBatch<KnowledgeJob>, env: AppEnv["Bindings"], ctx: ExecutionContext): Promise<void>;
+  queue(batch: MessageBatch<KnowledgeJob | PlatformEffectWakeup>, env: AppEnv["Bindings"], ctx: ExecutionContext): Promise<void>;
   scheduled(controller: ScheduledController, env: AppEnv["Bindings"], ctx: ExecutionContext): void;
 };
 
 const worker = app as QueueAndScheduledApp;
 worker.queue = async (batch, env, _ctx) => {
+  if (env.PLATFORM_EFFECTS_QUEUE_NAME && !isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME)) {
+    batch.retryAll({ delaySeconds: 60 });
+    throw new Error("platform_effect_queue_name_invalid");
+  }
+  if (env.PLATFORM_EFFECTS_QUEUE_NAME && batch.queue === env.PLATFORM_EFFECTS_QUEUE_NAME) {
+    if (batch.queue === env.KNOWLEDGE_QUEUE_NAME || batch.queue === env.KNOWLEDGE_DLQ_NAME) {
+      batch.retryAll({ delaySeconds: 60 });
+      throw new Error("platform_effect_queue_name_conflicts_with_knowledge_queue");
+    }
+    await handlePlatformEffectQueue(batch as MessageBatch<PlatformEffectWakeup>, env);
+    return;
+  }
   let route: "primary" | "dlq";
   try {
     route = routeKnowledgeQueueName(batch.queue, env);
   } catch (error) {
-    retryKnowledgeBatchWithoutParsing(batch);
+    retryKnowledgeBatchWithoutParsing(batch as MessageBatch<KnowledgeJob>);
     console.error(JSON.stringify({
       metric: "knowledge_queue_routing_error",
       queueName: batch.queue,
@@ -1658,10 +1731,10 @@ worker.queue = async (batch, env, _ctx) => {
     throw error;
   }
   if (route === "dlq") {
-    await handleKnowledgeDlq(batch, env);
+    await handleKnowledgeDlq(batch as MessageBatch<KnowledgeJob>, env);
     return;
   }
-  await handleKnowledgeQueue(batch, env, dispatchKnowledgeToSupermemory);
+  await handleKnowledgeQueue(batch as MessageBatch<KnowledgeJob>, env, dispatchKnowledgeToSupermemory);
 };
 worker.scheduled = (controller, env, ctx) => {
   const scheduledAt = new Date(controller.scheduledTime).toISOString();

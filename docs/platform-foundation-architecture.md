@@ -101,12 +101,15 @@ The lifecycle is:
 
 1. A state transition records its own metadata and an idempotent effect intent
    in the same SQLite transaction.
-2. An effect worker claims the intent with a short lease and receives the
+2. The bot publishes a queue wakeup containing only the internal
+   `PlatformStateDO` object name. A bounded admin wake route remains available
+   for recovery when the queue is unavailable.
+3. An effect worker claims the intent with a short lease and receives the
    validated intent metadata plus an opaque lease token.
-3. The effecter performs the provider call outside the Durable Object, then
+4. The effecter performs the provider call outside the Durable Object, then
    reports `complete` with a bounded external receipt reference or `failed`
    with a safe error code and retry policy.
-4. A revoked or superseded operation can cancel the intent; an expired lease
+5. A revoked or superseded operation can cancel the intent; an expired lease
    is reclaimable, while an active lease cannot be double-claimed.
 
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
@@ -115,7 +118,9 @@ requests now create these intents automatically.
 The ledger still does not perform the external effect. The isolated branch now
 contains a separately authenticated baseline effecter Worker for this boundary;
 it registers no provider adapters and therefore fails closed until custody,
-provider, and billing decisions are approved.
+provider, and billing decisions are approved. The queue and effecter service
+binding are dispatch architecture only; they do not imply that an external
+provider or credential custody system is configured.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a

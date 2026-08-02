@@ -2,6 +2,7 @@
 
 > **Start here:** [README.md](./README.md) · [PRODUCT.md](./PRODUCT.md) ·
 > [ARCHITECTURE.md](./ARCHITECTURE.md) · [docs/operations.md](./docs/operations.md).
+> Current deployment and live evidence: [docs/current-state.md](./docs/current-state.md).
 > Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.
 > Locked decisions: [DECISIONS.md](./DECISIONS.md).
 
@@ -125,6 +126,11 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `CLAUDEX_PROXY` / `CLAUDEX_PROXY_URL` | harness binding / var | Private CLIProxyAPI route and synthetic origin |
 | `CLAUDEX_MODEL` | harness var | Default Claudex model (`gpt-5.6-sol` when omitted) |
 | `CLIPROXY_CLIENT_KEY` / `CLIPROXY_INTERNAL_KEY` | Claudex proxy secrets | Separate model-proxy and OAuth import/export authentication |
+| `BUZZ_OPEN_TAG_SIGNER_SECRET` | bot secret | NIP-OA signer for the fail-closed Buzz wake receiver |
+| `BUZZ_RELAY_HTTP_BASE_URL` / `BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN` | bot vars | Relay query origin and independent allowlist grant |
+| `BUZZ_CHANNEL_TENANT_MAP` | bot var | Server-owned Buzz channel-to-tenant mapping |
+| `BUZZ_OPEN_TAG_AUTH_TAG_SECRET` | bot secret/var | Optional bounded Buzz authorization tag |
+| `PLATFORM_STATE` / `ROUTER_MEASUREMENTS` | Durable Object bindings | Tenant metadata/effect ledger and router shadow measurement ledger |
 
 See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
 
@@ -146,6 +152,11 @@ The guarded write path also requires an active `linear/create_issue` connector
 grant, a versioned Linear credential reference with `issues:create` or `write`,
 and a deployed credential broker. Without those foundations it fails closed;
 the repository does not claim a successful Linear write from MCP availability.
+
+The same rule applies to Drive and other hosted connectors: Worker Secrets are
+the deployment/bootstrap configuration path, while a shared fleet still needs
+tenant-scoped broker custody, rotation, revocation, and audit. Do not treat a
+configured deployment secret as proof of a tenant's provider grant.
 
 ## 4. Integrations (runtime)
 

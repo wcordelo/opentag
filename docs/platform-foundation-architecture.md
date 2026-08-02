@@ -71,6 +71,8 @@ provider side effect is implied. It covers:
 - idempotent provisioning requests and the complete DO/Slack/default-bundle
   footprint;
 - opaque identity and credential custody references with public metadata only;
+- an authenticated identity/key-custody adapter protocol that returns only
+  public-key metadata and opaque external receipts;
 - curated connector marketplace entries and OAuth grants;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
@@ -123,6 +125,24 @@ requests now create these intents automatically.
 The ledger still does not perform the external effect. That boundary must be
 implemented by a separately authenticated worker after custody, provider, and
 billing decisions are approved.
+
+## Identity custody adapter boundary
+
+`edge/src/platform/identity-custody-contract.ts` defines the authenticated
+boundary for the `identity_custody` effect. It accepts only a tenant-scoped
+`identity:` reference, custody backend, version, operation, idempotency key,
+requested timestamp, and optional public key. It rejects private-key-shaped
+values and unknown fields. The `opentag-identity-custody` Worker authenticates
+its internal caller, forwards the bounded request to an optional separately
+authenticated `IDENTITY_PROVIDER_ADAPTER`, and validates that the returned
+opaque receipt matches the tenant, identity, backend, operation, and version.
+
+The provider adapter owns key generation, signing, storage, rotation, and
+revocation. Provisioning/rotation receipts must return the public key needed by
+the metadata ledger; revocation receipts need not return a key. With no
+provider adapter binding or bearer configured, the Worker returns an explicit
+configuration error and performs no custody operation. No private key enters
+OpenTag Durable Objects, queues, Worker variables, or logs.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
@@ -190,10 +210,11 @@ not a replacement for that worker.
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
 - The platform-state migration, effect leases, and admin routes are deployed
-  and synthetic-live, but the production bootstrap authority, tenant locator
-  integration, identity/key custody worker, Slack OAuth callback, marketplace
-  trust review process, billing/plan enforcement, memory deletion executor,
-  and credential broker are not live.
+  and synthetic-live, and the identity custody protocol is source-complete,
+  but the production bootstrap authority, tenant locator integration,
+  configured identity provider/key custody adapter, Slack OAuth callback,
+  marketplace trust review process, billing/plan enforcement, memory deletion
+  executor, and credential broker are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.

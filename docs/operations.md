@@ -187,6 +187,9 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `IDENTITY_CUSTODY_AUTH_TOKEN` | Secret | Identity custody + effect worker | Internal identity-custody service authentication; never a private key |
+| `IDENTITY_PROVIDER_ADAPTER` | Optional service binding | Identity custody | External key generation/signing/custody boundary; absent keeps identity effects fail-closed |
+| `IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | Identity custody/provider adapter | Internal adapter bearer; never key material |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |

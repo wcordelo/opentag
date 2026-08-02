@@ -190,6 +190,7 @@ cd edge
 | `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
 | `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
 | `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
+| `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
@@ -314,6 +315,13 @@ effecter and create/configure both queue names before enabling the bot binding.
 If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
 route after the queue is restored; never copy an effect payload into a queue
 message.
+
+Memory deletion is not complete when the request is accepted. An approved
+external executor must submit one epoch-matching receipt per requested source
+through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
+complete a source, while `failed` makes the request terminally failed. The
+Worker stores only the receipt metadata and opaque external reference. It does
+not delete, inspect, or accept memory contents.
 
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and

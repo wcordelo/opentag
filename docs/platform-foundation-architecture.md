@@ -92,7 +92,10 @@ one reserved object. The ledger provides:
 - credential-linked OAuth grant versions with terminal revocation;
 - execution-linked, idempotent usage-meter receipts with bounded listing; and
 - monotonic memory policies plus deletion requests that remain `requested`
-  until an approved external deletion worker completes them.
+  until an approved external deletion worker completes them; each requested
+  source can now receive a durable `deleted`, `not_found`, or `failed` receipt
+  and the request becomes `completed` only when every source has a successful
+  terminal receipt.
 
 ## External effect handoff
 
@@ -131,6 +134,15 @@ The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
 delete knowledge.
+
+Memory deletion receipts are source-scoped and epoch-bound. The external
+executor may record only a requested source, and duplicate receipt retries are
+idempotent. `not_found` is treated as a successful absence proof; any
+`failed` receipt makes the request terminally failed rather than silently
+claiming completion. The receipt ledger stores bounded metadata and an opaque
+external receipt reference, never memory contents or deletion payloads. The
+executor still owns the actual deletion and must report receipts through the
+admin/effect boundary.
 
 Provisioning step advancement is receipt-bound. Each required step must carry
 an opaque external receipt reference and observed timestamp; completion without

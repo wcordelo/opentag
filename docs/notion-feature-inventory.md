@@ -13,8 +13,10 @@ The isolated credential-broker branch extends the fail-closed boundary with an
 optional Secrets Store custody adapter; no provider mapping or token is live.
 
 The queue-backed effecter implementation is maintained in the isolated
-`codex/weekly-platform-effecter` branch and remains fail-closed until an
-approved provider adapter and custody boundary are configured.
+`codex/weekly-platform-effecter` branch. Its provider boundary now requires a
+dedicated service binding and bearer secret per effect family, and remains
+fail-closed until an approved provider adapter and custody boundary are
+configured.
 
 The OAuth/marketplace branch adds replay-safe state, durable trust/version
 gates, and an authenticated provider-adapter protocol, but does not claim a
@@ -293,8 +295,10 @@ change, not evidence that all earlier gaps are complete.
 - the optional Secrets Store custody Worker, which validates the same immutable
   labels and reference/version pair before reading a named secret binding.
   The merged baseline also includes an authenticated effecter runner/Worker,
-  metadata-only queue wakeup/retry, and an admin recovery wake route; all
-  provider adapters remain fail-closed when unconfigured.
+  metadata-only queue wakeup/retry, and an admin recovery wake route. Effect
+  families use separate provider bindings and bearer secrets; each adapter is
+  registered only for its matching kind and all remain fail-closed when
+  unconfigured.
 - source-scoped memory deletion receipts bound to the request epoch; requests
   reach `completed` only after every source reports `deleted` or `not_found`,
   while failed receipts remain explicit and terminal; and a fail-closed,

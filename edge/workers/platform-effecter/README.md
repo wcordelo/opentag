@@ -27,11 +27,28 @@ is in flight. If the state owner cannot record a failure or completion, the
 request returns a retryable 503 rather than fabricating a receipt; the provider
 adapter must therefore use the intent idempotency key for reconciliation.
 
-An approved provider Worker can be connected through the optional
-`PLATFORM_EFFECT_ADAPTER` service binding and
-`PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, every
-effect kind is sent to `POST /execute` on that binding using this versioned,
-metadata-only envelope:
+An approved provider Worker can be connected for one effect family through its
+dedicated service binding and bearer secret. The supported pairs are
+`PROVISIONING_EFFECT_ADAPTER`/
+`PROVISIONING_EFFECT_ADAPTER_AUTH_TOKEN`,
+`IDENTITY_CUSTODY_EFFECT_ADAPTER`/
+`IDENTITY_CUSTODY_EFFECT_ADAPTER_AUTH_TOKEN`,
+`CREDENTIAL_CUSTODY_EFFECT_ADAPTER`/
+`CREDENTIAL_CUSTODY_EFFECT_ADAPTER_AUTH_TOKEN`,
+`CONNECTOR_OAUTH_EFFECT_ADAPTER`/
+`CONNECTOR_OAUTH_EFFECT_ADAPTER_AUTH_TOKEN`,
+`MARKETPLACE_EFFECT_ADAPTER`/
+`MARKETPLACE_EFFECT_ADAPTER_AUTH_TOKEN`,
+`BILLING_METER_EFFECT_ADAPTER`/
+`BILLING_METER_EFFECT_ADAPTER_AUTH_TOKEN`, and
+`MEMORY_DELETION_EFFECT_ADAPTER`/
+`MEMORY_DELETION_EFFECT_ADAPTER_AUTH_TOKEN`.
+
+The Worker registers an adapter only when both members of a pair are present.
+An adapter receives only its matching effect kind; a credential adapter cannot
+receive provisioning or billing intents. The `/health` response exposes the
+configured kind list and non-secret missing-binding/missing-auth states.
+Every adapter uses this versioned, metadata-only envelope:
 
 ```json
 {

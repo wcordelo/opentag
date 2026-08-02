@@ -28,6 +28,7 @@ import {
   validateMemoryDeletionReceipt,
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
+  PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
   platformEffectLeaseIsReclaimable,
   validateProvisioningRequest,
   validateProvisioningStepReceipt,
@@ -467,6 +468,16 @@ function leaseIsActive(row: PlatformEffectRow, now: string): boolean {
     row.lease_expires_at > now;
 }
 
+function effectGrantedLeaseSeconds(row: PlatformEffectRow): number {
+  if (!row.lease_expires_at || !row.updated_at) {
+    return PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS;
+  }
+  const seconds = Math.round(
+    (Date.parse(row.lease_expires_at) - Date.parse(row.updated_at)) / 1_000,
+  );
+  return Math.min(3_600, Math.max(30, seconds));
+}
+
 export interface PlatformStateEngineDeps {
   sql: SqlExecutor;
   tx: TransactionRunner;
@@ -575,7 +586,11 @@ export class PlatformStateEngine {
         }
         if (
           current.lease_expires_at &&
-          !platformEffectLeaseIsReclaimable(current.lease_expires_at, this.now())
+          !platformEffectLeaseIsReclaimable(
+            current.lease_expires_at,
+            this.now(),
+            effectGrantedLeaseSeconds(current),
+          )
         ) {
           throw new PlatformStateError("effect_lease_reclaim_pending", 409);
         }

@@ -481,13 +481,24 @@ export type PlatformEffectClaim = Readonly<{
 
 /** Grace after lease expiry before another worker may reclaim and rerun adapters. */
 export const PLATFORM_EFFECT_LEASE_RECLAIM_GRACE_SECONDS = 300;
+/** Default dispatch/effecter lease duration; also bounds in-flight /run overlap before reclaim. */
+export const PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS = 300;
 
-export function platformEffectLeaseReclaimableAt(leaseExpiresAt: string): number {
-  return Date.parse(leaseExpiresAt) + PLATFORM_EFFECT_LEASE_RECLAIM_GRACE_SECONDS * 1_000;
+export function platformEffectLeaseReclaimableAt(
+  leaseExpiresAt: string,
+  grantedLeaseSeconds = PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
+): number {
+  return Date.parse(leaseExpiresAt) +
+    PLATFORM_EFFECT_LEASE_RECLAIM_GRACE_SECONDS * 1_000 +
+    grantedLeaseSeconds * 1_000;
 }
 
-export function platformEffectLeaseIsReclaimable(leaseExpiresAt: string, nowMs: number): boolean {
-  return platformEffectLeaseReclaimableAt(leaseExpiresAt) <= nowMs;
+export function platformEffectLeaseIsReclaimable(
+  leaseExpiresAt: string,
+  nowMs: number,
+  grantedLeaseSeconds = PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
+): boolean {
+  return platformEffectLeaseReclaimableAt(leaseExpiresAt, grantedLeaseSeconds) <= nowMs;
 }
 
 const PLATFORM_EFFECT_KINDS: readonly PlatformEffectKind[] = [

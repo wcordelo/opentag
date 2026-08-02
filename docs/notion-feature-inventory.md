@@ -113,7 +113,7 @@ health-checked, but remain fail-closed until their external gates are approved:
   [#48](https://github.com/wcordelo/opentag/pull/48), and
 [#49](https://github.com/wcordelo/opentag/pull/49), and the dependent PRs
 [#50](https://github.com/wcordelo/opentag/pull/50) through
-[#52](https://github.com/wcordelo/opentag/pull/52) remain open and are not
+[#53](https://github.com/wcordelo/opentag/pull/53) remain open and are not
 included in the deployed baseline.
 
 After the foundation stack is accepted, validate the complete mainline

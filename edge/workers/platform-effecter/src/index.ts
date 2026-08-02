@@ -111,7 +111,12 @@ app.post("/run", async (c) => {
       state: stateClient(stub),
       adapters: {},
     });
-    if (result.adapterConfigured && result.receipt.status === "failed" && result.receipt.retryable) {
+    if (
+      result.adapterConfigured &&
+      result.receipt.status === "failed" &&
+      result.receipt.retryable &&
+      c.env.PLATFORM_EFFECTS_QUEUE
+    ) {
       await enqueuePlatformEffectWakeup(
         c.env.PLATFORM_EFFECTS_QUEUE,
         effectObjectName(request),

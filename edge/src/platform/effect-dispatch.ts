@@ -240,6 +240,9 @@ export async function dispatchPlatformEffectWakeup(
   const expiredLeased = leased.filter(
     (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) <= now,
   );
+  const activeLeased = leased.filter(
+    (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) > now,
+  );
   const candidates = [
     ...pending,
     ...expiredLeased,
@@ -260,6 +263,12 @@ export async function dispatchPlatformEffectWakeup(
   }
   if (runnable.length > selected.length) return { dispatched, nextDelaySeconds: 0 };
   if (future) return { dispatched, nextDelaySeconds: delayFor(future.availableAt, now) };
+  const nextLeaseExpiry = activeLeased
+    .map((item) => item.leaseExpiresAt!)
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+  if (nextLeaseExpiry) {
+    return { dispatched, nextDelaySeconds: delayFor(nextLeaseExpiry, now) };
+  }
   return { dispatched };
 }
 

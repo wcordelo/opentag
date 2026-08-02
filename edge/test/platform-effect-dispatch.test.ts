@@ -166,7 +166,7 @@ describe("platform effect wakeup contract", () => {
       platformEffectWakeup(tenantObject),
       fixture,
       Date.parse("2026-08-01T20:00:00.000Z"),
-    )).resolves.toEqual({ dispatched: 0 });
+    )).resolves.toEqual({ dispatched: 0, nextDelaySeconds: 900 });
     expect(fixture.calls.filter((call) => call.path === "/run")).toHaveLength(0);
   });
 });

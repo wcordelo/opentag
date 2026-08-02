@@ -15,6 +15,9 @@ function platformStateNamespace(calls: string[], bodies: Record<string, unknown>
         const path = new URL(String(input)).pathname;
         calls.push(`${objectName}:${path}`);
         if (typeof init?.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        if (path === "/tenant-locator/resolve") {
+          return Response.json({ status: "not_found" });
+        }
         return Response.json({ ok: true });
       },
     }),
@@ -52,6 +55,7 @@ describe("tenant locator provisioning integration", () => {
 
     expect(response.status).toBe(200);
     expect(calls).toEqual([
+      "__platform_marketplace__:/tenant-locator/resolve",
       "__platform_marketplace__:/tenant-locator",
       `tenant:${tenantId}:/provision`,
     ]);

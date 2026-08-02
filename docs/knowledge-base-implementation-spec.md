@@ -17,7 +17,7 @@ configuration. Worker Secrets are not a substitute for per-tenant provider
 custody. Drive, Linear, external MCP, broad ingestion, backup/restore, and
 production source activation remain gated by the stop conditions in this spec.
 See [../current-state.md](./current-state.md) for evidence and
-[../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
+[.../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
 for the backfill status map.
 
 
@@ -28,9 +28,10 @@ Input design: **“How We Built Our Knowledge Base,” 2026-07-15**
 Owners: OpenTag bot, agent-runtime, and new knowledge service maintainers
 
 > This document specifies a new product area. It does not describe current
-> behavior. Current implementation truth remains [PRODUCT.md](../PRODUCT.md),
-> [ARCHITECTURE.md](../ARCHITECTURE.md), and [DECISIONS.md](../DECISIONS.md).
-> The root [SPEC.md](../SPEC.md) remains the historical Centaur UX port spec.
+> behavior. Current implementation truth remains [PRODUCT.md](./PRODUCT.md),
+> [ARCHITECTURE.md](./ARCHITECTURE.md), and [DECISIONS.md](./DECISIONS.md).
+> The archived [SPEC.md](./archive/SPEC.md) remains the historical Centaur UX
+> port spec.
 
 ## 1. Executive decision
 
@@ -43,7 +44,7 @@ query the knowledge service through a Cloudflare service binding.
 This spec intentionally chooses external PostgreSQL through Cloudflare
 Hyperdrive so it can preserve the requested one-table, pgvector,
 3,072-dimension HNSW design. That changes the current
-[PRODUCT.md](../PRODUCT.md) promise that runtime and state remain on
+[PRODUCT.md](./PRODUCT.md) promise that runtime and state remain on
 Cloudflare. Implementation cannot begin against production data until
 product/operator review explicitly approves that contract change. If
 Cloudflare-only state remains a hard requirement, storage and vector dimensions

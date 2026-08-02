@@ -5,8 +5,8 @@ Updated: **2026-08-01**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
-[setup.md](../setup.md); system design is in
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+[setup.md](./setup.md); system design is in
+[ARCHITECTURE.md](./ARCHITECTURE.md).
 
 The dated production evidence for the current release is in
 [current-state.md](./current-state.md). This runbook separates deployed

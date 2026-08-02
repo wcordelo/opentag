@@ -3,10 +3,10 @@
 Runbook for the Orchestrator / Researcher / Verifier **task** pipeline.
 
 > Research is a **TaskRuntime flavor**, not the Claude Tag product surface.
-> Product north star: [`PRODUCT.md`](../PRODUCT.md). Slack ingress lives on the
+> Product north star: [`PRODUCT.md`](./PRODUCT.md). Slack ingress lives on the
 > bot Worker (`edge/src/worker.ts`); this Worker exposes internal `/research`.
 
-Current architecture and Stop sequencing: [ARCHITECTURE.md](../ARCHITECTURE.md).
+Current architecture and Stop sequencing: [ARCHITECTURE.md](./ARCHITECTURE.md).
 An exact cancel is complete only when the task reports both `cancelled: true`
 and `quiescent: true`; queued actor, outbox, delivery, and alarm work must then
 remain suppressed.

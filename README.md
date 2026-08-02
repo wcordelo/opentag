@@ -14,9 +14,9 @@ package among other pieces — TanStack AI for the triage runtime, Claude Code
 for repository turns, and MCP for tools like Linear and Notion. No Socket Mode.
 No Railway bot. Events API only.
 
-> **Canonical docs:** [PRODUCT.md](./PRODUCT.md) ·
-> [ARCHITECTURE.md](./ARCHITECTURE.md) · [DECISIONS.md](./DECISIONS.md) ·
-> [setup.md](./setup.md) · [docs/](./docs/README.md)
+> **Canonical docs:** [docs/PRODUCT.md](./docs/PRODUCT.md) ·
+> [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) · [docs/DECISIONS.md](./docs/DECISIONS.md) ·
+> [docs/setup.md](./docs/setup.md) · [docs/](./docs/README.md)
 
 Current implementation, deployment, live-canary, synthetic-platform, and
 remaining-gate evidence: [docs/current-state.md](./docs/current-state.md).
@@ -98,7 +98,7 @@ targets before callers: **Claudex proxy → harness → bot**.
 | **`opentag-orchestrator`** | `edge/wrangler.research.toml` | Optional research task plane |
 
 Full topology, sequence diagrams, and state machines:
-[ARCHITECTURE.md](./ARCHITECTURE.md).
+[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 ---
 
@@ -349,7 +349,7 @@ in the isolate).
 ### Production shape
 
 Deploy Containers + Workers. No laptop runtime or tunnel is required for Slack
-once Request URLs point at `opentag-bot`. Full walkthrough: [setup.md](./setup.md).
+once Request URLs point at `opentag-bot`. Full walkthrough: [docs/setup.md](./docs/setup.md).
 
 Requires **Workers Paid** (Cloudflare Containers).
 
@@ -502,7 +502,7 @@ Operations, deploy order, metrics, and troubleshooting:
 | `CLAUDEX_PROXY` / `CLIPROXY_*` | harness ↔ proxy | Private Claudex route and OAuth keys |
 
 Full tables: [`.env.example`](./.env.example),
-[`edge/.dev.vars.example`](./edge/.dev.vars.example), [setup.md](./setup.md).
+[`edge/.dev.vars.example`](./edge/.dev.vars.example), [docs/setup.md](./docs/setup.md).
 
 ---
 
@@ -519,7 +519,7 @@ Full tables: [`.env.example`](./.env.example),
 9. Research cancellation is complete only after quiescence.
 10. Deployment is an explicit operator action; coding targets deploy before callers.
 
-Locked rationale: [DECISIONS.md](./DECISIONS.md) (§§11–16 especially).
+Locked rationale: [docs/DECISIONS.md](./docs/DECISIONS.md) (§§11–16 especially).
 
 ---
 
@@ -557,10 +557,10 @@ Ledger: [docs/centaur-port.md](./docs/centaur-port.md).
 
 | Doc | Contents |
 | --- | --- |
-| [PRODUCT.md](./PRODUCT.md) | North star, surfaces, reliability & security contracts |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Topology, sequences, fences, recovery, harness, research |
-| [DECISIONS.md](./DECISIONS.md) | Locked technical decisions |
-| [setup.md](./setup.md) | Slack app, secrets, local and production setup |
+| [docs/PRODUCT.md](./docs/PRODUCT.md) | North star, surfaces, reliability & security contracts |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Topology, sequences, fences, recovery, harness, research |
+| [docs/DECISIONS.md](./docs/DECISIONS.md) | Locked technical decisions |
+| [docs/setup.md](./docs/setup.md) | Slack app, secrets, local and production setup |
 | [docs/operations.md](./docs/operations.md) | Validate, deploy order, observe, diagnose |
 | [docs/extending.md](./docs/extending.md) | Safe extension recipes |
 | [docs/centaur-port.md](./docs/centaur-port.md) | What was ported, adapted, or omitted |

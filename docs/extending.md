@@ -9,8 +9,8 @@ Durable Object, and reuse the existing render/effect fences. Bypassing those
 paths usually creates duplicate execution, answer-after-Stop, or silent-failure
 bugs.
 
-Read [ARCHITECTURE.md](../ARCHITECTURE.md) first. Locked decisions live in
-[DECISIONS.md](../DECISIONS.md).
+Read [ARCHITECTURE.md](./ARCHITECTURE.md) first. Locked decisions live in
+[DECISIONS.md](./DECISIONS.md).
 
 ## Choose the right extension point
 

@@ -54,7 +54,7 @@ touch the file or bump the image if needed).
 | `entrypoint.sh` | Optional Notion sidecar, then AG-UI on `:8200` |
 
 Secrets are Worker secrets forwarded into the container as env vars (long-lived
-keys — distinct from sandbox egress-proxy containers; see [`DECISIONS.md`](../../../DECISIONS.md) §2 vs §4).
+keys — distinct from sandbox egress-proxy containers; see [`docs/DECISIONS.md`](../../../docs/DECISIONS.md) §2 vs §4).
 
 ### Pitfall: `envVars` class field
 

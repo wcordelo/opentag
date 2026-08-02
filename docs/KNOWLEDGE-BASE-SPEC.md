@@ -9,10 +9,10 @@ foundations described by the current architecture. A live Slack retrieval was
 verified, but reconciliation is not configured and a fresh marker may lag
 indexing. This specification remains the design and rollout gate for broad
 source ingestion, Supermemory activation, backup/restore, and one-channel
-canary; see [docs/current-state.md](./docs/current-state.md) for actual
+canary; see [docs/current-state.md](./current-state.md) for actual
 deployment evidence.
 
-**Goal state:** resume from [`goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md`](./goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md). Railway discovery evidence is in [`goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md`](./goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md). This document is the authoritative execution plan; current implementation facts remain in `PRODUCT.md`, `ARCHITECTURE.md`, `DECISIONS.md`, and `AGENTS.md`.
+**Goal state:** resume from [`goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md`](../goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md). Railway discovery evidence is in [`goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md`](../goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md). This document is the authoritative execution plan; current implementation facts remain in `PRODUCT.md`, `ARCHITECTURE.md`, `DECISIONS.md`, and `AGENTS.md`.
 
 ## 1. Decision summary and superseded design
 
@@ -208,7 +208,7 @@ Rollback stops intake first (disable configuration and drain/hold Queue descript
 
 ## 8. Current Railway readiness and cleanup boundary
 
-The dated evidence is authoritative at [`RAILWAY-READINESS.md`](./goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md). Read-only readiness was verified 2026-07-18 with `bunx @railway/cli`, version `5.27.0`, authenticated as William Lopez-Cordero in workspace `William Lopez-Cordero's Projects` (`546abf5f-9447-4d89-84d3-5e5e08c809a0`). This checkout is unlinked. Four visible projects are `opentag-hybrid` (`8cc26395-b4e0-45b9-b325-2ac585a264d8`), `signalsci` (`2497d056-7a67-42b7-acbc-eac3c787b659`), `consulting` (`b48ccba6-310d-4df4-ae47-90f2060733aa`), and `senpi-openclaw` (`95dcf765-d0e7-490a-aad5-9cbe1c5ebdcd`); the observed inventory was 15 services, 10 active public domains, and 3 volumes. Read access is proven; create/link/deploy/configure/delete permission is unproven because no mutation was attempted.
+The dated evidence is authoritative at [`RAILWAY-READINESS.md`](../goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md). Read-only readiness was verified 2026-07-18 with `bunx @railway/cli`, version `5.27.0`, authenticated as William Lopez-Cordero in workspace `William Lopez-Cordero's Projects` (`546abf5f-9447-4d89-84d3-5e5e08c809a0`). This checkout is unlinked. Four visible projects are `opentag-hybrid` (`8cc26395-b4e0-45b9-b325-2ac585a264d8`), `signalsci` (`2497d056-7a67-42b7-acbc-eac3c787b659`), `consulting` (`b48ccba6-310d-4df4-ae47-90f2060733aa`), and `senpi-openclaw` (`95dcf765-d0e7-490a-aad5-9cbe1c5ebdcd`); the observed inventory was 15 services, 10 active public domains, and 3 volumes. Read access is proven; create/link/deploy/configure/delete permission is unproven because no mutation was attempted.
 
 Cleanup is separate from deployment and defaults to **RETAIN**. Sleeping/stopped is not unused: `opentag-hybrid` has four services with active domains, `consulting` has three older services with active domains, and `senpi-openclaw` has detached non-empty READY volume `70f5cb39-7923-490e-85aa-b00c7b64c1f1`. Before any deletion, refresh exact IDs plus usage, deployment/log, domain/DNS, volume/backup, owner, and dependency evidence; obtain owner confirmation; assess and test backup/rollback; then obtain explicit approval naming exact resources. Never make cleanup a deployment side effect.
 

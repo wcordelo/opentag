@@ -16,10 +16,10 @@ root timestamp; top-level slash commands use channel scope. Duplicate
 redeliveries stay silent, while distinct concurrent asks receive one durable-
 deduped busy note.
 
-Current references: [ARCHITECTURE.md](./ARCHITECTURE.md) ·
-[docs/centaur-port.md](./docs/centaur-port.md) ·
-[docs/extending.md](./docs/extending.md) ·
-[docs/operations.md](./docs/operations.md)
+Current references: [ARCHITECTURE.md](../ARCHITECTURE.md) ·
+[docs/centaur-port.md](../centaur-port.md) ·
+[docs/extending.md](../extending.md) ·
+[docs/operations.md](../operations.md)
 
 ## Phase A5 — Claude Code harness container, container-side (2026-07-12)
 

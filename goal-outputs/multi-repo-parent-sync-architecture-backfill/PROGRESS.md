@@ -1,4 +1,4 @@
-> **Historical snapshot.** This artifact was authored before the final merged OpenTag rollout. Read [the current reconciliation](../CURRENT-STATE-RECONCILIATION.md) and [the current OpenTag status](../../docs/current-state.md) before treating any implementation or deployment statement as current.
+> **Historical snapshot.** This artifact was authored before the final merged OpenTag rollout. Read [the current reconciliation](./CURRENT-STATE-RECONCILIATION.md) and [the current OpenTag status](../../docs/current-state.md) before treating any implementation or deployment statement as current.
 >
 > This historical progress ledger records the completed backfill and the earlier local-only publication boundary. The later OpenTag implementation, deployment, live tests, and current open gates are reconciled in `CURRENT-STATE-RECONCILIATION.md` and `docs/current-state.md`; the old “no deployment” authorization note is not the current rollout state.
 
@@ -116,4 +116,4 @@ The user explicitly authorized creating the three Notion databases, direct pushe
 
 This historical progress ledger records the completed backfill and the earlier local-only publication boundary. The later OpenTag implementation, deployment, live tests, and current open gates are reconciled in `CURRENT-STATE-RECONCILIATION.md` and `docs/current-state.md`; the old “no deployment” authorization note is not the current rollout state.
 
-The original evidence, classifications, and validation limits above are intentionally preserved. The canonical feature/gap ledger is [CURRENT-STATE-RECONCILIATION.md](../CURRENT-STATE-RECONCILIATION.md).
+The original evidence, classifications, and validation limits above are intentionally preserved. The canonical feature/gap ledger is [CURRENT-STATE-RECONCILIATION.md](./CURRENT-STATE-RECONCILIATION.md).

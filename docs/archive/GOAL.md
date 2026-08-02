@@ -1,8 +1,8 @@
 # OpenTag 2.0 — Build Goal
 
 > **Historical execution plan.** Phases A1–A5 are complete on the OpenTag 2.0
-> branch. Use [PRODUCT.md](./PRODUCT.md), [ARCHITECTURE.md](./ARCHITECTURE.md),
-> and [docs/extending.md](./docs/extending.md) for current behavior. Task lists
+> branch. Use [PRODUCT.md](../PRODUCT.md), [ARCHITECTURE.md](../ARCHITECTURE.md),
+> and [docs/extending.md](../extending.md) for current behavior. Task lists
 > below preserve the original acceptance criteria and delegation record.
 
 **Objective:** Transform opentag's rudimentary single-buffered Slack bot into a polished, resilient AI assistant by porting centaur's mature chatbot UX patterns into Cloudflare-native code.

@@ -7,13 +7,14 @@ import worker from "../src/worker.js";
 import type { Env } from "../src/env.js";
 import { deriveInternalTenantId } from "../src/platform/tenant-id.js";
 
-function platformStateNamespace(calls: string[]) {
+function platformStateNamespace(calls: string[], bodies: Record<string, unknown>[] = []) {
   return {
     idFromName: (name: string) => name,
     get: (objectName: string) => ({
-      fetch: async (input: RequestInfo | URL) => {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = new URL(String(input)).pathname;
         calls.push(`${objectName}:${path}`);
+        if (typeof init?.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
         if (path === "/tenant-locator/resolve") {
           return Response.json({ status: "not_found" });
         }
@@ -58,5 +59,32 @@ describe("tenant locator provisioning integration", () => {
       "__platform_marketplace__:/tenant-locator",
       `tenant:${tenantId}:/provision`,
     ]);
+  });
+
+  it("routes identity-link lookup through the tenant object without forwarding the routing field", async () => {
+    const calls: string[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    const env = {
+      ENVIRONMENT: "development",
+      PLATFORM_STATE: platformStateNamespace(calls, bodies),
+    } as unknown as Env;
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const response = await worker.fetch(
+      new Request("https://worker/admin/platform/identity-link/resolve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          schemaVersion: 1,
+          platform: "slack",
+          platformTenantId: "T-worker",
+          platformSubjectId: "U-worker",
+        }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([`tenant:${tenantId}:/identity-link/resolve`]);
+    expect(bodies[0]).not.toHaveProperty("tenantId");
   });
 });

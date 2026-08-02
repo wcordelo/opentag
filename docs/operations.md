@@ -330,6 +330,26 @@ connector readiness. Complete the required provisioning steps with opaque
 external receipts and run a non-production install smoke before enabling a
 tenant-scoped provider.
 
+### Identity-link lifecycle
+
+Identity links are stored in the selected tenant metadata object and bind the
+external subject tuple to a canonical principal and verified proof metadata.
+Use the admin-only routes with a tenant ID for controlled bootstrap:
+
+- `POST /admin/platform/identity-link` writes an active version;
+- `POST /admin/platform/identity-link/resolve` returns the active principal
+  and proof or a fail-closed status; and
+- `POST /admin/platform/identity-link/revoke` advances the version and makes
+  the subject link terminally inactive.
+
+The identity-link ledger is not an identity provider or key-custody system.
+Proof issuance, public-key generation, signing, private-key storage, and
+external revocation remain owned by the approved identity/custody authority.
+Never put private keys, tokens, OAuth codes, or generic provider payloads in
+an identity-link request or receipt. The registry-backed Slack adapter should
+resolve the tenant first and then resolve the subject link from that tenant
+object before constructing a platform request context.
+
 ### Credential broker deployment order
 
 The credential broker can be deployed before its custody backend to publish a

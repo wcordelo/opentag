@@ -303,7 +303,11 @@ change, not evidence that all earlier gaps are complete.
   read-only resolution, terminal revocation, collision/version-gap checks, and
   registry-backed Slack context adaptation. The registry is source-complete in
   the current implementation branch but is not included in the already-live
-  deployment until that branch is merged and deployed.
+  deployment until that branch is merged and deployed;
+- a tenant-scoped identity-link ledger and read-only resolver that binds
+  external subjects to canonical principals, validates proof relationships and
+  contiguous versions, and makes expiry/suspension/revocation fail closed.
+  Identity proof issuance and key custody remain external gates.
 
 ### Still required before “everything” is live
 
@@ -318,10 +322,10 @@ change, not evidence that all earlier gaps are complete.
    custody and receipt adapters. The server-owned tenant locator registry and
    registry-backed Slack boundary are now source-complete, but the local tenant
    ledger still requires an external receipt for every required provisioning
-   step. Still choose the isolation model, configure the bootstrap authority,
-   establish identity/key custody, populate the registry through the approved
-   install flow, and supply real receipts for every DO, bundle, OAuth, and
-   identity step.
+   step. Still choose the isolation model, configure the bootstrap and proof
+   authorities, establish identity/key custody, populate the locator and
+   identity-link ledgers through the approved install flow, and supply real
+   receipts for every DO, bundle, OAuth, and identity step.
 3. **OAuth/marketplace:** [PR #31](https://github.com/wcordelo/opentag/pull/31)
    and [PR #41](https://github.com/wcordelo/opentag/pull/41) add replay-safe state,
    curation gates, and exact scope/custody binding. Still choose callback

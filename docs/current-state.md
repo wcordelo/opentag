@@ -29,9 +29,10 @@ current status.
 
 The current deployment was performed from the clean detached deployment
 worktree at `/Users/will/Documents/opentag-worktrees/deploy-main-d075431`
-after `origin/main` reached the merged PR #40 tip. The tenant-locator
-foundation in the current implementation branch is not included in this
-deployment evidence until its branch is reviewed, merged, and redeployed.
+after `origin/main` reached the merged PR #40 tip. The tenant-locator and
+identity-link foundations in the current implementation branches are not
+included in this deployment evidence until their branches are reviewed,
+merged, and redeployed.
 Provider adapters and custody integrations must not be treated as live solely
 because their source has merged.
 No secret value is recorded here.

@@ -35,6 +35,9 @@ import {
   validateUsageMeterEvent,
 } from "./layer3-contract.js";
 import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
+import { deriveInternalTenantId } from "./tenant-id.js";
+import { platformTenantObjectName } from "./tenant-routing.js";
+import { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
 
 /**
  * Metadata-only platform state.
@@ -52,7 +55,9 @@ import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
  */
 
 export const PLATFORM_MARKETPLACE_OBJECT_NAME = "__platform_marketplace__";
-export const PLATFORM_STATE_SCHEMA_VERSION = 1 as const;
+export { deriveInternalTenantId } from "./tenant-id.js";
+export { platformTenantObjectName } from "./tenant-routing.js";
+export { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
 
 const PLATFORM_DDL = [
   `CREATE TABLE IF NOT EXISTS provisioning (
@@ -293,33 +298,6 @@ export class PlatformStateError extends Error {
     super(code);
     this.name = "PlatformStateError";
   }
-}
-
-/**
- * Derive the canonical internal tenant UUID without persisting the external
- * identifier in a global directory. The namespace is versioned so a future
- * migration can deliberately change the derivation rather than silently
- * moving a tenant to another Durable Object.
- */
-export async function deriveInternalTenantId(input: Pick<
-  ProvisioningRequest,
-  "externalPlatform" | "externalTenantId"
->): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      `opentag:tenant:v${PLATFORM_STATE_SCHEMA_VERSION}:${input.externalPlatform}:${input.externalTenantId}`,
-    ),
-  );
-  const bytes = new Uint8Array(digest).slice(0, 16);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-export function platformTenantObjectName(tenantId: string): string {
-  return `tenant:${id(tenantId, "tenant_id")}`;
 }
 
 type ProvisioningRow = {

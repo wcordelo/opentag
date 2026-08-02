@@ -15,6 +15,10 @@ export type RuntimeCapabilityEvidence = Readonly<{
     repositoryConfigured: boolean;
     nativeNanocodexConfigured: boolean;
   }>;
+  credentialBroker: Readonly<{
+    serviceBindingConfigured: boolean;
+    authConfigured: boolean;
+  }>;
   knowledge: Readonly<{
     namespaceConfigured: boolean;
     queueDeliveryConfigured: boolean;
@@ -50,6 +54,8 @@ type RuntimeEvidenceEnv = Partial<Pick<
   | "HARNESS_URL"
   | "HARNESS_REPO_URL"
   | "NANOCODEX_NATIVE_RESPONSES"
+  | "CONNECTOR_CREDENTIALS"
+  | "CONNECTOR_CREDENTIAL_BROKER_TOKEN"
   | "KNOWLEDGE"
   | "KNOWLEDGE_QUEUE"
   | "KNOWLEDGE_QUEUE_NAME"
@@ -91,6 +97,10 @@ export function buildRuntimeCapabilityEvidence(
       urlConfigured: configured(env.HARNESS_URL),
       repositoryConfigured: configured(env.HARNESS_REPO_URL),
       nativeNanocodexConfigured: env.NANOCODEX_NATIVE_RESPONSES?.trim() === "true",
+    },
+    credentialBroker: {
+      serviceBindingConfigured: Boolean(env.CONNECTOR_CREDENTIALS),
+      authConfigured: configured(env.CONNECTOR_CREDENTIAL_BROKER_TOKEN),
     },
     knowledge: {
       namespaceConfigured: Boolean(env.KNOWLEDGE),

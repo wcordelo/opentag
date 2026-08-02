@@ -1,6 +1,7 @@
 # Platform and routing foundation
 
-Status: **source-complete metadata foundation; synthetic-live; external effecter and connector broker still gated**
+Status: **source-complete metadata foundation; synthetic-live; credential-broker
+boundary validated locally; external effecter and connector custody still gated**
 
 Updated: **2026-08-01**
 
@@ -130,6 +131,26 @@ provider, and billing decisions are approved. The queue and effecter service
 binding are dispatch architecture only; they do not imply that an external
 provider or credential custody system is configured.
 
+## Credential broker boundary
+
+`edge/workers/credential-broker/` is the last-mile resolver for connector
+tokens. It authenticates the bot service binding, derives the canonical Slack
+tenant id, re-reads public credential metadata from `PlatformStateDO`, and
+checks the credential version, tenant, provider, expiry, and connector scope
+before contacting custody. It supports only explicitly registered connector
+actions (`google_drive/search` and `linear/create_issue`) and fails closed for
+unknown actions.
+
+The broker forwards immutable labels and public credential metadata to a
+separately authenticated `CUSTODY` service binding. The optional
+`opentag-credential-custody` Worker reads only explicitly mapped
+Cloudflare Secrets Store bindings; its configuration contains reference,
+version, binding-name, and expiry metadata, never provider token values. The
+broker and custody Worker remain fail-closed until both internal auth tokens,
+the approved mapping, and the non-production smoke are configured. This makes
+the architecture deployable and testable without pretending that Drive or
+Linear credentials are live.
+
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
@@ -161,11 +182,15 @@ access-bundle result.
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
-1. production tenant locator and per-team DO onboarding;
-2. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
-3. curated-only marketplace trust and OAuth callback ownership;
-4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
-5. retention/deletion guarantees and compliance requirements for hosted memory.
+1. shared per-tenant DO isolation versus Workers for Platforms;
+2. production tenant locator and per-team DO onboarding;
+3. whether the optional Cloudflare Secrets Store adapter is the approved
+   custody implementation, or whether an external KMS/envelope/self-hosted
+   Worker should replace it;
+4. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
+5. curated-only marketplace trust and OAuth callback ownership;
+6. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
+7. retention/deletion guarantees and compliance requirements for hosted memory.
 
 The baseline effecter does not silently choose one of those alternatives, run
 an OAuth callback, store a provider token, charge a plan, or delete live
@@ -191,8 +216,9 @@ not a replacement for that worker.
 ## Remaining activation gates
 
 - Drive search is implemented behind the connector authorization contract, but
-  needs a deployed `CONNECTOR_CREDENTIALS` broker and approved Google OAuth/key
-  custody path before it can run live.
+  needs the credential-broker and custody Workers, an approved Google
+  OAuth/key mapping, and a non-production validation workspace before it can
+  run live.
 - Knowledge MCP search still needs the existing Supermemory configuration and
   knowledge rollout gates. Raw templates use the local KnowledgeDO and do not
   imply that Supermemory ingestion is active.
@@ -201,11 +227,13 @@ not a replacement for that worker.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, and admin routes are deployed
-  and synthetic-live, but the production bootstrap authority, tenant locator
-  integration, identity/key custody worker, Slack OAuth callback, marketplace
-  trust review process, billing/plan enforcement, memory deletion executor,
-  and credential broker are not live.
+- The platform-state migration, effect leases, admin routes, credential-broker
+  boundary, and optional Secrets Store custody adapter are locally validated,
+  but the production
+  bootstrap authority, tenant locator integration, identity/key custody policy,
+  Slack OAuth callback, marketplace trust review process, billing/plan
+  enforcement, memory deletion executor, configured custody mapping, and
+  provider adapters are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.
@@ -213,4 +241,5 @@ not a replacement for that worker.
   evidence is recorded in `docs/current-state.md`; local tests alone never
   authorize a deploy or prove an external side effect.
 - The queue-backed baseline effecter is locally validated and remains
-  fail-closed with no registered provider adapters or credentials.
+  fail-closed with no registered provider adapters or credentials; no custody
+  mapping, provider token, or external provider adapter is live.

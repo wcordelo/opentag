@@ -23,6 +23,7 @@ flowchart LR
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
     Claudex["opentag-claudex-proxy<br/>workers/claudex-proxy"]
+    Broker["opentag-credential-broker<br/>workers/credential-broker"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
 
     Operator -->|"deploy:bot"| Bot
@@ -33,6 +34,7 @@ flowchart LR
 
     Bot -->|"AGENT_RUNTIME"| Agent
     Bot -->|"HARNESS"| Harness
+    Bot -->|"CONNECTOR_CREDENTIALS"| Broker
     Harness -->|"CLAUDEX_PROXY"| Claudex
     Bot -.->|"RESEARCH_TASKS"| Research
 ```
@@ -186,6 +188,7 @@ cd edge
 | `LINEAR_API_KEY` | Secret | Agent | Linear MCP |
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
+| `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
 | `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
@@ -283,6 +286,29 @@ The Linear requester-assignee flow requires `users:read.email` on the installed
 token, not only in the manifest.
 
 ## Platform effect handoff
+
+### Credential broker deployment order
+
+The credential broker can be deployed before its custody backend to publish a
+fail-closed health surface, but it must not be considered connector-ready until
+all three boundaries exist:
+
+1. Deploy `workers/credential-custody/` with an approved
+   `CUSTODY_AUTH_TOKEN`, Secrets Store binding map, and non-production secret
+   smoke; the binding map contains only credential references, versions,
+   binding names, and expiry metadata.
+2. Deploy `workers/credential-broker/` with the cross-Worker
+   `PLATFORM_STATE` binding and its `CUSTODY` service binding. Set the separate
+   `CUSTODY_AUTH_TOKEN`; the custody Worker owns provider tokens and OAuth
+   refresh material, while neither the broker nor the bot may persist them.
+3. Set `CONNECTOR_CREDENTIAL_BROKER_TOKEN` as a secret on the bot and broker,
+   then deploy the bot with its `CONNECTOR_CREDENTIALS` binding.
+
+Verify `/health` reports `providerResolutionEnabled: true` only after the
+custody binding is present. Until then, Drive and Linear must remain disabled
+for live workspaces and resolution must return
+`credential_custody_unavailable` or
+`credential_custody_auth_unconfigured`.
 
 The platform ledger does not call Slack, Google, Linear, a custody system, a
 billing provider, or a memory backend. State transitions create secret-free

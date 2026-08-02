@@ -58,6 +58,7 @@ export async function searchGoogleDrive(input: {
   bundle: AccessBundle;
   credential: CredentialReference;
   credentialBroker?: CredentialBroker;
+  brokerAuthToken?: string;
   fetchImpl?: typeof fetch;
   revalidate?: () => Promise<void>;
   now?: number;
@@ -95,7 +96,12 @@ export async function searchGoogleDrive(input: {
     }
     throw error;
   });
-  const accessToken = await resolveCredentialBearer(input.credentialBroker, input.credential, input.labels);
+  const accessToken = await resolveCredentialBearer(
+    input.credentialBroker,
+    input.credential,
+    input.labels,
+    { brokerAuthToken: input.brokerAuthToken },
+  );
   const params = new URLSearchParams({
     q: `trashed = false and fullText contains ${driveLiteral(query)}`,
     spaces: "drive",

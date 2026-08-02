@@ -87,6 +87,10 @@ describe("runtime capability evidence", () => {
         repositoryConfigured: true,
         nativeNanocodexConfigured: false,
       },
+      credentialBroker: {
+        serviceBindingConfigured: false,
+        authConfigured: false,
+      },
       knowledge: {
         namespaceConfigured: false,
         queueDeliveryConfigured: true,
@@ -125,13 +129,20 @@ describe("runtime capability evidence", () => {
       searchEndpointConfigured: false,
       actorTokenConfigured: false,
     });
-    expect(buildRuntimeCapabilityEvidence({
+    const evidence = buildRuntimeCapabilityEvidence({
+      CONNECTOR_CREDENTIALS: {} as never,
+      CONNECTOR_CREDENTIAL_BROKER_TOKEN: "broker-secret",
       PLATFORM_STATE: {} as never,
       PLATFORM_EFFECTS_QUEUE: {} as never,
       PLATFORM_EFFECTS_QUEUE_NAME: "opentag-platform-effects",
       PLATFORM_EFFECTER: {} as never,
       EFFECTOR_AUTH_TOKEN: "effector-secret",
-    }).platformEffects).toEqual({
+    });
+    expect(evidence.credentialBroker).toEqual({
+      serviceBindingConfigured: true,
+      authConfigured: true,
+    });
+    expect(evidence.platformEffects).toEqual({
       stateNamespaceConfigured: true,
       queueConfigured: true,
       effecterConfigured: true,

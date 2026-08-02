@@ -1,7 +1,7 @@
 # Notion-derived OpenTag feature inventory
 
 Status: **historical Notion audit reconciled with the merged connector/platform
-work and the 2026-08-01 live rollout**
+work, the 2026-08-01 live rollout, and the credential-broker branch**
 
 Updated: **2026-08-01**
 
@@ -9,6 +9,8 @@ The historical comparison used the source revisions recorded below. Current
 implementation and deployment truth is in
 [current-state.md](./current-state.md); this inventory remains the durable
 mapping from daily Centaur findings to OpenTag decisions.
+The isolated credential-broker branch extends the fail-closed boundary with an
+optional Secrets Store custody adapter; no provider mapping or token is live.
 
 The queue-backed effecter implementation is maintained in the isolated
 `codex/weekly-platform-effecter` branch and remains fail-closed until an
@@ -131,11 +133,14 @@ for the complete document-by-document status map.
 
 ### Jul 24 — one Evaluate, three N/A
 
-- **Evaluate — generic client-credentials token broker.** Merged main now has
-  a secret-free broker client and durable effect handoff, but no broker
-  Worker, encrypted provider store, rotation scheduler, or approved custody
-  backend. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
-  or access bundles.
+- **Evaluate — generic client-credentials token broker.** Merged main has the
+  secret-free broker client and durable effect handoff. The isolated branch
+  adds a fail-closed broker Worker with platform-state revalidation, provider
+  and scope policy, separate internal custody authentication, and an optional
+  Secrets Store-backed `CUSTODY` Worker. It still has no configured store,
+  provider OAuth exchange, rotation scheduler, or approved production custody
+  policy. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
+  queues, or access bundles.
 - **N/A — Kubernetes observable-resource labels.** No Kubernetes/iron-proxy
   equivalent is needed; Cloudflare structured logs and trace correlation are
   the adaptation.
@@ -240,10 +245,14 @@ change, not evidence that all earlier gaps are complete.
   `platform_effect_intents` handoff with bounded leases,
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
-  rotation, marketplace changes, billing meters, and memory deletion; the
-  isolated branch also adds an authenticated effecter runner/Worker, a
-  metadata-only queue wakeup/retry path, and an admin recovery wake route. It
-  still fails closed when no provider adapter is configured.
+  rotation, marketplace changes, billing meters, and memory deletion.
+- the isolated credential-broker Worker boundary with internal authentication,
+  tenant/provider/scope revalidation, and an external custody service seam;
+- the optional Secrets Store custody Worker, which validates the same immutable
+  labels and reference/version pair before reading a named secret binding.
+  The merged baseline also includes an authenticated effecter runner/Worker,
+  metadata-only queue wakeup/retry, and an admin recovery wake route; all
+  provider adapters remain fail-closed when unconfigured.
 - source-scoped memory deletion receipts bound to the request epoch; requests
   reach `completed` only after every source reports `deleted` or `not_found`,
   while failed receipts remain explicit and terminal; and a fail-closed,
@@ -254,16 +263,18 @@ change, not evidence that all earlier gaps are complete.
 
 ### Still required before “everything” is live
 
-1. **Credential broker and custody:** choose external KMS, wrapped Durable
-   Object envelope, or self-hosted custody; implement the broker Worker,
-   provider OAuth/token rotation, scope checks, revocation propagation, and a
-   safe non-production smoke. No credential store is currently configured.
+1. **Credential custody:** the broker Worker and optional Secrets Store adapter
+   are implemented locally. Approve that adapter or choose external KMS,
+   wrapped Durable Object envelope, or self-hosted custody; configure
+   reference/version mappings, provider OAuth/token rotation, scope checks,
+   revocation propagation, and a safe non-production smoke. No credential
+   store or provider mapping is currently configured.
 2. **Provisioning/identity:** the local tenant ledger now requires an external
    receipt for every required provisioning step. Choose the tenant locator and
    isolation model, deploy the bootstrap/effect worker and queue after an
    adapter is approved, establish identity/key custody, and supply real
    receipts for every DO, bundle, OAuth, and identity step. The metadata ledger
-   and platform binding are deployed; the external worker is not.
+   and platform binding are deployed; the external provider worker is not.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

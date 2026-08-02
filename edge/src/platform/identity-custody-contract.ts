@@ -59,7 +59,7 @@ function object(value: unknown, code: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function identifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH): string {
+function opaqueIdentifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH): string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -69,10 +69,15 @@ function identifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH):
   ) {
     throw new IdentityCustodyContractError(`${field}_invalid`);
   }
-  if (PRIVATE_MATERIAL_RE.test(value)) {
+  return value;
+}
+
+function identifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH): string {
+  const result = opaqueIdentifier(value, field, max);
+  if (PRIVATE_MATERIAL_RE.test(result)) {
     throw new IdentityCustodyContractError("private_key_material_forbidden");
   }
-  return value;
+  return result;
 }
 
 function safePublicKey(value: unknown, field: string): string {
@@ -175,7 +180,7 @@ export function validateIdentityCustodyReceipt(value: unknown): IdentityCustodyR
     identityRef: identityRef as `identity:${string}`,
     backend: backend(input.backend),
     version: version(input.version, "version"),
-    externalReceiptRef: identifier(input.externalReceiptRef, "external_receipt_ref"),
+    externalReceiptRef: opaqueIdentifier(input.externalReceiptRef, "external_receipt_ref"),
     observedAt: timestamp(input.observedAt, "observed_at"),
     ...(publicKey === undefined ? {} : { publicKey }),
   });

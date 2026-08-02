@@ -36,6 +36,20 @@ describe("identity custody contract", () => {
     expect(() => assertIdentityCustodyReceiptMatches(validated, receipt)).not.toThrow();
   });
 
+  it("accepts opaque external receipt refs with benign secret substrings", () => {
+    expect(validateIdentityCustodyReceipt({
+      schemaVersion: 1,
+      operation: "provision",
+      tenantId: "tenant-1",
+      identityRef: "identity:tenant-1:agent",
+      backend: "external_kms",
+      version: 1,
+      externalReceiptRef: "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-key",
+      observedAt: "2026-08-01T20:00:01.000Z",
+      publicKey: "ed25519:public-key",
+    }).externalReceiptRef).toContain("secretsmanager");
+  });
+
   it("allows revocation receipts without a public key", () => {
     expect(validateIdentityCustodyReceipt({
       schemaVersion: 1,

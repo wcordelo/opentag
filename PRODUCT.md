@@ -2,7 +2,7 @@
 
 Status: **ACTIVE and authoritative**
 
-Updated: **2026-07-18**
+Updated: **2026-08-01**
 
 ## North star
 
@@ -30,11 +30,16 @@ A user should experience:
 - Claude Code repository work with native Anthropic or Claudex/Codex model
   execution and mechanical commit/PR verification.
 
+For Slack threads, tagging is optional for a clear ask. OpenTag reads every
+human thread reply, routes questions, action requests, problem reports, files,
+and explicit mentions into the normal turn lifecycle, and leaves conversational
+noise as history without replying to it.
+
 ## Product surfaces
 
 | Surface | Status | Contract |
 | --- | --- | --- |
-| Mentions and thread replies | Implemented | Explicit bot mentions admit channel-thread turns; unmentioned replies remain Slack history for later context |
+| Mentions and thread replies | Implemented | DMs, files, and explicit mentions are always eligible; unmentioned thread questions, action requests, and problem reports route without a tag; passive chatter remains history |
 | `/agent` | Implemented | Same exact lifecycle as a mention |
 | `/config` | Implemented | Channel prompt update preserving bundles and policy |
 | `/research` | Implemented | Effect-fenced task start with exact cancellation |
@@ -46,14 +51,26 @@ A user should experience:
 | Never-silent recovery | Implemented | Session events, render obligations, DO alarms |
 | Claude Code harness | Production-enabled | Native Claude, Claudex, and Nanocodex modes share the same sandbox, Stop, egress, and git postconditions |
 | Research actors | Optional | Internal task plane, never Slack ingress |
+| Platform foundation | Source-complete; synthetic-live | Shared Worker fleet, per-team Durable Object isolation, metadata-only provisioning/effect ledger, connector references, OAuth/marketplace metadata, metering, and memory governance |
+| Router | Live shadow mode | Versioned heuristic classifier and workspace measurement ledger; Tier 1 and Tier 3 remain dark |
+| Buzz receive | Fail-closed integration | `/buzz/wake` exists with signed-admission plumbing, but an authenticated relay canary requires configured Buzz signer and relay credentials |
 | Multi-agent PM/implement/verify product | Deferred | Not in the public TaskRuntime API |
+
+The current deployment and feature-by-feature evidence is maintained in
+[docs/current-state.md](./docs/current-state.md). The platform and connector
+rows describe metadata and policy foundations; they do not claim that a real
+provider credential broker, OAuth callback, billing worker, deletion worker, or
+external Buzz relay is live.
 
 ## Current architecture spine
 
 1. **Ingress:** Slack Events API, commands, and interactions terminate on
    `opentag-bot`. Socket Mode and the old Railway bot are unsupported.
-2. **Pre-admission:** stable Slack identities create an exact active-turn row
-   and initial obligation before asynchronous enrichment.
+2. **Ingress routing and pre-admission:** normalized thread events pass through
+   a deterministic response-worthiness gate. Only response-worthy events create
+   an exact active-turn row and initial obligation before asynchronous
+   enrichment; duplicate Slack `message` delivery for an `app_mention` exits
+   before admission.
 3. **Bot engine:** `createBot` and `CloudflareSlackAdapter` handle messages,
    commands, cards, status, titles, and streaming.
 4. **Lifecycle:** `runSlackTurnLifecycle()` owns session admission, obligations,
@@ -78,8 +95,9 @@ diagrams.
 
 Every production turn carries a stable execution ID, a stable forwarded-message
 ID, an exact active-turn record, SessionEventDO admission, and a render
-obligation until terminal visibility is confirmed. Duplicates stay silent;
-distinct concurrent asks receive a durable-deduped busy note.
+obligation until terminal visibility is confirmed. Duplicate deliveries stay
+silent; passive thread events never create a turn; distinct concurrent asks
+receive a durable-deduped busy note.
 
 Every delivered turn ends with a live or recovered answer, an explicit error,
 a confirmed interruption, or an intentionally silent shortcut. Returning from
@@ -123,10 +141,12 @@ The exact map is [docs/centaur-port.md](./docs/centaur-port.md).
 
 1. Slack terminates only on `opentag-bot`; no Socket Mode.
 2. Bot, session, obligation, Stop, and research keys must agree.
-3. DMs use `DM_SCOPE`; channel mentions use their reply-thread timestamp;
+3. DMs use `DM_SCOPE`; channel thread events use their reply-thread timestamp;
    top-level slash commands use channel scope because Slack provides no ts.
-4. Pre-admit before the first async lookup.
-5. Never clear an obligation merely because code returned.
+4. Route response-worthiness before pre-admission; pre-admit before the first
+   async lookup.
+5. Never clear an obligation merely because code returned; confirmed final
+   render owns exact active-turn cleanup.
 6. Never grant remote git through prompts or environment variables alone.
 7. Research and harness cancellation are complete only after quiescence.
 8. Task-domain code depends on adapters rather than infrastructure APIs.

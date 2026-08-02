@@ -18,13 +18,16 @@ No Railway bot. Events API only.
 > [ARCHITECTURE.md](./ARCHITECTURE.md) · [DECISIONS.md](./DECISIONS.md) ·
 > [setup.md](./setup.md) · [docs/](./docs/README.md)
 
+Current implementation, deployment, live-canary, synthetic-platform, and
+remaining-gate evidence: [docs/current-state.md](./docs/current-state.md).
+
 ---
 
 ## What you get
 
 | Experience | Behavior |
 | --- | --- |
-| Mentions, thread replies, `/agent`, DMs | Same exact turn lifecycle: admit → run → fence → deliver |
+| Mentions, thread replies, `/agent`, DMs | Clear asks can route without a tag; passive chatter stays quiet; admitted turns use the same lifecycle: admit → run → fence → deliver |
 | Incremental Slack rendering | Status, titles, streamed Markdown, Block Kit cards |
 | Durable thread continuity | Survives Worker isolate hops; sticky model/harness per thread |
 | Never-silent outcomes | Live answer, recovered answer, explicit error, or confirmed Stop |
@@ -32,6 +35,9 @@ No Railway bot. Events API only.
 | Linear create-from-Slack | Structured confirm card; assignee defaults to Slack profile email |
 | Deep research | Optional task plane; results return to the originating thread |
 | Repository coding | Claude Code in an isolated Container with Worker-enforced egress and git postconditions |
+| Native Nanocodex | Typed OpenAI Responses adapter behind the existing harness boundary |
+| Platform foundation | Shared Worker fleet, per-team Durable Objects, metadata-only effect ledger, connector authorization |
+| Router | Heuristic classifier and workspace measurements in shadow mode; Tier 2 remains the safe floor |
 
 ▶️ **[Watch the demo](https://github.com/user-attachments/assets/a74fa1cb-add0-463e-a23c-aa09b95d5135)** (~50s) — generative UI in a Slack thread plus an Approve gate before writing out.
 
@@ -122,6 +128,12 @@ Every production turn derives purpose-tagged SHA-256 IDs from Slack identity:
 Ingress **pre-admits** the active turn and an initial render obligation
 *before* the first profile, config, task, or model await. That closes the race
 where Stop could arrive before the turn registered itself.
+
+Thread ingress is response-routed, not mention-only. DMs, explicit mentions,
+files, questions, action requests, and problem reports can create a turn;
+passive thread conversation remains Slack history without waking the agent.
+The duplicate threaded `message` that Slack may emit alongside `app_mention`
+is rejected before pre-admission, so it cannot leave a false active-turn lock.
 
 Conversation scope is surface-aware:
 
@@ -255,7 +267,7 @@ deliver back to the originating Slack thread. Cancellation requires
 
 | Surface | Status | Notes |
 | --- | --- | --- |
-| Mentions & thread replies | Implemented | Events API; incremental render |
+| Mentions & thread replies | Implemented | Events API; optional tags for clear asks; passive conversation stays history; incremental render |
 | `/agent` | Implemented | Same lifecycle as a mention |
 | `/config` | Implemented | Channel prompt; preserves bundles/policy |
 | `/research` | Implemented | Effect-fenced task start |
@@ -275,7 +287,8 @@ deliver back to the originating Slack thread. Cancellation requires
 
 ### Slack UX (bot Worker)
 
-- @mentions and explicitly mentioned thread follow-ups with durable history
+- @mentions and clear untagged thread follow-ups with durable history
+- passive thread chatter is observed without starting a turn
 - Slash commands: `/agent`, `/config`, `/research`
 - Reactions over chat spam (thanks → ❤️; long turns → hourglass)
 - `react_message` tool when an emoji is better than text

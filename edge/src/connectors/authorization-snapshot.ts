@@ -23,6 +23,8 @@ import {
 } from "../platform/layer3-contract.js";
 import {
   TENANT_LOCATOR_OBJECT_NAME,
+  tenantLocatorSubject,
+  validateTenantLocatorResolution,
   type PlatformStateNamespace,
 } from "../platform/tenant-locator.js";
 import {
@@ -87,6 +89,13 @@ function timestamp(value: unknown, field: string): string {
     throw new ConnectorAuthorizationSnapshotError(`${field}_invalid`, 503);
   }
   return result;
+}
+
+function positiveVersion(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new ConnectorAuthorizationSnapshotError(`${field}_invalid`, 403);
+  }
+  return value as number;
 }
 
 function sortedScopes(value: readonly string[]): readonly string[] {
@@ -288,6 +297,7 @@ export class PlatformStateConnectorAuthorizationReader {
     platform: "slack" | "buzz" | "teams";
     platformTenantId: string;
     platformSubjectId: string;
+    tenantLocatorVersion: number;
     connectorId: string;
     action: string;
   }>): Promise<ConnectorAuthorizationSnapshot> {
@@ -305,6 +315,33 @@ export class PlatformStateConnectorAuthorizationReader {
     const platformTenantId = identifier(input.platformTenantId, "platform_tenant_id");
     const platformSubjectId = identifier(input.platformSubjectId, "platform_subject_id");
     const platform = input.platform;
+    const tenantLocatorVersion = positiveVersion(input.tenantLocatorVersion, "tenant_locator_version");
+    const tenantLocator = validateTenantLocatorResolution(await readJson(
+      this.namespace,
+      TENANT_LOCATOR_OBJECT_NAME,
+      "/tenant-locator/resolve",
+      tenantLocatorSubject({ platform, platformTenantId }),
+      "connector_tenant_locator_unavailable",
+    ));
+    if (tenantLocator.status !== "resolved") {
+      throw new ConnectorAuthorizationSnapshotError(
+        `connector_tenant_locator_${tenantLocator.status}`,
+        tenantLocator.status === "not_found" ? 404 : 403,
+      );
+    }
+    if (
+      tenantLocator.locator.tenantId !== tenantId ||
+      tenantLocator.locator.platform !== platform ||
+      tenantLocator.locator.platformTenantId !== platformTenantId
+    ) {
+      throw new ConnectorAuthorizationSnapshotError(
+        "connector_tenant_locator_relationship_mismatch",
+        403,
+      );
+    }
+    if (tenantLocator.locator.version !== tenantLocatorVersion) {
+      throw new ConnectorAuthorizationSnapshotError("connector_tenant_locator_stale", 403);
+    }
     const identityResolution = validateIdentityLinkResolution(await readJson(
       this.namespace,
       tenantObjectName,

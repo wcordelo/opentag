@@ -149,6 +149,18 @@ function platformState(tenantId: string, credentialStatus: "active" | "revoked" 
   const stateStub = {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input)).pathname;
+      if (path === "/tenant-locator/resolve") {
+        return Response.json({
+          status: "resolved",
+          locator: {
+            platform: "slack",
+            platformTenantId: "T1",
+            tenantId,
+            version: 1,
+            status: "active",
+          },
+        });
+      }
       if (path === "/identity-link/resolve") return Response.json(identityResolution(tenantId));
       if (path === "/oauth/get") return Response.json(oauthGrant(tenantId));
       if (path === "/marketplace/list") return Response.json({ entries: [marketplace()] });
@@ -217,6 +229,18 @@ describe("credential broker Worker", () => {
     state.stateStub.fetch.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
       stateBody = JSON.parse(String(init?.body));
       const path = new URL(String(_input)).pathname;
+      if (path === "/tenant-locator/resolve") {
+        return Response.json({
+          status: "resolved",
+          locator: {
+            platform: "slack",
+            platformTenantId: "T1",
+            tenantId,
+            version: 1,
+            status: "active",
+          },
+        });
+      }
       if (path === "/identity-link/resolve") return Response.json(identityResolution(tenantId));
       if (path === "/oauth/get") return Response.json(oauthGrant(tenantId));
       if (path === "/marketplace/list") return Response.json({ entries: [marketplace()] });

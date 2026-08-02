@@ -190,6 +190,7 @@ cd edge
 | `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
 | `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
 | `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
+| `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
 | `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
@@ -313,6 +314,12 @@ effecter and create/configure both queue names before enabling the bot binding.
 If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
 route after the queue is restored; never copy an effect payload into a queue
 message.
+
+Provisioning step updates must include `schemaVersion`, the provisioning
+idempotency key, required step, outcome, opaque `externalReceiptRef`, and
+`observedAt`. A complete step cannot be marked retryable. The platform ledger
+stores the receipt and reaches `active` only after all required steps have
+completed with evidence; it does not perform the external provisioning work.
 
 ## Deploy and connect the harness
 

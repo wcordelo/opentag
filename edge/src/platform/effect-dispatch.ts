@@ -263,13 +263,25 @@ export async function dispatchPlatformEffectWakeup(
   const selected = runnable.slice(0, PLATFORM_EFFECT_MAX_BATCH);
   let dispatched = 0;
   for (const effect of selected) {
-    const outcome = await effecterRun(
-      bindings.PLATFORM_EFFECTER,
-      effect,
-      `platform-effect-dispatch:${crypto.randomUUID()}`,
-      bindings.EFFECTOR_AUTH_TOKEN,
-    );
-    if (outcome === "completed") dispatched += 1;
+    try {
+      const outcome = await effecterRun(
+        bindings.PLATFORM_EFFECTER,
+        effect,
+        `platform-effect-dispatch:${crypto.randomUUID()}`,
+        bindings.EFFECTOR_AUTH_TOKEN,
+      );
+      if (outcome === "completed") dispatched += 1;
+    } catch (error) {
+      if (error instanceof PlatformEffectDispatchError && !error.retryable) {
+        console.error(JSON.stringify({
+          metric: "platform_effect_run_rejected",
+          intentId: effect.intentId,
+          errorCode: error.code,
+        }));
+        continue;
+      }
+      throw error;
+    }
   }
   if (runnable.length > selected.length) return { dispatched, nextDelaySeconds: 0 };
   if (future) return { dispatched, nextDelaySeconds: delayFor(future.availableAt, now) };

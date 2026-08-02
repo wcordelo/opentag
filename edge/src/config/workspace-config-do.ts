@@ -27,6 +27,7 @@ import {
   ConnectorAuthorizationError,
   type ImmutableConnectorLabels,
   type ConnectorRequestIdentity,
+  type ConnectorAuthorizationPlatformBinding,
   type CredentialReference,
 } from "../connectors/authorization.js";
 import {
@@ -1742,6 +1743,7 @@ export class WorkspaceConfigDO extends DurableObject {
           projectId: input.projectId,
           channelId: input.channelId,
           requesterId: input.requesterId,
+          ...(typeof input.principalId === "string" ? { principalId: input.principalId } : {}),
           actorKind: input.actorKind,
           executionId: input.executionId,
           threadKey: input.threadKey,
@@ -1804,6 +1806,9 @@ export class WorkspaceConfigDO extends DurableObject {
           identity,
           connectorId: input.connectorId,
           action: input.action,
+          ...(input.platformBinding !== undefined
+            ? { platformBinding: input.platformBinding as ConnectorAuthorizationPlatformBinding }
+            : {}),
           lifetimeMs: input.lifetimeMs as number | undefined,
         });
         return Response.json(issued);
@@ -2023,6 +2028,7 @@ export async function loadConnectorAuthorization(
   input: ConnectorRequestIdentity & {
     connectorId: string;
     action: string;
+    platformBinding?: ConnectorAuthorizationPlatformBinding;
     lifetimeMs?: number;
   },
 ): Promise<{ labels: ImmutableConnectorLabels; credential?: CredentialReference }> {

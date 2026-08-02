@@ -8,10 +8,11 @@ The Worker:
 1. authenticates only the internal `opentag-bot` service binding;
 2. revalidates the immutable labels against the authoritative
    `WorkspaceConfigDO` access bundle and connector grant;
-3. derives the canonical Slack tenant id and reads the versioned public
-   credential reference from `PlatformStateDO`;
-4. rejects revoked, expired, cross-tenant, provider-mismatched, and
-   insufficient-scope references;
+3. requires the server-owned platform binding in those labels, then composes
+   the active principal's OAuth grant, curated marketplace version, and
+   versioned public credential reference from `PlatformStateDO`;
+4. rejects revoked, expired, stale, cross-tenant, marketplace-, provider-, and
+   scope-mismatched authorization snapshots;
 5. forwards only bounded metadata and immutable connector labels to an
    explicitly configured `CUSTODY` service binding; and
 6. returns a short-lived bearer only in the response body, without persisting

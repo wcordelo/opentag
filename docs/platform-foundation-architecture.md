@@ -204,11 +204,19 @@ provider or credential custody system is configured.
 
 `edge/workers/credential-broker/` is the last-mile resolver for connector
 tokens. It authenticates the bot service binding, derives the canonical Slack
-tenant id, re-reads public credential metadata from `PlatformStateDO`, and
-checks the credential version, tenant, provider, expiry, and connector scope
-before contacting custody. It supports only explicitly registered connector
-actions (`google_drive/search` and `linear/create_issue`) and fails closed for
-unknown actions.
+tenant id, requires a server-owned platform binding in the immutable label,
+and composes the active principal's OAuth grant, curated marketplace version,
+and public credential metadata from `PlatformStateDO`. It checks the grant,
+credential, tenant, principal, marketplace version, provider, expiry, and
+connector scope before contacting custody. It supports only explicitly
+registered connector actions (`google_drive/search` and
+`linear/create_issue`) and fails closed for unknown or legacy unbound labels.
+
+The composed metadata-only snapshot lives in
+`edge/src/connectors/authorization-snapshot.ts`. Its version fences are
+included in the signed connector label, so a rotated grant, marketplace
+revocation, credential revocation, or scope change cannot silently reuse an
+older authorization at the custody boundary.
 
 The broker forwards immutable labels and public credential metadata to a
 separately authenticated `CUSTODY` service binding. The optional

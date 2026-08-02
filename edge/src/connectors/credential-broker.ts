@@ -12,6 +12,9 @@ import type {
   ImmutableConnectorLabels,
 } from "./authorization.js";
 import {
+  parseConnectorAuthorizationPlatformBinding,
+} from "./authorization.js";
+import {
   validateCredentialCustodyReference,
   type CredentialCustodyReference,
 } from "../platform/layer3-contract.js";
@@ -100,6 +103,9 @@ function validateLabels(value: unknown): ImmutableConnectorLabels {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) {
     throw new Error("connector_labels_digest_invalid");
   }
+  const platformBinding = input.platformBinding === undefined
+    ? undefined
+    : parseConnectorAuthorizationPlatformBinding(input.platformBinding);
   return Object.freeze({
     schemaVersion: 1,
     workspaceId: identifier(input.workspaceId, "workspace_id"),
@@ -120,6 +126,7 @@ function validateLabels(value: unknown): ImmutableConnectorLabels {
     ...(input.credentialVersion === undefined
       ? {}
       : { credentialVersion: version(input.credentialVersion, "credential_version") }),
+    ...(platformBinding ? { platformBinding } : {}),
     issuedAt: timestamp(input.issuedAt, "connector_issued_at"),
     expiresAt: timestamp(input.expiresAt, "connector_expires_at"),
     digest,
@@ -223,6 +230,21 @@ export async function connectorLabelsDigest(
     unsigned.accessBundleRevision,
     unsigned.credentialRef ?? null,
     unsigned.credentialVersion ?? null,
+    unsigned.platformBinding
+      ? [
+          unsigned.platformBinding.schemaVersion,
+          unsigned.platformBinding.platform,
+          unsigned.platformBinding.platformTenantId,
+          unsigned.platformBinding.platformSubjectId,
+          unsigned.platformBinding.tenantId,
+          unsigned.platformBinding.principalId,
+          unsigned.platformBinding.identityLinkVersion,
+          unsigned.platformBinding.authorizationVersion,
+          unsigned.platformBinding.tenantLocatorVersion,
+          unsigned.platformBinding.oauthGrantVersion,
+          unsigned.platformBinding.marketplaceVersion,
+        ]
+      : null,
     unsigned.issuedAt,
     unsigned.expiresAt,
   ]);

@@ -152,6 +152,13 @@ describe("PlatformStateDO", () => {
         issuedAt: now,
       };
       expect((await call(state, "/identity", identity)).response.status).toBe(200);
+      const identityRead = await call(state, "/identity/get", { identityRef: identity.identityRef });
+      expect(identityRead.response.status).toBe(200);
+      expect(identityRead.body).toMatchObject({
+        identityRef: identity.identityRef,
+        publicKey: identity.publicKey,
+        version: identity.version,
+      });
       expect((await call(state, "/identity/revoke", { identityRef: identity.identityRef })).response.status).toBe(200);
       expect((await call(state, "/identity", { ...identity, version: 2 })).body.error).toBe("identity_revoked");
 

@@ -1,3 +1,5 @@
+> **Historical snapshot.** This goal predates the connector/platform merge and 2026-08-01 live rollout. Its source/test findings remain useful, but deployment and current status are in [docs/current-state.md](../../docs/current-state.md) and [goal-output status](../DOC-STATUS-RECONCILIATION.md).
+
 # PROGRESS — centaur-gap-implementation
 
 **Goal:** Implement `docs/centaur-gap-implementation-spec.md` end to end in OpenTag. Preserve unrelated working-tree changes. Complete the three feature tracks—permission introspection, channel runtime defaults, and trusted rich-payload Slack mentions—plus their tests, documentation, validation, and a fresh adversarial review. Do not deploy, reinstall the Slack app, mutate Cloudflare configuration, commit, push, or open a PR without explicit approval.

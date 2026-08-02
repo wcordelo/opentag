@@ -6,8 +6,10 @@ records. When documents disagree, use this precedence order:
 1. [PRODUCT.md](../PRODUCT.md) — active product contract
 2. [ARCHITECTURE.md](../ARCHITECTURE.md) — current code topology and lifecycle
 3. [DECISIONS.md](../DECISIONS.md) — locked technical decisions
-4. [operations.md](./operations.md) — runnable validation and deployment
-5. source code and tests
+4. [current-state.md](./current-state.md) — dated deployment, live evidence,
+   feature matrix, and remaining gates
+5. [operations.md](./operations.md) — runnable validation and deployment
+6. source code and tests
 
 ## Current guides
 
@@ -20,6 +22,7 @@ records. When documents disagree, use this precedence order:
 | [multi-repo-architecture.md](./multi-repo-architecture.md) | Complete-history qm, Nanocodex, Buzz, and Centaur deep dive plus the current OpenTag implementation ledger |
 | [extending.md](./extending.md) | How to add commands, tools, tasks, cards, runtimes, state, and egress |
 | [operations.md](./operations.md) | Local validation, Container builds, deploy order, metrics, troubleshooting |
+| [current-state.md](./current-state.md) | Current feature-by-feature live/synthetic/fail-closed evidence and gap reconciliation |
 | [../setup.md](../setup.md) | Slack, Cloudflare, runtime, harness, and research setup |
 | [../edge/README.md](../edge/README.md) | Testable Cloudflare target and package layout |
 | [research-actors.md](./research-actors.md) | Optional research actor contracts and cancellation |
@@ -30,8 +33,10 @@ records. When documents disagree, use this precedence order:
 
 ## Proposed specifications
 
-These documents describe planning-stage product work that is not yet current
-implementation truth:
+These documents describe design contracts and rollout plans. Their status
+tables and gates are authoritative for what remains to be built, while
+[current-state.md](./current-state.md) is authoritative for what has actually
+been deployed and tested:
 
 | Document | Purpose |
 | --- | --- |
@@ -49,6 +54,21 @@ file lists and gap statements are not current status:
 | [../GOAL.md](../GOAL.md) | Autonomous implementation plan |
 | [../implementation-notes.md](../implementation-notes.md) | Chronological phase log and later corrections |
 | [../ANALYSIS-SUMMARY.txt](../ANALYSIS-SUMMARY.txt) | Original migration decision summary |
+
+## Backfill and parity artifacts
+
+The complete-history parent/fork reports and the attached QM/Centaur/Buzz/
+Nanocodex comparisons live under
+[goal-outputs/multi-repo-parent-sync-architecture-backfill](../goal-outputs/multi-repo-parent-sync-architecture-backfill/).
+Use its [current-state reconciliation](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
+to map historical classifications to current implementation and live evidence.
+The root [VISION-SPEC.md](../VISION-SPEC.md), [ROUTER-SPEC.md](../ROUTER-SPEC.md),
+and [HANDOFF.md](../HANDOFF.md) are included in that same reconciliation and
+must not be read as a substitute for the current-state record.
+
+For older goal-output audits, use the repository-wide
+[goal-output document status](../goal-outputs/DOC-STATUS-RECONCILIATION.md)
+before treating a historical “blocked” or “not deployed” statement as current.
 
 Slack app manifest: [slack-app-manifest.yaml](../slack-app-manifest.yaml).
 It includes `users:read.email`; reinstall after scope changes and refresh the

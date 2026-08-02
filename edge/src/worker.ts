@@ -111,7 +111,12 @@ import {
 import {
   OAUTH_STATE_OBJECT_NAME,
 } from "./platform/oauth-state-do.js";
-import { validateProvisioningRequest } from "./platform/layer3-contract.js";
+import {
+  assertConnectorMarketplaceEntryActivatable,
+  PlatformFoundationError,
+  validateConnectorMarketplaceEntry,
+  validateProvisioningRequest,
+} from "./platform/layer3-contract.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -857,12 +862,21 @@ async function ensureCuratedOAuthMarketplace(
   };
   const entry = payload.entries?.[0];
   if (!entry) return c.json({ error: "oauth_marketplace_not_found" }, 409);
-  if (entry.status !== "curated") return c.json({ error: "oauth_marketplace_not_curated" }, 409);
-  if (entry.authMode !== "oauth2") return c.json({ error: "oauth_connector_not_oauth2" }, 409);
+  let marketplaceEntry;
+  try {
+    marketplaceEntry = assertConnectorMarketplaceEntryActivatable(
+      validateConnectorMarketplaceEntry(entry),
+    );
+  } catch (error) {
+    if (error instanceof PlatformFoundationError) {
+      return c.json({ error: error.code }, 409);
+    }
+    throw error;
+  }
+  if (marketplaceEntry.status !== "curated") return c.json({ error: "oauth_marketplace_not_curated" }, 409);
+  if (marketplaceEntry.authMode !== "oauth2") return c.json({ error: "oauth_connector_not_oauth2" }, 409);
   if (Array.isArray(body.scopes)) {
-    const allowedScopes = Array.isArray(entry.oauthScopes)
-      ? entry.oauthScopes.filter((scope): scope is string => typeof scope === "string")
-      : [];
+    const allowedScopes = [...marketplaceEntry.oauthScopes];
     const requestedScopes = body.scopes.filter((scope): scope is string => typeof scope === "string");
     if (requestedScopes.some((scope) => !allowedScopes.includes(scope))) {
       return c.json({ error: "oauth_scope_not_allowed" }, 409);

@@ -17,7 +17,7 @@ current status.
 | --- | --- |
 | Merged OpenTag baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, current merged main) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads; included in current main |
-| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from exact merged main `498164f` |
+| Bot deployment | `opentag-bot`, version `a7674fb3-219b-4b93-893a-53792f51824f` — deployed from exact merged main `498164f` |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
 | Bot health | `GET /health` returned HTTP 200 from the deployed main version with durable stores, service bindings, model and knowledge configuration, native Nanocodex, and Buzz directory readiness reported |

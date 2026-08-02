@@ -110,20 +110,26 @@ The lifecycle is:
 
 1. A state transition records its own metadata and an idempotent effect intent
    in the same SQLite transaction.
-2. An effect worker claims the intent with a short lease and receives the
+2. The bot publishes a queue wakeup containing only the internal
+   `PlatformStateDO` object name. A bounded admin wake route remains available
+   for recovery when the queue is unavailable.
+3. An effect worker claims the intent with a short lease and receives the
    validated intent metadata plus an opaque lease token.
-3. The worker performs the provider call outside the Durable Object, then
+4. The effecter performs the provider call outside the Durable Object, then
    reports `complete` with a bounded external receipt reference or `failed`
    with a safe error code and retry policy.
-4. A revoked or superseded operation can cancel the intent; an expired lease
+5. A revoked or superseded operation can cancel the intent; an expired lease
    is reclaimable, while an active lease cannot be double-claimed.
 
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
-The ledger still does not perform the external effect. That boundary must be
-implemented by a separately authenticated worker after custody, provider, and
-billing decisions are approved.
+The ledger still does not perform the external effect. The isolated branch now
+contains a separately authenticated baseline effecter Worker for this boundary;
+it registers no provider adapters and therefore fails closed until custody,
+provider, and billing decisions are approved. The queue and effecter service
+binding are dispatch architecture only; they do not imply that an external
+provider or credential custody system is configured.
 
 ## Credential broker boundary
 
@@ -157,7 +163,12 @@ idempotent. `not_found` is treated as a successful absence proof; any
 claiming completion. The receipt ledger stores bounded metadata and an opaque
 external receipt reference, never memory contents or deletion payloads. The
 executor still owns the actual deletion and must report receipts through the
-admin/effect boundary.
+admin/effect boundary. The provider-independent `opentag-memory-deletion`
+Worker now accepts one source-scoped request at a time, forwards only bounded
+tenant/source/epoch metadata to a separately authenticated adapter, and rejects
+successful provider responses without an opaque receipt reference. It remains
+fail-closed until a reviewed provider adapter, custody path, and non-production
+test namespace are configured.
 
 Provisioning step advancement is receipt-bound. Each required step must carry
 an opaque external receipt reference and observed timestamp; completion without
@@ -181,8 +192,9 @@ still required before these contracts become live product surfaces:
 6. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
 7. retention/deletion guarantees and compliance requirements for hosted memory.
 
-No code silently chooses one of those alternatives, runs an OAuth callback,
-stores a provider token, charges a plan, or deletes live customer knowledge.
+The baseline effecter does not silently choose one of those alternatives, run
+an OAuth callback, store a provider token, charge a plan, or delete live
+customer knowledge.
 The platform-state ledger records explicit bootstrap requests and externally
 verified receipts without marking a tenant active until the required steps are
 reported complete.
@@ -228,4 +240,6 @@ not a replacement for that worker.
 - Cloudflare deployment is an explicit operator action. The current deployment
   evidence is recorded in `docs/current-state.md`; local tests alone never
   authorize a deploy or prove an external side effect.
-- No custody mapping, provider token, or external provider adapter is live.
+- The queue-backed baseline effecter is locally validated and remains
+  fail-closed with no registered provider adapters or credentials; no custody
+  mapping, provider token, or external provider adapter is live.

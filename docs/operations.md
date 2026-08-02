@@ -190,6 +190,9 @@ cd edge
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
+| `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
+| `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
@@ -328,12 +331,32 @@ payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
 
+The bot publishes a wakeup after platform-state mutations to the
+`opentag-platform-effects` Queue. Each body contains only the internal
+`PlatformStateDO` object name. The effecter consumes the wakeup, lists bounded
+pending/retryable receipts, and calls `/run` through its authenticated service
+boundary. Retryable provider failures are scheduled from `availableAt`; the
+queue DLQ is for repeated dispatch failures, not provider secrets. Deploy the
+effecter and create/configure both queue names before enabling the bot binding.
+If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
+route after the queue is restored; never copy an effect payload into a queue
+message.
+
 Memory deletion is not complete when the request is accepted. An approved
 external executor must submit one epoch-matching receipt per requested source
 through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
 complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
+
+The provider-independent `edge/workers/memory-deletion/` boundary is an
+additional fail-closed handoff. `POST /delete` carries one source key, tenant,
+request/idempotency identifiers, deletion epoch, and timestamp to an explicitly
+authenticated provider adapter. It has no provider binding by default. Before
+activation, document the provider's source deletion, retention/legal-hold,
+tenant-isolation, idempotency, and test-namespace guarantees; a Worker health
+response or adapter HTTP success is not proof that the platform receipt ledger
+was updated.
 
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and

@@ -1434,7 +1434,12 @@ export class PlatformStateEngine {
     return parseJson<MemoryGovernancePolicy>(row.policy_json);
   }
 
-  requestMemoryDeletion(value: unknown): { ok: true; duplicate: boolean; status: "requested"; request: MemoryDeletionRequest } {
+  requestMemoryDeletion(value: unknown): {
+    ok: true;
+    duplicate: boolean;
+    status: "requested" | "accepted" | "completed" | "failed";
+    request: MemoryDeletionRequest;
+  } {
     const request = validateMemoryDeletionRequest(value);
     return this.tx(() => {
       assertTenantActive(this.provisioningByTenant(request.tenantId), request.tenantId);
@@ -1453,7 +1458,12 @@ export class PlatformStateEngine {
       ).toArray()[0];
       if (current) {
         if (current.request_json !== requestJson) throw new PlatformStateError("memory_deletion_idempotency_conflict", 409);
-        return { ok: true, duplicate: true, status: "requested", request };
+        return {
+          ok: true,
+          duplicate: true,
+          status: current.status as "requested" | "accepted" | "completed" | "failed",
+          request,
+        };
       }
       const sameRequest = this.sql.exec<DeletionRow>(
         `SELECT * FROM memory_deletion_requests WHERE request_id = ?`,

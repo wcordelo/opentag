@@ -1,0 +1,20 @@
+name = "opentag-identity-custody"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: IDENTITY_CUSTODY_AUTH_TOKEN. Share only with the authenticated
+# provisioning/effect worker. Never use a provider credential here.
+#
+# Optional service binding, enabled only after an approved provider adapter
+# exists:
+# [[services]]
+# binding = "IDENTITY_PROVIDER_ADAPTER"
+# service = "opentag-identity-provider-adapter"
+#
+# Secret: IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN. This is an internal adapter
+# bearer, not a private key or provider credential.

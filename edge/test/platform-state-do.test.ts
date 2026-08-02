@@ -391,12 +391,31 @@ describe("PlatformStateDO", () => {
       expect(activeClaim.response.status).toBe(409);
       expect(activeClaim.body.error).toBe("effect_lease_active");
 
+      const renewed = await call(state, "/effect/renew", {
+        intentId,
+        leaseToken,
+        leaseSeconds: 30,
+      });
+      expect(renewed.response.status).toBe(200);
+      expect(renewed.body).toMatchObject({
+        ok: true,
+        receipt: { status: "leased", attempts: 1 },
+      });
+      expect(renewed.body.leaseExpiresAt).toEqual(expect.any(String));
+
       const wrongCompletion = await call(state, "/effect/complete", {
         intentId,
         leaseToken: "wrong-token",
       });
       expect(wrongCompletion.response.status).toBe(409);
       expect(wrongCompletion.body.error).toBe("effect_lease_mismatch");
+
+      const missingReceipt = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken,
+      });
+      expect(missingReceipt.response.status).toBe(400);
+      expect(missingReceipt.body.error).toBe("effect_external_receipt_required");
 
       const failed = await call(state, "/effect/fail", {
         intentId,

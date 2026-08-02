@@ -1,0 +1,30 @@
+name = "opentag-platform-effecter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[queues.producers]]
+binding = "PLATFORM_EFFECTS_QUEUE"
+queue = "opentag-platform-effects"
+
+# This is a cross-Worker namespace binding to the metadata ledger owned by the
+# bot Worker. The effecter never gets a second copy of platform state.
+[[durable_objects.bindings]]
+name = "PLATFORM_STATE"
+class_name = "PlatformStateDO"
+script_name = "opentag-bot"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: EFFECTOR_AUTH_TOKEN. Do not put provider credentials in this Worker.
+# Provider-specific adapters and their custody bindings are separate, explicit
+# deployment decisions; no adapter is registered by this baseline Worker.
+# To enable an approved adapter, add a service binding named
+# `PLATFORM_EFFECT_ADAPTER` and set the separate
+# `PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. Keep both commented out here
+# until a provider Worker has passed its custody and compliance review.
+# [[services]]
+# binding = "PLATFORM_EFFECT_ADAPTER"
+# service = "opentag-platform-provider-adapter"

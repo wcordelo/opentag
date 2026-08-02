@@ -185,6 +185,113 @@ describe("PlatformStateDO", () => {
     }
   });
 
+  it("enforces a versioned billing plan without charging a provider", async () => {
+    const { state, close } = makeState();
+    try {
+      const provisioned = await call(state, "/provision", {
+        ...request,
+        requestId: "billing-request",
+        idempotencyKey: "billing-install",
+        externalTenantId: "T-billing",
+      });
+      const tenantId = provisioned.body.tenantId as string;
+      for (const step of REQUIRED_PROVISIONING_STEPS) {
+        await call(state, "/provision/step", {
+          schemaVersion: 1,
+          idempotencyKey: "billing-install",
+          step,
+          outcome: "complete",
+          externalReceiptRef: `receipt:${step}`,
+          observedAt: now,
+        });
+      }
+      const plan = {
+        schemaVersion: 1,
+        tenantId,
+        planId: "starter",
+        revision: 1,
+        status: "active",
+        periodStart: "2026-08-01T00:00:00.000Z",
+        periodEnd: "2026-09-01T00:00:00.000Z",
+        limits: {
+          knowledge_query: 5,
+          agent_tokens: null,
+          connector_calls: null,
+          container_ms: null,
+        },
+        overagePolicy: "block",
+        updatedAt: now,
+      };
+      expect((await call(state, "/billing/plan", plan)).response.status).toBe(200);
+      const allowed = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 3,
+        planRevision: 1,
+        occurredAt: now,
+      });
+      expect(allowed.body).toMatchObject({
+        action: "allow",
+        reason: "within_limit",
+        consumedQuantity: 0,
+        projectedQuantity: 3,
+        remainingQuantity: 5,
+      });
+      const meter = {
+        schemaVersion: 1,
+        eventId: "billing-meter-1",
+        idempotencyKey: "billing-meter-key-1",
+        tenantId,
+        executionId: "billing-execution-1",
+        tier: 1,
+        metric: "knowledge_query",
+        quantity: 3,
+        unit: "count",
+        planRevision: 1,
+        occurredAt: now,
+      };
+      expect((await call(state, "/meter", meter)).response.status).toBe(200);
+      const blocked = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 3,
+        planRevision: 1,
+        occurredAt: now,
+      });
+      expect(blocked.body).toMatchObject({ action: "block", reason: "limit_exceeded" });
+      const rejectedMeter = await call(state, "/meter", {
+        ...meter,
+        eventId: "billing-meter-2",
+        idempotencyKey: "billing-meter-key-2",
+      });
+      expect(rejectedMeter.response.status).toBe(409);
+      expect(rejectedMeter.body.error).toBe("billing_limit_exceeded");
+      const wrongRevision = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 1,
+        planRevision: 2,
+        occurredAt: now,
+      });
+      expect(wrongRevision.body).toMatchObject({ action: "block", reason: "plan_revision_mismatch" });
+      expect((await call(state, "/billing/plan", { ...plan, revision: 2, status: "suspended" })).response.status).toBe(200);
+      const suspended = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 1,
+        planRevision: 2,
+        occurredAt: now,
+      });
+      expect(suspended.body).toMatchObject({ action: "block", reason: "plan_suspended" });
+    } finally {
+      close();
+    }
+  });
+
   it("records marketplace, OAuth, metering, memory governance, and effect intents", async () => {
     const { state, close } = makeState();
     try {
@@ -222,20 +329,17 @@ describe("PlatformStateDO", () => {
         status: "curated",
         authMode: "oauth2",
         actions: ["search"],
-        oauthScopes: ["drive.readonly"],
+        oauthScopes: ["drive.readonly", "drive.metadata.readonly"],
         trustReviewRef: "review:google-drive:v1",
       };
       expect((await call(state, "/marketplace", marketplace)).response.status).toBe(200);
-      expect((await call(state, "/marketplace/revoke", {
-        connectorId: marketplace.connectorId,
-        version: marketplace.version,
-      })).response.status).toBe(200);
 
       const grant = {
         schemaVersion: 1,
         tenantId,
         principalId: "principal-1",
         connectorId: "google_drive",
+        marketplaceVersion: "v1",
         credentialRef: credential.credentialRef,
         providerSubject: "acct-1",
         scopes: ["drive.readonly"],
@@ -243,7 +347,23 @@ describe("PlatformStateDO", () => {
         status: "active",
         issuedAt: now,
       };
+      const scopeMismatch = await call(state, "/oauth", {
+        ...grant,
+        scopes: ["drive.metadata.readonly"],
+      });
+      expect(scopeMismatch.response.status).toBe(409);
+      expect(scopeMismatch.body.error).toBe("oauth_credential_scopes_mismatch");
       expect((await call(state, "/oauth", grant)).response.status).toBe(200);
+      expect((await call(state, "/marketplace/revoke", {
+        connectorId: marketplace.connectorId,
+        version: marketplace.version,
+      })).response.status).toBe(200);
+      const revokedByMarketplace = await call(state, "/oauth/get", {
+        tenantId,
+        principalId: grant.principalId,
+        connectorId: grant.connectorId,
+      });
+      expect(revokedByMarketplace.body.status).toBe("revoked");
       expect((await call(state, "/credential", { ...credential, version: 2 })).response.status).toBe(200);
       const revokedGrant = await call(state, "/oauth/get", {
         tenantId,
@@ -384,12 +504,31 @@ describe("PlatformStateDO", () => {
       expect(activeClaim.response.status).toBe(409);
       expect(activeClaim.body.error).toBe("effect_lease_active");
 
+      const renewed = await call(state, "/effect/renew", {
+        intentId,
+        leaseToken,
+        leaseSeconds: 30,
+      });
+      expect(renewed.response.status).toBe(200);
+      expect(renewed.body).toMatchObject({
+        ok: true,
+        receipt: { status: "leased", attempts: 1 },
+      });
+      expect(renewed.body.leaseExpiresAt).toEqual(expect.any(String));
+
       const wrongCompletion = await call(state, "/effect/complete", {
         intentId,
         leaseToken: "wrong-token",
       });
       expect(wrongCompletion.response.status).toBe(409);
       expect(wrongCompletion.body.error).toBe("effect_lease_mismatch");
+
+      const missingReceipt = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken,
+      });
+      expect(missingReceipt.response.status).toBe(400);
+      expect(missingReceipt.body.error).toBe("effect_external_receipt_required");
 
       const failed = await call(state, "/effect/fail", {
         intentId,

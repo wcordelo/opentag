@@ -23,6 +23,7 @@ flowchart LR
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
     Claudex["opentag-claudex-proxy<br/>workers/claudex-proxy"]
+    Broker["opentag-credential-broker<br/>workers/credential-broker"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
 
     Operator -->|"deploy:bot"| Bot
@@ -33,6 +34,7 @@ flowchart LR
 
     Bot -->|"AGENT_RUNTIME"| Agent
     Bot -->|"HARNESS"| Harness
+    Bot -->|"CONNECTOR_CREDENTIALS"| Broker
     Harness -->|"CLAUDEX_PROXY"| Claudex
     Bot -.->|"RESEARCH_TASKS"| Research
 ```
@@ -186,7 +188,23 @@ cd edge
 | `LINEAR_API_KEY` | Secret | Agent | Linear MCP |
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
+| `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `opentag-billing-adapter` | Separate Worker | Effect runner | Authenticated, provider-independent billing meter/receipt boundary; provider binding is disabled by default |
+| `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
+| `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
+| `OAUTH_STATE` | Durable Object binding | Bot | Hashed one-use OAuth state/nonce metadata; never provider codes or tokens |
+| `OAUTH_ALLOWED_REDIRECT_ORIGINS` | Deploy var | Bot/OAuth state | Explicit comma-separated HTTPS origin allowlist; unset keeps OAuth state fail-closed |
+| `OAUTH_EFFECTER` | Service binding | OAuth callback | Authenticated callback handoff destination |
+| `OAUTH_EFFECTER_AUTH_TOKEN` | Secret | OAuth callback/effecter | Internal callback-to-effecter bearer; never a provider credential |
+| `OAUTH_PROVIDER_ADAPTER` | Optional service binding | OAuth effecter | Provider exchange/custody boundary; absent keeps OAuth fail-closed |
+| `OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | OAuth effecter/provider adapter | Separate adapter bearer; never a provider credential in OpenTag |
+| `IDENTITY_CUSTODY_AUTH_TOKEN` | Secret | Identity custody + effect worker | Internal identity-custody service authentication; never a private key |
+| `IDENTITY_PROVIDER_ADAPTER` | Optional service binding | Identity custody | External key generation/signing/custody boundary; absent keeps identity effects fail-closed |
+| `IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | Identity custody/provider adapter | Internal adapter bearer; never key material |
+| `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
+| `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
+| `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
@@ -210,9 +228,9 @@ key; rotate that secret to revoke outstanding links.
 
 ## 2026-08-01 live rollout record
 
-The current production smoke used merged baseline `ff8d649` and a narrow
-identity-read fix on the reconciliation branch. The bot deployment is
-`bf1f47bf-b569-46cd-9e85-46141ed86d24`; the harness deployment was
+The current production deployment used exact merged baseline `498164f` from a
+clean detached checkout. The bot deployment is
+`cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1`; the harness deployment was
 `58c47ab9-daf9-456b-b17c-73fc66e6b25d`. The image digest and feature-by-feature
 result matrix are in [current-state.md](./current-state.md).
 
@@ -281,6 +299,29 @@ token, not only in the manifest.
 
 ## Platform effect handoff
 
+### Credential broker deployment order
+
+The credential broker can be deployed before its custody backend to publish a
+fail-closed health surface, but it must not be considered connector-ready until
+all three boundaries exist:
+
+1. Deploy `workers/credential-custody/` with an approved
+   `CUSTODY_AUTH_TOKEN`, Secrets Store binding map, and non-production secret
+   smoke; the binding map contains only credential references, versions,
+   binding names, and expiry metadata.
+2. Deploy `workers/credential-broker/` with the cross-Worker
+   `PLATFORM_STATE` binding and its `CUSTODY` service binding. Set the separate
+   `CUSTODY_AUTH_TOKEN`; the custody Worker owns provider tokens and OAuth
+   refresh material, while neither the broker nor the bot may persist them.
+3. Set `CONNECTOR_CREDENTIAL_BROKER_TOKEN` as a secret on the bot and broker,
+   then deploy the bot with its `CONNECTOR_CREDENTIALS` binding.
+
+Verify `/health` reports `providerResolutionEnabled: true` only after the
+custody binding is present. Until then, Drive and Linear must remain disabled
+for live workspaces and resolution must return
+`credential_custody_unavailable` or
+`credential_custody_auth_unconfigured`.
+
 The platform ledger does not call Slack, Google, Linear, a custody system, a
 billing provider, or a memory backend. State transitions create secret-free
 effect intents in the `PLATFORM_STATE` Durable Object. A separately deployed
@@ -302,6 +343,43 @@ payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
 
+## OAuth state deployment gate
+
+`OAUTH_STATE` is a metadata-only Durable Object. Before any external OAuth
+effecter is enabled:
+
+1. Deploy the bot migration that creates `OAuthStateDO`.
+2. Configure `OAUTH_ALLOWED_REDIRECT_ORIGINS` with exact HTTPS origins; an
+   unset or malformed allowlist makes `/issue` and `/consume` fail closed.
+3. Keep `/admin/platform/oauth/state/issue` and `/consume` behind the admin
+   secret. They are internal seams, not provider callback URLs.
+4. Verify the bot health response reports `oauthState: ok` and the runtime
+   evidence shows both the state namespace and allowlist as configured.
+5. Only then connect the authenticated `oauth-callback` and `oauth-effecter`
+   Workers. If enabling provider exchange, configure the separate
+   `OAUTH_PROVIDER_ADAPTER` binding and bearer. The adapter must implement
+   `edge/src/platform/oauth-provider-contract.ts`, correlate/consume state,
+   validate the exact marketplace version and scopes, exchange the code outside
+   OpenTag, and return only an opaque custody receipt. Do not send an access
+   token, refresh token, or client secret to the callback Worker, effecter, or
+   their Durable Objects.
+
+Marketplace entries must have a `review:` trust reference, actions, and
+auth-mode-consistent scopes. OAuth grants must name the exact curated
+marketplace version and matching provider/scopes. Revoking that marketplace
+version revokes dependent grants through the effect ledger.
+
+The bot publishes a wakeup after platform-state mutations to the
+`opentag-platform-effects` Queue. Each body contains only the internal
+`PlatformStateDO` object name. The effecter consumes the wakeup, lists bounded
+pending/retryable receipts, and calls `/run` through its authenticated service
+boundary. Retryable provider failures are scheduled from `availableAt`; the
+queue DLQ is for repeated dispatch failures, not provider secrets. Deploy the
+effecter and create/configure both queue names before enabling the bot binding.
+If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
+route after the queue is restored; never copy an effect payload into a queue
+message.
+
 Memory deletion is not complete when the request is accepted. An approved
 external executor must submit one epoch-matching receipt per requested source
 through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
@@ -309,11 +387,49 @@ complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
 
+Billing plans are configured through the admin-only platform route and are
+evaluated against the tenant's current UTC period. A plan revision must match
+the meter event, and a `block` overage policy rejects the meter before it is
+persisted or handed to the billing effecter. A plan is not a billing-provider
+subscription. A billing adapter must map the intent through
+`edge/src/platform/billing-provider-contract.ts`, returning only an opaque
+`billing:` receipt; prices, payment methods, and provider credentials stay
+outside OpenTag. Configure a separately authenticated provider adapter only
+after source-of-truth, invoice, retry, and reconciliation decisions are
+approved.
+The provider-independent `edge/workers/memory-deletion/` boundary is an
+additional fail-closed handoff. `POST /delete` carries one source key, tenant,
+request/idempotency identifiers, deletion epoch, and timestamp to an explicitly
+authenticated provider adapter. It has no provider binding by default. Before
+activation, document the provider's source deletion, retention/legal-hold,
+tenant-isolation, idempotency, and test-namespace guarantees; a Worker health
+response or adapter HTTP success is not proof that the platform receipt ledger
+was updated.
+
+The provider-independent handoff is implemented by the separate
+`edge/workers/billing-adapter/` Worker. Its `/meter` route accepts the fixed
+`billing-adapter-contract.ts` shape and requires an internal caller token. The
+optional provider service binding and its separate binding token must both be
+present before it forwards a request; otherwise it returns `503` without a
+provider call. The receipt must echo the intent, tenant, idempotency, event,
+execution, plan ID/revision, amount-minor, and currency fields. The adapter
+does not claim or complete platform effect leases, calculate prices, or store
+provider credentials; the generic platform effect runner and the approved
+billing authority retain those responsibilities.
+
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and
 `observedAt`. A complete step cannot be marked retryable. The platform ledger
 stores the receipt and reaches `active` only after all required steps have
 completed with evidence; it does not perform the external provisioning work.
+
+The provider-independent `edge/workers/provisioning-adapter/` boundary carries
+one allowlisted step to an explicitly authenticated bootstrap adapter through
+`POST /provision-step`. It is not a tenant locator, Slack installer, Durable
+Object creator, identity custodian, or access-bundle store by itself. Before
+activation, document idempotent resource creation/rollback, tenant isolation,
+OAuth and custody ownership, and a reversible test-tenant smoke; the Worker
+must remain unconfigured until those decisions are approved.
 
 ## Deploy and connect the harness
 

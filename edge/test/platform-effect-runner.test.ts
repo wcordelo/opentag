@@ -1,0 +1,483 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  PlatformEffectAdapterError,
+  PlatformEffectRunnerError,
+  createRemotePlatformEffectAdapter,
+  runPlatformEffect,
+  validatePlatformEffectAdapterIntent,
+  validatePlatformEffectRunRequest,
+  type PlatformEffectAdapterResult,
+  type PlatformEffectStateClient,
+} from "../src/platform/effect-runner.js";
+import type {
+  PlatformEffectClaim,
+  PlatformEffectReceipt,
+} from "../src/platform/layer3-contract.js";
+import { validatePlatformEffectIntent } from "../src/platform/layer3-contract.js";
+
+const intent = validatePlatformEffectIntent({
+  schemaVersion: 1,
+  intentId: "effect:credential:rotate:1",
+  idempotencyKey: "credential-rotate-1",
+  scope: "tenant",
+  tenantId: "tenant-1",
+  kind: "credential_custody",
+  targetRef: "credential:google:workspace",
+  metadata: { operation: "rotate", provider: "google", version: 2 },
+  requestedAt: "2026-08-01T22:00:00.000Z",
+});
+
+function receipt(status: PlatformEffectReceipt["status"]): PlatformEffectReceipt {
+  return {
+    schemaVersion: 1,
+    intentId: intent.intentId,
+    idempotencyKey: intent.idempotencyKey,
+    scope: intent.scope,
+    tenantId: intent.tenantId,
+    kind: intent.kind,
+    targetRef: intent.targetRef,
+    status,
+    attempts: 1,
+    retryable: status === "failed",
+    availableAt: "2026-08-01T22:00:00.000Z",
+    requestedAt: intent.requestedAt,
+    updatedAt: "2026-08-01T22:00:00.000Z",
+  };
+}
+
+function makeState(): {
+  state: PlatformEffectStateClient;
+  calls: { claim: unknown[]; complete: unknown[]; renew: unknown[]; fail: unknown[] };
+} {
+  const calls = {
+    claim: [] as unknown[],
+    complete: [] as unknown[],
+    renew: [] as unknown[],
+    fail: [] as unknown[],
+  };
+  const claim: PlatformEffectClaim = {
+    intent,
+    receipt: receipt("leased"),
+    leaseToken: "lease-1",
+    leaseOwner: "effecter-1",
+    leaseExpiresAt: "2026-08-01T22:05:00.000Z",
+  };
+  return {
+    calls,
+    state: {
+      async claim(input) {
+        calls.claim.push(input);
+        return claim;
+      },
+      async complete(input) {
+        calls.complete.push(input);
+        return { ok: true, duplicate: false, receipt: receipt("completed") };
+      },
+      async renew(input) {
+        calls.renew.push(input);
+        return {
+          ok: true,
+          leaseExpiresAt: "2026-08-01T22:06:00.000Z",
+          receipt: receipt("leased"),
+        };
+      },
+      async fail(input) {
+        calls.fail.push(input);
+        return { ok: true, receipt: receipt("failed") };
+      },
+    },
+  };
+}
+
+describe("platform effect runner", () => {
+  it("exposes only the reviewed metadata vocabulary to adapters", () => {
+    expect(validatePlatformEffectAdapterIntent(intent)).toBe(intent);
+    expect(() => validatePlatformEffectAdapterIntent({
+      ...intent,
+      metadata: { operation: "rotate", version: 2 },
+    })).toThrow("effect_metadata_contract_invalid");
+    expect(() => validatePlatformEffectAdapterIntent({
+      ...intent,
+      metadata: {
+        operation: "rotate",
+        provider: "google",
+        version: 2,
+        providerInstruction: "unexpected",
+      },
+    })).toThrow("effect_metadata_contract_invalid");
+    expect(validatePlatformEffectAdapterIntent({
+      ...intent,
+      kind: "memory_deletion",
+      targetRef: "memory-deletion:request-1",
+      metadata: { deletionEpoch: 3, requestId: "request-1" },
+    })).toMatchObject({
+      kind: "memory_deletion",
+      metadata: { deletionEpoch: 3, requestId: "request-1" },
+    });
+  });
+
+  it("accepts every metadata shape emitted by PlatformStateDO", () => {
+    const cases = [
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "provisioning",
+        targetRef: "provision:install-1",
+        metadata: {
+          externalPlatform: "slack",
+          externalTenantId: "T1",
+          isolationMode: "shared_worker_per_tenant_do",
+          custodyBackend: "external_kms",
+          requestId: "request-1",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "identity_custody",
+        targetRef: "identity:tenant-1",
+        metadata: { operation: "revoke", version: 1 },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "connector_oauth",
+        targetRef: "google_drive",
+        metadata: {
+          connectorId: "google_drive",
+          credentialRef: "credential:google:workspace",
+          operation: "explicit_revoke",
+          principalId: "principal-1",
+          version: 1,
+        },
+      },
+      {
+        scope: "platform",
+        kind: "marketplace",
+        targetRef: "google_drive:v1",
+        metadata: {
+          authMode: "oauth2",
+          connectorId: "google_drive",
+          operation: "curate",
+          provider: "google",
+          status: "curated",
+          trustReviewRef: "review:google-drive:v1",
+          version: "v1",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "billing_meter",
+        targetRef: "meter-1",
+        metadata: {
+          executionId: "execution-1",
+          metric: "connector_calls",
+          planRevision: 1,
+          quantity: 1,
+          tier: 2,
+          unit: "count",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "memory_deletion",
+        targetRef: "memory-deletion:request-1",
+        metadata: { deletionEpoch: 2, requestId: "request-1" },
+      },
+    ] as const;
+
+    for (const value of cases) {
+      const candidate = validatePlatformEffectIntent({
+        schemaVersion: 1,
+        intentId: `effect:${value.kind}`,
+        idempotencyKey: `idempotency:${value.kind}`,
+        requestedAt: intent.requestedAt,
+        ...value,
+      });
+      expect(validatePlatformEffectAdapterIntent(candidate)).toBe(candidate);
+    }
+  });
+
+  it("uses an authenticated, versioned remote adapter envelope", async () => {
+    const requests: Request[] = [];
+    const adapter = createRemotePlatformEffectAdapter({
+      async fetch(input, init) {
+        requests.push(new Request(input, init));
+        return Response.json({
+          schemaVersion: 1,
+          status: "completed",
+          externalReceiptRef: "provider-receipt-1",
+        });
+      },
+    }, "adapter-secret");
+
+    await expect(adapter(intent)).resolves.toEqual({
+      externalReceiptRef: "provider-receipt-1",
+    });
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    if (!request) throw new Error("remote adapter request missing");
+    expect(request.url).toBe("https://platform-effect-adapter/execute");
+    expect(request.headers.get("authorization")).toBe("Bearer adapter-secret");
+    expect(request.headers.get("content-type")).toBe("application/json");
+    expect(await request.json()).toEqual({
+      schemaVersion: 1,
+      intent,
+    });
+  });
+
+  it("maps provider retry responses and rejects malformed response envelopes", async () => {
+    const retrying = createRemotePlatformEffectAdapter({
+      async fetch() {
+        return Response.json({
+          schemaVersion: 1,
+          status: "failed",
+          errorCode: "provider_busy",
+          retryable: true,
+          retryAfterSeconds: 45,
+        });
+      },
+    }, "adapter-secret");
+    await expect(retrying(intent)).rejects.toMatchObject({
+      code: "provider_busy",
+      retryable: true,
+      retryAfterSeconds: 45,
+    });
+
+    const malformed = createRemotePlatformEffectAdapter({
+      async fetch() {
+        return Response.json({
+          schemaVersion: 1,
+          status: "completed",
+          externalReceiptRef: "provider-receipt-1",
+          providerDetail: "must not cross the boundary",
+        });
+      },
+    }, "adapter-secret");
+    await expect(malformed(intent)).rejects.toMatchObject({
+      code: "effect_adapter_response_invalid",
+      retryable: false,
+    });
+  });
+
+  it("claims, invokes the explicit adapter, and records a bounded receipt", async () => {
+    const { state, calls } = makeState();
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+        leaseSeconds: 60,
+      },
+      state,
+      adapters: {
+        credential_custody: async (received) => {
+          expect(received).toEqual(intent);
+          return { externalReceiptRef: "kms-receipt-1" };
+        },
+      },
+    });
+    expect(result).toMatchObject({ status: "completed", adapterConfigured: true });
+    expect(calls.claim).toEqual([{
+      intentId: intent.intentId,
+      workerId: "effecter-1",
+      leaseSeconds: 60,
+    }]);
+    expect(calls.complete).toEqual([{
+      intentId: intent.intentId,
+      leaseToken: "lease-1",
+      externalReceiptRef: "kms-receipt-1",
+    }]);
+    expect(calls.fail).toHaveLength(0);
+  });
+
+  it("renews the lease while a provider adapter is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const { state, calls } = makeState();
+      let resolveAdapter!: (value: PlatformEffectAdapterResult) => void;
+      const adapterResult = new Promise<PlatformEffectAdapterResult>((resolve) => {
+        resolveAdapter = resolve;
+      });
+      const run = runPlatformEffect({
+        request: {
+          scope: "tenant",
+          tenantId: "tenant-1",
+          intentId: intent.intentId,
+          workerId: "effecter-1",
+          leaseSeconds: 60,
+        },
+        state,
+        adapters: { credential_custody: async () => adapterResult },
+      });
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(calls.renew).toEqual([{
+        intentId: intent.intentId,
+        leaseToken: "lease-1",
+        leaseSeconds: 60,
+      }]);
+
+      resolveAdapter({ externalReceiptRef: "kms-receipt-1" });
+      await expect(run).resolves.toMatchObject({ status: "completed" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when an adapter is not configured", async () => {
+    const { state, calls } = makeState();
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: {},
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      adapterConfigured: false,
+      errorCode: "effect_adapter_unconfigured",
+    });
+    expect(calls.complete).toHaveLength(0);
+    expect(calls.fail).toEqual([{
+      intentId: intent.intentId,
+      leaseToken: "lease-1",
+      errorCode: "effect_adapter_unconfigured",
+      retryable: false,
+      retryAfterSeconds: 0,
+    }]);
+  });
+
+  it("preserves explicit retry classification and rejects scope confusion", async () => {
+    const { state, calls } = makeState();
+    const retry = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: {
+        credential_custody: async () => {
+          throw new PlatformEffectAdapterError("kms_temporarily_unavailable", true, 30);
+        },
+      },
+    });
+    expect(retry).toMatchObject({ status: "failed", errorCode: "kms_temporarily_unavailable" });
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "kms_temporarily_unavailable",
+      retryable: true,
+      retryAfterSeconds: 30,
+    });
+
+    const mismatched = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-other",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: {},
+    });
+    expect(mismatched).toMatchObject({ status: "failed", errorCode: "effect_scope_mismatch" });
+    expect(calls.fail.at(-1)).toMatchObject({ errorCode: "effect_scope_mismatch", retryable: true });
+  });
+
+  it("uses a bounded terminal fallback when the first failure report is rejected", async () => {
+    const { state, calls } = makeState();
+    let attempts = 0;
+    const resilientState: PlatformEffectStateClient = {
+      ...state,
+      async fail(input) {
+        calls.fail.push(input);
+        attempts += 1;
+        if (attempts === 1) throw new Error("simulated ledger validation failure");
+        return { ok: true, receipt: receipt("failed") };
+      },
+    };
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state: resilientState,
+      adapters: {
+        credential_custody: async () => {
+          throw new PlatformEffectAdapterError("provider_busy", true, 45);
+        },
+      },
+    });
+    expect(result).toMatchObject({ status: "failed" });
+    expect(calls.fail).toHaveLength(2);
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "effect_failure_report_failed",
+      retryable: false,
+      retryAfterSeconds: 0,
+    });
+  });
+
+  it("bounds runner requests and does not retry unknown adapter exceptions", async () => {
+    expect(() => validatePlatformEffectRunRequest({
+      scope: "platform",
+      tenantId: "not-allowed",
+      intentId: "effect-1",
+      workerId: "worker-1",
+    })).toThrow("effect_platform_tenant_forbidden");
+
+    const { state, calls } = makeState();
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: { credential_custody: async () => { throw new Error("provider detail"); } },
+    });
+    expect(result).toMatchObject({ status: "failed", errorCode: "effect_adapter_failed" });
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "effect_adapter_failed",
+      retryable: false,
+    });
+    expect(result).not.toHaveProperty("provider detail");
+    expect(() => validatePlatformEffectRunRequest({})).toThrow(PlatformEffectRunnerError);
+  });
+
+  it("does not mark an effect complete without an external receipt", async () => {
+    const { state, calls } = makeState();
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: {
+        credential_custody: async () => ({} as never),
+      },
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      adapterConfigured: true,
+      errorCode: "external_receipt_ref_invalid",
+    });
+    expect(calls.complete).toHaveLength(0);
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "external_receipt_ref_invalid",
+      retryable: false,
+    });
+  });
+});

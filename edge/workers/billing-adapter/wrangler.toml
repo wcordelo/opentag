@@ -1,0 +1,20 @@
+name = "opentag-billing-adapter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: BILLING_ADAPTER_AUTH_TOKEN. Share only with the internal platform
+# effect runner. It is not a billing-provider credential.
+#
+# Optional service binding, enabled only after an approved provider adapter
+# exists:
+# [[services]]
+# binding = "BILLING_PROVIDER_ADAPTER"
+# service = "opentag-billing-provider-adapter"
+#
+# Secret: BILLING_PROVIDER_ADAPTER_AUTH_TOKEN. This is an internal service
+# binding bearer, not a payment-provider token.

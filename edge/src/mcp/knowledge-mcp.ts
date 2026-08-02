@@ -516,13 +516,13 @@ function parseMcpRequest(body: unknown): { ok: true; value: KnowledgeMcpRequest 
     }
     try {
       const rawQuery = parseRawKnowledgeQuery({
-        ...(typeof raw.schemaVersion === "number" ? { schemaVersion: raw.schemaVersion } : {}),
+        schemaVersion: raw.schemaVersion,
         template: raw.template,
         teamId: raw.teamId,
-        ...(typeof raw.channelId === "string" ? { channelId: raw.channelId } : {}),
-        ...(typeof raw.recordId === "string" ? { recordId: raw.recordId } : {}),
-        ...(typeof raw.sourceKey === "string" ? { sourceKey: raw.sourceKey } : {}),
-        ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
+        channelId: raw.channelId,
+        recordId: raw.recordId,
+        sourceKey: raw.sourceKey,
+        limit: raw.limit,
       });
       return {
         ok: true,

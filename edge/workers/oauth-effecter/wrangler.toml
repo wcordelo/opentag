@@ -1,0 +1,18 @@
+name = "opentag-oauth-effecter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: OAUTH_EFFECTER_AUTH_TOKEN
+# Optional service binding for the provider exchange/custody boundary.
+# The adapter bearer is a separate secret from OAUTH_EFFECTER_AUTH_TOKEN.
+
+#[[services]]
+#binding = "OAUTH_PROVIDER_ADAPTER"
+#service = "opentag-oauth-provider-adapter"
+
+# Secret: OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN

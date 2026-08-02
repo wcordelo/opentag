@@ -92,9 +92,9 @@ app.post("/identity", async (c) => {
       assertIdentityCustodyReceiptMatches(request, receipt);
     } catch (error) {
       if (error instanceof IdentityCustodyContractError) {
-        throw new IdentityCustodyWorkerError(error.code, 503);
+        throw new IdentityCustodyWorkerError(error.code, 400);
       }
-      throw new IdentityCustodyWorkerError("identity_provider_receipt_invalid", 503);
+      throw new IdentityCustodyWorkerError("identity_provider_receipt_invalid", 400);
     }
     return c.json({ ok: true, status: "completed", receipt }, 202);
   } catch (error) {

@@ -69,6 +69,9 @@ function identifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH):
   ) {
     throw new IdentityCustodyContractError(`${field}_invalid`);
   }
+  if (PRIVATE_MATERIAL_RE.test(value)) {
+    throw new IdentityCustodyContractError("private_key_material_forbidden");
+  }
   return value;
 }
 

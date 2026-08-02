@@ -104,8 +104,22 @@ type EffectReceipt = Readonly<{
   status: "pending" | "failed" | "leased";
   retryable: boolean;
   availableAt: string;
+  updatedAt?: string;
   leaseExpiresAt?: string;
 }>;
+
+function effectGrantedLeaseSeconds(
+  leaseExpiresAt: string,
+  updatedAt?: string,
+): number {
+  if (!updatedAt) {
+    return PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS;
+  }
+  const seconds = Math.round(
+    (Date.parse(leaseExpiresAt) - Date.parse(updatedAt)) / 1_000,
+  );
+  return Math.min(3_600, Math.max(30, seconds));
+}
 
 function receipt(value: unknown, expected: "pending" | "failed" | "leased"): EffectReceipt {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -136,6 +150,7 @@ function receipt(value: unknown, expected: "pending" | "failed" | "leased"): Eff
     status: expected,
     retryable: input.retryable,
     availableAt: input.availableAt,
+    ...(typeof input.updatedAt === "string" ? { updatedAt: input.updatedAt } : {}),
     ...(typeof input.leaseExpiresAt === "string" ? { leaseExpiresAt: input.leaseExpiresAt } : {}),
   });
 }
@@ -243,7 +258,13 @@ export async function dispatchPlatformEffectWakeup(
     readEffectList(stub, scope, tenantId, "leased"),
   ]);
   const reclaimableLeased = leased.filter(
-    (item) => item.leaseExpiresAt && platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
+    (item) =>
+      item.leaseExpiresAt &&
+      platformEffectLeaseIsReclaimable(
+        item.leaseExpiresAt,
+        now,
+        effectGrantedLeaseSeconds(item.leaseExpiresAt, item.updatedAt),
+      ),
   );
   const candidates = [
     ...pending,
@@ -292,11 +313,20 @@ export async function dispatchPlatformEffectWakeup(
     (item) =>
       item.leaseExpiresAt &&
       Date.parse(item.leaseExpiresAt) <= now &&
-      !platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
+      !platformEffectLeaseIsReclaimable(
+        item.leaseExpiresAt,
+        now,
+        effectGrantedLeaseSeconds(item.leaseExpiresAt, item.updatedAt),
+      ),
   );
   const nextWakeAt = [
     ...activeForWake.map((item) => Date.parse(item.leaseExpiresAt!)),
-    ...pendingReclaimForWake.map((item) => platformEffectLeaseReclaimableAt(item.leaseExpiresAt!)),
+    ...pendingReclaimForWake.map((item) =>
+      platformEffectLeaseReclaimableAt(
+        item.leaseExpiresAt!,
+        effectGrantedLeaseSeconds(item.leaseExpiresAt!, item.updatedAt),
+      )
+    ),
   ].sort((left, right) => left - right)[0];
   if (nextWakeAt !== undefined) {
     return {

@@ -38,13 +38,15 @@ describe("PlatformStateDO in workerd", () => {
     expect(first.body.tenantId).toMatch(/^[0-9a-f-]{36}$/);
 
     const step = await post(stub, "/provision/step", {
+      schemaVersion: 1,
       idempotencyKey: request.idempotencyKey,
       step: REQUIRED_PROVISIONING_STEPS[0],
       outcome: "complete",
+      externalReceiptRef: "receipt:workers-step-1",
+      observedAt: request.requestedAt,
     });
     expect(step.response.status).toBe(200);
     expect(step.body.status).toBe("provisioning");
     expect(step.body.completedSteps).toEqual([REQUIRED_PROVISIONING_STEPS[0]]);
   });
 });
-

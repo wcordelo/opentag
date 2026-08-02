@@ -113,9 +113,12 @@ describe("PlatformStateDO", () => {
 
       for (const step of REQUIRED_PROVISIONING_STEPS) {
         const advanced = await call(state, "/provision/step", {
+          schemaVersion: 1,
           idempotencyKey: request.idempotencyKey,
           step,
           outcome: "complete",
+          externalReceiptRef: `receipt:${step}`,
+          observedAt: now,
         });
         expect(advanced.response.status).toBe(200);
       }
@@ -182,9 +185,12 @@ describe("PlatformStateDO", () => {
       const tenantId = provisioned.body.tenantId;
       for (const step of REQUIRED_PROVISIONING_STEPS) {
         await call(state, "/provision/step", {
+          schemaVersion: 1,
           idempotencyKey: request.idempotencyKey,
           step,
           outcome: "complete",
+          externalReceiptRef: `receipt:${step}`,
+          observedAt: now,
         });
       }
       const credential = {

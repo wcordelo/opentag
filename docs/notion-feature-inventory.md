@@ -197,6 +197,9 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
+- receipt-bound provisioning step advancement; a tenant cannot become `active`
+  from a bare outcome and each required footprint retains an opaque external
+  receipt before activation.
 
 ### Still required before “everything” is live
 
@@ -204,10 +207,11 @@ change, not evidence that all earlier gaps are complete.
    Object envelope, or self-hosted custody; implement the broker Worker,
    provider OAuth/token rotation, scope checks, revocation propagation, and a
    safe non-production smoke. No credential store is currently configured.
-2. **Provisioning/identity:** choose the tenant locator and isolation model,
-   deploy the bootstrap/effect worker, establish identity/key custody, and only
-   mark provisioning active after every required DO, bundle, OAuth, and identity
-   step has an external receipt.
+2. **Provisioning/identity:** the local tenant ledger now requires an external
+   receipt for every required provisioning step. Still choose the tenant
+   locator/isolation model, deploy the bootstrap/effect worker, establish
+   identity/key custody, and supply real receipts for every DO, bundle, OAuth,
+   and identity step.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

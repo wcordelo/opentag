@@ -8,6 +8,7 @@ import { interruptAguiTurn } from "../src/slack/stop-routing.js";
 import {
   agentExecutionIdFromRequest,
   agentTraceCorrelationFromRequest,
+  getOrCreateBot,
 } from "../src/bot-engine.js";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {} }));
@@ -36,6 +37,14 @@ describe("signed session viewer", () => {
 });
 
 describe("exact AG-UI control", () => {
+  it("fails closed when production lacks the agent runtime binding", async () => {
+    await expect(getOrCreateBot({
+      ENVIRONMENT: "production",
+      SLACK_BOT_TOKEN: "configured",
+      AGENT_URL: "https://agent.example/run",
+    } as never)).rejects.toThrow("AGENT_RUNTIME is required for production agent execution");
+  });
+
   it("copies the exact execution identity from AG-UI context", () => {
     expect(agentExecutionIdFromRequest({
       body: JSON.stringify({

@@ -114,12 +114,44 @@ service = "opentag-agent"
 binding = "HARNESS"
 service = "opentag-harness"
 
+# Deploy opentag-credential-broker before activating connector credentials.
+# The broker remains fail-closed until its external CUSTODY binding is
+# configured; this binding never carries a provider token.
+[[services]]
+binding = "CONNECTOR_CREDENTIALS"
+service = "opentag-credential-broker"
+
+# Metadata-only platform-effect wakeups. The queue body contains only an
+# internal PlatformStateDO object name; provider payloads and secrets never
+# enter this queue.
+[[queues.producers]]
+binding = "PLATFORM_EFFECTS_QUEUE"
+queue = "opentag-platform-effects"
+
+[[queues.consumers]]
+queue = "opentag-platform-effects"
+max_batch_size = 10
+max_retries = 5
+dead_letter_queue = "opentag-platform-effects-dlq"
+
+[[queues.consumers]]
+queue = "opentag-platform-effects-dlq"
+max_batch_size = 10
+max_retries = 3
+
+# Separately deploy the authenticated effecter before enabling production
+# dispatch. Its provider adapters remain independently fail-closed.
+[[services]]
+binding = "PLATFORM_EFFECTER"
+service = "opentag-platform-effecter"
+
 [vars]
 ENVIRONMENT = "production"
 NANOCODEX_NATIVE_RESPONSES = "true"
 HARNESS_REPO_URL = "https://github.com/wcordelo/opentag"
 KNOWLEDGE_QUEUE_NAME = "opentag-knowledge"
 KNOWLEDGE_DLQ_NAME = "opentag-knowledge-dlq"
+PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
 SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
@@ -144,6 +176,8 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # OAuth callback origins are non-secret and must be an explicit comma-separated
 # HTTPS origin allowlist before the external OAuth effecter is enabled:
 # OAUTH_ALLOWED_REDIRECT_ORIGINS = "https://app.example.com"
+# CONNECTOR_CREDENTIAL_BROKER_TOKEN, IDENTITY_CUSTODY_AUTH_TOKEN,
+# OAUTH_EFFECTER_AUTH_TOKEN, OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN
 # SUPERMEMORY_URL is a deploy-time non-secret var; configure it through
 # OPENTAG_VAR_SUPERMEMORY_URL in scripts/deploy-opentag.mjs.
 #
@@ -152,3 +186,5 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
 # HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
 # HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml`
+# EFFECTOR_AUTH_TOKEN is a secret shared with opentag-platform-effecter:
+# `wrangler secret put EFFECTOR_AUTH_TOKEN --config wrangler.bot.toml`

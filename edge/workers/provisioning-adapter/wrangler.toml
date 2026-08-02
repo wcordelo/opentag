@@ -1,0 +1,20 @@
+name = "opentag-provisioning-adapter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: PROVISIONING_ADAPTER_AUTH_TOKEN. Share only with the internal
+# effect runner. It is not a provider credential.
+#
+# Optional service binding, enabled only after an approved bootstrap adapter
+# exists:
+# [[services]]
+# binding = "PROVISIONING_PROVIDER_ADAPTER"
+# service = "opentag-provisioning-provider-adapter"
+#
+# Secret: PROVISIONING_PROVIDER_ADAPTER_AUTH_TOKEN. This is an internal
+# adapter bearer, not a resource-provider token.

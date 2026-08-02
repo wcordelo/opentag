@@ -29,11 +29,16 @@ import {
   validateMemoryDeletionReceipt,
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
+  PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
+  platformEffectLeaseIsReclaimable,
   validateProvisioningRequest,
   validateProvisioningStepReceipt,
   validateUsageMeterEvent,
 } from "./layer3-contract.js";
 import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
+import { deriveInternalTenantId } from "./tenant-id.js";
+import { platformTenantObjectName } from "./tenant-routing.js";
+import { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
 
 /**
  * Metadata-only platform state.
@@ -51,7 +56,9 @@ import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
  */
 
 export const PLATFORM_MARKETPLACE_OBJECT_NAME = "__platform_marketplace__";
-export const PLATFORM_STATE_SCHEMA_VERSION = 1 as const;
+export { deriveInternalTenantId } from "./tenant-id.js";
+export { platformTenantObjectName } from "./tenant-routing.js";
+export { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
 
 const PLATFORM_DDL = [
   `CREATE TABLE IF NOT EXISTS provisioning (
@@ -300,33 +307,6 @@ export class PlatformStateError extends Error {
   }
 }
 
-/**
- * Derive the canonical internal tenant UUID without persisting the external
- * identifier in a global directory. The namespace is versioned so a future
- * migration can deliberately change the derivation rather than silently
- * moving a tenant to another Durable Object.
- */
-export async function deriveInternalTenantId(input: Pick<
-  ProvisioningRequest,
-  "externalPlatform" | "externalTenantId"
->): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      `opentag:tenant:v${PLATFORM_STATE_SCHEMA_VERSION}:${input.externalPlatform}:${input.externalTenantId}`,
-    ),
-  );
-  const bytes = new Uint8Array(digest).slice(0, 16);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-export function platformTenantObjectName(tenantId: string): string {
-  return `tenant:${id(tenantId, "tenant_id")}`;
-}
-
 type ProvisioningRow = {
   idempotency_key: string;
   request_id: string;
@@ -430,6 +410,7 @@ function effectReceipt(row: PlatformEffectRow): PlatformEffectReceipt {
     attempts: row.attempts,
     retryable: row.retryable === 1,
     availableAt: row.available_at,
+    ...(row.lease_expires_at ? { leaseExpiresAt: row.lease_expires_at } : {}),
     ...(row.last_error_code ? { lastErrorCode: row.last_error_code } : {}),
     ...(row.external_receipt_ref
       ? { externalReceiptRef: row.external_receipt_ref }
@@ -470,6 +451,16 @@ function leaseIsActive(row: PlatformEffectRow, now: string): boolean {
   return row.status === "leased" &&
     typeof row.lease_expires_at === "string" &&
     row.lease_expires_at > now;
+}
+
+function effectGrantedLeaseSeconds(row: PlatformEffectRow): number {
+  if (!row.lease_expires_at || !row.updated_at) {
+    return PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS;
+  }
+  const seconds = Math.round(
+    (Date.parse(row.lease_expires_at) - Date.parse(row.updated_at)) / 1_000,
+  );
+  return Math.min(3_600, Math.max(30, seconds));
 }
 
 export interface PlatformStateEngineDeps {
@@ -551,7 +542,7 @@ export class PlatformStateEngine {
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.sql.exec<PlatformEffectRow>(
-      `SELECT * FROM platform_effect_intents ${where} ORDER BY updated_at ASC LIMIT ?`,
+      `SELECT * FROM platform_effect_intents ${where} ORDER BY available_at ASC LIMIT ?`,
       ...params,
       limit,
     ).toArray();
@@ -574,8 +565,20 @@ export class PlatformStateEngine {
       if (current.status === "completed" || current.status === "cancelled") {
         throw new PlatformStateError("effect_not_claimable", 409);
       }
-      if (leaseIsActive(current, now)) {
-        throw new PlatformStateError("effect_lease_active", 409);
+      if (current.status === "leased") {
+        if (leaseIsActive(current, now)) {
+          throw new PlatformStateError("effect_lease_active", 409);
+        }
+        if (
+          current.lease_expires_at &&
+          !platformEffectLeaseIsReclaimable(
+            current.lease_expires_at,
+            this.now(),
+            effectGrantedLeaseSeconds(current),
+          )
+        ) {
+          throw new PlatformStateError("effect_lease_reclaim_pending", 409);
+        }
       }
       if (current.status === "failed" && current.retryable !== 1) {
         throw new PlatformStateError("effect_failure_not_retryable", 409);
@@ -608,6 +611,38 @@ export class PlatformStateEngine {
     });
   }
 
+  /** Extend a live effect lease while its provider adapter is still running. */
+  renewEffect(value: unknown): { ok: true; leaseExpiresAt: string; receipt: PlatformEffectReceipt } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_renew_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const leaseToken = id(input.leaseToken, "lease_token", 256);
+    const leaseSeconds = effectLeaseSeconds(input.leaseSeconds);
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      this.assertEffectLease(current, leaseToken);
+      const now = this.now();
+      const updatedAt = new Date(now).toISOString();
+      const leaseExpiresAt = new Date(now + leaseSeconds * 1_000).toISOString();
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET lease_expires_at = ?, updated_at = ?
+         WHERE intent_id = ?`,
+        leaseExpiresAt,
+        updatedAt,
+        intentId,
+      );
+      return {
+        ok: true,
+        leaseExpiresAt,
+        receipt: effectReceipt(this.effectById(intentId)!),
+      };
+    });
+  }
+
   completeEffect(value: unknown): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new PlatformStateError("effect_complete_invalid", 400);
@@ -625,6 +660,9 @@ export class PlatformStateEngine {
         return { ok: true, duplicate: true, receipt: effectReceipt(current) };
       }
       this.assertEffectLease(current, leaseToken);
+      if (!externalReceiptRef) {
+        throw new PlatformStateError("effect_external_receipt_required", 400);
+      }
       const completedAt = nowIso(this.now);
       this.sql.exec(
         `UPDATE platform_effect_intents
@@ -1715,10 +1753,8 @@ export class PlatformStateEngine {
     if (row.status !== "leased" || row.lease_token !== leaseToken) {
       throw new PlatformStateError("effect_lease_mismatch", 409);
     }
-    const now = nowIso(this.now);
-    if (!row.lease_expires_at || row.lease_expires_at <= now) {
-      throw new PlatformStateError("effect_lease_expired", 409);
-    }
+    // Lease expiry ends exclusivity, but reclaim waits a grace period so a slow
+    // adapter can still close the lease with its token before another rerun.
   }
 
   private provisioningByKey(key: string): ProvisioningRow | undefined {
@@ -2049,6 +2085,9 @@ export class PlatformStateDO extends DurableObject {
       }
       if (url.pathname === "/effect/claim" && request.method === "POST") {
         return Response.json(this.engine.claimEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/renew" && request.method === "POST") {
+        return Response.json(this.engine.renewEffect(await readJson(request)));
       }
       if (url.pathname === "/effect/complete" && request.method === "POST") {
         return Response.json(this.engine.completeEffect(await readJson(request)));

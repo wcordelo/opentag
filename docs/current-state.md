@@ -15,8 +15,8 @@ current status.
 
 | Evidence | Value |
 | --- | --- |
-| Merged OpenTag baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
-| Review-ready feature PRs | [#29](https://github.com/wcordelo/opentag/pull/29), [#30](https://github.com/wcordelo/opentag/pull/30), [#31](https://github.com/wcordelo/opentag/pull/31), and [#32](https://github.com/wcordelo/opentag/pull/32); all non-draft, mergeable, and green at this reconciliation |
+| Merged OpenTag baseline at recorded deployment | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
+| Current merged main | `5b2a2f8` (`origin/main`, including the subsequently merged architecture PRs #29–#39 and #41–#43; PR #40 remains open) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
 | Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
@@ -30,9 +30,11 @@ current status.
 The current deployment was performed from the clean detached deployment
 worktree at `/Users/will/Documents/opentag-worktrees/deploy-20260801` after
 `origin/main` advanced through the provisioning and memory-receipt merges.
-The review-ready feature PRs and subsequent stacked feature branches remain
-unmerged and were not deployed by this workflow; their provider adapters and
-custody integrations are therefore not represented as live capability.
+The recorded deployment is the earlier `498164f` baseline. `origin/main` has
+since advanced to `5b2a2f8` through the stacked architecture merges, but this
+conflict-resolution workflow did not deploy that newer main or PR #40. Provider
+adapters and custody integrations must not be treated as live solely because
+their source has merged.
 No secret value is recorded here.
 
 ## Status vocabulary

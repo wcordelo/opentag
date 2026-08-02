@@ -180,7 +180,14 @@ function contractMetadata(
       if (metadata.previousVersion !== undefined) contractInteger(metadata.previousVersion);
       break;
     case "connector_oauth":
-      contractKeys(metadata, ["connectorId", "credentialRef", "operation", "principalId", "version"]);
+      contractKeys(metadata, [
+        "connectorId",
+        "credentialRef",
+        "marketplaceVersion",
+        "operation",
+        "principalId",
+        "version",
+      ]);
       contractString(metadata.connectorId);
       contractString(metadata.credentialRef);
       contractEnum(metadata.operation, [
@@ -188,8 +195,12 @@ function contractMetadata(
         "credential_rotation",
         "explicit_revoke",
         "grant_rotation",
+        "marketplace_revocation",
       ]);
       contractString(metadata.principalId);
+      if (metadata.marketplaceVersion !== undefined) {
+        contractString(metadata.marketplaceVersion);
+      }
       contractInteger(metadata.version);
       break;
     case "marketplace":

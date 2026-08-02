@@ -2042,7 +2042,7 @@ export class PlatformStateEngine {
     ).toArray();
     for (const row of rows) {
       const grant = parseJson<ConnectorOAuthGrant>(row.grant_json);
-      if (grant.marketplaceVersion !== undefined && grant.marketplaceVersion !== marketplaceVersion) {
+      if (grant.marketplaceVersion === undefined || grant.marketplaceVersion !== marketplaceVersion) {
         continue;
       }
       this.sql.exec(

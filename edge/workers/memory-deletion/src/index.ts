@@ -100,7 +100,11 @@ app.post("/delete", async (c) => {
       }
       throw new MemoryDeletionWorkerError("memory_provider_receipt_invalid", 503);
     }
-    return c.json({ ok: true, status: "completed", receipt }, 202);
+    return c.json({
+      ok: true,
+      status: receipt.status === "failed" ? "failed" : "completed",
+      receipt,
+    }, 202);
   } catch (error) {
     if (error instanceof MemoryDeletionWorkerError) {
       return c.json({ error: error.code }, error.status);

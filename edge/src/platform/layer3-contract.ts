@@ -143,8 +143,19 @@ export type ProvisioningReceipt = Readonly<{
   tenantId: string;
   status: ProvisioningStatus;
   completedSteps: readonly ProvisioningStep[];
+  stepReceipts: readonly ProvisioningStepReceipt[];
   failedStep?: ProvisioningStep;
   retryable: boolean;
+  observedAt: string;
+}>;
+
+export type ProvisioningStepReceipt = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  idempotencyKey: string;
+  step: ProvisioningStep;
+  outcome: "complete" | "failed";
+  retryable: boolean;
+  externalReceiptRef: string;
   observedAt: string;
 }>;
 
@@ -166,6 +177,30 @@ export function validateProvisioningRequest(value: unknown): ProvisioningRequest
     isolationMode: enumValue(input.isolationMode, ["shared_worker_per_tenant_do", "workers_for_platforms"], "isolation_mode"),
     custodyBackend: enumValue(input.custodyBackend, ["external_kms", "wrapped_do_envelope", "self_hosted"], "custody_backend"),
     requestedAt: timestamp(input.requestedAt, "requested_at"),
+  });
+}
+
+export function validateProvisioningStepReceipt(value: unknown): ProvisioningStepReceipt {
+  rejectSecretMaterial(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("provisioning_step_receipt_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  if (input.schemaVersion !== PLATFORM_SCHEMA_VERSION) throw new PlatformFoundationError("platform_schema_invalid");
+  if (input.retryable !== undefined && typeof input.retryable !== "boolean") {
+    throw new PlatformFoundationError("provisioning_retryable_invalid");
+  }
+  if (input.outcome === "complete" && input.retryable === true) {
+    throw new PlatformFoundationError("provisioning_complete_retryable_invalid");
+  }
+  return Object.freeze({
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    idempotencyKey: identifier(input.idempotencyKey, "idempotency_key"),
+    step: enumValue(input.step, REQUIRED_PROVISIONING_STEPS, "provisioning_step"),
+    outcome: enumValue(input.outcome, ["complete", "failed"], "provisioning_step_outcome"),
+    retryable: input.retryable === true,
+    externalReceiptRef: identifier(input.externalReceiptRef, "external_receipt_ref"),
+    observedAt: timestamp(input.observedAt, "observed_at"),
   });
 }
 

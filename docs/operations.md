@@ -189,6 +189,7 @@ cd edge
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
 | `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
+| `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
 | `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
@@ -312,6 +313,12 @@ subscription. A billing adapter must map the intent through
 outside OpenTag. Configure a separately authenticated provider adapter only
 after source-of-truth, invoice, retry, and reconciliation decisions are
 approved.
+
+Provisioning step updates must include `schemaVersion`, the provisioning
+idempotency key, required step, outcome, opaque `externalReceiptRef`, and
+`observedAt`. A complete step cannot be marked retryable. The platform ledger
+stores the receipt and reaches `active` only after all required steps have
+completed with evidence; it does not perform the external provisioning work.
 
 ## Deploy and connect the harness
 

@@ -3,6 +3,7 @@ import {
   PlatformEffectAdapterError,
   PlatformEffectRunnerError,
   runPlatformEffect,
+  validatePlatformEffectAdapterIntent,
   validatePlatformEffectRunRequest,
   type PlatformEffectStateClient,
 } from "../src/platform/effect-runner.js";
@@ -20,7 +21,7 @@ const intent = validatePlatformEffectIntent({
   tenantId: "tenant-1",
   kind: "credential_custody",
   targetRef: "credential:google:workspace",
-  metadata: { operation: "rotate", version: 2 },
+  metadata: { operation: "rotate", provider: "google", version: 2 },
   requestedAt: "2026-08-01T22:00:00.000Z",
 });
 
@@ -74,6 +75,116 @@ function makeState(): {
 }
 
 describe("platform effect runner", () => {
+  it("exposes only the reviewed metadata vocabulary to adapters", () => {
+    expect(validatePlatformEffectAdapterIntent(intent)).toBe(intent);
+    expect(() => validatePlatformEffectAdapterIntent({
+      ...intent,
+      metadata: { operation: "rotate", version: 2 },
+    })).toThrow("effect_metadata_contract_invalid");
+    expect(() => validatePlatformEffectAdapterIntent({
+      ...intent,
+      metadata: {
+        operation: "rotate",
+        provider: "google",
+        version: 2,
+        providerInstruction: "unexpected",
+      },
+    })).toThrow("effect_metadata_contract_invalid");
+    expect(validatePlatformEffectAdapterIntent({
+      ...intent,
+      kind: "memory_deletion",
+      targetRef: "memory-deletion:request-1",
+      metadata: { deletionEpoch: 3, requestId: "request-1" },
+    })).toMatchObject({
+      kind: "memory_deletion",
+      metadata: { deletionEpoch: 3, requestId: "request-1" },
+    });
+  });
+
+  it("accepts every metadata shape emitted by PlatformStateDO", () => {
+    const cases = [
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "provisioning",
+        targetRef: "provision:install-1",
+        metadata: {
+          externalPlatform: "slack",
+          externalTenantId: "T1",
+          isolationMode: "shared_worker_per_tenant_do",
+          custodyBackend: "external_kms",
+          requestId: "request-1",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "identity_custody",
+        targetRef: "identity:tenant-1",
+        metadata: { operation: "revoke", version: 1 },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "connector_oauth",
+        targetRef: "google_drive",
+        metadata: {
+          connectorId: "google_drive",
+          credentialRef: "credential:google:workspace",
+          operation: "explicit_revoke",
+          principalId: "principal-1",
+          version: 1,
+        },
+      },
+      {
+        scope: "platform",
+        kind: "marketplace",
+        targetRef: "google_drive:v1",
+        metadata: {
+          authMode: "oauth2",
+          connectorId: "google_drive",
+          operation: "curate",
+          provider: "google",
+          status: "curated",
+          trustReviewRef: "review:google-drive:v1",
+          version: "v1",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "billing_meter",
+        targetRef: "meter-1",
+        metadata: {
+          executionId: "execution-1",
+          metric: "connector_calls",
+          planRevision: 1,
+          quantity: 1,
+          tier: 2,
+          unit: "count",
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "memory_deletion",
+        targetRef: "memory-deletion:request-1",
+        metadata: { deletionEpoch: 2, requestId: "request-1" },
+      },
+    ] as const;
+
+    for (const value of cases) {
+      const candidate = validatePlatformEffectIntent({
+        schemaVersion: 1,
+        intentId: `effect:${value.kind}`,
+        idempotencyKey: `idempotency:${value.kind}`,
+        requestedAt: intent.requestedAt,
+        ...value,
+      });
+      expect(validatePlatformEffectAdapterIntent(candidate)).toBe(candidate);
+    }
+  });
+
   it("claims, invokes the explicit adapter, and records a bounded receipt", async () => {
     const { state, calls } = makeState();
     const result = await runPlatformEffect({

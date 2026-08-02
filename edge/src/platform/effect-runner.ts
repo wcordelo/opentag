@@ -97,6 +97,140 @@ function safeErrorCode(value: unknown, field = "effect_error_code"): string {
   return result;
 }
 
+function metadataContractError(): never {
+  throw new PlatformEffectRunnerError("effect_metadata_contract_invalid");
+}
+
+function contractString(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 2_048 ||
+    value !== value.trim() ||
+    CONTROL_RE.test(value)
+  ) {
+    metadataContractError();
+  }
+  return value;
+}
+
+function contractInteger(value: unknown, allowZero = false): number {
+  if (!Number.isSafeInteger(value) || (value as number) < (allowZero ? 0 : 1)) {
+    metadataContractError();
+  }
+  return value as number;
+}
+
+function contractEnum<T extends string>(value: unknown, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    metadataContractError();
+  }
+  return value as T;
+}
+
+function contractKeys(
+  metadata: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  if (Object.keys(metadata).some((key) => !allowed.includes(key))) {
+    metadataContractError();
+  }
+}
+
+function contractMetadata(
+  intent: PlatformEffectIntent,
+): PlatformEffectIntent {
+  const metadata = intent.metadata as Record<string, unknown>;
+  switch (intent.kind) {
+    case "provisioning":
+      contractKeys(metadata, [
+        "externalPlatform",
+        "externalTenantId",
+        "isolationMode",
+        "custodyBackend",
+        "requestId",
+      ]);
+      contractEnum(metadata.externalPlatform, ["slack"]);
+      contractString(metadata.externalTenantId);
+      contractEnum(metadata.isolationMode, ["shared_worker_per_tenant_do", "workers_for_platforms"]);
+      contractEnum(metadata.custodyBackend, ["external_kms", "wrapped_do_envelope", "self_hosted"]);
+      contractString(metadata.requestId);
+      break;
+    case "identity_custody":
+      contractKeys(metadata, ["operation", "version"]);
+      contractEnum(metadata.operation, ["revoke", "rotate"]);
+      contractInteger(metadata.version);
+      break;
+    case "credential_custody":
+      contractKeys(metadata, ["operation", "previousVersion", "provider", "version"]);
+      contractEnum(metadata.operation, ["revoke", "rotate"]);
+      contractString(metadata.provider);
+      contractInteger(metadata.version);
+      if (metadata.previousVersion !== undefined) contractInteger(metadata.previousVersion);
+      break;
+    case "connector_oauth":
+      contractKeys(metadata, ["connectorId", "credentialRef", "operation", "principalId", "version"]);
+      contractString(metadata.connectorId);
+      contractString(metadata.credentialRef);
+      contractEnum(metadata.operation, [
+        "credential_revocation",
+        "credential_rotation",
+        "explicit_revoke",
+        "grant_rotation",
+      ]);
+      contractString(metadata.principalId);
+      contractInteger(metadata.version);
+      break;
+    case "marketplace":
+      contractKeys(metadata, [
+        "authMode",
+        "connectorId",
+        "operation",
+        "provider",
+        "status",
+        "trustReviewRef",
+        "version",
+      ]);
+      contractEnum(metadata.authMode, ["oauth2", "service_binding", "none"]);
+      contractString(metadata.connectorId);
+      contractEnum(metadata.operation, ["curate", "deprecate", "revoke"]);
+      contractString(metadata.provider);
+      contractEnum(metadata.status, ["curated", "deprecated", "revoked"]);
+      contractString(metadata.trustReviewRef);
+      contractString(metadata.version);
+      break;
+    case "billing_meter":
+      contractKeys(metadata, ["executionId", "metric", "planRevision", "quantity", "tier", "unit"]);
+      contractString(metadata.executionId);
+      contractEnum(metadata.metric, ["knowledge_query", "agent_tokens", "connector_calls", "container_ms"]);
+      contractInteger(metadata.planRevision);
+      contractInteger(metadata.quantity, true);
+      if (![1, 2, 3].includes(metadata.tier as number)) metadataContractError();
+      contractEnum(metadata.unit, ["count", "tokens", "milliseconds"]);
+      break;
+    case "memory_deletion":
+      contractKeys(metadata, ["deletionEpoch", "requestId"]);
+      contractInteger(metadata.deletionEpoch, true);
+      contractString(metadata.requestId);
+      break;
+  }
+  return intent;
+}
+
+/**
+ * Validate the exact metadata shape that a provider adapter may receive.
+ *
+ * The durable ledger keeps a generic bounded envelope for forward-compatible
+ * storage, but the external effect boundary is stricter: each effect kind has
+ * a closed metadata vocabulary and primitive types. This prevents a future
+ * adapter from treating an unreviewed field as a provider instruction.
+ */
+export function validatePlatformEffectAdapterIntent(
+  intent: PlatformEffectIntent,
+): PlatformEffectIntent {
+  return contractMetadata(intent);
+}
+
 function leaseSeconds(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (
@@ -239,6 +373,22 @@ export async function runPlatformEffect(input: {
       retryAfterSeconds: 0,
     });
     return { status: "failed", adapterConfigured: false, receipt, errorCode: "effect_scope_mismatch" };
+  }
+
+  try {
+    validatePlatformEffectAdapterIntent(intent);
+  } catch {
+    const receipt = await reportFailure(input.state, claim, {
+      errorCode: "effect_metadata_contract_invalid",
+      retryable: false,
+      retryAfterSeconds: 0,
+    });
+    return {
+      status: "failed",
+      adapterConfigured: false,
+      receipt,
+      errorCode: "effect_metadata_contract_invalid",
+    };
   }
 
   const adapter = input.adapters[intent.kind];

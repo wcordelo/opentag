@@ -18,7 +18,7 @@ const intent = validatePlatformEffectIntent({
   tenantId: "tenant-1",
   kind: "credential_custody",
   targetRef: "credential:google:workspace",
-  metadata: { operation: "rotate", version: 2 },
+  metadata: { operation: "rotate", provider: "google", version: 2 },
   requestedAt: "2026-08-01T22:00:00.000Z",
 });
 

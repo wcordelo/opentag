@@ -172,6 +172,113 @@ describe("PlatformStateDO", () => {
     }
   });
 
+  it("keeps subject identity links tenant-scoped, versioned, and revocable", async () => {
+    const { state, close } = makeState();
+    try {
+      const provisioned = await call(state, "/provision", {
+        ...request,
+        requestId: "identity-link-request",
+        idempotencyKey: "identity-link-install",
+        externalTenantId: "T-identity-link",
+      });
+      const tenantId = provisioned.body.tenantId as string;
+      const principalId = "22222222-2222-4222-8222-222222222222";
+      const subject = {
+        platform: "slack",
+        platformTenantId: "T-identity-link",
+        platformSubjectId: "U-identity-link",
+      };
+      const active = {
+        schemaVersion: 1,
+        tenantId,
+        subject,
+        principal: {
+          tenantId,
+          principalId,
+          kind: "human",
+          status: "active",
+          authorizationVersion: 1,
+        },
+        identityLink: {
+          tenantId,
+          principalId,
+          subject,
+          proofType: "slack_admin_attestation",
+          proofDigest: "sha256:identity-link-proof",
+          verifiedAt: now,
+          identityLinkVersion: 1,
+        },
+        version: 1,
+        status: "active",
+        updatedAt: now,
+      };
+      const created = await call(state, "/identity-link", active);
+      expect(created.response.status).toBe(200);
+      expect(created.body).toMatchObject({ duplicate: false, record: { version: 1, tenantId } });
+      expect((await call(state, "/identity-link", active)).body.duplicate).toBe(true);
+      expect((await call(state, "/identity-link/resolve", {
+        schemaVersion: 1,
+        ...subject,
+      })).body).toMatchObject({
+        status: "resolved",
+        principal: { tenantId, principalId },
+        identityLink: { identityLinkVersion: 1 },
+      });
+
+      const updated = {
+        ...active,
+        version: 2,
+        updatedAt: "2026-08-01T20:01:00.000Z",
+        principal: { ...active.principal, authorizationVersion: 2 },
+        identityLink: { ...active.identityLink, identityLinkVersion: 2 },
+      };
+      expect((await call(state, "/identity-link", updated)).body).toMatchObject({
+        duplicate: false,
+        record: { version: 2, principal: { authorizationVersion: 2 } },
+      });
+      expect((await call(state, "/identity-link", {
+        ...updated,
+        version: 4,
+        identityLink: { ...updated.identityLink, identityLinkVersion: 4 },
+        updatedAt: "2026-08-01T20:02:00.000Z",
+      })).body.error).toBe("identity_link_version_gap");
+      expect((await call(state, "/identity-link", {
+        ...active,
+        subject: { ...subject, platformTenantId: "T-foreign" },
+        identityLink: {
+          ...active.identityLink,
+          subject: { ...subject, platformTenantId: "T-foreign" },
+        },
+      })).body.error).toBe("identity_link_tenant_conflict");
+
+      const revoked = await call(state, "/identity-link/revoke", {
+        schemaVersion: 1,
+        ...subject,
+        version: 3,
+        revokedAt: "2026-08-01T20:03:00.000Z",
+      });
+      expect(revoked.body).toMatchObject({ duplicate: false, record: { status: "revoked", version: 3 } });
+      expect((await call(state, "/identity-link/resolve", {
+        schemaVersion: 1,
+        ...subject,
+      })).body).toEqual({ status: "inactive" });
+      expect((await call(state, "/identity-link/revoke", {
+        schemaVersion: 1,
+        ...subject,
+        version: 3,
+        revokedAt: "2026-08-01T20:03:00.000Z",
+      })).body.duplicate).toBe(true);
+      expect((await call(state, "/identity-link", {
+        ...active,
+        version: 4,
+        identityLink: { ...active.identityLink, identityLinkVersion: 4 },
+        updatedAt: "2026-08-01T20:04:00.000Z",
+      })).body.error).toBe("identity_link_revoked");
+    } finally {
+      close();
+    }
+  });
+
   it("durably advances provisioning and keeps retries idempotent", async () => {
     const { state, close } = makeState();
     try {

@@ -134,6 +134,23 @@ This closes the source-level tenant-locator gap; production population still
 requires an approved bootstrap authority, real provisioning receipts, and a
 non-production install smoke.
 
+### Identity-link boundary
+
+Each tenant metadata object now has a metadata-only identity-link ledger. It
+binds one external subject to one canonical internal principal and a verified
+identity proof, with independent authorization and identity-link versions.
+Writes require matching tenant/principal/subject relationships and contiguous
+versions; a subject cannot be silently rebound to another principal, and
+revocation is terminal. Expired or suspended links resolve as `inactive`.
+
+The admin-only `/admin/platform/identity-link`, `/resolve`, and `/revoke`
+routes are bootstrap/lifecycle seams. `PlatformStateIdentityLinkReader`
+addresses only the tenant object selected by the already-resolved locator and
+stores no private key or provider token. The Slack adapter can resolve both
+the locator and identity link from these read-only boundaries before building
+`PlatformRequestContext`. Identity/key generation, signing, custody, and proof
+issuance remain the separate authenticated custody/provider responsibility.
+
 ## External effect handoff
 
 `platform_effect_intents` is the only durable handoff between the metadata
@@ -347,13 +364,13 @@ not a replacement for that worker.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, tenant-locator registry/reader, effect leases,
-  admin routes, credential-broker boundary, optional Secrets Store custody
-  adapter, and identity custody protocol are locally validated, but the
-  production bootstrap authority, configured identity provider/key custody
-  adapter, Slack OAuth callback, marketplace trust review process, billing/plan
-  enforcement, memory deletion executor, configured custody mapping, and
-  provider adapters are not live.
+- The platform-state migration, tenant-locator and identity-link
+  registry/readers, effect leases, admin routes, credential-broker boundary,
+  optional Secrets Store custody adapter, and identity custody protocol are
+  locally validated, but the production bootstrap/proof authority, configured
+  identity provider/key custody adapter, Slack OAuth callback, marketplace
+  trust review process, billing/plan enforcement, memory deletion executor,
+  configured custody mapping, and provider adapters are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.

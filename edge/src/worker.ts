@@ -118,6 +118,7 @@ import {
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
 import { TENANT_LOCATOR_SCHEMA_VERSION } from "./platform/tenant-locator.js";
+import { IDENTITY_LINK_SCHEMA_VERSION } from "./platform/identity-link.js";
 import {
   enqueuePlatformEffectWakeup,
   handlePlatformEffectQueue,
@@ -916,6 +917,29 @@ app.post("/admin/platform/identity/revoke", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
   return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity/revoke", body);
+});
+
+app.post("/admin/platform/identity-link", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link", body);
+});
+
+app.post("/admin/platform/identity-link/resolve", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (body.schemaVersion !== IDENTITY_LINK_SCHEMA_VERSION) {
+    return c.json({ error: "identity_link_schema_invalid" }, 400);
+  }
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  const { tenantId: _tenantId, ...lookup } = body;
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link/resolve", lookup);
+});
+
+app.post("/admin/platform/identity-link/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  const { tenantId: _tenantId, ...revocation } = body;
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link/revoke", revocation);
 });
 
 app.post("/admin/platform/credential", requireAdminAuth(), async (c) => {

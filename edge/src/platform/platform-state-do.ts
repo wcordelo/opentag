@@ -53,6 +53,14 @@ import {
   validateTenantLocatorRecord,
   validateTenantLocatorRevocation,
 } from "./tenant-locator.js";
+import {
+  IdentityLinkContractError,
+  identityLinkResolutionFromRecord,
+  type IdentityLinkRecord,
+  validateIdentityLinkLookup,
+  validateIdentityLinkRecord,
+  validateIdentityLinkRevocation,
+} from "./identity-link.js";
 
 /**
  * Metadata-only platform state.
@@ -150,6 +158,19 @@ const PLATFORM_DDL = [
      issued_at TEXT NOT NULL,
      revoked_at TEXT,
      updated_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS identity_links (
+     external_platform TEXT NOT NULL,
+     external_tenant_id TEXT NOT NULL,
+     external_subject_id TEXT NOT NULL,
+     tenant_id TEXT NOT NULL,
+     principal_json TEXT NOT NULL,
+     identity_link_json TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+     updated_at TEXT NOT NULL,
+     revoked_at TEXT,
+     PRIMARY KEY (external_platform, external_tenant_id, external_subject_id)
    )`,
   `CREATE TABLE IF NOT EXISTS credential_custody_refs (
      credential_ref TEXT PRIMARY KEY,
@@ -383,8 +404,39 @@ type TenantLocatorRow = {
   locator_json: string;
 };
 
+type IdentityLinkRow = {
+  external_platform: string;
+  external_tenant_id: string;
+  external_subject_id: string;
+  tenant_id: string;
+  principal_json: string;
+  identity_link_json: string;
+  version: number;
+  status: IdentityLinkRecord["status"];
+  updated_at: string;
+  revoked_at: string | null;
+};
+
 function tenantLocatorFromRow(row: TenantLocatorRow): TenantLocatorRecord {
   return validateTenantLocatorRecord(parseJson<unknown>(row.locator_json));
+}
+
+function identityLinkFromRow(row: IdentityLinkRow): IdentityLinkRecord {
+  return validateIdentityLinkRecord({
+    schemaVersion: 1,
+    tenantId: row.tenant_id,
+    subject: {
+      platform: row.external_platform,
+      platformTenantId: row.external_tenant_id,
+      platformSubjectId: row.external_subject_id,
+    },
+    principal: parseJson<unknown>(row.principal_json),
+    identityLink: parseJson<unknown>(row.identity_link_json),
+    version: row.version,
+    status: row.status,
+    updatedAt: row.updated_at,
+    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  });
 }
 
 function provisioningReceipt(
@@ -1146,6 +1198,159 @@ export class PlatformStateEngine {
       const stored = this.provisioningByKey(key)!;
       return provisioningReceipt(stored, this.provisioningStepReceipts(stored.idempotency_key));
     });
+  }
+
+  putIdentityLink(value: unknown): { ok: true; duplicate: boolean; record: IdentityLinkRecord } {
+    const record = validateIdentityLinkRecord(value);
+    if (record.status !== "active") {
+      throw new IdentityLinkContractError("identity_link_put_requires_active", 400);
+    }
+    if (record.principal.status !== "active") {
+      throw new IdentityLinkContractError("identity_principal_inactive", 409);
+    }
+    return this.tx(() => {
+      const tenant = assertProvisionedRow(this.provisioningByTenant(record.tenantId), record.tenantId);
+      if (
+        tenant.external_platform !== record.subject.platform ||
+        tenant.external_tenant_id !== record.subject.platformTenantId
+      ) {
+        throw new IdentityLinkContractError("identity_link_tenant_conflict", 409);
+      }
+      const current = this.sql.exec<IdentityLinkRow>(
+        `SELECT * FROM identity_links
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+      ).toArray()[0];
+      if (current) {
+        const currentRecord = identityLinkFromRow(current);
+        if (currentRecord.tenantId !== record.tenantId) {
+          throw new IdentityLinkContractError("identity_link_tenant_conflict", 409);
+        }
+        if (currentRecord.identityLink.principalId !== record.identityLink.principalId) {
+          throw new IdentityLinkContractError("identity_link_principal_conflict", 409);
+        }
+        if (currentRecord.status === "revoked") {
+          throw new IdentityLinkContractError("identity_link_revoked", 409);
+        }
+        if (record.version < currentRecord.version) {
+          throw new IdentityLinkContractError("identity_link_version_stale", 409);
+        }
+        if (record.version === currentRecord.version) {
+          if (JSON.stringify(currentRecord) !== JSON.stringify(record)) {
+            throw new IdentityLinkContractError("identity_link_version_conflict", 409);
+          }
+          return { ok: true, duplicate: true, record: currentRecord };
+        }
+        if (record.version !== currentRecord.version + 1) {
+          throw new IdentityLinkContractError("identity_link_version_gap", 409);
+        }
+      } else if (record.version !== 1) {
+        throw new IdentityLinkContractError("identity_link_initial_version_invalid", 409);
+      }
+
+      this.sql.exec(
+        `INSERT INTO identity_links (
+           external_platform, external_tenant_id, external_subject_id,
+           tenant_id, principal_json, identity_link_json, version, status,
+           updated_at, revoked_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL)
+         ON CONFLICT(external_platform, external_tenant_id, external_subject_id) DO UPDATE SET
+           tenant_id = excluded.tenant_id,
+           principal_json = excluded.principal_json,
+           identity_link_json = excluded.identity_link_json,
+           version = excluded.version,
+           status = excluded.status,
+           updated_at = excluded.updated_at,
+           revoked_at = NULL`,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+        record.tenantId,
+        json(record.principal),
+        json(record.identityLink),
+        record.version,
+        record.updatedAt,
+      );
+      return { ok: true, duplicate: false, record };
+    });
+  }
+
+  revokeIdentityLink(value: unknown): { ok: true; duplicate: boolean; record: IdentityLinkRecord } {
+    const revocation = validateIdentityLinkRevocation(value);
+    return this.tx(() => {
+      const current = this.sql.exec<IdentityLinkRow>(
+        `SELECT * FROM identity_links
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        revocation.platform,
+        revocation.platformTenantId,
+        revocation.platformSubjectId,
+      ).toArray()[0];
+      if (!current) throw new IdentityLinkContractError("identity_link_not_found", 404);
+      const currentRecord = identityLinkFromRow(current);
+      if (currentRecord.status === "revoked") {
+        if (currentRecord.version === revocation.version && currentRecord.revokedAt === revocation.revokedAt) {
+          return { ok: true, duplicate: true, record: currentRecord };
+        }
+        throw new IdentityLinkContractError("identity_link_revoked", 409);
+      }
+      if (revocation.version !== currentRecord.version + 1) {
+        throw new IdentityLinkContractError(
+          revocation.version < currentRecord.version + 1
+            ? "identity_link_version_stale"
+            : "identity_link_version_gap",
+          409,
+        );
+      }
+      const record = validateIdentityLinkRecord({
+        ...currentRecord,
+        version: revocation.version,
+        identityLink: {
+          ...currentRecord.identityLink,
+          identityLinkVersion: revocation.version,
+        },
+        status: "revoked",
+        updatedAt: revocation.revokedAt,
+        revokedAt: revocation.revokedAt,
+      });
+      this.sql.exec(
+        `UPDATE identity_links
+         SET version = ?, identity_link_json = ?, status = 'revoked',
+             updated_at = ?, revoked_at = ?
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        record.version,
+        json(record.identityLink),
+        record.updatedAt,
+        record.revokedAt ?? null,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+      );
+      return { ok: true, duplicate: false, record };
+    });
+  }
+
+  resolveIdentityLink(value: unknown) {
+    const lookup = validateIdentityLinkLookup(value);
+    const rows = this.sql.exec<IdentityLinkRow>(
+      `SELECT * FROM identity_links
+       WHERE external_platform = ?
+         AND external_tenant_id = ?
+         AND external_subject_id = ?`,
+      lookup.platform,
+      lookup.platformTenantId,
+      lookup.platformSubjectId,
+    ).toArray();
+    if (rows.length === 0) return { status: "not_found" as const };
+    if (rows.length !== 1) return { status: "ambiguous" as const };
+    return identityLinkResolutionFromRecord(identityLinkFromRow(rows[0]!));
   }
 
   putIdentity(value: unknown): { ok: true; duplicate: boolean; reference: IdentityCustodyReference } {
@@ -2393,9 +2598,12 @@ function responseForError(error: unknown): Response {
   if (
     error instanceof PlatformFoundationError ||
     error instanceof PlatformStateError ||
-    error instanceof TenantLocatorContractError
+    error instanceof TenantLocatorContractError ||
+    error instanceof IdentityLinkContractError
   ) {
-    const status = error instanceof PlatformStateError || error instanceof TenantLocatorContractError
+    const status = error instanceof PlatformStateError ||
+      error instanceof TenantLocatorContractError ||
+      error instanceof IdentityLinkContractError
       ? error.status
       : 400;
     return Response.json({ error: error.code }, { status });
@@ -2465,6 +2673,15 @@ export class PlatformStateDO extends DurableObject {
       }
       if (url.pathname === "/tenant-locator/resolve" && request.method === "POST") {
         return Response.json(this.engine.resolveTenantLocator(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link" && request.method === "POST") {
+        return Response.json(this.engine.putIdentityLink(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link/revoke" && request.method === "POST") {
+        return Response.json(this.engine.revokeIdentityLink(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link/resolve" && request.method === "POST") {
+        return Response.json(this.engine.resolveIdentityLink(await readJson(request)));
       }
       if (url.pathname === "/provision/step" && request.method === "POST") {
         return Response.json(this.engine.advanceProvisioning(await readJson(request)));

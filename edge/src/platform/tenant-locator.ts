@@ -213,11 +213,11 @@ export function tenantLocatorSubject(value: Pick<ExternalSubject, "platform" | "
   });
 }
 
-type PlatformStateStub = {
+export type PlatformStateStub = {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 };
 
-type PlatformStateNamespace = {
+export type PlatformStateNamespace = {
   idFromName(name: string): unknown;
   get(id: unknown): PlatformStateStub;
 };

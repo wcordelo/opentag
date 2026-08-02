@@ -183,6 +183,10 @@ cd edge
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `OAUTH_STATE` | Durable Object binding | Bot | Hashed one-use OAuth state/nonce metadata; never provider codes or tokens |
 | `OAUTH_ALLOWED_REDIRECT_ORIGINS` | Deploy var | Bot/OAuth state | Explicit comma-separated HTTPS origin allowlist; unset keeps OAuth state fail-closed |
+| `OAUTH_EFFECTER` | Service binding | OAuth callback | Authenticated callback handoff destination |
+| `OAUTH_EFFECTER_AUTH_TOKEN` | Secret | OAuth callback/effecter | Internal callback-to-effecter bearer; never a provider credential |
+| `OAUTH_PROVIDER_ADAPTER` | Optional service binding | OAuth effecter | Provider exchange/custody boundary; absent keeps OAuth fail-closed |
+| `OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | OAuth effecter/provider adapter | Separate adapter bearer; never a provider credential in OpenTag |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
@@ -268,10 +272,14 @@ effecter is enabled:
    secret. They are internal seams, not provider callback URLs.
 4. Verify the bot health response reports `oauthState: ok` and the runtime
    evidence shows both the state namespace and allowlist as configured.
-5. Only then connect an independently authenticated effecter that exchanges a
-   provider code outside OpenTag and returns an opaque custody reference. Do
-   not send a provider code, access token, refresh token, or client secret to
-   this Worker or its Durable Objects.
+5. Only then connect the authenticated `oauth-callback` and `oauth-effecter`
+   Workers. If enabling provider exchange, configure the separate
+   `OAUTH_PROVIDER_ADAPTER` binding and bearer. The adapter must implement
+   `edge/src/platform/oauth-provider-contract.ts`, correlate/consume state,
+   validate the exact marketplace version and scopes, exchange the code outside
+   OpenTag, and return only an opaque custody receipt. Do not send an access
+   token, refresh token, or client secret to the callback Worker, effecter, or
+   their Durable Objects.
 
 Marketplace entries must have a `review:` trust reference, actions, and
 auth-mode-consistent scopes. OAuth grants must name the exact curated

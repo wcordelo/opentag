@@ -139,8 +139,17 @@ The bot's `/admin/platform/oauth/state/issue` and `/consume` routes are
 admin-only architecture seams. They first require the exact marketplace
 version to be curated and OAuth-enabled. They are not public provider
 callbacks: no OAuth code, access token, refresh token, or provider exchange is
-accepted by OpenTag. An external effecter must own that exchange and custody
-boundary, then call the one-use consume seam with metadata only.
+accepted by the bot or its Durable Objects.
+
+`edge/workers/oauth-callback` is the public callback boundary and forwards a
+bounded one-request handoff to the authenticated `oauth-effecter` Worker. The
+effecter can call an optional separately authenticated provider adapter using
+the protocol in `edge/src/platform/oauth-provider-contract.ts`. The adapter
+owns provider exchange, state correlation, marketplace/scope validation, and
+external custody, and may return only a bounded receipt with an opaque
+`credential:` reference and exact marketplace/grant metadata. The effecter and
+callback Worker remain fail-closed when that adapter binding or its separate
+bearer is absent; no provider token is stored or returned by OpenTag.
 
 Marketplace curation now requires a `review:` trust reference, at least one
 action, and auth-mode-consistent scopes. OAuth grants carry the exact

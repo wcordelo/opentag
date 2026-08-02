@@ -4,8 +4,9 @@ Status: source audit completed 2026-08-01; implementation comparison began
 against the merged OpenTag line and is being advanced in isolated weekly
 feature branches. This report is a repository artifact, not a write to the
 Notion baseline or daily-review database. The OAuth/marketplace branch adds a
-replay-safe state store and durable trust/version gates, but does not claim a
-provider callback, token exchange, or custody deployment.
+replay-safe state store, durable trust/version gates, and an authenticated
+provider-adapter protocol, but does not claim a provider callback, token
+exchange, or custody deployment.
 
 ## Scope and source availability
 
@@ -213,10 +214,11 @@ change, not evidence that all earlier gaps are complete.
    deploy the bootstrap/effect worker, establish identity/key custody, and only
    mark provisioning active after every required DO, bundle, OAuth, and identity
    step has an external receipt.
-3. **OAuth/marketplace:** the local state and curation gates are now ready;
-   still choose callback ownership and production allowlisted origins, deploy
-   an independently authenticated provider effecter, perform code exchange
-   outside OpenTag, and return a custody reference. No provider token is live.
+3. **OAuth/marketplace:** the local state, curation gates, and authenticated
+   adapter/receipt protocol are now ready; still choose callback ownership and
+   production allowlisted origins, deploy an independently authenticated
+   provider effecter, perform code exchange outside OpenTag, and return a
+   custody reference. No provider token is live.
 4. **Billing:** choose the billing source of truth, plan/overage policy,
    metering reconciliation, and enforcement behavior. Meter intents exist but
    no billing provider is called.

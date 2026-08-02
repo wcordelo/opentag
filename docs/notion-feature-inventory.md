@@ -155,10 +155,13 @@ and rollback evidence meet an explicit rollout decision.
   product requirement. It would need connector grants, a broker, read-only
   bounded pagination/media/reference normalization, item-level errors, and
   citation/ACL tests.
-- **Evaluate — immutable connector-policy labels.** This foundation is now
-  implemented on merged main in `edge/src/connectors/authorization.ts`, with
-  credential references, access-bundle revisions, revocation, and citation
-  binding. A real broker and custody service remain outstanding.
+- **Evaluate — immutable connector-policy labels.** The connector label,
+  credential-reference, access-bundle revision, revocation, and citation
+  foundation is implemented. The follow-up snapshot fence now also requires
+  an active server-owned OAuth grant bound to a curated marketplace version
+  and matching custody reference before the broker can request a token. The
+  runtime identity-binding flow, real broker/custody deployment, and provider
+  token remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
 - **N/A — Codex-specific instruction-size configuration.** OpenTag’s pinned
   Claude Code harness does not need that Centaur-specific setting.

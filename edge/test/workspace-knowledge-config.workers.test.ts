@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { tenantStub } from "../src/tenancy.js";
+import { deriveInternalTenantId } from "../src/platform/tenant-id.js";
 
 describe("WorkspaceConfigDO tracked knowledge sources", () => {
   it("allows disabled-never-enabled first activation but blocks post-disable re-enable", async () => {
@@ -341,6 +342,44 @@ describe("WorkspaceConfigDO connector authorization metadata", () => {
         credentialRef: ref,
         credentialVersion: 1,
       },
+    });
+
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: teamId,
+    });
+    const principalId = "22222222-2222-5222-8222-222222222222";
+    const platformBound = await stub.fetch("https://do/issueConnectorAuthorization", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        projectId: "P1",
+        channelId: "C1",
+        requesterId: principalId,
+        principalId,
+        actorKind: "human",
+        executionId: "exec-platform-1",
+        threadKey: "thread-1",
+        connectorId: "google_drive",
+        action: "search",
+        platformBinding: {
+          schemaVersion: 1,
+          platform: "slack",
+          platformTenantId: teamId,
+          platformSubjectId: "U1",
+          tenantId,
+          principalId,
+          identityLinkVersion: 2,
+          authorizationVersion: 3,
+          tenantLocatorVersion: 1,
+          oauthGrantVersion: 4,
+          marketplaceVersion: "2026-08-01",
+        },
+      }),
+    });
+    expect(platformBound.status).toBe(200);
+    expect(await platformBound.json()).toMatchObject({
+      labels: { platformBinding: { tenantId, principalId, oauthGrantVersion: 4 } },
     });
 
     await stub.fetch("https://do/revokeBundle", {

@@ -253,6 +253,9 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
+- versioned tenant billing plans with half-open periods, per-metric limits,
+  idempotent meter acceptance, and fail-closed suspended/stale/over-limit
+  decisions; no payment provider is contacted.
 - the isolated credential-broker Worker boundary with internal authentication,
   tenant/provider/scope revalidation, and an external custody service seam;
 - the optional Secrets Store custody Worker, which validates the same immutable
@@ -278,26 +281,24 @@ change, not evidence that all earlier gaps are complete.
    revocation propagation, and a safe non-production smoke. No credential
    store or provider mapping is currently configured.
 2. **Provisioning/identity:** the local tenant ledger now requires an external
-   receipt for every required provisioning step, and a provider-independent
-   step-scoped bootstrap boundary exists. Choose the tenant locator and
-   isolation model, configure the bootstrap adapter, establish identity/key
-   custody, and supply real receipts for every DO, bundle, OAuth, and identity
-   step. The metadata ledger and platform binding are deployed; the external
-   provider worker is not.
-3. **OAuth/marketplace:** the local state, curation gates, and authenticated
-   adapter/receipt protocol are ready; still choose callback ownership and
-   production allowlisted origins, deploy an independently authenticated
-   provider effecter, perform code exchange outside OpenTag, and return a
-   custody reference. No provider token is live.
-4. **Billing:** choose the billing source of truth, plan/overage policy,
-   metering reconciliation, and enforcement behavior. Meter intents exist but
-   no billing provider is called.
+   receipt for every required provisioning step. Still choose the tenant
+   locator/isolation model, deploy the bootstrap/effect worker, establish
+   identity/key custody, and supply real receipts for every DO, bundle, OAuth,
+   and identity step.
+3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
+   nonce/state handling, curated trust-review authority, and connector version
+   lifecycle. The ledger is ready; the external effecter is not.
+4. **Billing:** local plan/period/limit enforcement, meter decisions, and a
+   secret-free provider meter/receipt contract now exist. Still choose the
+   billing source of truth, invoice/overage policy, reconciliation, payment
+   provider, and enforcement owner; no billing provider is called.
 5. **Memory deletion:** the durable receipt ledger, source/epoch checks, and a
    provider-independent source-scoped adapter boundary now exist. Still choose
    retention/compliance guarantees, provider custody, and the non-production
    namespace before configuring the adapter that performs source-by-source
    deletion and submits proof; the ledger and boundary do not inspect or delete
-   memory themselves.
+   memory themselves; the request stays `requested` until that executor reports
+   success.
 6. **Router rollout:** collect enough shadow measurements, then add Tier 1
    knowledge quality gates and fallback/synthesis behavior, product-facing
    escalation affordance, and an explicit rollout gate before enabling

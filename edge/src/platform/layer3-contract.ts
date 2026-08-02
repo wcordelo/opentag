@@ -50,6 +50,13 @@ export const REQUIRED_PROVISIONING_STEPS: readonly ProvisioningStep[] = [
   "default_access_bundle",
 ] as const;
 const METER_TIERS = [1, 2, 3] as const;
+export const BILLING_METRICS = [
+  "knowledge_query",
+  "agent_tokens",
+  "connector_calls",
+  "container_ms",
+] as const;
+export type BillingMetric = (typeof BILLING_METRICS)[number];
 
 export class PlatformFoundationError extends Error {
   constructor(readonly code: string) {
@@ -371,7 +378,7 @@ export type UsageMeterEvent = Readonly<{
   tenantId: string;
   executionId: string;
   tier: 1 | 2 | 3;
-  metric: "knowledge_query" | "agent_tokens" | "connector_calls" | "container_ms";
+  metric: BillingMetric;
   quantity: number;
   unit: "count" | "tokens" | "milliseconds";
   planRevision: number;
@@ -389,9 +396,113 @@ export function validateUsageMeterEvent(value: unknown): UsageMeterEvent {
     tenantId: identifier(input.tenantId, "tenant_id"),
     executionId: identifier(input.executionId, "execution_id"),
     tier: enumValue(input.tier, METER_TIERS, "tier"),
-    metric: enumValue(input.metric, ["knowledge_query", "agent_tokens", "connector_calls", "container_ms"], "metric"),
+    metric: enumValue(input.metric, BILLING_METRICS, "metric"),
     quantity: nonNegativeInteger(input.quantity, "quantity"),
     unit: enumValue(input.unit, ["count", "tokens", "milliseconds"], "unit"),
+    planRevision: positiveVersion(input.planRevision, "plan_revision"),
+    occurredAt: timestamp(input.occurredAt, "occurred_at"),
+  });
+}
+
+export type BillingPlan = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  tenantId: string;
+  planId: string;
+  revision: number;
+  status: "active" | "suspended";
+  periodStart: string;
+  periodEnd: string;
+  limits: Readonly<Record<BillingMetric, number | null>>;
+  overagePolicy: "allow" | "block";
+  updatedAt: string;
+}>;
+
+export type BillingUsageCheck = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  tenantId: string;
+  metric: BillingMetric;
+  quantity: number;
+  planRevision: number;
+  occurredAt: string;
+}>;
+
+export type BillingUsageDecision = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  tenantId: string;
+  metric: BillingMetric;
+  requestedQuantity: number;
+  consumedQuantity: number;
+  projectedQuantity: number;
+  limit: number | null;
+  remainingQuantity: number | null;
+  planConfigured: boolean;
+  planRevision?: number;
+  action: "allow" | "block";
+  reason: "plan_unconfigured" | "within_limit" | "overage_allowed" | "limit_exceeded" | "plan_suspended" | "plan_revision_mismatch" | "period_out_of_bounds";
+  evaluatedAt: string;
+}>;
+
+function billingLimits(value: unknown): Readonly<Record<BillingMetric, number | null>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("billing_limits_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  const keys = Object.keys(input);
+  if (keys.length !== BILLING_METRICS.length || keys.some((key) => !BILLING_METRICS.includes(key as BillingMetric))) {
+    throw new PlatformFoundationError("billing_limits_invalid");
+  }
+  const limits = Object.fromEntries(BILLING_METRICS.map((metric) => {
+    const limit = input[metric];
+    if (limit !== null && (!Number.isSafeInteger(limit) || (limit as number) < 0)) {
+      throw new PlatformFoundationError("billing_limit_invalid");
+    }
+    return [metric, limit];
+  })) as Record<BillingMetric, number | null>;
+  return Object.freeze(limits);
+}
+
+function period(start: unknown, end: unknown): { periodStart: string; periodEnd: string } {
+  const periodStart = timestamp(start, "period_start");
+  const periodEnd = timestamp(end, "period_end");
+  if (Date.parse(periodEnd) <= Date.parse(periodStart)) {
+    throw new PlatformFoundationError("billing_period_invalid");
+  }
+  return { periodStart, periodEnd };
+}
+
+export function validateBillingPlan(value: unknown): BillingPlan {
+  rejectSecretMaterial(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("billing_plan_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  if (input.schemaVersion !== PLATFORM_SCHEMA_VERSION) throw new PlatformFoundationError("platform_schema_invalid");
+  const planPeriod = period(input.periodStart, input.periodEnd);
+  return Object.freeze({
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    tenantId: identifier(input.tenantId, "tenant_id"),
+    planId: identifier(input.planId, "plan_id"),
+    revision: positiveVersion(input.revision, "revision"),
+    status: enumValue(input.status, ["active", "suspended"], "billing_plan_status"),
+    ...planPeriod,
+    limits: billingLimits(input.limits),
+    overagePolicy: enumValue(input.overagePolicy, ["allow", "block"], "overage_policy"),
+    updatedAt: timestamp(input.updatedAt, "updated_at"),
+  });
+}
+
+export function validateBillingUsageCheck(value: unknown): BillingUsageCheck {
+  rejectSecretMaterial(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformFoundationError("billing_usage_check_invalid");
+  }
+  const input = value as Record<string, unknown>;
+  if (input.schemaVersion !== PLATFORM_SCHEMA_VERSION) throw new PlatformFoundationError("platform_schema_invalid");
+  return Object.freeze({
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    tenantId: identifier(input.tenantId, "tenant_id"),
+    metric: enumValue(input.metric, BILLING_METRICS, "metric"),
+    quantity: nonNegativeInteger(input.quantity, "quantity"),
     planRevision: positiveVersion(input.planRevision, "plan_revision"),
     occurredAt: timestamp(input.occurredAt, "occurred_at"),
   });

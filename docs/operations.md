@@ -190,6 +190,8 @@ cd edge
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
+| `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
 | `OAUTH_STATE` | Durable Object binding | Bot | Hashed one-use OAuth state/nonce metadata; never provider codes or tokens |
 | `OAUTH_ALLOWED_REDIRECT_ORIGINS` | Deploy var | Bot/OAuth state | Explicit comma-separated HTTPS origin allowlist; unset keeps OAuth state fail-closed |
 | `OAUTH_EFFECTER` | Service binding | OAuth callback | Authenticated callback handoff destination |
@@ -384,6 +386,16 @@ complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
 
+Billing plans are configured through the admin-only platform route and are
+evaluated against the tenant's current UTC period. A plan revision must match
+the meter event, and a `block` overage policy rejects the meter before it is
+persisted or handed to the billing effecter. A plan is not a billing-provider
+subscription. A billing adapter must map the intent through
+`edge/src/platform/billing-provider-contract.ts`, returning only an opaque
+`billing:` receipt; prices, payment methods, and provider credentials stay
+outside OpenTag. Configure a separately authenticated provider adapter only
+after source-of-truth, invoice, retry, and reconciliation decisions are
+approved.
 The provider-independent `edge/workers/memory-deletion/` boundary is an
 additional fail-closed handoff. `POST /delete` carries one source key, tenant,
 request/idempotency identifiers, deletion epoch, and timestamp to an explicitly

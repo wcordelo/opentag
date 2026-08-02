@@ -84,6 +84,8 @@ provider side effect is implied. It covers:
   bound to the exact curated marketplace version, provider, and allowed scopes;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
+- versioned tenant billing plans with bounded period/limit decisions before
+  meter acceptance;
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
   request contracts; and
 - secret-free external effect intents with idempotent leases, retries, and
@@ -115,7 +117,12 @@ one reserved object. The ledger provides:
 ledger and an external provisioning, custody, OAuth, marketplace, billing, or
 memory worker. An intent contains only a bounded target reference and sorted
 metadata; recursive validation rejects provider tokens, OAuth codes, prompts,
-queries, bodies, and other secret-shaped fields.
+queries, bodies, and other secret-shaped fields. Billing adapters should map a
+`billing_meter` intent through
+`edge/src/platform/billing-provider-contract.ts`: only usage identity,
+quantity, unit, plan revision, and execution correlation cross the boundary,
+and completion requires an opaque `billing:` receipt. Prices, payment methods,
+cards, and provider credentials remain outside OpenTag.
 
 The lifecycle is:
 
@@ -185,6 +192,14 @@ ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
 delete knowledge.
 
+Billing plans are a separate metadata boundary. A tenant plan carries an
+explicit revision, half-open UTC billing period, per-metric bounded limits, and
+an `allow`/`block` overage policy. Meter writes re-check the current plan in
+the same SQLite transaction after idempotency checks; suspended plans, stale
+revisions, out-of-period events, and blocked overage fail closed. An absent
+plan remains explicitly `plan_unconfigured` and allows metering for migration
+compatibility. This is entitlement and reconciliation infrastructure only: no
+card, invoice, payment provider, or charge is performed.
 ## OAuth state and marketplace activation
 
 `edge/src/platform/oauth-state-do.ts` is a separate SQLite Durable Object for

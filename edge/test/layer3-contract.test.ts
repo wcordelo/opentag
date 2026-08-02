@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   provisioningPlan,
   REQUIRED_PROVISIONING_STEPS,
+  validateBillingPlan,
+  validateBillingUsageCheck,
   assertConnectorMarketplaceEntryActivatable,
   validateProvisioningStepReceipt,
   validateConnectorMarketplaceEntry,
@@ -165,6 +167,69 @@ describe("Layer 3 platform contracts", () => {
       planRevision: 1,
       occurredAt: now,
     })).toMatchObject({ executionId: "exec-1", tier: 1 });
+  });
+
+  it("validates versioned billing periods and bounded limits", () => {
+    expect(validateBillingPlan({
+      schemaVersion: 1,
+      tenantId: "T1",
+      planId: "starter",
+      revision: 2,
+      status: "active",
+      periodStart: "2026-08-01T00:00:00.000Z",
+      periodEnd: "2026-09-01T00:00:00.000Z",
+      limits: {
+        knowledge_query: 100,
+        agent_tokens: 100_000,
+        connector_calls: null,
+        container_ms: 1_000_000,
+      },
+      overagePolicy: "block",
+      updatedAt: now,
+    })).toMatchObject({ planId: "starter", revision: 2 });
+    expect(validateBillingUsageCheck({
+      schemaVersion: 1,
+      tenantId: "T1",
+      metric: "knowledge_query",
+      quantity: 3,
+      planRevision: 2,
+      occurredAt: "2026-08-01T20:00:00.000Z",
+    })).toMatchObject({ quantity: 3, planRevision: 2 });
+    expect(() => validateBillingPlan({
+      schemaVersion: 1,
+      tenantId: "T1",
+      planId: "starter",
+      revision: 2,
+      status: "active",
+      periodStart: "2026-09-01T00:00:00.000Z",
+      periodEnd: "2026-08-01T00:00:00.000Z",
+      limits: {
+        knowledge_query: 100,
+        agent_tokens: 100_000,
+        connector_calls: null,
+        container_ms: 1_000_000,
+      },
+      overagePolicy: "block",
+      updatedAt: now,
+    })).toThrow("billing_period_invalid");
+    expect(() => validateBillingPlan({
+      schemaVersion: 1,
+      tenantId: "T1",
+      planId: "starter",
+      revision: 2,
+      status: "active",
+      periodStart: "2026-08-01T00:00:00.000Z",
+      periodEnd: "2026-09-01T00:00:00.000Z",
+      limits: {
+        knowledge_query: 100,
+        agent_tokens: 100_000,
+        connector_calls: null,
+        container_ms: 1_000_000,
+      },
+      overagePolicy: "block",
+      updatedAt: now,
+      accessToken: "never",
+    })).toThrow("secret_material_forbidden");
   });
 
   it("makes memory retention and deletion explicit, not best effort", () => {

@@ -185,6 +185,113 @@ describe("PlatformStateDO", () => {
     }
   });
 
+  it("enforces a versioned billing plan without charging a provider", async () => {
+    const { state, close } = makeState();
+    try {
+      const provisioned = await call(state, "/provision", {
+        ...request,
+        requestId: "billing-request",
+        idempotencyKey: "billing-install",
+        externalTenantId: "T-billing",
+      });
+      const tenantId = provisioned.body.tenantId as string;
+      for (const step of REQUIRED_PROVISIONING_STEPS) {
+        await call(state, "/provision/step", {
+          schemaVersion: 1,
+          idempotencyKey: "billing-install",
+          step,
+          outcome: "complete",
+          externalReceiptRef: `receipt:${step}`,
+          observedAt: now,
+        });
+      }
+      const plan = {
+        schemaVersion: 1,
+        tenantId,
+        planId: "starter",
+        revision: 1,
+        status: "active",
+        periodStart: "2026-08-01T00:00:00.000Z",
+        periodEnd: "2026-09-01T00:00:00.000Z",
+        limits: {
+          knowledge_query: 5,
+          agent_tokens: null,
+          connector_calls: null,
+          container_ms: null,
+        },
+        overagePolicy: "block",
+        updatedAt: now,
+      };
+      expect((await call(state, "/billing/plan", plan)).response.status).toBe(200);
+      const allowed = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 3,
+        planRevision: 1,
+        occurredAt: now,
+      });
+      expect(allowed.body).toMatchObject({
+        action: "allow",
+        reason: "within_limit",
+        consumedQuantity: 0,
+        projectedQuantity: 3,
+        remainingQuantity: 5,
+      });
+      const meter = {
+        schemaVersion: 1,
+        eventId: "billing-meter-1",
+        idempotencyKey: "billing-meter-key-1",
+        tenantId,
+        executionId: "billing-execution-1",
+        tier: 1,
+        metric: "knowledge_query",
+        quantity: 3,
+        unit: "count",
+        planRevision: 1,
+        occurredAt: now,
+      };
+      expect((await call(state, "/meter", meter)).response.status).toBe(200);
+      const blocked = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 3,
+        planRevision: 1,
+        occurredAt: now,
+      });
+      expect(blocked.body).toMatchObject({ action: "block", reason: "limit_exceeded" });
+      const rejectedMeter = await call(state, "/meter", {
+        ...meter,
+        eventId: "billing-meter-2",
+        idempotencyKey: "billing-meter-key-2",
+      });
+      expect(rejectedMeter.response.status).toBe(409);
+      expect(rejectedMeter.body.error).toBe("billing_limit_exceeded");
+      const wrongRevision = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 1,
+        planRevision: 2,
+        occurredAt: now,
+      });
+      expect(wrongRevision.body).toMatchObject({ action: "block", reason: "plan_revision_mismatch" });
+      expect((await call(state, "/billing/plan", { ...plan, revision: 2, status: "suspended" })).response.status).toBe(200);
+      const suspended = await call(state, "/billing/check", {
+        schemaVersion: 1,
+        tenantId,
+        metric: "knowledge_query",
+        quantity: 1,
+        planRevision: 2,
+        occurredAt: now,
+      });
+      expect(suspended.body).toMatchObject({ action: "block", reason: "plan_suspended" });
+    } finally {
+      close();
+    }
+  });
+
   it("records marketplace, OAuth, metering, memory governance, and effect intents", async () => {
     const { state, close } = makeState();
     try {

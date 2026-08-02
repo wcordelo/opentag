@@ -60,6 +60,7 @@ type RuntimeEvidenceEnv = Partial<Pick<
   | "PLATFORM_EFFECTS_QUEUE"
   | "PLATFORM_EFFECTS_QUEUE_NAME"
   | "PLATFORM_EFFECTER"
+  | "EFFECTOR_AUTH_TOKEN"
   | "SUPERMEMORY_URL"
   | "KNOWLEDGE_ACTOR_TOKEN_SECRET"
   | "BUZZ_RELAY_HTTP_BASE_URL"
@@ -115,7 +116,8 @@ export function buildRuntimeCapabilityEvidence(
         env.PLATFORM_STATE &&
         env.PLATFORM_EFFECTS_QUEUE &&
         isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME) &&
-        env.PLATFORM_EFFECTER,
+        env.PLATFORM_EFFECTER &&
+        configured(env.EFFECTOR_AUTH_TOKEN),
       ),
     },
     buzz: {

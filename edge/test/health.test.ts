@@ -130,6 +130,7 @@ describe("runtime capability evidence", () => {
       PLATFORM_EFFECTS_QUEUE: {} as never,
       PLATFORM_EFFECTS_QUEUE_NAME: "opentag-platform-effects",
       PLATFORM_EFFECTER: {} as never,
+      EFFECTOR_AUTH_TOKEN: "effector-secret",
     }).platformEffects).toEqual({
       stateNamespaceConfigured: true,
       queueConfigured: true,

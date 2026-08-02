@@ -1506,10 +1506,9 @@ export class PlatformStateEngine {
     if (row.status !== "leased" || row.lease_token !== leaseToken) {
       throw new PlatformStateError("effect_lease_mismatch", 409);
     }
-    const now = nowIso(this.now);
-    if (!row.lease_expires_at || row.lease_expires_at <= now) {
-      throw new PlatformStateError("effect_lease_expired", 409);
-    }
+    // Lease expiry gates reclaim in claimEffect, not completion reporting: a
+    // slow worker must still close the lease with its token before another
+    // worker can replace it and rerun the provider adapter.
   }
 
   private provisioningByKey(key: string): ProvisioningRow | undefined {

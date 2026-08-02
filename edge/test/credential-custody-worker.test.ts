@@ -82,7 +82,48 @@ async function requestBody(
   };
 }
 
-function bindings(secret: SecretsStoreSecret = { get: vi.fn(async () => "drive-token") }) {
+function metadata(tenantId: string, status: "active" | "revoked" = "active") {
+  return {
+    schemaVersion: 1,
+    tenantId,
+    credentialRef: reference.ref,
+    backend: "external_kms",
+    provider: "google",
+    subject: reference.subject,
+    scopes: ["drive.readonly"],
+    version: reference.version,
+    status,
+    issuedAt: "2099-08-01T19:00:00.000Z",
+  };
+}
+
+function durableObjects(tenantId: string, status: "active" | "revoked" = "active") {
+  const workspaceStub = {
+    fetch: vi.fn(async () => Response.json({ ok: true })),
+  };
+  const stateStub = {
+    fetch: vi.fn(async () => Response.json(metadata(tenantId, status))),
+  };
+  return {
+    WORKSPACE_CONFIG: {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => workspaceStub),
+    },
+    PLATFORM_STATE: {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => stateStub),
+    },
+  };
+}
+
+async function envBindings(
+  secret: SecretsStoreSecret = { get: vi.fn(async () => "drive-token") },
+  status: "active" | "revoked" = "active",
+) {
+  const tenantId = await deriveInternalTenantId({
+    externalPlatform: "slack",
+    externalTenantId: "T1",
+  });
   return {
     CUSTODY_AUTH_TOKEN: "custody-secret",
     CUSTODY_BINDINGS_JSON: JSON.stringify([{
@@ -92,6 +133,7 @@ function bindings(secret: SecretsStoreSecret = { get: vi.fn(async () => "drive-t
       expiresAt: "2099-08-01T20:10:00.000Z",
     }]),
     GOOGLE_DRIVE_TOKEN_V2: secret,
+    ...durableObjects(tenantId, status),
   };
 }
 
@@ -110,7 +152,7 @@ describe("credential custody Worker", () => {
         },
         body: JSON.stringify(body),
       }),
-      bindings(secret) as never,
+      await envBindings(secret) as never,
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -133,7 +175,7 @@ describe("credential custody Worker", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-      { CUSTODY_BINDINGS_JSON: bindings().CUSTODY_BINDINGS_JSON } as never,
+      { CUSTODY_BINDINGS_JSON: (await envBindings()).CUSTODY_BINDINGS_JSON } as never,
     );
     expect(unauthorized.status).toBe(503);
     await expect(unauthorized.json()).resolves.toEqual({ error: "credential_custody_auth_unconfigured" });
@@ -150,7 +192,7 @@ describe("credential custody Worker", () => {
       { CUSTODY_AUTH_TOKEN: "custody-secret" } as never,
     );
     expect(noBindings.status).toBe(503);
-    await expect(noBindings.json()).resolves.toEqual({ error: "credential_custody_bindings_unconfigured" });
+    await expect(noBindings.json()).resolves.toEqual({ error: "workspace_config_unavailable" });
   });
 
   it("rejects tampered labels, revoked references, and missing bindings", async () => {
@@ -165,7 +207,7 @@ describe("credential custody Worker", () => {
         },
         body: JSON.stringify(await requestBody(tamperedLabels)),
       }),
-      bindings() as never,
+      await envBindings() as never,
     );
     expect(tampered.status).toBe(403);
     await expect(tampered.json()).resolves.toEqual({ error: "connector_labels_tampered" });
@@ -177,9 +219,9 @@ describe("credential custody Worker", () => {
           authorization: "Bearer custody-secret",
           "content-type": "application/json",
         },
-        body: JSON.stringify(await requestBody(validLabels, "revoked")),
+        body: JSON.stringify(await requestBody(validLabels, "active")),
       }),
-      bindings() as never,
+      await envBindings(undefined, "revoked") as never,
     );
     expect(revoked.status).toBe(403);
     await expect(revoked.json()).resolves.toEqual({ error: "credential_revoked" });
@@ -193,7 +235,7 @@ describe("credential custody Worker", () => {
         },
         body: JSON.stringify(await requestBody(validLabels)),
       }),
-      { ...bindings(), GOOGLE_DRIVE_TOKEN_V2: undefined } as never,
+      { ...(await envBindings()), GOOGLE_DRIVE_TOKEN_V2: undefined } as never,
     );
     expect(missingBinding.status).toBe(503);
     await expect(missingBinding.json()).resolves.toEqual({ error: "credential_custody_secret_binding_unavailable" });

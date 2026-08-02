@@ -1,16 +1,28 @@
 import { Hono } from "hono";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
   assertConnectorLabelsIntegrity,
   type CredentialCustodyResolveRequest,
   validateCredentialBrokerResponse,
   validateCredentialCustodyResolveRequest,
 } from "../../../src/connectors/credential-broker.js";
+import {
+  validateCredentialCustodyReference,
+  type CredentialCustodyReference,
+} from "../../../src/platform/layer3-contract.js";
+import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js";
+import type { WorkspaceConfigDO } from "../../../src/config/workspace-config-do.js";
+import { platformTenantObjectName } from "../../../src/platform/tenant-routing.js";
 
 type SecretsStoreSecret = Readonly<{
   get(): Promise<string>;
 }>;
 
 type CustodyBindings = {
+  /** Authoritative access-bundle and connector-grant revalidation. */
+  WORKSPACE_CONFIG?: DurableObjectNamespace<WorkspaceConfigDO>;
+  /** Cross-Worker namespace owned by opentag-bot; metadata only. */
+  PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
   CUSTODY_AUTH_TOKEN?: string;
   /** JSON metadata only: secret values stay in Secrets Store bindings. */
   CUSTODY_BINDINGS_JSON?: string;
@@ -30,7 +42,7 @@ type CustodyBindingConfig = Readonly<{
 }>;
 
 class CustodyError extends Error {
-  constructor(readonly code: string, readonly status: 400 | 401 | 403 | 404 | 503) {
+  constructor(readonly code: string, readonly status: 400 | 401 | 403 | 404 | 409 | 503) {
     super(code);
     this.name = "CustodyError";
   }
@@ -125,9 +137,105 @@ function configuredBinding(
   return binding;
 }
 
-function boundedExpiry(request: CredentialCustodyResolveRequest, configured: string): string {
+function expiresAtAfter(now: number, value: string | undefined): boolean {
+  return value === undefined || Number.isFinite(Date.parse(value)) && Date.parse(value) > now;
+}
+
+async function verifyConnectorAuthorization(
+  env: CustodyBindings,
+  request: CredentialCustodyResolveRequest,
+): Promise<void> {
+  if (!env.WORKSPACE_CONFIG) {
+    throw new CustodyError("workspace_config_unavailable", 503);
+  }
+  const authorizationStub = env.WORKSPACE_CONFIG.get(
+    env.WORKSPACE_CONFIG.idFromName(request.labels.workspaceId),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const authorizationResponse = await authorizationStub.fetch(
+    "https://workspace/verifyConnectorAuthorization",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ labels: request.labels }),
+    },
+  );
+  if (!authorizationResponse.ok) {
+    const body = await authorizationResponse.json().catch(() => ({})) as Record<string, unknown>;
+    const code = typeof body.error === "string" && /^[a-z][a-z0-9_.-]{0,127}$/.test(body.error)
+      ? body.error
+      : "connector_authorization_unavailable";
+    const status = authorizationResponse.status === 403
+      ? 403
+      : authorizationResponse.status === 409
+        ? 409
+        : 503;
+    throw new CustodyError(code, status);
+  }
+}
+
+async function readCredentialMetadata(
+  env: CustodyBindings,
+  request: CredentialCustodyResolveRequest,
+): Promise<CredentialCustodyReference> {
+  if (!env.PLATFORM_STATE) {
+    throw new CustodyError("platform_state_unavailable", 503);
+  }
+  const stub = env.PLATFORM_STATE.get(
+    env.PLATFORM_STATE.idFromName(platformTenantObjectName(request.tenantId)),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const response = await stub.fetch("https://platform-state/credential/get", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ credentialRef: request.reference.ref }),
+  });
+  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    const code = typeof body.error === "string" ? body.error : "credential_metadata_unavailable";
+    const status = response.status === 404 ? 404 : response.status === 409 ? 409 : 503;
+    throw new CustodyError(code, status);
+  }
+  try {
+    return validateCredentialCustodyReference(body);
+  } catch {
+    throw new CustodyError("credential_metadata_invalid", 503);
+  }
+}
+
+function assertCredentialActive(
+  request: CredentialCustodyResolveRequest,
+  credential: CredentialCustodyReference,
+): void {
+  const now = Date.now();
+  if (!expiresAtAfter(now, request.labels.expiresAt)) {
+    throw new CustodyError("connector_authorization_expired", 403);
+  }
+  if (credential.tenantId !== request.tenantId) {
+    throw new CustodyError("credential_tenant_mismatch", 403);
+  }
+  if (credential.credentialRef !== request.reference.ref) {
+    throw new CustodyError("credential_reference_mismatch", 403);
+  }
+  if (credential.version !== request.reference.version) {
+    throw new CustodyError("credential_version_mismatch", 403);
+  }
+  if (credential.status !== "active") {
+    throw new CustodyError("credential_revoked", 403);
+  }
+  if (!expiresAtAfter(now, credential.expiresAt)) {
+    throw new CustodyError("credential_expired", 403);
+  }
+  if (credential.expiresAt && Date.parse(request.labels.expiresAt) > Date.parse(credential.expiresAt)) {
+    throw new CustodyError("connector_authorization_outlives_credential", 403);
+  }
+}
+
+function boundedExpiry(
+  request: CredentialCustodyResolveRequest,
+  configured: string,
+  credential: CredentialCustodyReference,
+): string {
   const values = [configured, request.labels.expiresAt];
-  if (request.credential.expiresAt) values.push(request.credential.expiresAt);
+  if (credential.expiresAt) values.push(credential.expiresAt);
   const expiresAt = new Date(Math.min(...values.map((value) => Date.parse(value))));
   if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
     throw new CustodyError("credential_custody_token_expired", 403);
@@ -139,6 +247,7 @@ async function resolveSecret(
   env: CustodyBindings,
   request: CredentialCustodyResolveRequest,
   binding: CustodyBindingConfig,
+  credential: CredentialCustodyReference,
 ): Promise<Response> {
   const candidate = env[binding.binding];
   if (!candidate || typeof candidate !== "object" ||
@@ -156,7 +265,7 @@ async function resolveSecret(
     ref: request.reference.ref,
     version: request.reference.version,
     accessToken,
-    expiresAt: boundedExpiry(request, binding.expiresAt),
+    expiresAt: boundedExpiry(request, binding.expiresAt, credential),
   });
   return Response.json(response, {
     headers: { "cache-control": "no-store" },
@@ -168,8 +277,13 @@ app.get("/health", (c) => c.json({
   role: "credential-custody",
   authConfigured: Boolean(c.env.CUSTODY_AUTH_TOKEN),
   bindingConfigConfigured: Boolean(c.env.CUSTODY_BINDINGS_JSON?.trim()),
+  workspaceConfigConfigured: Boolean(c.env.WORKSPACE_CONFIG),
+  platformStateConfigured: Boolean(c.env.PLATFORM_STATE),
   providerResolutionEnabled: Boolean(
-    c.env.CUSTODY_AUTH_TOKEN && c.env.CUSTODY_BINDINGS_JSON?.trim(),
+    c.env.CUSTODY_AUTH_TOKEN &&
+    c.env.CUSTODY_BINDINGS_JSON?.trim() &&
+    c.env.WORKSPACE_CONFIG &&
+    c.env.PLATFORM_STATE,
   ),
 }));
 
@@ -190,11 +304,11 @@ app.post("/resolve", async (c) => {
       }
       return c.json({ error: error instanceof Error ? error.message : "credential_custody_request_invalid" }, 400);
     }
-    if (request.credential.status !== "active") {
-      throw new CustodyError("credential_revoked", 403);
-    }
+    await verifyConnectorAuthorization(c.env, request);
+    const credential = await readCredentialMetadata(c.env, request);
+    assertCredentialActive(request, credential);
     const binding = configuredBinding(parseBindingConfig(c.env), request);
-    return await resolveSecret(c.env, request, binding);
+    return await resolveSecret(c.env, request, binding, credential);
   } catch (error) {
     if (error instanceof CustodyError) return c.json({ error: error.code }, error.status);
     if (error instanceof SyntaxError) return c.json({ error: "invalid_json" }, 400);

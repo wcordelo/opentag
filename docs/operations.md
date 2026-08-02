@@ -187,6 +187,7 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
 | `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
@@ -299,6 +300,12 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+Provisioning step updates must include `schemaVersion`, the provisioning
+idempotency key, required step, outcome, opaque `externalReceiptRef`, and
+`observedAt`. A complete step cannot be marked retryable. The platform ledger
+stores the receipt and reaches `active` only after all required steps have
+completed with evidence; it does not perform the external provisioning work.
 
 ## Deploy and connect the harness
 

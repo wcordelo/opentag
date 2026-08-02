@@ -19,6 +19,11 @@ The original decision analysis remains in
 [ARCHITECTURE-ANALYSIS.md](../ARCHITECTURE-ANALYSIS.md). This document records
 what actually landed and where it lives now.
 
+The current deployment and live feature matrix is maintained in
+[current-state.md](./current-state.md). This ledger records architecture and
+parity decisions; it does not turn synthetic platform metadata into proof of a
+real provider effect.
+
 ## Decision in one diagram
 
 ```mermaid
@@ -60,6 +65,7 @@ operating model.
 | Render obligations and crash recovery | `ConversationStateDO`, `RenderObligationEngine` | Rebuilt with SQLite + DO alarms | Implemented; no startup scan |
 | Session append/execute/replay/interrupt contract | `SessionEventDO` | Rebuilt from contract, not copied from `api-rs` | Implemented with exact tombstones |
 | Message/execution idempotency | `wire-id.ts`, pre-admission, SessionEventDO | Adapted and strengthened | Stable SHA-256 purpose-tagged IDs |
+| Read-every-reply response routing | `ingress-normalize.ts`, `response-routing.ts`, `pre-admit-turn.ts`, `cloudflare-slack-adapter.ts` | Adapted to Cloudflare ingress and durable turn ownership | Live-verified: untagged questions/action/problem reports wake; passive thread chatter stays history; explicit Slack duplicate delivery cannot create a stale lock |
 | Stop command | `stop-command.ts` | Near-verbatim parser port | Integrated with exact cancellation lifecycle |
 | Runtime interrupt | `stop-routing.ts`, harness `/interrupt`, research cancel | New Cloudflare control path | Implemented with quiescence confirmation |
 | Sticky model/harness flags | `overrides.ts`, `thread-overrides.ts` | Ported with unsupported providers removed | Sticky `claudecode`/`claudex` mode and model; reasoning flags rejected |
@@ -67,11 +73,11 @@ operating model.
 | Redacted permission inspection | `permissions/*`, `show_permissions`, admin endpoint, harness CLI | Adapted without Rails/iron-proxy | Implemented as informational snapshots; authorization remains elsewhere |
 | Rich-payload bot mentions | `trusted-trigger.ts`, `rich-display-text.ts`, pre-admission | Stricter authorization adaptation | Disabled by default; exact actor + exact nested mention; non-human safe-tool ceiling |
 | Immutable connector labels and credential references | `edge/src/connectors/authorization.ts`, `credential-broker.ts`, `WorkspaceConfigDO` | Cloudflare-native authorization boundary | Implemented; tokens remain outside OpenTag state |
-| External platform effect handoff | `edge/src/platform/platform-state-do.ts` effect intents and leases | Durable provider boundary for provisioning, custody, OAuth, billing, and memory | Implemented locally; no external effect worker or provider credentials are live |
 | Receipt-bound tenant provisioning | `edge/src/platform/layer3-contract.ts`, `platform-state-do.ts` | Durable required-step evidence before tenant activation | Implemented locally; Slack install, custody, and resource provisioning executor remain gated |
-| Router measurement ledger | `edge/src/router/measurement-do.ts`, `edge/src/router/measurement.ts` | Workspace-scoped shadow dispatch/outcome/feedback records before tier dispatch | Implemented locally; Tier 1/Tier 3 remain dark |
-| Guarded Linear issue creation | `edge/src/connectors/linear-write.ts`, `edge/src/tools/linear-write.ts`, durable HITL | Replaces read-only MCP mutation temptation with an explicit effect path | Implemented locally; broker/OAuth grant and live test workspace still required |
-| Drive search after connector foundations | `search-drive.ts`, `drive-connector.ts`, citation contract | Added only after label, bundle, revocation, and broker foundations | Implemented locally; credential broker and Google custody deployment still required |
+| External platform effect handoff | `edge/src/platform/platform-state-do.ts` effect intents and leases | Durable provider boundary for provisioning, custody, OAuth, billing, and memory | Deployed and synthetic-live; no external effect worker or provider credentials are live |
+| Router measurement ledger | `edge/src/router/measurement-do.ts`, `edge/src/router/measurement.ts` | Workspace-scoped shadow dispatch/outcome/feedback records before tier dispatch | Deployed and live-queried; Tier 1/Tier 3 remain dark |
+| Guarded Linear issue creation | `edge/src/connectors/linear-write.ts`, `edge/src/tools/linear-write.ts`, durable HITL | Replaces read-only MCP mutation temptation with an explicit effect path | Source-complete and fail-closed; broker/OAuth grant and live test workspace still required |
+| Drive search after connector foundations | `search-drive.ts`, `drive-connector.ts`, citation contract | Added only after label, bundle, revocation, and broker foundations | Source-complete and fail-closed; credential broker and Google custody deployment still required |
 | Harness restart transcript re-feed | `agent-turn.ts`, harness client | Adapted | Last 24k characters passed to harness |
 | Quick cards | `quick-card.ts`, research Slack delivery | Generalized from Quick-site cards | Artifact actions plus final-research Retry/Dig deeper/Export |
 | Buttons become user-authored turns | `quick-actions.ts` | Adapted to OpenTag ingress | Implemented; inherits dedup and policy |
@@ -218,7 +224,14 @@ more rigorous lifecycle than the initial Centaur comparison anticipated.
 
 The active turn is durably registered before any asynchronous profile, config,
 or task lookup. A Stop that arrives immediately can therefore identify and
-cancel the exact turn.
+cancel the exact turn. The response-worthiness gate runs before this write:
+DMs, explicit mentions, files, questions, action requests, and problem reports
+can admit, while passive conversation is observed without waking the agent.
+Slack's duplicate threaded `message` delivery for an `app_mention` is rejected
+before the write, preventing an adapter-level discard from orphaning the
+active-turn row. The live canary verified the routing matrix, showed the busy
+warning only for a genuinely overlapping turn, and accepted a follow-up after
+the first turn reached its terminal state without a stale active-turn warning.
 
 ### Transactional render and effect fences
 
@@ -330,9 +343,10 @@ Claude's own success claim is held until OpenTag verifies:
   expiring first-turn event link. The endpoint is read-only and no-store.
 - The current outbound policy is deliberately GitHub-specific. Other git hosts
   need their own parser, allowlist, branch proof, and API authorization logic.
-- **Container smoke (sharp under UID 1001, v2 overlay turns):** blocked in Cloud
-  environments without Docker/BuildKit; TypeScript tests do not prove native
-  image-module packaging.
+- **Container smoke (sharp under UID 1001, v2 overlay turns):** the harness
+  image is deployed and the Claudex/nanocodex Slack paths are live-verified.
+  A fresh local Docker/BuildKit reproduction is still separate evidence; the
+  deployment digest is recorded in `docs/current-state.md`.
 
 ## Source documents
 

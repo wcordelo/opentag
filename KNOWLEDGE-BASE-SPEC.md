@@ -3,6 +3,15 @@
 **Status:** implementation-ready planning specification; no deployment or cleanup is authorized by this document.
 **Canonical decision:** B1 replaces the obsolete Vectorize/D1/R2/RRF, Supabase/Postgres, and Cloudflare-Container-persistence proposals. The knowledge index is **Supermemory Local `server-v0.0.5`**, running as one Railway service with one persistent Railway volume. OpenTag's Durable Objects remain the configuration, scheduling, and ledger plane; they are not a second retrieval corpus.
 
+**Current reconciliation (2026-08-01):** OpenTag's deployed bot now has the
+source-side actor-token, KnowledgeDO, queue, search, and bounded raw-query
+foundations described by the current architecture. A live Slack retrieval was
+verified, but reconciliation is not configured and a fresh marker may lag
+indexing. This specification remains the design and rollout gate for broad
+source ingestion, Supermemory activation, backup/restore, and one-channel
+canary; see [docs/current-state.md](./docs/current-state.md) for actual
+deployment evidence.
+
 **Goal state:** resume from [`goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md`](./goal-outputs/supermemory-railway-knowledge-base/PROGRESS.md). Railway discovery evidence is in [`goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md`](./goal-outputs/supermemory-railway-knowledge-base/RAILWAY-READINESS.md). This document is the authoritative execution plan; current implementation facts remain in `PRODUCT.md`, `ARCHITECTURE.md`, `DECISIONS.md`, and `AGENTS.md`.
 
 ## 1. Decision summary and superseded design

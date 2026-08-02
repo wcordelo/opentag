@@ -117,7 +117,10 @@ import {
   validateConnectorMarketplaceEntry,
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
-import { TENANT_LOCATOR_SCHEMA_VERSION } from "./platform/tenant-locator.js";
+import {
+  TENANT_LOCATOR_SCHEMA_VERSION,
+  validateTenantLocatorResolution,
+} from "./platform/tenant-locator.js";
 import {
   enqueuePlatformEffectWakeup,
   handlePlatformEffectQueue,
@@ -823,21 +826,46 @@ app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
     return c.json({ error: error instanceof Error ? error.message : "provisioning_request_invalid" }, 400);
   }
   const tenantId = await deriveInternalTenantId(request);
-  const locatorResponse = await forwardPlatformState(
+  const resolveResponse = await forwardPlatformState(
     c,
     PLATFORM_MARKETPLACE_OBJECT_NAME,
-    "/tenant-locator",
+    "/tenant-locator/resolve",
     {
       schemaVersion: TENANT_LOCATOR_SCHEMA_VERSION,
       platform: request.externalPlatform,
       platformTenantId: request.externalTenantId,
-      tenantId,
-      version: 1,
-      status: "active",
-      updatedAt: request.requestedAt,
     },
   );
-  if (!locatorResponse.ok) return locatorResponse;
+  if (!resolveResponse.ok) return resolveResponse;
+  let skipLocatorPut = false;
+  try {
+    const resolution = validateTenantLocatorResolution(await resolveResponse.json());
+    if (resolution.status === "resolved") {
+      if (resolution.locator.tenantId !== tenantId) {
+        return c.json({ error: "tenant_locator_tenant_conflict" }, 409);
+      }
+      skipLocatorPut = true;
+    }
+  } catch {
+    return c.json({ error: "tenant_locator_response_invalid" }, 503);
+  }
+  if (!skipLocatorPut) {
+    const locatorResponse = await forwardPlatformState(
+      c,
+      PLATFORM_MARKETPLACE_OBJECT_NAME,
+      "/tenant-locator",
+      {
+        schemaVersion: TENANT_LOCATOR_SCHEMA_VERSION,
+        platform: request.externalPlatform,
+        platformTenantId: request.externalTenantId,
+        tenantId,
+        version: 1,
+        status: "active",
+        updatedAt: request.requestedAt,
+      },
+    );
+    if (!locatorResponse.ok) return locatorResponse;
+  }
   return forwardPlatformState(c, platformTenantObjectName(tenantId), "/provision", body);
 });
 

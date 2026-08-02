@@ -1,0 +1,20 @@
+name = "opentag-memory-deletion"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: MEMORY_DELETION_AUTH_TOKEN. Share only with the internal effect
+# caller. It is not a provider credential and is not a tenant memory key.
+#
+# Optional service binding, enabled only after an approved provider adapter
+# exists:
+# [[services]]
+# binding = "MEMORY_PROVIDER_ADAPTER"
+# service = "opentag-memory-provider-adapter"
+#
+# Secret: MEMORY_PROVIDER_ADAPTER_AUTH_TOKEN. This is an internal adapter
+# bearer, not a provider token or memory payload.

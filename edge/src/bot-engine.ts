@@ -137,6 +137,9 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
   if (!env.AGENT_URL) {
     throw new Error("AGENT_URL is required for AG-UI agent replies");
   }
+  if (env.ENVIRONMENT === "production" && !env.AGENT_RUNTIME) {
+    throw new Error("AGENT_RUNTIME is required for production agent execution");
+  }
   if (env.ENVIRONMENT === "production" && !env.SESSION_EVENTS) {
     throw new Error("SESSION_EVENTS is required for production terminal ownership");
   }

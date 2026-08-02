@@ -24,6 +24,7 @@ export default defineConfig({
           KNOWLEDGE_SOURCE_AUTH_ISSUER: TEST_KNOWLEDGE_SOURCE_ISSUER,
           KNOWLEDGE_SOURCE_AUTH_KEY_ID: TEST_KNOWLEDGE_SOURCE_KEY_ID,
           KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY: TEST_KNOWLEDGE_SOURCE_PUBLIC_KEY,
+          OAUTH_ALLOWED_REDIRECT_ORIGINS: "https://app.example.test,https://admin.example.test",
         },
       },
     }),

@@ -259,7 +259,8 @@ change, not evidence that all earlier gaps are complete.
   source-scoped provider adapter boundary that still carries no memory content.
 - receipt-bound provisioning step advancement; a tenant cannot become `active`
   from a bare outcome and each required footprint retains an opaque external
-  receipt before activation.
+  receipt before activation; and a fail-closed, step-scoped bootstrap adapter
+  boundary that does not carry credentials or generic resource payloads.
 
 ### Still required before “everything” is live
 
@@ -270,11 +271,12 @@ change, not evidence that all earlier gaps are complete.
    revocation propagation, and a safe non-production smoke. No credential
    store or provider mapping is currently configured.
 2. **Provisioning/identity:** the local tenant ledger now requires an external
-   receipt for every required provisioning step. Choose the tenant locator and
-   isolation model, deploy the bootstrap/effect worker and queue after an
-   adapter is approved, establish identity/key custody, and supply real
-   receipts for every DO, bundle, OAuth, and identity step. The metadata ledger
-   and platform binding are deployed; the external provider worker is not.
+   receipt for every required provisioning step, and a provider-independent
+   step-scoped bootstrap boundary exists. Choose the tenant locator and
+   isolation model, configure the bootstrap adapter, establish identity/key
+   custody, and supply real receipts for every DO, bundle, OAuth, and identity
+   step. The metadata ledger and platform binding are deployed; the external
+   provider worker is not.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

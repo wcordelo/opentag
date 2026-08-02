@@ -367,6 +367,14 @@ idempotency key, required step, outcome, opaque `externalReceiptRef`, and
 stores the receipt and reaches `active` only after all required steps have
 completed with evidence; it does not perform the external provisioning work.
 
+The provider-independent `edge/workers/provisioning-adapter/` boundary carries
+one allowlisted step to an explicitly authenticated bootstrap adapter through
+`POST /provision-step`. It is not a tenant locator, Slack installer, Durable
+Object creator, identity custodian, or access-bundle store by itself. Before
+activation, document idempotent resource creation/rollback, tenant isolation,
+OAuth and custody ownership, and a reversible test-tenant smoke; the Worker
+must remain unconfigured until those decisions are approved.
+
 ## Deploy and connect the harness
 
 This is an explicit operator action. The repository ships active production

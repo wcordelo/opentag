@@ -81,6 +81,21 @@ function identityResolution() {
   };
 }
 
+function tenantLocatorResolution() {
+  return {
+    status: "resolved",
+    locator: {
+      schemaVersion: 1,
+      platform: "slack",
+      platformTenantId: "T1",
+      tenantId: TENANT,
+      version: 1,
+      status: "active",
+      updatedAt: "2099-08-01T19:00:00.000Z",
+    },
+  };
+}
+
 function namespace(overrides: {
   grant?: Record<string, unknown>;
   marketplace?: Record<string, unknown>;
@@ -92,6 +107,7 @@ function namespace(overrides: {
       const url = new URL(String(input));
       calls.push(`${url.pathname}:${String(init?.body ?? "")}`);
       if (url.pathname === "/identity-link/resolve") return Response.json(identityResolution());
+      if (url.pathname === "/tenant-locator/resolve") return Response.json(tenantLocatorResolution());
       if (url.pathname === "/oauth/get") return Response.json(overrides.grant ?? grant);
       if (url.pathname === "/credential/get") return Response.json(overrides.credential ?? credential);
       if (url.pathname === "/marketplace/list") {
@@ -128,6 +144,7 @@ describe("connector authorization snapshot", () => {
       grant: { version: 4, credentialRef: REF },
       credential: { version: 9, credentialRef: REF },
       marketplace: { version: marketplace.version, status: "curated" },
+      tenantLocatorVersion: 1,
     });
     expect(JSON.stringify(snapshot)).not.toContain("accessToken");
     expect(fake.value.idFromName).toHaveBeenCalledWith(platformTenantObjectName(TENANT));
@@ -178,6 +195,7 @@ describe("connector authorization snapshot", () => {
       marketplace,
       grant,
       credential,
+      tenantLocatorVersion: 1,
       observedAt: "2099-08-01T20:00:00.000Z",
     });
     const binding = parseConnectorAuthorizationPlatformBinding({

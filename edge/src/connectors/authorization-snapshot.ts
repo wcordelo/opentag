@@ -23,6 +23,7 @@ import {
 } from "../platform/layer3-contract.js";
 import {
   TENANT_LOCATOR_OBJECT_NAME,
+  validateTenantLocatorResolution,
   type PlatformStateNamespace,
 } from "../platform/tenant-locator.js";
 import {
@@ -47,6 +48,7 @@ export type ConnectorAuthorizationSnapshot = Readonly<{
   marketplace: ConnectorMarketplaceEntry;
   grant: ConnectorOAuthGrant;
   credential: CredentialCustodyReference;
+  tenantLocatorVersion: number;
   observedAt: string;
 }>;
 
@@ -89,6 +91,13 @@ function timestamp(value: unknown, field: string): string {
   return result;
 }
 
+function positiveVersion(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new ConnectorAuthorizationSnapshotError(`${field}_invalid`, 503);
+  }
+  return value as number;
+}
+
 function sortedScopes(value: readonly string[]): readonly string[] {
   return Object.freeze([...new Set(value)].sort());
 }
@@ -120,6 +129,7 @@ export function validateConnectorAuthorizationSnapshot(
     "marketplace",
     "grant",
     "credential",
+    "tenantLocatorVersion",
     "observedAt",
   ]);
   if (Object.keys(input).some((key) => !allowed.has(key))) {
@@ -154,6 +164,7 @@ export function validateConnectorAuthorizationSnapshot(
     marketplace,
     grant,
     credential,
+    tenantLocatorVersion: positiveVersion(input.tenantLocatorVersion, "tenant_locator_version"),
     observedAt: timestamp(input.observedAt, "observed_at"),
   });
 }
@@ -238,6 +249,7 @@ export function assertConnectorAuthorizationSnapshotMatchesBinding(
     snapshot.action !== expected.action ||
     snapshot.grant.version !== binding.oauthGrantVersion ||
     snapshot.marketplace.version !== binding.marketplaceVersion ||
+    snapshot.tenantLocatorVersion !== binding.tenantLocatorVersion ||
     snapshot.credential.credentialRef !== expected.credentialRef ||
     snapshot.credential.version !== expected.credentialVersion
   ) {
@@ -323,6 +335,26 @@ export class PlatformStateConnectorAuthorizationReader {
         403,
       );
     }
+    const tenantLocatorResolution = validateTenantLocatorResolution(await readJson(
+      this.namespace,
+      TENANT_LOCATOR_OBJECT_NAME,
+      "/tenant-locator/resolve",
+      {
+        schemaVersion: 1,
+        platform,
+        platformTenantId,
+      },
+      "connector_tenant_locator_unavailable",
+    ));
+    if (tenantLocatorResolution.status !== "resolved") {
+      throw new ConnectorAuthorizationSnapshotError(
+        `connector_tenant_locator_${tenantLocatorResolution.status}`,
+        403,
+      );
+    }
+    if (tenantLocatorResolution.locator.tenantId !== tenantId) {
+      throw new ConnectorAuthorizationSnapshotError("connector_tenant_locator_mismatch", 403);
+    }
     const grant = validateConnectorOAuthGrant(await readJson(
       this.namespace,
       tenantObjectName,
@@ -358,6 +390,7 @@ export class PlatformStateConnectorAuthorizationReader {
       marketplace: entries[0],
       grant,
       credential,
+      tenantLocatorVersion: tenantLocatorResolution.locator.version,
       observedAt: new Date().toISOString(),
     });
     assertConnectorAuthorizationSnapshotUsable(snapshot);

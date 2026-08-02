@@ -150,6 +150,20 @@ function platformState(tenantId: string, credentialStatus: "active" | "revoked" 
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input)).pathname;
       if (path === "/identity-link/resolve") return Response.json(identityResolution(tenantId));
+      if (path === "/tenant-locator/resolve") {
+        return Response.json({
+          status: "resolved",
+          locator: {
+            schemaVersion: 1,
+            platform: "slack",
+            platformTenantId: "T1",
+            tenantId,
+            version: 1,
+            status: "active",
+            updatedAt: "2099-08-01T19:00:00.000Z",
+          },
+        });
+      }
       if (path === "/oauth/get") return Response.json(oauthGrant(tenantId));
       if (path === "/marketplace/list") return Response.json({ entries: [marketplace()] });
       if (path === "/credential/get") return Response.json(metadata(tenantId, credentialStatus));
@@ -218,6 +232,20 @@ describe("credential broker Worker", () => {
       stateBody = JSON.parse(String(init?.body));
       const path = new URL(String(_input)).pathname;
       if (path === "/identity-link/resolve") return Response.json(identityResolution(tenantId));
+      if (path === "/tenant-locator/resolve") {
+        return Response.json({
+          status: "resolved",
+          locator: {
+            schemaVersion: 1,
+            platform: "slack",
+            platformTenantId: "T1",
+            tenantId,
+            version: 1,
+            status: "active",
+            updatedAt: "2099-08-01T19:00:00.000Z",
+          },
+        });
+      }
       if (path === "/oauth/get") return Response.json(oauthGrant(tenantId));
       if (path === "/marketplace/list") return Response.json({ entries: [marketplace()] });
       return Response.json(metadata(tenantId));

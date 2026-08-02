@@ -19,7 +19,7 @@ current status.
 | Current merged main | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merge; PRs #45–#53 remain open and are not deployed) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
 | Bot deployment | `opentag-bot`, version `88615a84-1396-4298-bd76-95b423db496c` — deployed from merged main `d075431` on 2026-08-02 after typecheck, 1,226 unit tests, 55 Worker/e2e tests, deploy-config validation, and Wrangler dry-run validation; three repeated live `/health` probes returned HTTP 200 |
-| Provider-independent effect boundaries | `opentag-credential-custody` `893d7042-d265-4f0d-8fea-06f8a65472f2`; `opentag-credential-broker` `8e15a914-c11b-4b8f-9f3b-04472af4dd82`; `opentag-platform-effecter` `a1a33e17-d5bc-4055-aa94-7fbf3d8ffb56`; `opentag-provisioning-adapter` `50455921-30fd-48e5-ae75-13d626d06ce9`; `opentag-identity-custody` `97704e53-bfd7-4dee-b463-0f19dfdf9c36`; `opentag-oauth-effecter` `70e4633a-d08a-4876-b824-2807aeb24d04`; `opentag-oauth-callback` `16e15e50-342f-4293-8501-5e42ff7df1e8`; `opentag-billing-adapter` `e1bd6ccb-0a50-4560-87d1-18b6971e3f30`; `opentag-memory-deletion` `6b20ab90-d176-46ac-a0ae-3b4a24b21abb` — deployed fail-closed from the same merged main; no provider adapter or caller credential was configured |
+| Provider-independent effect boundaries | `opentag-credential-custody` `253aeab0-244e-456d-a65a-05ea0c9eb166`; `opentag-credential-broker` `618d0d35-07b7-475a-9fde-15af5a65a799`; `opentag-platform-effecter` `79b4d4a9-d039-4441-8532-b70b6826cf6a`; `opentag-provisioning-adapter` `ccf92a82-97c2-45bd-ae7a-64bf61bdf06f`; `opentag-identity-custody` `77e00862-fe2f-4ee6-b06b-9695dc868e9f`; `opentag-oauth-effecter` `a8b6cb82-aa9a-4dda-9d10-4081f89fe0d9`; `opentag-oauth-callback` `f0e20f62-c975-410b-b9ec-cdfb604abfa9`; `opentag-billing-adapter` `d341ec12-8765-486a-ad8e-0b21018b7121`; `opentag-memory-deletion` `ee536f48-32ef-4194-8dc1-776430341545` — deployed from merged main on 2026-08-02; all health endpoints returned HTTP 200, with provider effects fail-closed and no provider adapter configured |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
 | Bot health | `GET /health` returned HTTP 200 after the final redeploy; durable stores and service bindings are healthy, while `modelConfigured`, credential-broker auth, knowledge reconciliation, and OAuth redirect-origin configuration remain false |
@@ -35,6 +35,11 @@ foundation PRs #45–#53 remain open and are not included in this
 deployment. Provider adapters, custody mappings, OAuth origins, internal
 caller secrets, and external credentials must not be treated as live solely
 because their boundary Workers are deployed.
+The support Worker probes also verified the intended negative states: the
+credential broker and custody binding are not authorized for resolution, the
+effecter exposes no provider kinds, the OAuth callback has no allowed origin,
+and provisioning, identity, billing, and memory provider adapters are not
+configured. An unauthenticated effecter `/run` request returned HTTP 401.
 No secret value is recorded here.
 
 ## Status vocabulary

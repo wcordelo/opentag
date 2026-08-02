@@ -273,7 +273,15 @@ app.get("/health", (c) => c.json({
 app.post("/resolve", async (c) => {
   try {
     requireAuth(c.env, c.req.header("authorization"));
-    const request = validateCredentialBrokerRequest(await c.req.json());
+    let request: ReturnType<typeof validateCredentialBrokerRequest>;
+    try {
+      request = validateCredentialBrokerRequest(await c.req.json());
+    } catch (error) {
+      if (error instanceof Error) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
     await assertLabelsIntegrity(request.labels);
     const policy = policyFor(request);
     const { tenantId, credential } = await readCredentialMetadata(c.env, request);

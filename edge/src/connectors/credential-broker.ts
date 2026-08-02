@@ -45,7 +45,6 @@ function identifier(value: unknown, field: string, max = 512): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > max ||
-    value !== value.trim() ||
     /[\u0000-\u001f\u007f]/.test(value)
   ) {
     throw new Error(`${field}_invalid`);

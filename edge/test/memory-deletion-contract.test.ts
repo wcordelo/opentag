@@ -43,9 +43,13 @@ describe("memory deletion executor contract", () => {
       ...request,
       token: "never",
     })).toThrow("memory_deletion_source_request_field_invalid");
+    expect(validateMemoryDeletionSourceRequest({
+      ...request,
+      sourceKey: "wiki:T1:S1:page with spaces",
+    }).sourceKey).toBe("wiki:T1:S1:page with spaces");
     expect(() => validateMemoryDeletionSourceRequest({
       ...request,
-      sourceKey: "slack:T1:C1:contains user text",
+      sourceKey: "wiki:T1:S1:bad\u0000key",
     })).toThrow("source_key_invalid");
   });
 

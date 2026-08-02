@@ -19,7 +19,6 @@ export const MEMORY_DELETION_EXECUTOR_SCHEMA_VERSION = 1 as const;
 const MAX_IDENTIFIER_LENGTH = 256;
 const MAX_SOURCE_KEY_LENGTH = 128;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
-const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export class MemoryDeletionContractError extends Error {
@@ -61,11 +60,7 @@ function identifier(value: unknown, field: string, max = MAX_IDENTIFIER_LENGTH):
 }
 
 function sourceKey(value: unknown): string {
-  const result = identifier(value, "source_key", MAX_SOURCE_KEY_LENGTH);
-  if (!SOURCE_KEY_RE.test(result)) {
-    throw new MemoryDeletionContractError("source_key_invalid");
-  }
-  return result;
+  return identifier(value, "source_key", MAX_SOURCE_KEY_LENGTH);
 }
 
 function timestamp(value: unknown, field: string): string {
@@ -125,9 +120,6 @@ export function validateMemoryDeletionSourceReceipt(value: unknown): MemoryDelet
   const receipt = validateMemoryDeletionReceipt(input);
   if ((receipt.status === "deleted" || receipt.status === "not_found") && receipt.receiptRef === undefined) {
     throw new MemoryDeletionContractError("memory_deletion_receipt_ref_required");
-  }
-  if (!SOURCE_KEY_RE.test(receipt.sourceKey) || receipt.sourceKey.length > MAX_SOURCE_KEY_LENGTH) {
-    throw new MemoryDeletionContractError("source_key_invalid");
   }
   return receipt;
 }

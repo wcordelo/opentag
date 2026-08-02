@@ -557,7 +557,7 @@ export class PlatformStateEngine {
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.sql.exec<PlatformEffectRow>(
-      `SELECT * FROM platform_effect_intents ${where} ORDER BY updated_at ASC LIMIT ?`,
+      `SELECT * FROM platform_effect_intents ${where} ORDER BY available_at ASC LIMIT ?`,
       ...params,
       limit,
     ).toArray();

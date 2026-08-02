@@ -1684,18 +1684,31 @@ export class PlatformStateEngine {
     });
   }
 
-  putOAuthGrant(value: unknown): { ok: true; duplicate: boolean; grant: ConnectorOAuthGrant } {
+  putOAuthGrant(
+    value: unknown,
+    marketplaceSnapshot?: unknown,
+  ): { ok: true; duplicate: boolean; grant: ConnectorOAuthGrant } {
     const grant = validateConnectorOAuthGrant(value);
     if (grant.status !== "active") throw new PlatformStateError("oauth_active_grant_required", 400);
     return this.tx(() => {
       assertTenantActive(this.provisioningByTenant(grant.tenantId), grant.tenantId);
-      const marketplace = this.sql.exec<MarketplaceRow>(
-        `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
-        grant.connectorId,
-        grant.marketplaceVersion,
-      ).toArray()[0];
-      if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
-      const marketplaceEntry = marketplaceFromRow(marketplace);
+      const marketplaceEntry = marketplaceSnapshot === undefined
+        ? (() => {
+          const marketplace = this.sql.exec<MarketplaceRow>(
+            `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
+            grant.connectorId,
+            grant.marketplaceVersion,
+          ).toArray()[0];
+          if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
+          return marketplaceFromRow(marketplace);
+        })()
+        : validateConnectorMarketplaceEntry(marketplaceSnapshot);
+      if (
+        marketplaceEntry.connectorId !== grant.connectorId ||
+        marketplaceEntry.version !== grant.marketplaceVersion
+      ) {
+        throw new PlatformStateError("oauth_marketplace_snapshot_mismatch", 409);
+      }
       assertConnectorMarketplaceEntryActivatable(marketplaceEntry);
       if (marketplaceEntry.status !== "curated") {
         throw new PlatformStateError("oauth_marketplace_not_curated", 409);
@@ -2737,7 +2750,12 @@ export class PlatformStateDO extends DurableObject {
         return Response.json(this.engine.revokeMarketplace(await readJson(request)));
       }
       if (url.pathname === "/oauth" && request.method === "POST") {
-        return Response.json(this.engine.putOAuthGrant(await readJson(request)));
+        const input = await readJson(request);
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+          throw new PlatformStateError("oauth_request_invalid", 400);
+        }
+        const { marketplaceSnapshot, ...grant } = input as Record<string, unknown>;
+        return Response.json(this.engine.putOAuthGrant(grant, marketplaceSnapshot));
       }
       if (url.pathname === "/oauth/get" && request.method === "POST") {
         return Response.json(this.engine.getOAuthGrant(await readJson(request)));

@@ -3,18 +3,17 @@
 Status: **historical Notion audit reconciled with the merged connector/platform
 work, the 2026-08-01 live rollout, and the credential-broker branch**
 
-Updated: **2026-08-01**
+Updated: **2026-08-02**
 
 The historical comparison used the source revisions recorded below. Current
 implementation and deployment truth is in
 [current-state.md](./current-state.md); this inventory remains the durable
 mapping from daily Centaur findings to OpenTag decisions.
-The isolated credential-broker branch extends the fail-closed boundary with an
-optional Secrets Store custody adapter; no provider mapping or token is live.
+The credential-broker and provider-independent effect boundaries are deployed
+from merged main with no provider mapping, caller credential, or token live.
 
-The queue-backed effecter implementation is maintained in the isolated
-`codex/weekly-platform-effecter` branch and remains fail-closed until an
-approved provider adapter and custody boundary are configured.
+The queue-backed effecter implementation is deployed and remains fail-closed
+until an approved provider adapter and custody boundary are configured.
 
 The OAuth/marketplace branch adds replay-safe state, durable trust/version
 gates, and an authenticated provider-adapter protocol, but does not claim a
@@ -79,7 +78,8 @@ blocked now have a precise evidence status:
 - router classification is **live-verified in shadow mode** with Tier 2 still
   dispatched;
 - Drive and Linear remain **fail-closed** because the deployed bot has no
-  `CONNECTOR_CREDENTIALS` broker/provider custody; and
+  broker authorization, custody mapping, provider adapter, or test-workspace
+  grant, even though the internal broker service binding is deployed; and
 - the Buzz receive route is **live fail-closed**, not authenticated-live.
 
 The original Notion findings and dates are not rewritten. See the
@@ -88,27 +88,33 @@ for the complete document-by-document status map.
 
 ## Current landing and activation gates
 
-The deployed baseline is merged OpenTag `main` `498164f`, served as Worker
-version `a7674fb3-219b-4b93-893a-53792f51824f`. The following architecture work
-is implemented and validated in isolated, non-draft PRs but is not live until
-it is merged and redeployed:
+The deployed baseline is merged OpenTag `main` `d075431`, served as Worker
+version `24284136-feb8-44ef-91e0-4b50e5a554bb`. The provider-independent
+effect boundaries from the merged architecture work are deployed and
+health-checked, but remain fail-closed until their external gates are approved:
 
 - [#29 platform effecter](https://github.com/wcordelo/opentag/pull/29) and
   [#30 credential broker](https://github.com/wcordelo/opentag/pull/30) establish
-  the secret-free handoff and custody boundary;
+  the secret-free handoff and custody boundary; both boundaries are deployed
+  without provider credentials;
 - [#31 OAuth/marketplace](https://github.com/wcordelo/opentag/pull/31),
   [#32 billing policy](https://github.com/wcordelo/opentag/pull/32),
   [#37 identity custody](https://github.com/wcordelo/opentag/pull/37),
   [#38 memory deletion](https://github.com/wcordelo/opentag/pull/38), and
   [#39 provisioning](https://github.com/wcordelo/opentag/pull/39) add the
-  provider-independent metadata and receipt boundaries; and
+  provider-independent metadata and receipt boundaries, now deployed from
+  merged main;
 - [#41 OAuth scope hardening](https://github.com/wcordelo/opentag/pull/41),
   [#42 billing adapter](https://github.com/wcordelo/opentag/pull/42), and
   [#43 trace/query/router safety](https://github.com/wcordelo/opentag/pull/43)
-  close follow-up validation gaps.
+  close follow-up validation gaps. The later foundation stack [#45](https://github.com/wcordelo/opentag/pull/45),
+  [#47](https://github.com/wcordelo/opentag/pull/47),
+  [#48](https://github.com/wcordelo/opentag/pull/48), and
+  [#49](https://github.com/wcordelo/opentag/pull/49) remains open and is not
+  included in the deployed baseline.
 
-After merge, validate the complete mainline together, deploy the bot plus only
-the approved effect workers, and run synthetic/non-production smoke tests. Do
+After the foundation stack is accepted, validate the complete mainline
+together, redeploy the bot, and rerun synthetic/non-production smoke tests. Do
 not enable Drive or Linear until broker custody, exact grants, OAuth/provider
 configuration, ACL policy, and a test workspace are all present. Do not enable
 Tier 1 or Tier 3 routing until shadow volume, quality, feedback, latency, cost,

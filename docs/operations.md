@@ -230,7 +230,7 @@ key; rotate that secret to revoke outstanding links.
 
 The current production deployment used exact merged baseline `498164f` from a
 clean detached checkout. The bot deployment is
-`fbecbc00-2789-4d8f-ba3d-3552265e0165`; the harness deployment was
+`cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1`; the harness deployment was
 `58c47ab9-daf9-456b-b17c-73fc66e6b25d`. The image digest and feature-by-feature
 result matrix are in [current-state.md](./current-state.md).
 

@@ -18,7 +18,7 @@ current status.
 | Merged OpenTag baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
 | Review-ready feature PRs | [#29](https://github.com/wcordelo/opentag/pull/29), [#30](https://github.com/wcordelo/opentag/pull/30), [#31](https://github.com/wcordelo/opentag/pull/31), and [#32](https://github.com/wcordelo/opentag/pull/32); all non-draft, mergeable, and green at this reconciliation |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `fbecbc00-2789-4d8f-ba3d-3552265e0165` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
+| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
 | Bot health | `GET /health` returned HTTP 200 with durable stores, service bindings, native Nanocodex, knowledge actor-token configuration, and Buzz directory readiness reported |

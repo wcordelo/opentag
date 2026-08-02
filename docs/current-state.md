@@ -15,22 +15,21 @@ current status.
 
 | Evidence | Value |
 | --- | --- |
-| Merged OpenTag baseline | `ff8d649ff91e35b7c428de1a45f5e892bcc747a7` (`origin/main`, PR #27 merge) |
-| Reconciliation branch | `codex/docs-live-reconciliation` |
-| Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `bf1f47bf-b569-46cd-9e85-46141ed86d24` — tightened flexible Slack response routing, duplicate-admission fix, and explicit route-input hardening |
+| Merged OpenTag baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, current merged main) |
+| Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads; included in current main |
+| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from exact merged main `498164f` |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
-| Bot health | `GET /health` returned HTTP 200 with durable stores, service bindings, native Nanocodex, knowledge actor-token configuration, and Buzz directory readiness reported |
+| Bot health | `GET /health` returned HTTP 200 from the deployed main version with durable stores, service bindings, model and knowledge configuration, native Nanocodex, and Buzz directory readiness reported |
 | Slack canary thread | [final routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
 | Slack passive-only canary | [top-level plus untagged `yo` remained silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
 | Stale-turn cleanup thread | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 | Cloudflare origin | `https://opentag-bot.williamlopezc.workers.dev` |
 
-The deployment was performed from the reconciliation branch so the identity
-read fix and the tightened Slack routing/finalization correction could be verified
-immediately. The branch still requires the normal review/publication path
-before its source changes become part of `origin/main`.
+The latest bot deployment was performed from the exact clean merged `origin/main`
+checkout. Open feature branches remain review artifacts and were not merged or
+deployed by this workflow; their provider adapters and custody integrations are
+therefore not represented as live capability.
 No secret value is recorded here.
 
 ## Status vocabulary
@@ -60,7 +59,7 @@ No secret value is recorded here.
 | Native typed Nanocodex Responses adapter | Live-verified | Slack marker `OPENTAG_NANOCODEX_NATIVE_OK` returned from `--nanocodex`; the typed adapter, provider state, replay, and completed-only commit are source-tested. A live reconnect/checkpoint replay drill remains open. |
 | Claudex model path through the private harness boundary | Live-verified | Slack marker `OPENTAG_CLAUDEX_HARNESS_OK` returned after the harness redeploy. This verifies the private Worker/service-binding path, not a public harness endpoint. |
 | Harness sandbox, egress, sentinels, remote-git postconditions | Source-complete; harness deployed | Harness image and Worker are deployed with the expected binding. No live repository push or PR was performed in this canary. |
-| Runtime/capability identity and deployment evidence | Live-verified | `/health` reports the current bot version, bindings, and capability flags. It correctly reports `modelConfigured: false` for the agent and `reconciliationConfigured: false` for knowledge; readiness is not silently upgraded. The first untagged question therefore ended with an explicit no-text terminal rather than a model answer, while routing itself still executed. |
+| Runtime/capability identity and deployment evidence | Live-verified | The deployed `/health` reports the current Worker version, `modelConfigured: true`, knowledge namespace/search/reconciliation/actor-token configuration, durable bindings, and native Nanocodex. Configuration presence is not treated as proof of a provider or authenticated Buzz effect; those paths remain separately gated. |
 | Actor-bound knowledge/MCP authorization | Source-complete; synthetic/admin path only | Token, replay, team/project, ACL, audit, and source-authorization contracts are focused-tested. External MCP remains operator-only; no actor token or real external MCP call was exposed in this rollout. |
 | Slack knowledge search and ordinary retrieval | Live-verified with indexing caveat | An indexed historical marker returned four hits and a normal knowledge question returned a scoped answer. A newly posted marker returned zero exact hits immediately, so indexing latency/eventual consistency remains an explicit operational condition. |
 | Connector labels, opaque credential references, bundle revisions, revocation, citations | Synthetic-live | The synthetic platform run exercised reference writes/reads, grants, marketplace metadata, revocation, and effect creation. Tokens never entered OpenTag state. |

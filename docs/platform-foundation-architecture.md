@@ -109,20 +109,26 @@ The lifecycle is:
 
 1. A state transition records its own metadata and an idempotent effect intent
    in the same SQLite transaction.
-2. An effect worker claims the intent with a short lease and receives the
+2. The bot publishes a queue wakeup containing only the internal
+   `PlatformStateDO` object name. A bounded admin wake route remains available
+   for recovery when the queue is unavailable.
+3. An effect worker claims the intent with a short lease and receives the
    validated intent metadata plus an opaque lease token.
-3. The worker performs the provider call outside the Durable Object, then
+4. The effecter performs the provider call outside the Durable Object, then
    reports `complete` with a bounded external receipt reference or `failed`
    with a safe error code and retry policy.
-4. A revoked or superseded operation can cancel the intent; an expired lease
+5. A revoked or superseded operation can cancel the intent; an expired lease
    is reclaimable, while an active lease cannot be double-claimed.
 
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
-The ledger still does not perform the external effect. That boundary must be
-implemented by a separately authenticated worker after custody, provider, and
-billing decisions are approved.
+The ledger still does not perform the external effect. The isolated branch now
+contains a separately authenticated baseline effecter Worker for this boundary;
+it registers no provider adapters and therefore fails closed until custody,
+provider, and billing decisions are approved. The queue and effecter service
+binding are dispatch architecture only; they do not imply that an external
+provider or credential custody system is configured.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
@@ -156,8 +162,9 @@ still required before these contracts become live product surfaces:
 4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
 5. retention/deletion guarantees and compliance requirements for hosted memory.
 
-No code silently chooses one of those alternatives, runs an OAuth callback,
-stores a provider token, charges a plan, or deletes live customer knowledge.
+The baseline effecter does not silently choose one of those alternatives, run
+an OAuth callback, store a provider token, charge a plan, or delete live
+customer knowledge.
 The platform-state ledger records explicit bootstrap requests and externally
 verified receipts without marking a tenant active until the required steps are
 reported complete.
@@ -200,3 +207,5 @@ not a replacement for that worker.
 - Cloudflare deployment is an explicit operator action. The current deployment
   evidence is recorded in `docs/current-state.md`; local tests alone never
   authorize a deploy or prove an external side effect.
+- The queue-backed baseline effecter is locally validated and remains
+  fail-closed with no registered provider adapters or credentials.

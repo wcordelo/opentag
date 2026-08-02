@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import { isPlatformEffectQueueName } from "./platform/effect-dispatch.js";
 
 export type RuntimeCapabilityEvidence = Readonly<{
   version: 1;
@@ -20,6 +21,12 @@ export type RuntimeCapabilityEvidence = Readonly<{
     reconciliationConfigured: boolean;
     searchEndpointConfigured: boolean;
     actorTokenConfigured: boolean;
+  }>;
+  platformEffects: Readonly<{
+    stateNamespaceConfigured: boolean;
+    queueConfigured: boolean;
+    effecterConfigured: boolean;
+    dispatchConfigured: boolean;
   }>;
   buzz: Readonly<{
     relayConfigured: boolean;
@@ -49,6 +56,11 @@ type RuntimeEvidenceEnv = Partial<Pick<
   | "KNOWLEDGE_DLQ_NAME"
   | "KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED"
   | "KNOWLEDGE_RECONCILIATION_TEAM_IDS"
+  | "PLATFORM_STATE"
+  | "PLATFORM_EFFECTS_QUEUE"
+  | "PLATFORM_EFFECTS_QUEUE_NAME"
+  | "PLATFORM_EFFECTER"
+  | "EFFECTOR_AUTH_TOKEN"
   | "SUPERMEMORY_URL"
   | "KNOWLEDGE_ACTOR_TOKEN_SECRET"
   | "BUZZ_RELAY_HTTP_BASE_URL"
@@ -93,6 +105,20 @@ export function buildRuntimeCapabilityEvidence(
         configured(env.KNOWLEDGE_RECONCILIATION_TEAM_IDS),
       searchEndpointConfigured: configured(env.SUPERMEMORY_URL),
       actorTokenConfigured: configured(env.KNOWLEDGE_ACTOR_TOKEN_SECRET),
+    },
+    platformEffects: {
+      stateNamespaceConfigured: Boolean(env.PLATFORM_STATE),
+      queueConfigured: Boolean(
+        env.PLATFORM_EFFECTS_QUEUE && configured(env.PLATFORM_EFFECTS_QUEUE_NAME),
+      ) && isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME),
+      effecterConfigured: Boolean(env.PLATFORM_EFFECTER),
+      dispatchConfigured: Boolean(
+        env.PLATFORM_STATE &&
+        env.PLATFORM_EFFECTS_QUEUE &&
+        isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME) &&
+        env.PLATFORM_EFFECTER &&
+        configured(env.EFFECTOR_AUTH_TOKEN),
+      ),
     },
     buzz: {
       relayConfigured: configured(env.BUZZ_RELAY_HTTP_BASE_URL),

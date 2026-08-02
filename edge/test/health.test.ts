@@ -94,6 +94,12 @@ describe("runtime capability evidence", () => {
         searchEndpointConfigured: true,
         actorTokenConfigured: false,
       },
+      platformEffects: {
+        stateNamespaceConfigured: false,
+        queueConfigured: false,
+        effecterConfigured: false,
+        dispatchConfigured: false,
+      },
       buzz: {
         relayConfigured: true,
         tenantDirectoryConfigured: true,
@@ -118,6 +124,18 @@ describe("runtime capability evidence", () => {
       reconciliationConfigured: false,
       searchEndpointConfigured: false,
       actorTokenConfigured: false,
+    });
+    expect(buildRuntimeCapabilityEvidence({
+      PLATFORM_STATE: {} as never,
+      PLATFORM_EFFECTS_QUEUE: {} as never,
+      PLATFORM_EFFECTS_QUEUE_NAME: "opentag-platform-effects",
+      PLATFORM_EFFECTER: {} as never,
+      EFFECTOR_AUTH_TOKEN: "effector-secret",
+    }).platformEffects).toEqual({
+      stateNamespaceConfigured: true,
+      queueConfigured: true,
+      effecterConfigured: true,
+      dispatchConfigured: true,
     });
   });
 });

@@ -10,6 +10,10 @@ implementation and deployment truth is in
 [current-state.md](./current-state.md); this inventory remains the durable
 mapping from daily Centaur findings to OpenTag decisions.
 
+The queue-backed effecter implementation is maintained in the isolated
+`codex/weekly-platform-effecter` branch and remains fail-closed until an
+approved provider adapter and custody boundary are configured.
+
 ## Scope and source availability
 
 The requested Pacific window is **2026-07-22 through 2026-07-31**, inclusive.
@@ -47,6 +51,17 @@ The [daily database](https://app.notion.com/p/3f174eb0c9b24c51aa28beeae39de4ef),
 and [OpenTag parent plan](https://app.notion.com/p/39a344480094810c8ba1f84c89f7168d)
 were inspected for schema, historical context, and architecture boundaries.
 
+The broader OpenTag page was also inspected: the [single-agent architecture
+plan](https://app.notion.com/p/39a344480094810c8ba1f84c89f7168d), [vision
+spec](https://app.notion.com/p/3af34448009481d09af0c42ec4ef14fe), [three-tier
+router spec](https://app.notion.com/p/3af34448009481bcadfcdf87cb50355d),
+[porting priorities](https://app.notion.com/p/3a9344480094817884dedb90cfb8c988),
+[end-to-end implementation spec](https://app.notion.com/p/3ab34448009481ec96d0eebda0c30fa7),
+the legacy [Centaur-to-Edge migration spec](https://app.notion.com/p/38d34448009481f58864e58be2a71c97),
+and the qm, Nanocodex, and Buzz full-history review databases. The legacy
+Centaur-to-Edge actor/Wasm/Nix design is superseded by the single-agent
+Cloudflare architecture and is not an omitted implementation requirement.
+
 ## Current rollout reconciliation
 
 The connector/platform/router items that were previously described as local or
@@ -71,7 +86,7 @@ for the complete document-by-document status map.
 
 - **Migrate — Google Drive full-text search.** Centaur added bounded
   `fullText contains` search, escaping, and tests. OpenTag now has a bounded
-  Drive connector and citation output in the local branch, but live use still
+  Drive connector and citation output on merged main, but live use still
   requires a deployed credential broker, Google OAuth/custody, ACL policy, and
   a non-production validation workspace.
 - **Migrate — secret-shaped harness-output redaction.** This is implemented in
@@ -107,7 +122,7 @@ for the complete document-by-document status map.
   bounded pagination/media/reference normalization, item-level errors, and
   citation/ACL tests.
 - **Evaluate — immutable connector-policy labels.** This foundation is now
-  implemented locally in `edge/src/connectors/authorization.ts`, with
+  implemented on merged main in `edge/src/connectors/authorization.ts`, with
   credential references, access-bundle revisions, revocation, and citation
   binding. A real broker and custody service remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
@@ -116,8 +131,8 @@ for the complete document-by-document status map.
 
 ### Jul 24 — one Evaluate, three N/A
 
-- **Evaluate — generic client-credentials token broker.** The local branch now
-  has a secret-free broker client and a durable effect handoff, but no broker
+- **Evaluate — generic client-credentials token broker.** Merged main now has
+  a secret-free broker client and durable effect handoff, but no broker
   Worker, encrypted provider store, rotation scheduler, or approved custody
   backend. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
   or access bundles.
@@ -131,7 +146,7 @@ for the complete document-by-document status map.
 ### Jul 25 — one Migrate, one Evaluate, three N/A
 
 - **Migrate — Claude Opus 5 shortcuts and effective-selection footnote.** The
-  local branch includes `opus-5` and `opus-5-fast` aliases and effective
+  merged line includes `opus-5` and `opus-5-fast` aliases and effective
   harness/model provenance in the harness progress path. A live Slack smoke
   remains useful after the next deployment.
 - **Evaluate — deterministic controlled rollout/provenance.** OpenTag has
@@ -144,7 +159,7 @@ for the complete document-by-document status map.
 ### Jul 28 — two Migrate, two Covered, three N/A
 
 - **Migrate — preserve Linear project/milestone through confirmed writes.** The
-  local branch implements project and milestone fields in the durable approval,
+  merged line implements project and milestone fields in the durable approval,
   exact digest, Linear mutation, and tests. It remains disabled for production
   until a broker/OAuth grant and test workspace are available.
 - **Migrate — terminal skips for inaccessible Slack knowledge sources.** The
@@ -188,8 +203,8 @@ change, not evidence that all earlier gaps are complete.
 
 ### Jul 31 — one Evaluate, three Covered, one N/A
 
-- **Evaluate — authorized bounded raw knowledge/context queries.** The local
-  branch implements named, server-owned `query_template` operations with fixed
+- **Evaluate — authorized bounded raw knowledge/context queries.** The merged
+  line implements named, server-owned `query_template` operations with fixed
   statements, bounded results, verified team scope, and redacted lease tokens.
   Arbitrary SQL, table names, filters, ordering, and caller-chosen addressing
   remain prohibited.
@@ -221,10 +236,14 @@ change, not evidence that all earlier gaps are complete.
   outcome, and feedback measurement while dispatch remains Tier 2;
 - provisioning, identity/credential references, marketplace/OAuth, usage meter,
   memory-policy/deletion contracts; and
-- the new secret-free `platform_effect_intents` ledger with bounded leases,
+- the merged `platform-state` metadata ledger and the new secret-free
+  `platform_effect_intents` handoff with bounded leases,
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
-  rotation, marketplace changes, billing meters, and memory deletion.
+  rotation, marketplace changes, billing meters, and memory deletion; the
+  isolated branch also adds an authenticated effecter runner/Worker, a
+  metadata-only queue wakeup/retry path, and an admin recovery wake route. It
+  still fails closed when no provider adapter is configured.
 - source-scoped memory deletion receipts bound to the request epoch; requests
   reach `completed` only after every source reports `deleted` or `not_found`,
   while failed receipts remain explicit and terminal. No deletion executor is
@@ -240,10 +259,11 @@ change, not evidence that all earlier gaps are complete.
    provider OAuth/token rotation, scope checks, revocation propagation, and a
    safe non-production smoke. No credential store is currently configured.
 2. **Provisioning/identity:** the local tenant ledger now requires an external
-   receipt for every required provisioning step. Still choose the tenant
-   locator/isolation model, deploy the bootstrap/effect worker, establish
-   identity/key custody, and supply real receipts for every DO, bundle, OAuth,
-   and identity step.
+   receipt for every required provisioning step. Choose the tenant locator and
+   isolation model, deploy the bootstrap/effect worker and queue after an
+   adapter is approved, establish identity/key custody, and supply real
+   receipts for every DO, bundle, OAuth, and identity step. The metadata ledger
+   and platform binding are deployed; the external worker is not.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

@@ -187,6 +187,9 @@ cd edge
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
+| `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
+| `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
@@ -301,6 +304,17 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+The bot publishes a wakeup after platform-state mutations to the
+`opentag-platform-effects` Queue. Each body contains only the internal
+`PlatformStateDO` object name. The effecter consumes the wakeup, lists bounded
+pending/retryable receipts, and calls `/run` through its authenticated service
+boundary. Retryable provider failures are scheduled from `availableAt`; the
+queue DLQ is for repeated dispatch failures, not provider secrets. Deploy the
+effecter and create/configure both queue names before enabling the bot binding.
+If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
+route after the queue is restored; never copy an effect payload into a queue
+message.
 
 Memory deletion is not complete when the request is accepted. An approved
 external executor must submit one epoch-matching receipt per requested source

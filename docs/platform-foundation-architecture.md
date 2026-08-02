@@ -193,12 +193,14 @@ The lifecycle is:
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
-The ledger still does not perform the external effect. The isolated branch now
-contains a separately authenticated baseline effecter Worker for this boundary;
-it registers no provider adapters and therefore fails closed until custody,
-provider, and billing decisions are approved. The queue and effecter service
-binding are dispatch architecture only; they do not imply that an external
-provider or credential custody system is configured.
+The ledger still does not perform the external effect. The baseline effecter
+Worker registers no provider adapters and therefore fails closed until custody,
+provider, and billing decisions are approved. When an adapter is approved, it
+must use the dedicated binding for exactly one effect family (for example,
+`CREDENTIAL_CUSTODY_EFFECT_ADAPTER`); each family has its own bearer secret and
+the Worker exposes only that matching kind to the adapter. The queue and
+effecter service binding are dispatch architecture only; they do not imply
+that an external provider or credential custody system is configured.
 
 ## Credential broker boundary
 

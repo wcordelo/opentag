@@ -100,7 +100,11 @@ app.post("/provision-step", async (c) => {
       }
       throw new ProvisioningAdapterWorkerError("provisioning_provider_receipt_invalid", 503);
     }
-    return c.json({ ok: true, status: "completed", receipt }, 202);
+    return c.json({
+      ok: true,
+      status: receipt.outcome === "complete" ? "completed" : "failed",
+      receipt,
+    }, 202);
   } catch (error) {
     if (error instanceof ProvisioningAdapterWorkerError) {
       return c.json({ error: error.code }, error.status);

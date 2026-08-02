@@ -246,8 +246,8 @@ change, not evidence that all earlier gaps are complete.
   still fails closed when no provider adapter is configured.
 - source-scoped memory deletion receipts bound to the request epoch; requests
   reach `completed` only after every source reports `deleted` or `not_found`,
-  while failed receipts remain explicit and terminal. No deletion executor is
-  implied.
+  while failed receipts remain explicit and terminal; and a fail-closed,
+  source-scoped provider adapter boundary that still carries no memory content.
 - receipt-bound provisioning step advancement; a tenant cannot become `active`
   from a bare outcome and each required footprint retains an opaque external
   receipt before activation.
@@ -270,10 +270,12 @@ change, not evidence that all earlier gaps are complete.
 4. **Billing:** choose the billing source of truth, plan/overage policy,
    metering reconciliation, and enforcement behavior. Meter intents exist but
    no billing provider is called.
-5. **Memory deletion:** the durable receipt ledger and source/epoch checks now
-   exist. Still choose retention/compliance guarantees and deploy the deletion
-   executor that performs source-by-source deletion and submits proof; the
-   ledger does not inspect or delete memory itself.
+5. **Memory deletion:** the durable receipt ledger, source/epoch checks, and a
+   provider-independent source-scoped adapter boundary now exist. Still choose
+   retention/compliance guarantees, provider custody, and the non-production
+   namespace before configuring the adapter that performs source-by-source
+   deletion and submits proof; the ledger and boundary do not inspect or delete
+   memory themselves.
 6. **Router rollout:** collect enough shadow measurements, then add Tier 1
    knowledge quality gates and fallback/synthesis behavior, product-facing
    escalation affordance, and an explicit rollout gate before enabling

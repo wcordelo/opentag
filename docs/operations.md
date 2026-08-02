@@ -323,6 +323,15 @@ complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
 
+The provider-independent `edge/workers/memory-deletion/` boundary is an
+additional fail-closed handoff. `POST /delete` carries one source key, tenant,
+request/idempotency identifiers, deletion epoch, and timestamp to an explicitly
+authenticated provider adapter. It has no provider binding by default. Before
+activation, document the provider's source deletion, retention/legal-hold,
+tenant-isolation, idempotency, and test-namespace guarantees; a Worker health
+response or adapter HTTP success is not proof that the platform receipt ledger
+was updated.
+
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and
 `observedAt`. A complete step cannot be marked retryable. The platform ledger

@@ -142,7 +142,12 @@ idempotent. `not_found` is treated as a successful absence proof; any
 claiming completion. The receipt ledger stores bounded metadata and an opaque
 external receipt reference, never memory contents or deletion payloads. The
 executor still owns the actual deletion and must report receipts through the
-admin/effect boundary.
+admin/effect boundary. The provider-independent `opentag-memory-deletion`
+Worker now accepts one source-scoped request at a time, forwards only bounded
+tenant/source/epoch metadata to a separately authenticated adapter, and rejects
+successful provider responses without an opaque receipt reference. It remains
+fail-closed until a reviewed provider adapter, custody path, and non-production
+test namespace are configured.
 
 Provisioning step advancement is receipt-bound. Each required step must carry
 an opaque external receipt reference and observed timestamp; completion without

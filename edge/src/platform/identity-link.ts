@@ -225,7 +225,11 @@ function checkRelationships(record: IdentityLinkRecord): void {
   }
 }
 
-export function validateIdentityLinkRecord(value: unknown, now = new Date()): IdentityLinkRecord {
+export function validateIdentityLinkRecord(
+  value: unknown,
+  now = new Date(),
+  allowExpiredProof = false,
+): IdentityLinkRecord {
   const input = object(value, "identity_link_record_invalid");
   exactFields(
     input,
@@ -249,7 +253,7 @@ export function validateIdentityLinkRecord(value: unknown, now = new Date()): Id
     tenantId: canonicalTenantId(input.tenantId),
     subject: subject(input.subject),
     principal: principal(input.principal),
-    identityLink: verifiedLink(input.identityLink, now, status === "revoked"),
+    identityLink: verifiedLink(input.identityLink, now, status === "revoked" || allowExpiredProof),
     version: version(input.version, "version"),
     status,
     updatedAt: timestamp(input.updatedAt, "updated_at"),

@@ -422,21 +422,25 @@ function tenantLocatorFromRow(row: TenantLocatorRow): TenantLocatorRecord {
 }
 
 function identityLinkFromRow(row: IdentityLinkRow): IdentityLinkRecord {
-  return validateIdentityLinkRecord({
-    schemaVersion: 1,
-    tenantId: row.tenant_id,
-    subject: {
-      platform: row.external_platform,
-      platformTenantId: row.external_tenant_id,
-      platformSubjectId: row.external_subject_id,
+  return validateIdentityLinkRecord(
+    {
+      schemaVersion: 1,
+      tenantId: row.tenant_id,
+      subject: {
+        platform: row.external_platform,
+        platformTenantId: row.external_tenant_id,
+        platformSubjectId: row.external_subject_id,
+      },
+      principal: parseJson<unknown>(row.principal_json),
+      identityLink: parseJson<unknown>(row.identity_link_json),
+      version: row.version,
+      status: row.status,
+      updatedAt: row.updated_at,
+      ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
     },
-    principal: parseJson<unknown>(row.principal_json),
-    identityLink: parseJson<unknown>(row.identity_link_json),
-    version: row.version,
-    status: row.status,
-    updatedAt: row.updated_at,
-    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
-  });
+    new Date(),
+    true,
+  );
 }
 
 function provisioningReceipt(

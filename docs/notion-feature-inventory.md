@@ -1,7 +1,7 @@
 # Notion-derived OpenTag feature inventory
 
 Status: **historical Notion audit reconciled with the merged connector/platform
-work and the 2026-08-01 live rollout**
+work, the 2026-08-01 live rollout, and the credential-broker branch**
 
 Updated: **2026-08-01**
 
@@ -9,7 +9,6 @@ The historical comparison used the source revisions recorded below. Current
 implementation and deployment truth is in
 [current-state.md](./current-state.md); this inventory remains the durable
 mapping from daily Centaur findings to OpenTag decisions.
-
 The isolated credential-broker branch extends the fail-closed boundary with an
 optional Secrets Store custody adapter; no provider mapping or token is live.
 

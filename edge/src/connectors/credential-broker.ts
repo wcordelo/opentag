@@ -259,7 +259,13 @@ export async function resolveCredentialBearer(
     headers,
     body: JSON.stringify(request),
   });
-  if (!response.ok) throw new Error("connector_credential_resolution_failed");
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    const code = typeof body.error === "string" && /^[a-z][a-z0-9_.-]{0,127}$/.test(body.error)
+      ? body.error
+      : "connector_credential_resolution_failed";
+    throw new Error(code);
+  }
   const body = validateCredentialBrokerResponse(await response.json());
   if (body.ref !== request.reference.ref || body.version !== request.reference.version) {
     throw new Error("connector_credential_resolution_invalid");

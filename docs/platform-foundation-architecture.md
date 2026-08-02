@@ -1,6 +1,7 @@
 # Platform and routing foundation
 
-Status: **source-complete metadata foundation; synthetic-live; external effecter and connector broker still gated**
+Status: **source-complete metadata foundation; synthetic-live; credential-broker
+boundary validated locally; external effecter and connector custody still gated**
 
 Updated: **2026-08-01**
 
@@ -150,10 +151,10 @@ The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
 1. shared per-tenant DO isolation versus Workers for Platforms;
-2. whether the optional Cloudflare Secrets Store adapter is the approved
+2. production tenant locator and per-team DO onboarding;
+3. whether the optional Cloudflare Secrets Store adapter is the approved
    custody implementation, or whether an external KMS/envelope/self-hosted
    Worker should replace it;
-3. production tenant locator and per-team DO onboarding;
 4. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
 5. curated-only marketplace trust and OAuth callback ownership;
 6. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
@@ -193,17 +194,17 @@ not a replacement for that worker.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, and admin routes are deployed
-  and synthetic-live, but the production bootstrap authority, tenant locator
-  integration, identity/key custody worker, Slack OAuth callback, marketplace
-  trust review process, billing/plan enforcement, memory deletion executor,
-  and credential broker are not live.
+- The platform-state migration, effect leases, admin routes, credential-broker
+  boundary, and optional Secrets Store custody adapter are locally validated,
+  but the production
+  bootstrap authority, tenant locator integration, identity/key custody policy,
+  Slack OAuth callback, marketplace trust review process, billing/plan
+  enforcement, memory deletion executor, configured custody mapping, and
+  provider adapters are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.
 - Cloudflare deployment is an explicit operator action. The current deployment
   evidence is recorded in `docs/current-state.md`; local tests alone never
   authorize a deploy or prove an external side effect.
-- The credential-broker boundary and optional Secrets Store custody adapter are
-  locally validated, but no custody mapping, provider token, or external
-  provider adapter is live.
+- No custody mapping, provider token, or external provider adapter is live.

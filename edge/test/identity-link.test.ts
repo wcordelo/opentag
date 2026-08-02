@@ -83,15 +83,13 @@ describe("identity link contract", () => {
   });
 
   it("treats expiry and revocation as inactive without inventing a principal", () => {
-    const expired = validateIdentityLinkRecord({
+    expect(() => validateIdentityLinkRecord({
       ...RECORD,
       identityLink: {
         ...LINK,
         expiresAt: "2026-08-01T21:00:00.000Z",
       },
-    });
-    expect(identityLinkResolutionFromRecord(expired, new Date("2026-08-01T22:00:00.000Z")))
-      .toEqual({ status: "inactive" });
+    })).toThrow(new IdentityLinkContractError("identity_link_inactive"));
     const revoked = validateIdentityLinkRecord({
       ...RECORD,
       version: 2,

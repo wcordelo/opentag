@@ -249,7 +249,7 @@ export function validateIdentityLinkRecord(value: unknown, now = new Date()): Id
     tenantId: canonicalTenantId(input.tenantId),
     subject: subject(input.subject),
     principal: principal(input.principal),
-    identityLink: verifiedLink(input.identityLink, now, true),
+    identityLink: verifiedLink(input.identityLink, now, status === "revoked"),
     version: version(input.version, "version"),
     status,
     updatedAt: timestamp(input.updatedAt, "updated_at"),

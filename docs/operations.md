@@ -193,6 +193,7 @@ cd edge
 | `OAUTH_EFFECTER_AUTH_TOKEN` | Secret | OAuth callback/effecter | Internal callback-to-effecter bearer; never a provider credential |
 | `OAUTH_PROVIDER_ADAPTER` | Optional service binding | OAuth effecter | Provider exchange/custody boundary; absent keeps OAuth fail-closed |
 | `OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | OAuth effecter/provider adapter | Separate adapter bearer; never a provider credential in OpenTag |
+| `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
 | `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
@@ -331,6 +332,12 @@ Marketplace entries must have a `review:` trust reference, actions, and
 auth-mode-consistent scopes. OAuth grants must name the exact curated
 marketplace version and matching provider/scopes. Revoking that marketplace
 version revokes dependent grants through the effect ledger.
+
+Provisioning step updates must include `schemaVersion`, the provisioning
+idempotency key, required step, outcome, opaque `externalReceiptRef`, and
+`observedAt`. A complete step cannot be marked retryable. The platform ledger
+stores the receipt and reaches `active` only after all required steps have
+completed with evidence; it does not perform the external provisioning work.
 
 ## Deploy and connect the harness
 

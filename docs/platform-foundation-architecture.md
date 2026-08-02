@@ -92,7 +92,7 @@ canonical internal tenant UUID; the platform-wide connector marketplace uses
 one reserved object. The ledger provides:
 
 - idempotent provisioning receipts and monotonic step advancement, becoming
-  `active` only after every required footprint is explicitly completed;
+  `active` only after every required footprint has an external receipt;
 - versioned identity and credential custody references with terminal
   revocation;
 - curated marketplace versions and terminal connector revocation;
@@ -167,6 +167,15 @@ action, and auth-mode-consistent scopes. OAuth grants carry the exact
 `marketplaceVersion`; the ledger rejects uncurated/non-OAuth entries, provider
 mismatches, and scopes outside the reviewed entry. This is a durable safety
 gate, not proof that any provider OAuth integration is live.
+
+Provisioning step advancement is receipt-bound. Each required step must carry
+an opaque external receipt reference and observed timestamp; completion without
+that evidence is rejected. The ledger retains the bounded receipt per step and
+does not treat a tenant as active until every required step has a terminal
+`complete` receipt. Failed steps remain retryable only when the external
+executor explicitly marks them retryable; the ledger never fabricates a
+successful Slack install, Durable Object creation, key-custody operation, or
+access-bundle result.
 
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:

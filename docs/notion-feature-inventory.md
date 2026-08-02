@@ -232,6 +232,9 @@ change, not evidence that all earlier gaps are complete.
   retries, idempotency, and terminal completion/failure/cancellation. Local
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
+- receipt-bound provisioning step advancement; a tenant cannot become `active`
+  from a bare outcome and each required footprint retains an opaque external
+  receipt before activation.
 
 ### Still required before “everything” is live
 
@@ -239,12 +242,13 @@ change, not evidence that all earlier gaps are complete.
    Object envelope, or self-hosted custody; implement the broker Worker,
    provider OAuth/token rotation, scope checks, revocation propagation, and a
    safe non-production smoke. No credential store is currently configured.
-2. **Provisioning/identity:** choose the tenant locator and isolation model,
-   deploy the bootstrap/effect worker, establish identity/key custody, and only
-   mark provisioning active after every required DO, bundle, OAuth, and identity
-   step has an external receipt.
+2. **Provisioning/identity:** the local tenant ledger now requires an external
+   receipt for every required provisioning step. Choose the tenant locator and
+   isolation model, deploy the bootstrap/effect worker after an adapter is
+   approved, establish identity/key custody, and supply real receipts for every
+   DO, bundle, OAuth, and identity step before marking provisioning active.
 3. **OAuth/marketplace:** the local state, curation gates, and authenticated
-   adapter/receipt protocol are now ready; still choose callback ownership and
+   adapter/receipt protocol are ready; still choose callback ownership and
    production allowlisted origins, deploy an independently authenticated
    provider effecter, perform code exchange outside OpenTag, and return a
    custody reference. No provider token is live.

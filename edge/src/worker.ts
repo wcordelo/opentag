@@ -115,6 +115,7 @@ import {
   assertConnectorMarketplaceEntryActivatable,
   PlatformFoundationError,
   validateConnectorMarketplaceEntry,
+  type ConnectorMarketplaceEntry,
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
 import { TENANT_LOCATOR_SCHEMA_VERSION } from "./platform/tenant-locator.js";
@@ -974,10 +975,10 @@ app.post("/admin/platform/marketplace/revoke", requireAdminAuth(), async (c) => 
   return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace/revoke", await c.req.json());
 });
 
-async function ensureCuratedOAuthMarketplace(
+async function loadCuratedOAuthMarketplace(
   c: Context<AppEnv>,
   body: Record<string, unknown>,
-): Promise<Response | undefined> {
+): Promise<ConnectorMarketplaceEntry | Response> {
   if (typeof body.connectorId !== "string" || typeof body.marketplaceVersion !== "string") {
     return c.json({ error: "oauth_marketplace_identity_required" }, 400);
   }
@@ -1016,7 +1017,15 @@ async function ensureCuratedOAuthMarketplace(
       return c.json({ error: "oauth_scope_not_allowed" }, 409);
     }
   }
-  return undefined;
+  return marketplaceEntry;
+}
+
+async function ensureCuratedOAuthMarketplace(
+  c: Context<AppEnv>,
+  body: Record<string, unknown>,
+): Promise<Response | undefined> {
+  const result = await loadCuratedOAuthMarketplace(c, body);
+  return result instanceof Response ? result : undefined;
 }
 
 /**
@@ -1041,7 +1050,14 @@ app.post("/admin/platform/oauth/state/consume", requireAdminAuth(), async (c) =>
 app.post("/admin/platform/oauth", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
-  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth", body);
+  const marketplace = await loadCuratedOAuthMarketplace(c, body);
+  if (marketplace instanceof Response) return marketplace;
+  return forwardPlatformState(
+    c,
+    platformTenantObjectName(body.tenantId),
+    "/oauth",
+    { ...body, marketplaceSnapshot: marketplace },
+  );
 });
 
 app.post("/admin/platform/oauth/get", requireAdminAuth(), async (c) => {

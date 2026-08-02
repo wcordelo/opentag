@@ -23,6 +23,7 @@ vi.mock("../src/config/workspace-config-do.js", () => ({
 }));
 
 const { PlatformStateDO } = await import("../src/platform/platform-state-do.js");
+import { PlatformStateConnectorAuthorizationReader } from "../src/connectors/authorization-snapshot.js";
 import { loadPlatformConnectorAuthorization } from "../src/connectors/platform-authorization.js";
 import { bindRequestContext, slackTurnIdentitySync } from "../src/request-context.js";
 import { slackObligationThreadKey } from "../src/slack/obligation-thread-key.js";
@@ -385,6 +386,39 @@ describe("platform authorization acceptance flow", () => {
         connectorId: "google_drive",
         action: "search",
       })).rejects.toThrow("connector_oauth_grant_inactive");
+    } finally {
+      seeded.close();
+    }
+  });
+
+  it("rejects an old connector fence after the server-owned locator advances", async () => {
+    const seeded = await seedPlatformFlow();
+    try {
+      const state = namespace(new Map([
+        [TENANT_LOCATOR_OBJECT_NAME, stubFor(seeded.reserved)],
+        [platformTenantObjectName(seeded.tenantId), stubFor(seeded.tenant)],
+      ]));
+      const advanced = await post(seeded.reserved, "/tenant-locator", {
+        schemaVersion: 1,
+        platform: "slack",
+        platformTenantId: EXTERNAL_TENANT,
+        tenantId: seeded.tenantId,
+        version: 2,
+        status: "active",
+        updatedAt: "2026-08-01T20:01:00.000Z",
+      });
+      expect(advanced.response.status).toBe(200);
+
+      await expect(new PlatformStateConnectorAuthorizationReader(state).resolve({
+        tenantId: seeded.tenantId,
+        principalId: PRINCIPAL_ID,
+        platform: "slack",
+        platformTenantId: EXTERNAL_TENANT,
+        platformSubjectId: EXTERNAL_SUBJECT,
+        tenantLocatorVersion: 1,
+        connectorId: "google_drive",
+        action: "search",
+      })).rejects.toThrow("connector_tenant_locator_stale");
     } finally {
       seeded.close();
     }

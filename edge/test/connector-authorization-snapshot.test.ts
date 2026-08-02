@@ -82,6 +82,7 @@ function identityResolution() {
 }
 
 function namespace(overrides: {
+  tenantLocatorVersion?: number;
   grant?: Record<string, unknown>;
   marketplace?: Record<string, unknown>;
   credential?: Record<string, unknown>;
@@ -91,6 +92,18 @@ function namespace(overrides: {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       calls.push(`${url.pathname}:${String(init?.body ?? "")}`);
+      if (url.pathname === "/tenant-locator/resolve") {
+        return Response.json({
+          status: "resolved",
+          locator: {
+            platform: "slack",
+            platformTenantId: "T1",
+            tenantId: TENANT,
+            version: overrides.tenantLocatorVersion ?? 1,
+            status: "active",
+          },
+        });
+      }
       if (url.pathname === "/identity-link/resolve") return Response.json(identityResolution());
       if (url.pathname === "/oauth/get") return Response.json(overrides.grant ?? grant);
       if (url.pathname === "/credential/get") return Response.json(overrides.credential ?? credential);
@@ -116,6 +129,7 @@ describe("connector authorization snapshot", () => {
       platform: "slack",
       platformTenantId: "T1",
       platformSubjectId: "U1",
+      tenantLocatorVersion: 1,
       connectorId: "google_drive",
       action: "search",
     });
@@ -164,6 +178,7 @@ describe("connector authorization snapshot", () => {
       platform: "slack",
       platformTenantId: "T1",
       platformSubjectId: "U1",
+      tenantLocatorVersion: 1,
       connectorId: "google_drive",
       action: "search",
     })).rejects.toThrow("connector_oauth_grant_inactive");
@@ -211,8 +226,23 @@ describe("connector authorization snapshot", () => {
       platform: "slack",
       platformTenantId: "T1",
       platformSubjectId: "U1",
+      tenantLocatorVersion: 1,
       connectorId: "google_drive",
       action: "search",
     })).rejects.toThrow("connector_scope_mismatch");
+  });
+
+  it("rejects a label whose tenant locator version is stale", async () => {
+    const fake = namespace({ tenantLocatorVersion: 2 });
+    await expect(new PlatformStateConnectorAuthorizationReader(fake.value).resolve({
+      tenantId: TENANT,
+      principalId: PRINCIPAL,
+      platform: "slack",
+      platformTenantId: "T1",
+      platformSubjectId: "U1",
+      tenantLocatorVersion: 1,
+      connectorId: "google_drive",
+      action: "search",
+    })).rejects.toThrow("connector_tenant_locator_stale");
   });
 });

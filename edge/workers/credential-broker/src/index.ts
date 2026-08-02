@@ -139,6 +139,7 @@ async function readCredentialMetadata(
       platform: platformBinding.platform,
       platformTenantId: platformBinding.platformTenantId,
       platformSubjectId: platformBinding.platformSubjectId,
+      tenantLocatorVersion: platformBinding.tenantLocatorVersion,
       connectorId: request.labels.connectorId,
       action: request.labels.action,
     });

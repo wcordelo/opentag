@@ -92,6 +92,7 @@ export async function loadPlatformConnectorAuthorization(input: Readonly<{
     platform: platformContext.platform,
     platformTenantId: platformContext.actor.platformTenantId,
     platformSubjectId: platformContext.actor.platformSubjectId,
+    tenantLocatorVersion: platformContext.tenantLocatorVersion,
     connectorId: input.connectorId,
     action: input.action,
   });

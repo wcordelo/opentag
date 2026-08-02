@@ -5,6 +5,7 @@ import type {
   Queue,
 } from "@cloudflare/workers-types";
 import {
+  PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
   platformEffectLeaseIsReclaimable,
   platformEffectLeaseReclaimableAt,
 } from "./layer3-contract.js";
@@ -206,7 +207,7 @@ async function effecterRun(
       ...(effect.tenantId ? { tenantId: effect.tenantId } : {}),
       intentId: effect.intentId,
       workerId,
-      leaseSeconds: 300,
+      leaseSeconds: PLATFORM_EFFECT_DEFAULT_LEASE_SECONDS,
     }),
   });
   if (response.ok) return "completed";
@@ -244,15 +245,6 @@ export async function dispatchPlatformEffectWakeup(
   const reclaimableLeased = leased.filter(
     (item) => item.leaseExpiresAt && platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
   );
-  const activeLeased = leased.filter(
-    (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) > now,
-  );
-  const pendingReclaimLeased = leased.filter(
-    (item) =>
-      item.leaseExpiresAt &&
-      Date.parse(item.leaseExpiresAt) <= now &&
-      !platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
-  );
   const candidates = [
     ...pending,
     ...reclaimableLeased,
@@ -262,6 +254,7 @@ export async function dispatchPlatformEffectWakeup(
   const future = candidates.find((item) => Date.parse(item.availableAt) > now);
   const selected = runnable.slice(0, PLATFORM_EFFECT_MAX_BATCH);
   let dispatched = 0;
+  let skipped = false;
   for (const effect of selected) {
     try {
       const outcome = await effecterRun(
@@ -270,7 +263,11 @@ export async function dispatchPlatformEffectWakeup(
         `platform-effect-dispatch:${crypto.randomUUID()}`,
         bindings.EFFECTOR_AUTH_TOKEN,
       );
-      if (outcome === "completed") dispatched += 1;
+      if (outcome === "completed") {
+        dispatched += 1;
+      } else if (outcome === "skipped") {
+        skipped = true;
+      }
     } catch (error) {
       if (error instanceof PlatformEffectDispatchError && !error.retryable) {
         console.error(JSON.stringify({
@@ -285,9 +282,21 @@ export async function dispatchPlatformEffectWakeup(
   }
   if (runnable.length > selected.length) return { dispatched, nextDelaySeconds: 0 };
   if (future) return { dispatched, nextDelaySeconds: delayFor(future.availableAt, now) };
+  const leasedForScheduling = skipped
+    ? await readEffectList(stub, scope, tenantId, "leased")
+    : leased;
+  const activeForWake = leasedForScheduling.filter(
+    (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) > now,
+  );
+  const pendingReclaimForWake = leasedForScheduling.filter(
+    (item) =>
+      item.leaseExpiresAt &&
+      Date.parse(item.leaseExpiresAt) <= now &&
+      !platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
+  );
   const nextWakeAt = [
-    ...activeLeased.map((item) => Date.parse(item.leaseExpiresAt!)),
-    ...pendingReclaimLeased.map((item) => platformEffectLeaseReclaimableAt(item.leaseExpiresAt!)),
+    ...activeForWake.map((item) => Date.parse(item.leaseExpiresAt!)),
+    ...pendingReclaimForWake.map((item) => platformEffectLeaseReclaimableAt(item.leaseExpiresAt!)),
   ].sort((left, right) => left - right)[0];
   if (nextWakeAt !== undefined) {
     return {
@@ -295,6 +304,7 @@ export async function dispatchPlatformEffectWakeup(
       nextDelaySeconds: delayFor(new Date(nextWakeAt).toISOString(), now),
     };
   }
+  if (skipped) return { dispatched, nextDelaySeconds: 1 };
   return { dispatched };
 }
 

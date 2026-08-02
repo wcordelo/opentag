@@ -22,6 +22,36 @@ reference. The runner will not mark an effect completed from an empty or
 malformed adapter result; provider work that cannot produce a receipt is a
 manual reconciliation failure, not a fabricated success.
 
+An approved provider Worker can be connected through the optional
+`PLATFORM_EFFECT_ADAPTER` service binding and
+`PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, every
+effect kind is sent to `POST /execute` on that binding using this versioned,
+metadata-only envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "intent": {
+    "schemaVersion": 1,
+    "intentId": "...",
+    "idempotencyKey": "...",
+    "scope": "tenant",
+    "tenantId": "...",
+    "kind": "credential_custody",
+    "targetRef": "...",
+    "metadata": { "operation": "rotate", "provider": "...", "version": 2 },
+    "requestedAt": "..."
+  }
+}
+```
+
+The provider must return either
+`{"schemaVersion":1,"status":"completed","externalReceiptRef":"..."}`
+or a strict failure envelope with `errorCode`, `retryable`, and optional
+`retryAfterSeconds`. Extra fields, malformed receipts, and unsupported schema
+versions fail closed. Provider credentials, leases, and internal state never
+cross this service-binding boundary.
+
 The bot publishes metadata-only wakeups to `opentag-platform-effects` after
 state mutations. This Worker consumes those wakeups through the authenticated
 `/run` boundary and schedules retryable failures from the bounded receipt
@@ -33,4 +63,5 @@ The Durable Object binding uses `script_name = "opentag-bot"`, so this Worker
 does not create a second platform-state database. Deploying it also requires
 the `EFFECTOR_AUTH_TOKEN` secret and a deliberate decision to make a provider
 adapter available; this baseline is safe to validate locally but is not a
-claim that any external effect is live.
+claim that any external effect is live. The optional provider service binding
+is intentionally absent from the default `wrangler.toml`.

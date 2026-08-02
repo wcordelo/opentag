@@ -50,6 +50,12 @@ export type PlatformEffectAdapters = Partial<
   Record<PlatformEffectKind, PlatformEffectAdapter>
 >;
 
+export const PLATFORM_EFFECT_ADAPTER_SCHEMA_VERSION = 1 as const;
+
+type PlatformEffectAdapterFetcher = Readonly<{
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}>;
+
 type EffectFailure = Readonly<{
   errorCode: string;
   retryable: boolean;
@@ -252,6 +258,108 @@ function boundedEffectRetryAfterSeconds(value: unknown): number {
     return 0;
   }
   return value as number;
+}
+
+function strictAdapterRetryAfter(value: unknown): number {
+  if (value === undefined) return 0;
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) > 86_400
+  ) {
+    throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+  }
+  return value as number;
+}
+
+function strictResponseKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) {
+    throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+  }
+}
+
+function remoteAdapterResponse(value: unknown): PlatformEffectAdapterResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+  }
+  const input = value as Record<string, unknown>;
+  if (input.schemaVersion !== PLATFORM_EFFECT_ADAPTER_SCHEMA_VERSION) {
+    throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+  }
+  if (input.status === "completed") {
+    strictResponseKeys(input, ["schemaVersion", "status", "externalReceiptRef"]);
+    return { externalReceiptRef: receiptReference(input.externalReceiptRef) };
+  }
+  if (input.status === "failed") {
+    strictResponseKeys(input, ["schemaVersion", "status", "errorCode", "retryable", "retryAfterSeconds"]);
+    let errorCode: string;
+    try {
+      errorCode = safeErrorCode(input.errorCode, "effect_provider_error_code");
+    } catch {
+      throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+    }
+    if (typeof input.retryable !== "boolean") {
+      throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+    }
+    throw new PlatformEffectAdapterError(
+      errorCode,
+      input.retryable,
+      strictAdapterRetryAfter(input.retryAfterSeconds),
+    );
+  }
+  throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+}
+
+/**
+ * Build one metadata-only adapter for an explicitly authenticated provider
+ * Worker. The remote Worker owns provider custody and returns only a bounded
+ * receipt or safe retry classification; it never receives the effect lease.
+ */
+export function createRemotePlatformEffectAdapter(
+  fetcher: PlatformEffectAdapterFetcher,
+  authToken: string,
+): PlatformEffectAdapter {
+  if (!authToken || !authToken.trim()) {
+    throw new PlatformEffectRunnerError("effect_adapter_auth_unconfigured");
+  }
+  return async (intent) => {
+    validatePlatformEffectAdapterIntent(intent);
+    let response: Response;
+    try {
+      response = await fetcher.fetch("https://platform-effect-adapter/execute", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          schemaVersion: PLATFORM_EFFECT_ADAPTER_SCHEMA_VERSION,
+          intent,
+        }),
+      });
+    } catch {
+      throw new PlatformEffectAdapterError("effect_provider_unavailable", true, 30);
+    }
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new PlatformEffectAdapterError(
+        retryable
+          ? "effect_provider_unavailable"
+          : response.status === 401 || response.status === 403
+            ? "effect_provider_unauthorized"
+            : "effect_provider_rejected",
+        retryable,
+        retryable ? 30 : 0,
+      );
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new PlatformEffectAdapterError("effect_adapter_response_invalid", false);
+    }
+    return remoteAdapterResponse(payload);
+  };
 }
 
 export function validatePlatformEffectRunRequest(

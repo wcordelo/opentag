@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PlatformEffectAdapterError,
   PlatformEffectRunnerError,
+  createRemotePlatformEffectAdapter,
   runPlatformEffect,
   validatePlatformEffectAdapterIntent,
   validatePlatformEffectRunRequest,
@@ -183,6 +184,68 @@ describe("platform effect runner", () => {
       });
       expect(validatePlatformEffectAdapterIntent(candidate)).toBe(candidate);
     }
+  });
+
+  it("uses an authenticated, versioned remote adapter envelope", async () => {
+    const requests: Request[] = [];
+    const adapter = createRemotePlatformEffectAdapter({
+      async fetch(input, init) {
+        requests.push(new Request(input, init));
+        return Response.json({
+          schemaVersion: 1,
+          status: "completed",
+          externalReceiptRef: "provider-receipt-1",
+        });
+      },
+    }, "adapter-secret");
+
+    await expect(adapter(intent)).resolves.toEqual({
+      externalReceiptRef: "provider-receipt-1",
+    });
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    if (!request) throw new Error("remote adapter request missing");
+    expect(request.url).toBe("https://platform-effect-adapter/execute");
+    expect(request.headers.get("authorization")).toBe("Bearer adapter-secret");
+    expect(request.headers.get("content-type")).toBe("application/json");
+    expect(await request.json()).toEqual({
+      schemaVersion: 1,
+      intent,
+    });
+  });
+
+  it("maps provider retry responses and rejects malformed response envelopes", async () => {
+    const retrying = createRemotePlatformEffectAdapter({
+      async fetch() {
+        return Response.json({
+          schemaVersion: 1,
+          status: "failed",
+          errorCode: "provider_busy",
+          retryable: true,
+          retryAfterSeconds: 45,
+        });
+      },
+    }, "adapter-secret");
+    await expect(retrying(intent)).rejects.toMatchObject({
+      code: "provider_busy",
+      retryable: true,
+      retryAfterSeconds: 45,
+    });
+
+    const malformed = createRemotePlatformEffectAdapter({
+      async fetch() {
+        return Response.json({
+          schemaVersion: 1,
+          status: "completed",
+          externalReceiptRef: "provider-receipt-1",
+          providerDetail: "must not cross the boundary",
+        });
+      },
+    }, "adapter-secret");
+    await expect(malformed(intent)).rejects.toMatchObject({
+      code: "effect_adapter_response_invalid",
+      retryable: false,
+    });
   });
 
   it("claims, invokes the explicit adapter, and records a bounded receipt", async () => {

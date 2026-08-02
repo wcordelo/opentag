@@ -1,7 +1,9 @@
 import { Hono } from "hono";
-import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace, Fetcher } from "@cloudflare/workers-types";
 import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js";
 import {
+  createRemotePlatformEffectAdapter,
+  type PlatformEffectAdapters,
   type PlatformEffectStateClient,
   PlatformEffectRunnerError,
   runPlatformEffect,
@@ -9,6 +11,7 @@ import {
 } from "../../../src/platform/effect-runner.js";
 import type {
   PlatformEffectClaim,
+  PlatformEffectKind,
   PlatformEffectReceipt,
 } from "../../../src/platform/layer3-contract.js";
 import {
@@ -26,11 +29,36 @@ type Env = {
     PLATFORM_STATE: DurableObjectNamespace<PlatformStateDO>;
     PLATFORM_EFFECTS_QUEUE?: Queue<PlatformEffectWakeup>;
     EFFECTOR_AUTH_TOKEN?: string;
+    PLATFORM_EFFECT_ADAPTER?: Fetcher;
+    PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN?: string;
     ENVIRONMENT?: string;
   };
 };
 
 const app = new Hono<Env>();
+
+const EFFECT_ADAPTER_KINDS: readonly PlatformEffectKind[] = [
+  "provisioning",
+  "identity_custody",
+  "credential_custody",
+  "connector_oauth",
+  "marketplace",
+  "billing_meter",
+  "memory_deletion",
+];
+
+function configuredAdapters(env: Env["Bindings"]): PlatformEffectAdapters {
+  const token = env.PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN;
+  if (!env.PLATFORM_EFFECT_ADAPTER || !token?.trim()) return {};
+  const adapter = createRemotePlatformEffectAdapter(env.PLATFORM_EFFECT_ADAPTER, token);
+  return Object.fromEntries(
+    EFFECT_ADAPTER_KINDS.map((kind) => [kind, adapter]),
+  ) as PlatformEffectAdapters;
+}
+
+function providerAdapterConfigured(env: Env["Bindings"]): boolean {
+  return Boolean(env.PLATFORM_EFFECT_ADAPTER && env.PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN?.trim());
+}
 
 function requireEffectorAuth(c: { env: Env["Bindings"]; req: { header(name: string): string | undefined } }): Response | undefined {
   const expected = c.env.EFFECTOR_AUTH_TOKEN;
@@ -73,16 +101,18 @@ function stateClient(
   };
 }
 
-app.get("/health", (c) =>
-  c.json({
+app.get("/health", (c) => {
+  const adapterConfigured = providerAdapterConfigured(c.env);
+  return c.json({
     ok: true,
     role: "platform-effecter",
     configured: Boolean(c.env.EFFECTOR_AUTH_TOKEN),
     effectQueueConfigured: Boolean(c.env.PLATFORM_EFFECTS_QUEUE),
-    adapterKinds: [],
-    providerEffectsEnabled: false,
-  }),
-);
+    adapterConfigured,
+    adapterKinds: adapterConfigured ? EFFECT_ADAPTER_KINDS : [],
+    providerEffectsEnabled: adapterConfigured,
+  });
+});
 
 app.post("/run", async (c) => {
   const authError = requireEffectorAuth(c);
@@ -103,13 +133,10 @@ app.post("/run", async (c) => {
     c.env.PLATFORM_STATE.idFromName(effectObjectName(request)),
   ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
   try {
-    // No provider adapter is registered until custody/provider decisions are
-    // approved. A live invocation therefore closes the intent as an explicit
-    // terminal configuration failure, never as a fabricated success.
     const result = await runPlatformEffect({
       request,
       state: stateClient(stub),
-      adapters: {},
+      adapters: configuredAdapters(c.env),
     });
     if (
       result.receipt.status === "failed" &&

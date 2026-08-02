@@ -48,13 +48,22 @@ const claim: PlatformEffectClaim = {
   leaseExpiresAt: "2026-08-01T22:05:00.000Z",
 };
 
-function environment(token?: string): { bindings: Record<string, unknown>; paths: string[] } {
+function environment(options: {
+  token?: string;
+  providerAdapter?: unknown;
+  providerToken?: string;
+} = {}): { bindings: Record<string, unknown>; paths: string[] } {
   const paths: string[] = [];
   const stub = {
     async fetch(input: RequestInfo | URL, _init?: RequestInit): Promise<Response> {
       const path = new URL(input.toString()).pathname;
       paths.push(path);
       if (path === "/effect/claim") return Response.json(claim);
+      if (path === "/effect/complete") return Response.json({
+        ok: true,
+        duplicate: false,
+        receipt: receipt("completed"),
+      });
       if (path === "/effect/fail") return Response.json({
         ok: true,
         receipt: receipt("failed"),
@@ -69,7 +78,9 @@ function environment(token?: string): { bindings: Record<string, unknown>; paths
         idFromName: (name: string) => name,
         get: () => stub,
       },
-      ...(token === undefined ? {} : { EFFECTOR_AUTH_TOKEN: token }),
+      ...(options.token === undefined ? {} : { EFFECTOR_AUTH_TOKEN: options.token }),
+      ...(options.providerAdapter === undefined ? {} : { PLATFORM_EFFECT_ADAPTER: options.providerAdapter }),
+      ...(options.providerToken === undefined ? {} : { PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN: options.providerToken }),
     },
   };
 }
@@ -78,11 +89,13 @@ async function fetchWorker(
   path: string,
   options: {
     token?: string;
+    providerAdapter?: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    providerToken?: string;
     body?: unknown;
     authorization?: string;
   } = {},
 ): Promise<{ response: Response; body: Record<string, unknown>; paths: string[] }> {
-  const setup = environment(options.token);
+  const setup = environment(options);
   const response = await worker.fetch(new Request(`https://effecter${path}`, {
     method: options.body === undefined ? "GET" : "POST",
     headers: {
@@ -121,6 +134,34 @@ describe("platform effecter Worker", () => {
     expect(wrong.body.error).toBe("unauthorized");
   });
 
+  it("advertises provider adapters only when binding and auth are both configured", async () => {
+    const disabled = await fetchWorker("/health", { token: "expected" });
+    expect(disabled.body).toMatchObject({
+      adapterConfigured: false,
+      adapterKinds: [],
+      providerEffectsEnabled: false,
+    });
+
+    const enabled = await fetchWorker("/health", {
+      token: "expected",
+      providerAdapter: { fetch: async () => Response.json({}) },
+      providerToken: "provider-secret",
+    });
+    expect(enabled.body).toMatchObject({
+      adapterConfigured: true,
+      adapterKinds: [
+        "provisioning",
+        "identity_custody",
+        "credential_custody",
+        "connector_oauth",
+        "marketplace",
+        "billing_meter",
+        "memory_deletion",
+      ],
+      providerEffectsEnabled: true,
+    });
+  });
+
   it("claims through the bot ledger and terminally fails without a provider adapter", async () => {
     const result = await fetchWorker("/run", {
       token: "expected",
@@ -139,5 +180,34 @@ describe("platform effecter Worker", () => {
       errorCode: "effect_adapter_unconfigured",
     });
     expect(result.paths).toEqual(["/effect/claim", "/effect/fail"]);
+  });
+
+  it("routes a configured effect through the metadata-only provider adapter", async () => {
+    const result = await fetchWorker("/run", {
+      token: "expected",
+      authorization: "Bearer expected",
+      providerAdapter: {
+        async fetch() {
+          return Response.json({
+            schemaVersion: 1,
+            status: "completed",
+            externalReceiptRef: "provider-receipt-1",
+          });
+        },
+      },
+      providerToken: "provider-secret",
+      body: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+    });
+    expect(result.response.status).toBe(200);
+    expect(result.body).toMatchObject({
+      status: "completed",
+      adapterConfigured: true,
+    });
+    expect(result.paths).toEqual(["/effect/claim", "/effect/complete"]);
   });
 });

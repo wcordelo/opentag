@@ -281,6 +281,12 @@ function assertStatusTimestamps(
   }
 }
 
+function exactScopeSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((scope) => rightSet.has(scope));
+}
+
 function assertProvisionedRow(row: ProvisioningRow | undefined, tenantId: string): ProvisioningRow {
   if (!row) throw new PlatformStateError("tenant_not_provisioned", 409);
   if (row.tenant_id !== tenantId) throw new PlatformStateError("tenant_scope_mismatch", 409);
@@ -1322,6 +1328,9 @@ export class PlatformStateEngine {
       if (credential.status !== "active") throw new PlatformStateError("oauth_credential_revoked", 409);
       if (credential.provider !== marketplaceEntry.provider) {
         throw new PlatformStateError("oauth_provider_mismatch", 409);
+      }
+      if (!exactScopeSet(parseJson<string[]>(credential.scopes_json), grant.scopes)) {
+        throw new PlatformStateError("oauth_credential_scopes_mismatch", 409);
       }
       const current = this.sql.exec<OAuthRow>(
         `SELECT * FROM connector_oauth_grants

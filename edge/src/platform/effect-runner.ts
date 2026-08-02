@@ -73,6 +73,11 @@ export type PlatformEffectStateClient = Readonly<{
     leaseToken: string;
     externalReceiptRef?: string;
   }): Promise<{ ok: true; duplicate: boolean; receipt: PlatformEffectReceipt }>;
+  renew(input: {
+    intentId: string;
+    leaseToken: string;
+    leaseSeconds: number;
+  }): Promise<{ ok: true; leaseExpiresAt: string; receipt: PlatformEffectReceipt }>;
   fail(input: {
     intentId: string;
     leaseToken: string;
@@ -428,6 +433,31 @@ function normalizeAdapterFailure(error: unknown): EffectFailure {
   };
 }
 
+function startLeaseHeartbeat(
+  state: PlatformEffectStateClient,
+  claim: PlatformEffectClaim,
+  leaseSeconds: number,
+): () => void {
+  const intervalMs = Math.max(1_000, Math.floor(leaseSeconds * 1_000 / 3));
+  let renewalInFlight = false;
+  const timer = setInterval(() => {
+    if (renewalInFlight) return;
+    renewalInFlight = true;
+    void state.renew({
+      intentId: claim.intent.intentId,
+      leaseToken: claim.leaseToken,
+      leaseSeconds,
+    }).catch(() => {
+      // A later heartbeat can recover a transient state-owner failure. If the
+      // lease is ultimately lost, completion remains ambiguous and the state
+      // owner must reconcile the provider receipt instead of rerunning blindly.
+    }).finally(() => {
+      renewalInFlight = false;
+    });
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+
 async function reportFailure(
   state: PlatformEffectStateClient,
   claim: PlatformEffectClaim,
@@ -465,6 +495,7 @@ export async function runPlatformEffect(input: {
   adapters: PlatformEffectAdapters;
 }): Promise<PlatformEffectRunResult> {
   const request = validatePlatformEffectRunRequest(input.request);
+  const requestedLeaseSeconds = request.leaseSeconds ?? 300;
   const claim = await input.state.claim({
     intentId: request.intentId,
     workerId: request.workerId,
@@ -516,6 +547,11 @@ export async function runPlatformEffect(input: {
 
   let result: PlatformEffectAdapterResult;
   let externalReceiptRef: string;
+  const stopLeaseHeartbeat = startLeaseHeartbeat(
+    input.state,
+    claim,
+    requestedLeaseSeconds,
+  );
   try {
     result = await adapter(intent);
     if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -524,9 +560,11 @@ export async function runPlatformEffect(input: {
     externalReceiptRef = receiptReference(result.externalReceiptRef);
   } catch (error) {
     const failure = normalizeAdapterFailure(error);
+    stopLeaseHeartbeat();
     const receipt = await reportFailure(input.state, claim, failure);
     return { status: "failed", adapterConfigured: true, receipt, errorCode: failure.errorCode };
   }
+  stopLeaseHeartbeat();
   let completion: Awaited<ReturnType<PlatformEffectStateClient["complete"]>>;
   try {
     completion = await input.state.complete({

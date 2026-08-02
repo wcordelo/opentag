@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   PlatformEffectAdapterError,
   PlatformEffectRunnerError,
@@ -6,6 +6,7 @@ import {
   runPlatformEffect,
   validatePlatformEffectAdapterIntent,
   validatePlatformEffectRunRequest,
+  type PlatformEffectAdapterResult,
   type PlatformEffectStateClient,
 } from "../src/platform/effect-runner.js";
 import type {
@@ -46,9 +47,14 @@ function receipt(status: PlatformEffectReceipt["status"]): PlatformEffectReceipt
 
 function makeState(): {
   state: PlatformEffectStateClient;
-  calls: { claim: unknown[]; complete: unknown[]; fail: unknown[] };
+  calls: { claim: unknown[]; complete: unknown[]; renew: unknown[]; fail: unknown[] };
 } {
-  const calls = { claim: [] as unknown[], complete: [] as unknown[], fail: [] as unknown[] };
+  const calls = {
+    claim: [] as unknown[],
+    complete: [] as unknown[],
+    renew: [] as unknown[],
+    fail: [] as unknown[],
+  };
   const claim: PlatformEffectClaim = {
     intent,
     receipt: receipt("leased"),
@@ -66,6 +72,14 @@ function makeState(): {
       async complete(input) {
         calls.complete.push(input);
         return { ok: true, duplicate: false, receipt: receipt("completed") };
+      },
+      async renew(input) {
+        calls.renew.push(input);
+        return {
+          ok: true,
+          leaseExpiresAt: "2026-08-01T22:06:00.000Z",
+          receipt: receipt("leased"),
+        };
       },
       async fail(input) {
         calls.fail.push(input);
@@ -278,6 +292,40 @@ describe("platform effect runner", () => {
       externalReceiptRef: "kms-receipt-1",
     }]);
     expect(calls.fail).toHaveLength(0);
+  });
+
+  it("renews the lease while a provider adapter is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const { state, calls } = makeState();
+      let resolveAdapter!: (value: PlatformEffectAdapterResult) => void;
+      const adapterResult = new Promise<PlatformEffectAdapterResult>((resolve) => {
+        resolveAdapter = resolve;
+      });
+      const run = runPlatformEffect({
+        request: {
+          scope: "tenant",
+          tenantId: "tenant-1",
+          intentId: intent.intentId,
+          workerId: "effecter-1",
+          leaseSeconds: 60,
+        },
+        state,
+        adapters: { credential_custody: async () => adapterResult },
+      });
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(calls.renew).toEqual([{
+        intentId: intent.intentId,
+        leaseToken: "lease-1",
+        leaseSeconds: 60,
+      }]);
+
+      resolveAdapter({ externalReceiptRef: "kms-receipt-1" });
+      await expect(run).resolves.toMatchObject({ status: "completed" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails closed when an adapter is not configured", async () => {

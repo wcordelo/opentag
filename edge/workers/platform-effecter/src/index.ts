@@ -97,6 +97,7 @@ function stateClient(
   return {
     claim: (body) => call<PlatformEffectClaim>("/effect/claim", body),
     complete: (body) => call<{ ok: true; duplicate: boolean; receipt: PlatformEffectReceipt }>("/effect/complete", body),
+    renew: (body) => call<{ ok: true; leaseExpiresAt: string; receipt: PlatformEffectReceipt }>("/effect/renew", body),
     fail: (body) => call<{ ok: true; receipt: PlatformEffectReceipt }>("/effect/fail", body),
   };
 }

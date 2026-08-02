@@ -611,6 +611,38 @@ export class PlatformStateEngine {
     });
   }
 
+  /** Extend a live effect lease while its provider adapter is still running. */
+  renewEffect(value: unknown): { ok: true; leaseExpiresAt: string; receipt: PlatformEffectReceipt } {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new PlatformStateError("effect_renew_invalid", 400);
+    }
+    const input = value as Record<string, unknown>;
+    const intentId = id(input.intentId, "intent_id");
+    const leaseToken = id(input.leaseToken, "lease_token", 256);
+    const leaseSeconds = effectLeaseSeconds(input.leaseSeconds);
+    return this.tx(() => {
+      const current = this.effectById(intentId);
+      if (!current) throw new PlatformStateError("effect_not_found", 404);
+      this.assertEffectLease(current, leaseToken);
+      const now = this.now();
+      const updatedAt = new Date(now).toISOString();
+      const leaseExpiresAt = new Date(now + leaseSeconds * 1_000).toISOString();
+      this.sql.exec(
+        `UPDATE platform_effect_intents
+         SET lease_expires_at = ?, updated_at = ?
+         WHERE intent_id = ?`,
+        leaseExpiresAt,
+        updatedAt,
+        intentId,
+      );
+      return {
+        ok: true,
+        leaseExpiresAt,
+        receipt: effectReceipt(this.effectById(intentId)!),
+      };
+    });
+  }
+
   completeEffect(value: unknown): { ok: true; duplicate: boolean; receipt: PlatformEffectReceipt } {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new PlatformStateError("effect_complete_invalid", 400);
@@ -1978,6 +2010,9 @@ export class PlatformStateDO extends DurableObject {
       }
       if (url.pathname === "/effect/claim" && request.method === "POST") {
         return Response.json(this.engine.claimEffect(await readJson(request)));
+      }
+      if (url.pathname === "/effect/renew" && request.method === "POST") {
+        return Response.json(this.engine.renewEffect(await readJson(request)));
       }
       if (url.pathname === "/effect/complete" && request.method === "POST") {
         return Response.json(this.engine.completeEffect(await readJson(request)));

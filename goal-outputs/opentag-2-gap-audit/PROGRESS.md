@@ -1,3 +1,5 @@
+> **Historical snapshot.** This audit describes the pre-connector-foundation line. Current closure, live evidence, and remaining gaps are in [docs/current-state.md](../../docs/current-state.md).
+
 # PROGRESS — opentag-2-gap-audit
 
 **Goal:** Produce a skeptical, source-evidenced gap audit of the merged OpenTag 2.0 implementation against SPEC.md section 7 and 8, ARCHITECTURE.md, DECISIONS.md, GOAL.md house rules, implementation-notes.md, and docs/centaur-port.md, including important Centaur functionality omissions and current test/typecheck results, prioritized as Critical, High, Medium, or Low.

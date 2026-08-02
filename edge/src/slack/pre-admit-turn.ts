@@ -14,6 +14,7 @@ import {
 } from "./obligation-thread-key.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
 import { hasExplicitBotMention } from "./ingress-normalize.js";
+import { classifySlackThreadReplyRoute } from "./response-routing.js";
 import {
   classifyTrustedRichTrigger,
   type TrustedTriggerConfig,
@@ -99,10 +100,14 @@ export function preAdmissionIdentityForEvent(
     !isThreadReply &&
     !trusted
   ) return undefined;
-  // A late file-share repair is an internal continuation of an already
-  // admitted turn, not a new human text instruction. Preserve that path even
-  // when Slack's file event has no repeated bot mention.
-  if (isThreadReply && !trusted && !hasBotMention && !isFileShare) return undefined;
+  if (isThreadReply && !trusted && hasBotMention && !isFileShare) return undefined;
+  if (isThreadReply && !trusted && !hasBotMention && !isFileShare) {
+    const route = classifySlackThreadReplyRoute({
+      userText: typeof event?.text === "string" ? stripMentions(event.text) : "",
+      hasFiles: Array.isArray(event?.files) && event.files.length > 0,
+    });
+    if (route.decision !== "respond") return undefined;
+  }
   if (
     event?.subtype &&
     event.subtype !== "file_share" &&

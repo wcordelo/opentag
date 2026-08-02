@@ -1,8 +1,14 @@
 # Connector authorization architecture
 
+Status: **source-complete authorization foundation; synthetic-live; provider
+broker and external connector calls remain fail-closed**
+
+Updated: **2026-08-01**
+
 This is the shared security boundary for credentialed connectors such as Google
 Drive, Linear, X, and future hosted MCP integrations. It is intentionally
 separate from the Slack tool allowlist: a tool name is not a credential grant.
+The current deployment matrix is in [current-state.md](./current-state.md).
 
 ## Contract
 
@@ -111,3 +117,18 @@ are resolved to Linear IDs inside the connector. Enabling the path still
 requires the credential broker, Linear OAuth/custody provisioning, an active
 access-bundle grant, and a live validation against a non-production test
 workspace; this branch does not perform that external validation.
+
+## Current live boundary
+
+The deployed bot does not have a `CONNECTOR_CREDENTIALS` service binding. The
+synthetic platform run proved that opaque references, bundle revisions,
+OAuth-grant metadata, revocation, citation fields, and effect intents can be
+stored and revalidated without secret material. It did not prove Google or
+Linear provider access. Drive search and Linear create therefore remain
+fail-closed until the separately deployed broker, provider custody, grants,
+allowlists, and a test workspace are all present.
+
+Cloudflare Worker Secrets are the approved deployment/bootstrap configuration
+path, including one-click and Wrangler CLI setup. They are not a per-tenant
+credential store for a shared Worker fleet; the broker must preserve tenant
+scope, rotation, revocation, and audit.

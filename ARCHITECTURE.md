@@ -1,13 +1,15 @@
 # OpenTag architecture
 
 Status: **current implementation reference**
-Updated: **2026-07-18**
+Updated: **2026-08-01**
 
 OpenTag is a Slack-native agent system built on Cloudflare Workers, Durable
 Objects, service bindings, and Containers. The production Slack surface is one
 Worker (`opentag-bot`). It can route conversational turns to the AG-UI triage
 runtime, coding turns to the Claude Code harness, and long-running
-research to a separate task plane.
+research to a separate task plane. The current deployment evidence and
+remaining activation gates are tracked in
+[docs/current-state.md](./docs/current-state.md).
 
 This document describes what the current branch implements. For why the team
 ported Centaur's UX patterns instead of its Kubernetes control plane, see
@@ -32,6 +34,10 @@ flowchart LR
       Session["SessionEventDO / SESSION_EVENTS<br/>execute admission, event log,<br/>interrupt tombstones, replay"]
       Config["WorkspaceConfigDO<br/>prompts, bundles, policies"]
       Knowledge["KnowledgeDO<br/>channel knowledge"]
+      Deferred["DeferredIngressDO<br/>quick clicks, delayed files"]
+      Rate["SlackRateLimitDO<br/>channel dispatch reservations"]
+      Platform["PlatformStateDO<br/>tenant metadata, effects,<br/>custody references"]
+      Router["RouterMeasurementDO<br/>shadow dispatch, outcomes,<br/>feedback ledger"]
     end
 
     subgraph Agent["Conversation plane"]
@@ -56,12 +62,17 @@ flowchart LR
     Lifecycle <--> Session
     Lifecycle --> Config
     Tools --> Knowledge
+    Lifecycle --> Deferred
+    Lifecycle --> Rate
+    Lifecycle --> Platform
+    Lifecycle --> Router
     Lifecycle -->|"AGENT_RUNTIME + AGENT_URL path"| AgentWorker --> Triage
     Lifecycle -->|"HARNESS"| HarnessWorker --> HarnessContainer --> Egress
     Egress -->|"claudex mode only"| Claudex
     Tools -.->|"RESEARCH_TASKS"| Orchestrator --> Actors
     Adapter --> Slack
     Actors --> Slack
+    Buzz["Buzz /buzz/wake<br/>signed receive boundary"] --> Lifecycle
 ```
 
 Solid paths are deployed production bindings; dashed paths are optional task
@@ -84,6 +95,11 @@ preserve dependency order: `opentag-claudex-proxy`, then `opentag-harness`, then
 | Research tasks | `opentag-orchestrator` | `edge/workers/orchestrator/`, `lib/research/` |
 | Channel configuration and tool policy | `WorkspaceConfigDO` | `edge/src/config/` |
 | Channel knowledge | `KnowledgeDO` | `edge/src/memory/` |
+| Deferred clicks and delayed-file repair | `DeferredIngressDO` | `edge/src/deferred-ingress-do.ts` |
+| Cross-isolate Slack dispatch pacing | `SlackRateLimitDO` | `edge/src/slack/slack-rate-limit-do.ts` |
+| Tenant/platform metadata and effect handoff | `PlatformStateDO` | `edge/src/platform/platform-state-do.ts` |
+| Router shadow measurements | `RouterMeasurementDO` | `edge/src/router/measurement-do.ts` |
+| Buzz wake admission | Bot `/buzz/wake` | `edge/src/buzz/wake-http.ts`, `edge/src/buzz/wake-bindings.ts` |
 
 ## Slack ingress and pre-admission
 
@@ -104,6 +120,24 @@ Slack uses the Events API only. There is no Socket Mode or Railway bot.
 7. `quick_*` interactions become synthetic turns authored by the clicking user
    and re-enter the same admission and lifecycle path.
 
+Before step 4, ordinary Slack thread messages pass through the response
+routing gate in `edge/src/slack/response-routing.ts`:
+
+```text
+signed Slack event
+  -> normalize event
+  -> duplicate app_mention message? discard before admission
+  -> response-worthy? admit and run the normal lifecycle
+  -> otherwise observe in Slack history without waking the agent
+```
+
+DMs, explicit mentions, trusted triggers, and file shares are response-worthy
+by contract. Unmentioned thread questions, action requests, and problem reports
+are also response-worthy; passive conversation is not. Top-level unmentioned
+channel chatter remains silent. This gate decides whether a message should
+enter the agent lifecycle. It does not enable Router Tier 1 or Tier 3, which
+remain shadow/dark and are measured separately.
+
 Conversation identity is deliberately surface-aware:
 
 | Slack input | Conversation scope |
@@ -119,12 +153,17 @@ mentions must not share memory, sticky overrides, or one channel-wide turn
 lock, while a slash command has no message timestamp from which to create that
 thread identity.
 
-Channel-thread turn admission requires an exact mention of the configured bot.
-An unmentioned human `message` event is history-only: the Worker does not
-register or execute a turn, and it does not delete or mutate the Slack message.
-When a later explicit mention is admitted, the normal thread-history read can
-include those earlier replies. DMs and top-level slash commands retain their
-existing admission rules.
+Channel-thread admission is response-routed rather than mention-only. An
+unmentioned human `message` event that is passive conversation is history-only:
+the Worker does not register or execute a turn, and it does not delete or
+mutate the Slack message. A clear question, action request, problem report, or
+file share can enter the normal lifecycle without a tag. DMs and explicit
+mentions retain their unconditional response eligibility.
+
+Slack may deliver an explicit mention twice: once as `app_mention` and once as
+a threaded `message`. The duplicate `message` is rejected before durable
+pre-admission. This ordering is required because discarding it later in the
+adapter would leave an active-turn row with no runtime owner.
 
 Stable wire IDs use purpose-tagged SHA-256 values:
 
@@ -146,7 +185,14 @@ sequenceDiagram
     participant R as AG-UI or Harness runtime
 
     S->>W: Signed event or slash command
-    W->>C: Pre-admit exact active turn
+    W->>W: Normalize + response-worthiness route
+    alt observe passive thread event
+      W-->>W: Keep Slack history; no turn or active row
+    else duplicate message delivery
+      W-->>W: Ignore before durable admission
+    else response-worthy event
+      W->>C: Pre-admit exact active turn
+    end
     W-->>S: Acknowledge within Slack deadline
     W->>C: Register or refresh active turn + initial obligation
     W->>E: execute(executionId, forwardedMessageId)

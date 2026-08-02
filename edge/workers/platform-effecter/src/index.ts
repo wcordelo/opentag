@@ -112,7 +112,6 @@ app.post("/run", async (c) => {
       adapters: {},
     });
     if (
-      result.adapterConfigured &&
       result.receipt.status === "failed" &&
       result.receipt.retryable &&
       c.env.PLATFORM_EFFECTS_QUEUE

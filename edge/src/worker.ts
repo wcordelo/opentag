@@ -1706,10 +1706,6 @@ type QueueAndScheduledApp = typeof app & {
 
 const worker = app as QueueAndScheduledApp;
 worker.queue = async (batch, env, _ctx) => {
-  if (env.PLATFORM_EFFECTS_QUEUE_NAME && !isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME)) {
-    batch.retryAll({ delaySeconds: 60 });
-    throw new Error("platform_effect_queue_name_invalid");
-  }
   const platformEffectsDlqName = env.PLATFORM_EFFECTS_QUEUE_NAME
     ? `${env.PLATFORM_EFFECTS_QUEUE_NAME}-dlq`
     : undefined;
@@ -1717,6 +1713,10 @@ worker.queue = async (batch, env, _ctx) => {
     env.PLATFORM_EFFECTS_QUEUE_NAME &&
     (batch.queue === env.PLATFORM_EFFECTS_QUEUE_NAME || batch.queue === platformEffectsDlqName)
   ) {
+    if (!isPlatformEffectQueueName(env.PLATFORM_EFFECTS_QUEUE_NAME)) {
+      batch.retryAll({ delaySeconds: 60 });
+      throw new Error("platform_effect_queue_name_invalid");
+    }
     if (
       batch.queue === env.KNOWLEDGE_QUEUE_NAME ||
       batch.queue === env.KNOWLEDGE_DLQ_NAME

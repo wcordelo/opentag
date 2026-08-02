@@ -464,16 +464,29 @@ async function reportFailure(
   failure: EffectFailure,
 ): Promise<PlatformEffectReceipt> {
   try {
-    const result = await state.fail({
+    return (await state.fail({
       intentId: claim.intent.intentId,
       leaseToken: claim.leaseToken,
       errorCode: failure.errorCode,
       retryable: failure.retryable,
       retryAfterSeconds: failure.retryAfterSeconds,
-    });
-    return result.receipt;
+    })).receipt;
   } catch {
-    throw new PlatformEffectRunnerError("effect_failure_report_failed", 503);
+    // A malformed provider classification must not strand a lease. Make one
+    // bounded terminal fallback with only ledger-safe constants; if the state
+    // owner itself is unavailable, surface 503 so queue retry/reconciliation
+    // can recover without fabricating a receipt.
+    try {
+      return (await state.fail({
+        intentId: claim.intent.intentId,
+        leaseToken: claim.leaseToken,
+        errorCode: "effect_failure_report_failed",
+        retryable: false,
+        retryAfterSeconds: 0,
+      })).receipt;
+    } catch {
+      throw new PlatformEffectRunnerError("effect_failure_report_failed", 503);
+    }
   }
 }
 

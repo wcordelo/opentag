@@ -22,6 +22,11 @@ reference. The runner will not mark an effect completed from an empty or
 malformed adapter result; provider work that cannot produce a receipt is a
 manual reconciliation failure, not a fabricated success.
 
+The runner renews the Durable Object lease periodically while an adapter call
+is in flight. If the state owner cannot record a failure or completion, the
+request returns a retryable 503 rather than fabricating a receipt; the provider
+adapter must therefore use the intent idempotency key for reconciliation.
+
 An approved provider Worker can be connected through the optional
 `PLATFORM_EFFECT_ADAPTER` service binding and
 `PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, every

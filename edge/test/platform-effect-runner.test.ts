@@ -392,6 +392,41 @@ describe("platform effect runner", () => {
     expect(calls.fail.at(-1)).toMatchObject({ errorCode: "effect_scope_mismatch", retryable: true });
   });
 
+  it("uses a bounded terminal fallback when the first failure report is rejected", async () => {
+    const { state, calls } = makeState();
+    let attempts = 0;
+    const resilientState: PlatformEffectStateClient = {
+      ...state,
+      async fail(input) {
+        calls.fail.push(input);
+        attempts += 1;
+        if (attempts === 1) throw new Error("simulated ledger validation failure");
+        return { ok: true, receipt: receipt("failed") };
+      },
+    };
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state: resilientState,
+      adapters: {
+        credential_custody: async () => {
+          throw new PlatformEffectAdapterError("provider_busy", true, 45);
+        },
+      },
+    });
+    expect(result).toMatchObject({ status: "failed" });
+    expect(calls.fail).toHaveLength(2);
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "effect_failure_report_failed",
+      retryable: false,
+      retryAfterSeconds: 0,
+    });
+  });
+
   it("bounds runner requests and does not retry unknown adapter exceptions", async () => {
     expect(() => validatePlatformEffectRunRequest({
       scope: "platform",

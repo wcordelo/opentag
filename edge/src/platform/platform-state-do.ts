@@ -5,6 +5,7 @@ import type {
   CredentialCustodyReference,
   IdentityCustodyReference,
   MemoryDeletionRequest,
+  MemoryDeletionReceipt,
   MemoryGovernancePolicy,
   PlatformEffectClaim,
   PlatformEffectIntent,
@@ -24,6 +25,7 @@ import {
   validateCredentialCustodyReference,
   validateIdentityCustodyReference,
   validateMemoryDeletionRequest,
+  validateMemoryDeletionReceipt,
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
   validateProvisioningRequest,
@@ -185,6 +187,16 @@ const PLATFORM_DDL = [
      status TEXT NOT NULL CHECK (status IN ('requested', 'accepted', 'completed', 'failed')),
      requested_at TEXT NOT NULL,
      updated_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS memory_deletion_receipts (
+     idempotency_key TEXT PRIMARY KEY,
+     request_id TEXT NOT NULL,
+     tenant_id TEXT NOT NULL,
+     source_key TEXT NOT NULL,
+     receipt_json TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('deleted', 'not_found', 'failed')),
+     observed_at TEXT NOT NULL,
+     UNIQUE (request_id, source_key)
    )`,
 ];
 
@@ -1444,7 +1456,12 @@ export class PlatformStateEngine {
     return parseJson<MemoryGovernancePolicy>(row.policy_json);
   }
 
-  requestMemoryDeletion(value: unknown): { ok: true; duplicate: boolean; status: "requested"; request: MemoryDeletionRequest } {
+  requestMemoryDeletion(value: unknown): {
+    ok: true;
+    duplicate: boolean;
+    status: "requested" | "accepted" | "completed" | "failed";
+    request: MemoryDeletionRequest;
+  } {
     const request = validateMemoryDeletionRequest(value);
     return this.tx(() => {
       assertTenantActive(this.provisioningByTenant(request.tenantId), request.tenantId);
@@ -1463,7 +1480,12 @@ export class PlatformStateEngine {
       ).toArray()[0];
       if (current) {
         if (current.request_json !== requestJson) throw new PlatformStateError("memory_deletion_idempotency_conflict", 409);
-        return { ok: true, duplicate: true, status: "requested", request };
+        return {
+          ok: true,
+          duplicate: true,
+          status: current.status as "requested" | "accepted" | "completed" | "failed",
+          request,
+        };
       }
       const sameRequest = this.sql.exec<DeletionRow>(
         `SELECT * FROM memory_deletion_requests WHERE request_id = ?`,
@@ -1504,14 +1526,110 @@ export class PlatformStateEngine {
     });
   }
 
-  getMemoryDeletion(value: unknown): MemoryDeletionRequest & { status: string } {
-    const key = id(value, "idempotency_key");
+  recordMemoryDeletionReceipt(value: unknown): {
+    ok: true;
+    duplicate: boolean;
+    status: "requested" | "accepted" | "completed" | "failed";
+    receipt: MemoryDeletionReceipt;
+  } {
+    const receipt = validateMemoryDeletionReceipt(value);
+    return this.tx(() => {
+      const requestRow = this.sql.exec<DeletionRow>(
+        `SELECT * FROM memory_deletion_requests WHERE request_id = ?`,
+        receipt.requestId,
+      ).toArray()[0];
+      if (!requestRow) throw new PlatformStateError("memory_deletion_not_found", 404);
+      const request = parseJson<MemoryDeletionRequest>(requestRow.request_json);
+      if (request.tenantId !== receipt.tenantId) {
+        throw new PlatformStateError("memory_deletion_tenant_mismatch", 409);
+      }
+      if (request.deletionEpoch !== receipt.deletionEpoch) {
+        throw new PlatformStateError("memory_deletion_epoch_stale", 409);
+      }
+      if (!request.sourceKeys.includes(receipt.sourceKey)) {
+        throw new PlatformStateError("memory_deletion_source_not_requested", 409);
+      }
+      const current = this.sql.exec<DeletionReceiptRow>(
+        `SELECT * FROM memory_deletion_receipts WHERE idempotency_key = ?`,
+        receipt.idempotencyKey,
+      ).toArray()[0];
+      if (current) {
+        if (current.receipt_json !== json(receipt)) {
+          throw new PlatformStateError("memory_deletion_receipt_idempotency_conflict", 409);
+        }
+        return {
+          ok: true,
+          duplicate: true,
+          status: requestRow.status as "requested" | "accepted" | "completed" | "failed",
+          receipt,
+        };
+      }
+      if (requestRow.status === "completed" || requestRow.status === "failed") {
+        throw new PlatformStateError("memory_deletion_terminal", 409);
+      }
+      const sameSource = this.sql.exec<DeletionReceiptRow>(
+        `SELECT * FROM memory_deletion_receipts WHERE request_id = ? AND source_key = ?`,
+        receipt.requestId,
+        receipt.sourceKey,
+      ).toArray()[0];
+      if (sameSource) throw new PlatformStateError("memory_deletion_source_already_recorded", 409);
+      this.sql.exec(
+        `INSERT INTO memory_deletion_receipts (
+           idempotency_key, request_id, tenant_id, source_key,
+           receipt_json, status, observed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        receipt.idempotencyKey,
+        receipt.requestId,
+        receipt.tenantId,
+        receipt.sourceKey,
+        json(receipt),
+        receipt.status,
+        receipt.observedAt,
+      );
+      const receipts = this.deletionReceipts(receipt.requestId);
+      const failed = receipts.some((item) => item.status === "failed");
+      const complete = request.sourceKeys.every((sourceKey) =>
+        receipts.some((item) => item.sourceKey === sourceKey && item.status !== "failed"),
+      );
+      const status = failed ? "failed" : complete ? "completed" : "accepted";
+      const updatedAt = nowIso(this.now);
+      this.sql.exec(
+        `UPDATE memory_deletion_requests SET status = ?, updated_at = ? WHERE request_id = ?`,
+        status,
+        updatedAt,
+        receipt.requestId,
+      );
+      return { ok: true, duplicate: false, status, receipt };
+    });
+  }
+
+  getMemoryDeletion(value: unknown): MemoryDeletionRequest & {
+    status: "requested" | "accepted" | "completed" | "failed";
+    receipts: MemoryDeletionReceipt[];
+  } {
+    const key = id(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).idempotencyKey
+        : value,
+      "idempotency_key",
+    );
     const row = this.sql.exec<DeletionRow>(
       `SELECT * FROM memory_deletion_requests WHERE idempotency_key = ?`,
       key,
     ).toArray()[0];
     if (!row) throw new PlatformStateError("memory_deletion_not_found", 404);
-    return { ...parseJson<MemoryDeletionRequest>(row.request_json), status: row.status };
+    return {
+      ...parseJson<MemoryDeletionRequest>(row.request_json),
+      status: row.status as "requested" | "accepted" | "completed" | "failed",
+      receipts: this.deletionReceipts(row.request_id),
+    };
+  }
+
+  private deletionReceipts(requestId: string): MemoryDeletionReceipt[] {
+    return this.sql.exec<DeletionReceiptRow>(
+      `SELECT * FROM memory_deletion_receipts WHERE request_id = ? ORDER BY observed_at ASC`,
+      requestId,
+    ).toArray().map((row) => parseJson<MemoryDeletionReceipt>(row.receipt_json));
   }
 
   private effectById(intentId: string): PlatformEffectRow | undefined {
@@ -1763,6 +1881,16 @@ type DeletionRow = {
   updated_at: string;
 };
 
+type DeletionReceiptRow = {
+  idempotency_key: string;
+  request_id: string;
+  tenant_id: string;
+  source_key: string;
+  receipt_json: string;
+  status: MemoryDeletionReceipt["status"];
+  observed_at: string;
+};
+
 async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json();
@@ -1911,6 +2039,9 @@ export class PlatformStateDO extends DurableObject {
       }
       if (url.pathname === "/memory/deletion" && request.method === "POST") {
         return Response.json(this.engine.requestMemoryDeletion(await readJson(request)));
+      }
+      if (url.pathname === "/memory/deletion/receipt" && request.method === "POST") {
+        return Response.json(this.engine.recordMemoryDeletionReceipt(await readJson(request)));
       }
       if (url.pathname === "/memory/deletion/get" && request.method === "POST") {
         const body = await readJson(request);

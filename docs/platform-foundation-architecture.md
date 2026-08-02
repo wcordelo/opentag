@@ -6,6 +6,9 @@ Updated: **2026-08-01**
 
 The OAuth state/marketplace gates and authenticated provider-adapter protocol
 are locally validated but remain fail-closed without approved provider custody.
+The effect ledger, router measurement ledger, marketplace trust gates, and
+replay-safe OAuth state store are validated in code; no hosted platform effecter,
+connector credential broker, or live provider OAuth exchange is deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future

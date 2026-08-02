@@ -1653,7 +1653,7 @@ export class PlatformStateEngine {
     ).toArray();
     for (const row of rows) {
       const grant = parseJson<ConnectorOAuthGrant>(row.grant_json);
-      if (grant.marketplaceVersion !== undefined && grant.marketplaceVersion !== marketplaceVersion) continue;
+      if (grant.marketplaceVersion !== marketplaceVersion) continue;
       this.sql.exec(
         `UPDATE connector_oauth_grants
          SET grant_json = ?, status = 'revoked', revoked_at = ?, updated_at = ?

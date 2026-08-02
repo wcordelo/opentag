@@ -15,6 +15,7 @@ import {
   validateCredentialCustodyReference,
   type CredentialCustodyReference,
 } from "../platform/layer3-contract.js";
+import { deriveInternalTenantId } from "../platform/tenant-id.js";
 
 export const CREDENTIAL_BROKER_SCHEMA_VERSION = 1 as const;
 
@@ -162,9 +163,9 @@ export function validateCredentialBrokerResponse(value: unknown): CredentialBrok
   return Object.freeze(response);
 }
 
-export function validateCredentialCustodyResolveRequest(
+export async function validateCredentialCustodyResolveRequest(
   value: unknown,
-): CredentialCustodyResolveRequest {
+): Promise<CredentialCustodyResolveRequest> {
   const input = object(value, "credential_custody_request");
   if (input.schemaVersion !== CREDENTIAL_BROKER_SCHEMA_VERSION) {
     throw new Error("credential_custody_schema_invalid");
@@ -175,6 +176,13 @@ export function validateCredentialCustodyResolveRequest(
     reference: input.reference,
     labels: input.labels,
   });
+  const expectedTenantId = await deriveInternalTenantId({
+    externalPlatform: "slack",
+    externalTenantId: brokerRequest.labels.workspaceId,
+  });
+  if (tenantId !== expectedTenantId) {
+    throw new Error("credential_custody_workspace_tenant_mismatch");
+  }
   const credential = validateCredentialCustodyReference(input.credential);
   if (credential.tenantId !== tenantId) {
     throw new Error("credential_custody_tenant_mismatch");

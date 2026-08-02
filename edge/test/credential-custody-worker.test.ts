@@ -4,6 +4,7 @@ import {
   issueConnectorAuthorization,
   parseCredentialReference,
 } from "../src/connectors/authorization.js";
+import { deriveInternalTenantId } from "../src/platform/tenant-id.js";
 import { credentialCustodyApp } from "../workers/credential-custody/src/index.js";
 
 const reference = parseCredentialReference({
@@ -53,18 +54,22 @@ async function labels() {
   })).labels;
 }
 
-function requestBody(
+async function requestBody(
   connectorLabels: Awaited<ReturnType<typeof labels>>,
   status: "active" | "revoked" = "active",
 ) {
+  const tenantId = await deriveInternalTenantId({
+    externalPlatform: "slack",
+    externalTenantId: connectorLabels.workspaceId,
+  });
   return {
     schemaVersion: 1,
-    tenantId: "tenant-1",
+    tenantId,
     reference: { ref: reference.ref, version: reference.version },
     labels: connectorLabels,
     credential: {
       schemaVersion: 1,
-      tenantId: "tenant-1",
+      tenantId,
       credentialRef: reference.ref,
       backend: "external_kms",
       provider: "google",
@@ -95,7 +100,7 @@ type SecretsStoreSecret = { get(): Promise<string> };
 describe("credential custody Worker", () => {
   it("resolves a configured Secrets Store binding without accepting token material", async () => {
     const secret = { get: vi.fn(async () => "drive-token") };
-    const body = requestBody(await labels());
+    const body = await requestBody(await labels());
     const response = await credentialCustodyApp.fetch(
       new Request("https://custody/resolve", {
         method: "POST",
@@ -121,7 +126,7 @@ describe("credential custody Worker", () => {
   });
 
   it("fails closed without custody auth or a binding map", async () => {
-    const body = requestBody(await labels());
+    const body = await requestBody(await labels());
     const unauthorized = await credentialCustodyApp.fetch(
       new Request("https://custody/resolve", {
         method: "POST",
@@ -158,7 +163,7 @@ describe("credential custody Worker", () => {
           authorization: "Bearer custody-secret",
           "content-type": "application/json",
         },
-        body: JSON.stringify(requestBody(tamperedLabels)),
+        body: JSON.stringify(await requestBody(tamperedLabels)),
       }),
       bindings() as never,
     );
@@ -172,7 +177,7 @@ describe("credential custody Worker", () => {
           authorization: "Bearer custody-secret",
           "content-type": "application/json",
         },
-        body: JSON.stringify(requestBody(validLabels, "revoked")),
+        body: JSON.stringify(await requestBody(validLabels, "revoked")),
       }),
       bindings() as never,
     );
@@ -186,7 +191,7 @@ describe("credential custody Worker", () => {
           authorization: "Bearer custody-secret",
           "content-type": "application/json",
         },
-        body: JSON.stringify(requestBody(validLabels)),
+        body: JSON.stringify(await requestBody(validLabels)),
       }),
       { ...bindings(), GOOGLE_DRIVE_TOKEN_V2: undefined } as never,
     );

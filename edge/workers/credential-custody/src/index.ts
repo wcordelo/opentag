@@ -178,12 +178,15 @@ app.post("/resolve", async (c) => {
     requireAuth(c.env, c.req.header("authorization"));
     let request: CredentialCustodyResolveRequest;
     try {
-      request = validateCredentialCustodyResolveRequest(await c.req.json());
+      request = await validateCredentialCustodyResolveRequest(await c.req.json());
       await assertConnectorLabelsIntegrity(request.labels);
     } catch (error) {
       if (error instanceof CustodyError) throw error;
       if (error instanceof Error && error.message === "connector_labels_tampered") {
         throw new CustodyError("connector_labels_tampered", 403);
+      }
+      if (error instanceof Error && error.message === "credential_custody_workspace_tenant_mismatch") {
+        throw new CustodyError("credential_custody_workspace_tenant_mismatch", 403);
       }
       return c.json({ error: error instanceof Error ? error.message : "credential_custody_request_invalid" }, 400);
     }

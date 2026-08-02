@@ -1,8 +1,15 @@
 # Platform and routing foundation
 
-Status: **source-complete metadata foundation; synthetic-live; external effecter and connector broker still gated**
+Status: **source-complete metadata foundation; synthetic-live; credential-broker
+boundary validated locally; external effecter and connector custody still gated**
 
 Updated: **2026-08-01**
+
+The OAuth state/marketplace gates and authenticated provider-adapter protocol
+are locally validated but remain fail-closed without approved provider custody.
+The effect ledger, router measurement ledger, marketplace trust gates, and
+replay-safe OAuth state store are validated in code; no hosted platform effecter,
+connector credential broker, or live provider OAuth exchange is deployed.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -71,7 +78,10 @@ provider side effect is implied. It covers:
 - idempotent provisioning requests and the complete DO/Slack/default-bundle
   footprint;
 - opaque identity and credential custody references with public metadata only;
-- curated connector marketplace entries and OAuth grants;
+- an authenticated identity/key-custody adapter protocol that returns only
+  public-key metadata and opaque external receipts;
+- curated connector marketplace entries and OAuth grants; active grants are
+  bound to the exact curated marketplace version, provider, and allowed scopes;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
 - versioned tenant billing plans with bounded period/limit decisions before
@@ -91,7 +101,9 @@ one reserved object. The ledger provides:
 - versioned identity and credential custody references with terminal
   revocation;
 - curated marketplace versions and terminal connector revocation;
-- credential-linked OAuth grant versions with terminal revocation;
+- credential-linked OAuth grant versions with terminal revocation; revoking a
+  marketplace version revokes its dependent grants and emits revocation
+  effects;
 - execution-linked, idempotent usage-meter receipts with bounded listing; and
 - monotonic memory policies plus deletion requests that remain `requested`
   until an approved external deletion worker completes them; each requested
@@ -127,20 +139,64 @@ The lifecycle is:
 
 1. A state transition records its own metadata and an idempotent effect intent
    in the same SQLite transaction.
-2. An effect worker claims the intent with a short lease and receives the
+2. The bot publishes a queue wakeup containing only the internal
+   `PlatformStateDO` object name. A bounded admin wake route remains available
+   for recovery when the queue is unavailable.
+3. An effect worker claims the intent with a short lease and receives the
    validated intent metadata plus an opaque lease token.
-3. The worker performs the provider call outside the Durable Object, then
+4. The effecter performs the provider call outside the Durable Object, then
    reports `complete` with a bounded external receipt reference or `failed`
    with a safe error code and retry policy.
-4. A revoked or superseded operation can cancel the intent; an expired lease
+5. A revoked or superseded operation can cancel the intent; an expired lease
    is reclaimable, while an active lease cannot be double-claimed.
 
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
-The ledger still does not perform the external effect. That boundary must be
-implemented by a separately authenticated worker after custody, provider, and
-billing decisions are approved.
+The ledger still does not perform the external effect. The isolated branch now
+contains a separately authenticated baseline effecter Worker for this boundary;
+it registers no provider adapters and therefore fails closed until custody,
+provider, and billing decisions are approved. The queue and effecter service
+binding are dispatch architecture only; they do not imply that an external
+provider or credential custody system is configured.
+
+## Credential broker boundary
+
+`edge/workers/credential-broker/` is the last-mile resolver for connector
+tokens. It authenticates the bot service binding, derives the canonical Slack
+tenant id, re-reads public credential metadata from `PlatformStateDO`, and
+checks the credential version, tenant, provider, expiry, and connector scope
+before contacting custody. It supports only explicitly registered connector
+actions (`google_drive/search` and `linear/create_issue`) and fails closed for
+unknown actions.
+
+The broker forwards immutable labels and public credential metadata to a
+separately authenticated `CUSTODY` service binding. The optional
+`opentag-credential-custody` Worker reads only explicitly mapped
+Cloudflare Secrets Store bindings; its configuration contains reference,
+version, binding-name, and expiry metadata, never provider token values. The
+broker and custody Worker remain fail-closed until both internal auth tokens,
+the approved mapping, and the non-production smoke are configured. This makes
+the architecture deployable and testable without pretending that Drive or
+Linear credentials are live.
+
+## Identity custody adapter boundary
+
+`edge/src/platform/identity-custody-contract.ts` defines the authenticated
+boundary for the `identity_custody` effect. It accepts only a tenant-scoped
+`identity:` reference, custody backend, version, operation, idempotency key,
+requested timestamp, and optional public key. It rejects private-key-shaped
+values and unknown fields. The `opentag-identity-custody` Worker authenticates
+its internal caller, forwards the bounded request to an optional separately
+authenticated `IDENTITY_PROVIDER_ADAPTER`, and validates that the returned
+opaque receipt matches the tenant, identity, backend, operation, and version.
+
+The provider adapter owns key generation, signing, storage, rotation, and
+revocation. Provisioning/rotation receipts must return the public key needed by
+the metadata ledger; revocation receipts need not return a key. With no
+provider adapter binding or bearer configured, the Worker returns an explicit
+configuration error and performs no custody operation. No private key enters
+OpenTag Durable Objects, queues, Worker variables, or logs.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
@@ -155,6 +211,40 @@ revisions, out-of-period events, and blocked overage fail closed. An absent
 plan remains explicitly `plan_unconfigured` and allows metering for migration
 compatibility. This is entitlement and reconciliation infrastructure only: no
 card, invoice, payment provider, or charge is performed.
+## OAuth state and marketplace activation
+
+`edge/src/platform/oauth-state-do.ts` is a separate SQLite Durable Object for
+browser-flow state. It stores only SHA-256 state/nonce hashes plus bounded
+tenant, principal, connector-version, redirect, scope, issue, expiry, and
+consumption metadata. `/issue` returns the random state and nonce once;
+`/consume` atomically marks a matching pair consumed and refuses replay. The
+state contract rejects authorization-code/token-shaped fields, requires an
+explicit HTTPS redirect-origin allowlist, and bounds state lifetime to 60–900
+seconds.
+
+The bot's `/admin/platform/oauth/state/issue` and `/consume` routes are
+admin-only architecture seams. They first require the exact marketplace
+version to be curated and OAuth-enabled. They are not public provider
+callbacks: no OAuth code, access token, refresh token, or provider exchange is
+accepted by the bot or its Durable Objects.
+
+`edge/workers/oauth-callback` is the public callback boundary and forwards a
+bounded one-request handoff to the authenticated `oauth-effecter` Worker. The
+effecter can call an optional separately authenticated provider adapter using
+the protocol in `edge/src/platform/oauth-provider-contract.ts`. The adapter
+owns provider exchange, state correlation, marketplace/scope validation, and
+external custody, and may return only a bounded receipt with an opaque
+`credential:` reference and exact marketplace/grant metadata. The effecter and
+callback Worker remain fail-closed when that adapter binding or its separate
+bearer is absent; no provider token is stored or returned by OpenTag.
+
+Marketplace curation now requires a `review:` trust reference, at least one
+action, and auth-mode-consistent scopes. OAuth grants carry the exact
+`marketplaceVersion`; the ledger rejects uncurated/non-OAuth entries, provider
+mismatches, scopes outside the reviewed entry, and any grant whose scope set
+differs from the custody reference. This is a durable safety gate, not proof
+that any provider OAuth integration is live.
+
 Memory deletion receipts are source-scoped and epoch-bound. The external
 executor may record only a requested source, and duplicate receipt retries are
 idempotent. `not_found` is treated as a successful absence proof; any
@@ -162,7 +252,12 @@ idempotent. `not_found` is treated as a successful absence proof; any
 claiming completion. The receipt ledger stores bounded metadata and an opaque
 external receipt reference, never memory contents or deletion payloads. The
 executor still owns the actual deletion and must report receipts through the
-admin/effect boundary.
+admin/effect boundary. The provider-independent `opentag-memory-deletion`
+Worker now accepts one source-scoped request at a time, forwards only bounded
+tenant/source/epoch metadata to a separately authenticated adapter, and rejects
+successful provider responses without an opaque receipt reference. It remains
+fail-closed until a reviewed provider adapter, custody path, and non-production
+test namespace are configured.
 
 Provisioning step advancement is receipt-bound. Each required step must carry
 an opaque external receipt reference and observed timestamp; completion without
@@ -173,17 +268,30 @@ executor explicitly marks them retryable; the ledger never fabricates a
 successful Slack install, Durable Object creation, key-custody operation, or
 access-bundle result.
 
+The provider-independent `opentag-provisioning-adapter` Worker now provides a
+step-scoped boundary for that executor. It accepts only the selected required
+step, tenant/request metadata, isolation/custody modes, and requester subject;
+it forwards no credentials or generic resource payload. It validates the
+returned step receipt against the request's idempotency key and remains
+fail-closed until a reviewed tenant/bootstrap adapter and non-production
+namespace are configured.
+
 The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
-1. production tenant locator and per-team DO onboarding;
-2. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
-3. curated-only marketplace trust and OAuth callback ownership;
-4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
-5. retention/deletion guarantees and compliance requirements for hosted memory.
+1. shared per-tenant DO isolation versus Workers for Platforms;
+2. production tenant locator and per-team DO onboarding;
+3. whether the optional Cloudflare Secrets Store adapter is the approved
+   custody implementation, or whether an external KMS/envelope/self-hosted
+   Worker should replace it;
+4. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
+5. curated-only marketplace trust and OAuth callback ownership;
+6. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
+7. retention/deletion guarantees and compliance requirements for hosted memory.
 
-No code silently chooses one of those alternatives, runs an OAuth callback,
-stores a provider token, charges a plan, or deletes live customer knowledge.
+The baseline effecter does not silently choose one of those alternatives, run
+an OAuth callback, store a provider token, charge a plan, or delete live
+customer knowledge.
 The platform-state ledger records explicit bootstrap requests and externally
 verified receipts without marking a tenant active until the required steps are
 reported complete.
@@ -205,8 +313,9 @@ not a replacement for that worker.
 ## Remaining activation gates
 
 - Drive search is implemented behind the connector authorization contract, but
-  needs a deployed `CONNECTOR_CREDENTIALS` broker and approved Google OAuth/key
-  custody path before it can run live.
+  needs the credential-broker and custody Workers, an approved Google
+  OAuth/key mapping, and a non-production validation workspace before it can
+  run live.
 - Knowledge MCP search still needs the existing Supermemory configuration and
   knowledge rollout gates. Raw templates use the local KnowledgeDO and do not
   imply that Supermemory ingestion is active.
@@ -215,14 +324,19 @@ not a replacement for that worker.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, and admin routes are deployed
-  and synthetic-live, but the production bootstrap authority, tenant locator
-  integration, identity/key custody worker, Slack OAuth callback, marketplace
-  trust review process, billing/plan enforcement, memory deletion executor,
-  and credential broker are not live.
+- The platform-state migration, effect leases, admin routes, credential-broker
+  boundary, optional Secrets Store custody adapter, and identity custody
+  protocol are locally validated, but the production bootstrap authority,
+  tenant locator integration, configured identity provider/key custody adapter,
+  Slack OAuth callback, marketplace trust review process, billing/plan
+  enforcement, memory deletion executor, configured custody mapping, and
+  provider adapters are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.
 - Cloudflare deployment is an explicit operator action. The current deployment
   evidence is recorded in `docs/current-state.md`; local tests alone never
   authorize a deploy or prove an external side effect.
+- The queue-backed baseline effecter is locally validated and remains
+  fail-closed with no registered provider adapters or credentials; no custody
+  mapping, provider token, or external provider adapter is live.

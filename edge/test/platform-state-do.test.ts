@@ -329,20 +329,17 @@ describe("PlatformStateDO", () => {
         status: "curated",
         authMode: "oauth2",
         actions: ["search"],
-        oauthScopes: ["drive.readonly"],
+        oauthScopes: ["drive.readonly", "drive.metadata.readonly"],
         trustReviewRef: "review:google-drive:v1",
       };
       expect((await call(state, "/marketplace", marketplace)).response.status).toBe(200);
-      expect((await call(state, "/marketplace/revoke", {
-        connectorId: marketplace.connectorId,
-        version: marketplace.version,
-      })).response.status).toBe(200);
 
       const grant = {
         schemaVersion: 1,
         tenantId,
         principalId: "principal-1",
         connectorId: "google_drive",
+        marketplaceVersion: "v1",
         credentialRef: credential.credentialRef,
         providerSubject: "acct-1",
         scopes: ["drive.readonly"],
@@ -350,7 +347,23 @@ describe("PlatformStateDO", () => {
         status: "active",
         issuedAt: now,
       };
+      const scopeMismatch = await call(state, "/oauth", {
+        ...grant,
+        scopes: ["drive.metadata.readonly"],
+      });
+      expect(scopeMismatch.response.status).toBe(409);
+      expect(scopeMismatch.body.error).toBe("oauth_credential_scopes_mismatch");
       expect((await call(state, "/oauth", grant)).response.status).toBe(200);
+      expect((await call(state, "/marketplace/revoke", {
+        connectorId: marketplace.connectorId,
+        version: marketplace.version,
+      })).response.status).toBe(200);
+      const revokedByMarketplace = await call(state, "/oauth/get", {
+        tenantId,
+        principalId: grant.principalId,
+        connectorId: grant.connectorId,
+      });
+      expect(revokedByMarketplace.body.status).toBe("revoked");
       expect((await call(state, "/credential", { ...credential, version: 2 })).response.status).toBe(200);
       const revokedGrant = await call(state, "/oauth/get", {
         tenantId,
@@ -491,12 +504,31 @@ describe("PlatformStateDO", () => {
       expect(activeClaim.response.status).toBe(409);
       expect(activeClaim.body.error).toBe("effect_lease_active");
 
+      const renewed = await call(state, "/effect/renew", {
+        intentId,
+        leaseToken,
+        leaseSeconds: 30,
+      });
+      expect(renewed.response.status).toBe(200);
+      expect(renewed.body).toMatchObject({
+        ok: true,
+        receipt: { status: "leased", attempts: 1 },
+      });
+      expect(renewed.body.leaseExpiresAt).toEqual(expect.any(String));
+
       const wrongCompletion = await call(state, "/effect/complete", {
         intentId,
         leaseToken: "wrong-token",
       });
       expect(wrongCompletion.response.status).toBe(409);
       expect(wrongCompletion.body.error).toBe("effect_lease_mismatch");
+
+      const missingReceipt = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken,
+      });
+      expect(missingReceipt.response.status).toBe(400);
+      expect(missingReceipt.body.error).toBe("effect_external_receipt_required");
 
       const failed = await call(state, "/effect/fail", {
         intentId,

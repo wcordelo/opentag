@@ -71,6 +71,7 @@ export function createSearchDriveTool(dependencies: {
           bundle,
           credential: authorization.credential,
           credentialBroker: env.CONNECTOR_CREDENTIALS,
+          brokerAuthToken: env.CONNECTOR_CREDENTIAL_BROKER_TOKEN,
           revalidate: async () => verifyConnectorAuthorization(env.WORKSPACE_CONFIG, authorization.labels),
         });
         await dependencies.assertActive(thread);
@@ -79,7 +80,7 @@ export function createSearchDriveTool(dependencies: {
         if (error instanceof DriveConnectorError) {
           return { status: "knowledge_unavailable", citations: [], retryable: error.retryable } satisfies SearchDriveResult;
         }
-        if (error instanceof Error && /authorization|revoked|grant|policy|scope/.test(error.message)) {
+        if (error instanceof Error && /unauthorized|authorization|revoked|grant|policy|scope/.test(error.message)) {
           return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;
         }
         return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies SearchDriveResult;

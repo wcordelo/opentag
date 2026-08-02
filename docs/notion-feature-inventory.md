@@ -86,6 +86,34 @@ The original Notion findings and dates are not rewritten. See the
 [backfill reconciliation](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
 for the complete document-by-document status map.
 
+## Current landing and activation gates
+
+The deployed baseline is merged OpenTag `main` `498164f`, served as Worker
+version `a7674fb3-219b-4b93-893a-53792f51824f`. The following architecture work
+is implemented and validated in isolated, non-draft PRs but is not live until
+it is merged and redeployed:
+
+- [#29 platform effecter](https://github.com/wcordelo/opentag/pull/29) and
+  [#30 credential broker](https://github.com/wcordelo/opentag/pull/30) establish
+  the secret-free handoff and custody boundary;
+- [#31 OAuth/marketplace](https://github.com/wcordelo/opentag/pull/31),
+  [#32 billing policy](https://github.com/wcordelo/opentag/pull/32),
+  [#37 identity custody](https://github.com/wcordelo/opentag/pull/37),
+  [#38 memory deletion](https://github.com/wcordelo/opentag/pull/38), and
+  [#39 provisioning](https://github.com/wcordelo/opentag/pull/39) add the
+  provider-independent metadata and receipt boundaries; and
+- [#41 OAuth scope hardening](https://github.com/wcordelo/opentag/pull/41),
+  [#42 billing adapter](https://github.com/wcordelo/opentag/pull/42), and
+  [#43 trace/query/router safety](https://github.com/wcordelo/opentag/pull/43)
+  close follow-up validation gaps.
+
+After merge, validate the complete mainline together, deploy the bot plus only
+the approved effect workers, and run synthetic/non-production smoke tests. Do
+not enable Drive or Linear until broker custody, exact grants, OAuth/provider
+configuration, ACL policy, and a test workspace are all present. Do not enable
+Tier 1 or Tier 3 routing until shadow volume, quality, feedback, latency, cost,
+and rollback evidence meet an explicit rollout decision.
+
 ## Every finding in the available window
 
 ### Jul 22 — two Migrate, one Evaluate, one Covered, two N/A
@@ -274,31 +302,38 @@ change, not evidence that all earlier gaps are complete.
 
 ### Still required before “everything” is live
 
-1. **Credential custody:** the broker Worker and optional Secrets Store adapter
-   are implemented locally. Approve that adapter or choose external KMS,
-   wrapped Durable Object envelope, or self-hosted custody; configure
-   reference/version mappings, provider OAuth/token rotation, scope checks,
-   revocation propagation, and a safe non-production smoke. No credential
-   store or provider mapping is currently configured.
-2. **Provisioning/identity:** the local tenant ledger now requires an external
+1. **Credential custody:** [PR #30](https://github.com/wcordelo/opentag/pull/30)
+   adds the authenticated broker boundary and optional Secrets Store adapter.
+   Still choose external KMS, a wrapped Durable Object envelope, or self-hosted
+   custody; configure reference/version mappings, provider OAuth/token rotation,
+   scope checks, revocation propagation, and a safe non-production smoke. No
+   credential store or provider mapping is currently configured.
+2. **Provisioning/identity:** [PR #37](https://github.com/wcordelo/opentag/pull/37)
+   and [PR #39](https://github.com/wcordelo/opentag/pull/39) add provider-independent
+   custody and receipt adapters. The local tenant ledger requires an external
    receipt for every required provisioning step. Still choose the tenant
-   locator/isolation model, deploy the bootstrap/effect worker, establish
+   locator/isolation model, configure the bootstrap adapter, establish
    identity/key custody, and supply real receipts for every DO, bundle, OAuth,
    and identity step.
-3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
-   nonce/state handling, curated trust-review authority, and connector version
-   lifecycle. The ledger is ready; the external effecter is not.
-4. **Billing:** local plan/period/limit enforcement, meter decisions, and a
-   secret-free provider meter/receipt contract now exist. Still choose the
-   billing source of truth, invoice/overage policy, reconciliation, payment
-   provider, and enforcement owner; no billing provider is called.
-5. **Memory deletion:** the durable receipt ledger, source/epoch checks, and a
-   provider-independent source-scoped adapter boundary now exist. Still choose
-   retention/compliance guarantees, provider custody, and the non-production
-   namespace before configuring the adapter that performs source-by-source
-   deletion and submits proof; the ledger and boundary do not inspect or delete
-   memory themselves; the request stays `requested` until that executor reports
-   success.
+3. **OAuth/marketplace:** [PR #31](https://github.com/wcordelo/opentag/pull/31)
+   and [PR #41](https://github.com/wcordelo/opentag/pull/41) add replay-safe state,
+   curation gates, and exact scope/custody binding. Still choose callback
+   ownership and production allowlisted origins, deploy an independently
+   authenticated provider effecter, perform code exchange outside OpenTag, and
+   return a custody reference. No provider token is live.
+4. **Billing:** [PR #32](https://github.com/wcordelo/opentag/pull/32) and
+   [PR #42](https://github.com/wcordelo/opentag/pull/42) add versioned local
+   plan/period/limit enforcement, meter decisions, and a secret-free provider
+   meter/receipt contract. Still choose the billing source of truth,
+   invoice/overage policy, reconciliation, payment provider, and enforcement
+   owner; no billing provider is called.
+5. **Memory deletion:** [PR #38](https://github.com/wcordelo/opentag/pull/38)
+   adds source-scoped receipts and a provider-independent adapter boundary. Still
+   choose retention/compliance guarantees, provider custody, and the
+   non-production namespace before configuring the executor that performs
+   source-by-source deletion and submits proof; the ledger and boundary do not
+   inspect or delete memory themselves, and the request stays `requested` until
+   that executor reports success.
 6. **Router rollout:** collect enough shadow measurements, then add Tier 1
    knowledge quality gates and fallback/synthesis behavior, product-facing
    escalation affordance, and an explicit rollout gate before enabling

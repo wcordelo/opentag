@@ -1150,7 +1150,6 @@ export class PlatformStateEngine {
 
   putMarketplace(value: unknown): { ok: true; duplicate: boolean; entry: ConnectorMarketplaceEntry } {
     const entry = validateConnectorMarketplaceEntry(value);
-    assertConnectorMarketplaceEntryActivatable(entry);
     if (entry.status === "revoked") {
       throw new PlatformStateError("marketplace_active_entry_required", 400);
     }
@@ -1165,6 +1164,7 @@ export class PlatformStateEngine {
         if (current.entry_json !== entryJson) throw new PlatformStateError("marketplace_version_conflict", 409);
         return { ok: true, duplicate: true, entry };
       }
+      assertConnectorMarketplaceEntryActivatable(entry);
       const updatedAt = nowIso(this.now);
       this.sql.exec(
         `INSERT INTO marketplace_entries (connector_id, version, entry_json, status, updated_at)
@@ -1780,7 +1780,9 @@ export class PlatformStateEngine {
           credentialRef: grant.credentialRef,
           operation,
           principalId: grant.principalId,
-          marketplaceVersion: grant.marketplaceVersion,
+          ...(grant.marketplaceVersion !== undefined
+            ? { marketplaceVersion: grant.marketplaceVersion }
+            : {}),
           version: grant.version,
         },
         requestedAt,
@@ -1826,7 +1828,9 @@ export class PlatformStateEngine {
     ).toArray();
     for (const row of rows) {
       const grant = parseJson<ConnectorOAuthGrant>(row.grant_json);
-      if (grant.marketplaceVersion !== marketplaceVersion) continue;
+      if (grant.marketplaceVersion !== undefined && grant.marketplaceVersion !== marketplaceVersion) {
+        continue;
+      }
       this.sql.exec(
         `UPDATE connector_oauth_grants
          SET grant_json = ?, status = 'revoked', revoked_at = ?, updated_at = ?

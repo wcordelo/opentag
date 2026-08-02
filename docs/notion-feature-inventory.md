@@ -1,7 +1,7 @@
 # Notion-derived OpenTag feature inventory
 
 Status: **historical Notion audit reconciled with the merged connector/platform
-work, the 2026-08-01 live rollout, and the credential-broker branch**
+work, the 2026-08-01 and 2026-08-02 live rollouts, and the credential-broker branch**
 
 Updated: **2026-08-02**
 
@@ -89,7 +89,8 @@ for the complete document-by-document status map.
 ## Current landing and activation gates
 
 The deployed baseline is merged OpenTag `main` `d075431`, served as Worker
-version `24284136-feb8-44ef-91e0-4b50e5a554bb`. The provider-independent
+version `88615a84-1396-4298-bd76-95b423db496c` after three repeated live health
+probes returned HTTP 200. The provider-independent
 effect boundaries from the merged architecture work are deployed and
 health-checked, but remain fail-closed until their external gates are approved:
 
@@ -110,8 +111,10 @@ health-checked, but remain fail-closed until their external gates are approved:
   close follow-up validation gaps. The later foundation stack [#45](https://github.com/wcordelo/opentag/pull/45),
   [#47](https://github.com/wcordelo/opentag/pull/47),
   [#48](https://github.com/wcordelo/opentag/pull/48), and
-  [#49](https://github.com/wcordelo/opentag/pull/49) remains open and is not
-  included in the deployed baseline.
+[#49](https://github.com/wcordelo/opentag/pull/49), and the dependent PRs
+[#50](https://github.com/wcordelo/opentag/pull/50) through
+[#52](https://github.com/wcordelo/opentag/pull/52) remain open and are not
+included in the deployed baseline.
 
 After the foundation stack is accepted, validate the complete mainline
 together, redeploy the bot, and rerun synthetic/non-production smoke tests. Do

@@ -5,7 +5,7 @@ Status: **current reconciliation record**
 Updated: **2026-08-02**
 
 This document is the evidence index for the merged connector/platform/router
-work and the live rollout performed on 2026-08-01. It reconciles the older
+work and the live rollouts performed on 2026-08-01 and 2026-08-02. It reconciles the older
 backfill reports and design specs without rewriting their historical evidence.
 When a historical report says that a feature was not implemented, read that
 statement as true at its recorded review point and use this document for the
@@ -16,9 +16,9 @@ current status.
 | Evidence | Value |
 | --- | --- |
 | Merged OpenTag baseline at recorded deployment | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
-| Current merged main | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merge; PRs #45, #47, #48, and #49 remain open and are not deployed) |
+| Current merged main | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merge; PRs #45–#52 remain open and are not deployed) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `24284136-feb8-44ef-91e0-4b50e5a554bb` — deployed from merged main `d075431` after typecheck, 1,226 unit tests, 55 Worker/e2e tests, deploy-config validation, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
+| Bot deployment | `opentag-bot`, version `88615a84-1396-4298-bd76-95b423db496c` — deployed from merged main `d075431` on 2026-08-02 after typecheck, 1,226 unit tests, 55 Worker/e2e tests, deploy-config validation, and Wrangler dry-run validation; three repeated live `/health` probes returned HTTP 200 |
 | Provider-independent effect boundaries | `opentag-credential-custody` `893d7042-d265-4f0d-8fea-06f8a65472f2`; `opentag-credential-broker` `8e15a914-c11b-4b8f-9f3b-04472af4dd82`; `opentag-platform-effecter` `a1a33e17-d5bc-4055-aa94-7fbf3d8ffb56`; `opentag-provisioning-adapter` `50455921-30fd-48e5-ae75-13d626d06ce9`; `opentag-identity-custody` `97704e53-bfd7-4dee-b463-0f19dfdf9c36`; `opentag-oauth-effecter` `70e4633a-d08a-4876-b824-2807aeb24d04`; `opentag-oauth-callback` `16e15e50-342f-4293-8501-5e42ff7df1e8`; `opentag-billing-adapter` `e1bd6ccb-0a50-4560-87d1-18b6971e3f30`; `opentag-memory-deletion` `6b20ab90-d176-46ac-a0ae-3b4a24b21abb` — deployed fail-closed from the same merged main; no provider adapter or caller credential was configured |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
@@ -31,7 +31,7 @@ current status.
 The current deployment was performed from a clean isolated checkout of
 `origin/main` at `d075431`. The bot and provider-independent effect boundaries
 were deployed after the merged-main validation suite passed. The stacked
-foundation PRs #45, #47, #48, and #49 remain open and are not included in this
+foundation PRs #45–#52 remain open and are not included in this
 deployment. Provider adapters, custody mappings, OAuth origins, internal
 caller secrets, and external credentials must not be treated as live solely
 because their boundary Workers are deployed.

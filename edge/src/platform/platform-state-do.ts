@@ -26,6 +26,7 @@ import {
   validateMemoryDeletionRequest,
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
+  platformEffectLeaseIsReclaimable,
   validateProvisioningRequest,
   validateProvisioningStepReceipt,
   validateUsageMeterEvent,
@@ -556,8 +557,16 @@ export class PlatformStateEngine {
       if (current.status === "completed" || current.status === "cancelled") {
         throw new PlatformStateError("effect_not_claimable", 409);
       }
-      if (leaseIsActive(current, now)) {
-        throw new PlatformStateError("effect_lease_active", 409);
+      if (current.status === "leased") {
+        if (leaseIsActive(current, now)) {
+          throw new PlatformStateError("effect_lease_active", 409);
+        }
+        if (
+          current.lease_expires_at &&
+          !platformEffectLeaseIsReclaimable(current.lease_expires_at, this.now())
+        ) {
+          throw new PlatformStateError("effect_lease_reclaim_pending", 409);
+        }
       }
       if (current.status === "failed" && current.retryable !== 1) {
         throw new PlatformStateError("effect_failure_not_retryable", 409);
@@ -1551,9 +1560,8 @@ export class PlatformStateEngine {
     if (row.status !== "leased" || row.lease_token !== leaseToken) {
       throw new PlatformStateError("effect_lease_mismatch", 409);
     }
-    // Lease expiry gates reclaim in claimEffect, not completion reporting: a
-    // slow worker must still close the lease with its token before another
-    // worker can replace it and rerun the provider adapter.
+    // Lease expiry ends exclusivity, but reclaim waits a grace period so a slow
+    // adapter can still close the lease with its token before another rerun.
   }
 
   private provisioningByKey(key: string): ProvisioningRow | undefined {

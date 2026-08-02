@@ -466,6 +466,17 @@ export type PlatformEffectClaim = Readonly<{
   leaseExpiresAt: string;
 }>;
 
+/** Grace after lease expiry before another worker may reclaim and rerun adapters. */
+export const PLATFORM_EFFECT_LEASE_RECLAIM_GRACE_SECONDS = 300;
+
+export function platformEffectLeaseReclaimableAt(leaseExpiresAt: string): number {
+  return Date.parse(leaseExpiresAt) + PLATFORM_EFFECT_LEASE_RECLAIM_GRACE_SECONDS * 1_000;
+}
+
+export function platformEffectLeaseIsReclaimable(leaseExpiresAt: string, nowMs: number): boolean {
+  return platformEffectLeaseReclaimableAt(leaseExpiresAt) <= nowMs;
+}
+
 const PLATFORM_EFFECT_KINDS: readonly PlatformEffectKind[] = [
   "provisioning",
   "identity_custody",

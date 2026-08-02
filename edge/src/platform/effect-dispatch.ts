@@ -4,6 +4,10 @@ import type {
   MessageBatch,
   Queue,
 } from "@cloudflare/workers-types";
+import {
+  platformEffectLeaseIsReclaimable,
+  platformEffectLeaseReclaimableAt,
+} from "./layer3-contract.js";
 import type { PlatformStateDO } from "./platform-state-do.js";
 
 export const PLATFORM_EFFECT_WAKEUP_SCHEMA_VERSION = 1 as const;
@@ -237,15 +241,21 @@ export async function dispatchPlatformEffectWakeup(
     readEffectList(stub, scope, tenantId, "failed"),
     readEffectList(stub, scope, tenantId, "leased"),
   ]);
-  const expiredLeased = leased.filter(
-    (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) <= now,
+  const reclaimableLeased = leased.filter(
+    (item) => item.leaseExpiresAt && platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
   );
   const activeLeased = leased.filter(
     (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) > now,
   );
+  const pendingReclaimLeased = leased.filter(
+    (item) =>
+      item.leaseExpiresAt &&
+      Date.parse(item.leaseExpiresAt) <= now &&
+      !platformEffectLeaseIsReclaimable(item.leaseExpiresAt, now),
+  );
   const candidates = [
     ...pending,
-    ...expiredLeased,
+    ...reclaimableLeased,
     ...failed.filter((item) => item.retryable),
   ].sort((left, right) => Date.parse(left.availableAt) - Date.parse(right.availableAt));
   const runnable = candidates.filter((item) => Date.parse(item.availableAt) <= now);
@@ -263,11 +273,15 @@ export async function dispatchPlatformEffectWakeup(
   }
   if (runnable.length > selected.length) return { dispatched, nextDelaySeconds: 0 };
   if (future) return { dispatched, nextDelaySeconds: delayFor(future.availableAt, now) };
-  const nextLeaseExpiry = activeLeased
-    .map((item) => item.leaseExpiresAt!)
-    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
-  if (nextLeaseExpiry) {
-    return { dispatched, nextDelaySeconds: delayFor(nextLeaseExpiry, now) };
+  const nextWakeAt = [
+    ...activeLeased.map((item) => Date.parse(item.leaseExpiresAt!)),
+    ...pendingReclaimLeased.map((item) => platformEffectLeaseReclaimableAt(item.leaseExpiresAt!)),
+  ].sort((left, right) => left - right)[0];
+  if (nextWakeAt !== undefined) {
+    return {
+      dispatched,
+      nextDelaySeconds: delayFor(new Date(nextWakeAt).toISOString(), now),
+    };
   }
   return { dispatched };
 }

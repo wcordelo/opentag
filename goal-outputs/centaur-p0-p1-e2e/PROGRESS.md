@@ -1,3 +1,5 @@
+> **Historical snapshot.** This goal predates the final harness rollout. Current deployment, live Slack evidence, and remaining targeted canaries are in [docs/current-state.md](../../docs/current-state.md).
+
 # Centaur P0/P1 E2E Progress
 
 ## Preflight (Slice 0)

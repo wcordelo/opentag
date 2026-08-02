@@ -8,6 +8,8 @@ Current architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
 Operations: [docs/operations.md](../docs/operations.md)
 
+Current release evidence: [docs/current-state.md](../docs/current-state.md)
+
 Extension rules: [docs/extending.md](../docs/extending.md)
 
 ## Deployment units
@@ -22,6 +24,7 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 | `wrangler.research.toml` | `opentag-orchestrator`, internal research | Optional task plane |
 | `wrangler.bot-store.toml` | StateStore workerd alias | Test-only; no deploy script or embedded admin credential |
 | `workers/wasm-dispatch/` | Intent dispatcher | Optional research build path |
+| `PLATFORM_STATE` / `ROUTER_MEASUREMENTS` | Tenant metadata/effect ledger and router shadow ledger | Deployed; synthetic/live-queried, external effecters remain gated |
 
 ## Install and test
 
@@ -54,7 +57,9 @@ npm run typecheck
 ```mermaid
 flowchart LR
     Slack["Slack"] --> Verify["worker.ts<br/>verify + ack"]
-    Verify --> Pre["stable identity + pre-admission"]
+    Verify --> Route["normalize + response-worthiness route"]
+    Route -->|respond| Pre["stable identity + pre-admission"]
+    Route -->|observe| History["Slack history only"]
     Pre --> Adapter["CloudflareSlackAdapter"]
     Adapter --> Fast["shortcut / command / quick action"]
     Adapter --> Life["runSlackTurnLifecycle"]
@@ -63,6 +68,9 @@ flowchart LR
     Life <--> Events["SESSION_EVENTS"]
     Life --> Agent["AGENT_RUNTIME"]
     Life -->|"coding / selected"| Harness["HARNESS"]
+    Life --> Platform["PLATFORM_STATE"]
+    Life --> Router["ROUTER_MEASUREMENTS<br/>shadow only"]
+    Buzz["Buzz /buzz/wake<br/>signed receive"] --> Life
     Fast -. optional .-> Research["RESEARCH_TASKS"]
 ```
 
@@ -79,6 +87,14 @@ flowchart LR
 8. routes to AG-UI or the authoritative Claude Code harness;
 9. fences every turn render and non-Slack side effect;
 10. leaves final cleanup to confirmed terminal visibility or exact Stop.
+
+The response route is intentionally separate from model execution. DMs,
+explicit mentions, trusted triggers, and files always proceed. An unmentioned
+thread question, action request, or problem report also proceeds without a
+tag; passive thread chatter is retained in Slack history without creating an
+active turn. The shared route helper is applied during pre-admission and again
+at adapter ingress so Slack's duplicate `app_mention`/threaded `message`
+delivery cannot create a row that the adapter later discards.
 
 AG-UI incremental Markdown is mirrored best-effort into SessionEventDO before
 Slack updates so alarm recovery can replay it. Harness NDJSON uses the same
@@ -108,6 +124,10 @@ rename Durable Object classes or delete migration tags after deployment.
 - a DM slash command may look up a recent DM timestamp solely for assistant
   status while retaining `DM_SCOPE` as its conversation identity;
 - stable wire IDs are `ot1e_…` for executions and `ot1m_…` for forwarded messages.
+- clear thread asks do not require a bot tag; passive conversation remains
+  history-only;
+- a final confirmed render deletes the exact active-turn row, while a busy note
+  is reserved for a genuine distinct concurrent turn.
 
 ## Stop and recovery
 

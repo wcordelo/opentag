@@ -87,6 +87,10 @@ import {
   type RouterHeuristicDecision,
 } from "../router/heuristics.js";
 import {
+  classifySlackResponseRoute,
+  classifySlackThreadReplyRoute,
+} from "./response-routing.js";
+import {
   createHarnessProgressLiveRenderer,
   type HarnessProgressLiveRenderer,
 } from "./harness-progress-live.js";
@@ -608,6 +612,26 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       eventId: normalized.eventId,
       threadTs: normalized.threadTs ?? normalized.ts,
     });
+    const route = normalized.source === "thread_reply"
+      ? classifySlackThreadReplyRoute({
+        userText: normalized.userText,
+        hasFiles: normalized.hasFiles,
+      })
+      : classifySlackResponseRoute({
+        source: normalized.source,
+        userText: normalized.userText,
+        hasFiles: normalized.hasFiles,
+      });
+    console.log(JSON.stringify({
+      metric: "slack_message_routed",
+      source: normalized.source,
+      decision: route.decision,
+      reason: route.reason,
+      eventId: normalized.eventId,
+      channelId: normalized.channel,
+      threadTs: normalized.threadTs ?? normalized.ts,
+    }));
+    if (route.decision !== "respond") return { handled: true };
 
     const isDm = normalized.source === "direct_message";
     // Top-level channel mentions scope on their OWN message ts, not the

@@ -1,12 +1,18 @@
 # OpenTag operations guide
 
 Status: **current runbook**
-Updated: **2026-07-18**
+Updated: **2026-08-01**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
 [setup.md](../setup.md); system design is in
 [ARCHITECTURE.md](../ARCHITECTURE.md).
+
+The dated production evidence for the current release is in
+[current-state.md](./current-state.md). This runbook separates deployed
+configuration from provider readiness: a binding or health flag is not proof
+that an authenticated external broker, relay, OAuth callback, billing worker,
+or deletion effect has completed.
 
 ## Deployment map
 
@@ -183,6 +189,12 @@ cd edge
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `/admin/platform/billing/plan` | Admin route | Bot | Versioned period/limit plan metadata; no payment mutation |
 | `/admin/platform/billing/check` | Admin route | Bot | Bounded current-period usage entitlement decision |
+| `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
+| `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
+| `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
+| `BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN` | Deploy var | Bot | Independent relay-origin grant; never derived from fetch base |
+| `BUZZ_CHANNEL_TENANT_MAP` | Deploy var | Bot | Server-owned channel-to-tenant directory |
+| `BUZZ_OPEN_TAG_AUTH_TAG_SECRET` | Secret/var | Bot | Optional bounded Buzz auth-tag material |
 | `NOTION_TOKEN`, `NOTION_MCP_AUTH_TOKEN` | Secret | Agent | Optional Notion sidecar |
 
 Same-zone Worker calls should use service bindings. `AGENT_URL` and
@@ -195,6 +207,40 @@ success after the runtime returns matching accepted/quiescent proof. Signed
 `/sessions/:token` links are read-only, expire after seven days, return
 `Cache-Control: private, no-store`, and require `ADMIN_SECRET` as their HMAC
 key; rotate that secret to revoke outstanding links.
+
+## 2026-08-01 live rollout record
+
+The current production smoke used merged baseline `ff8d649` and a narrow
+identity-read fix on the reconciliation branch. The bot deployment is
+`bf1f47bf-b569-46cd-9e85-46141ed86d24`; the harness deployment was
+`58c47ab9-daf9-456b-b17c-73fc66e6b25d`. The image digest and feature-by-feature
+result matrix are in [current-state.md](./current-state.md).
+
+The live checks covered `/health`, flexible Slack response routing, exact Slack
+markers for the normal turn, native Nanocodex, and Claudex, ordinary knowledge
+retrieval, indexed knowledge search, concurrency feedback, router summary/list,
+synthetic platform provisioning and effect leases, the corrected identity read
+route, and the Buzz fail-closed probe. `POST /buzz/wake` returned HTTP 503
+`buzz_receive_not_configured` without contacting the relay.
+
+The Slack routing canary is [here](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659).
+It demonstrated an untagged problem/action request, a passive conversational
+statement with no bot turn, an explicit marker, and an untagged question. The
+explicit marker sent while the problem/action turn was still running received
+the expected genuine-concurrency warning; after the first turn rendered
+`Complete`, a later explicit marker returned exactly
+`OPENTAG_ROUTING_FINAL_IDLE_OK` without a stale-turn warning. The earlier stale
+thread was safely cleared with an explicit Stop
+[here](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119).
+A separate [passive-only smoke](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029)
+used a fresh top-level user message and an untagged `yo`; after the prior turn
+was idle, Slack showed no bot reply.
+
+Do not report the following as live passes from this rollout: Drive or Linear
+provider calls, OAuth callback, billing, deletion execution, authenticated Buzz
+NIP-OA admission, a live Stop/HITL click, provider checkpoint reconnect, or a
+fresh one-click installation. Those require credentials, external effecters,
+or a controlled test workspace.
 
 ## Deploy the AG-UI agent
 
@@ -445,6 +491,7 @@ Useful metric names include:
 | `turn_failed` | Lifecycle raised before confirmed completion |
 | `turn_duplicate` | Stable execution already handled |
 | `turn_duplicate_pre_admission` | Slack redelivery rejected before enrichment |
+| `slack_message_routed` | Response-worthiness decision (`respond` or `observe`) plus bounded reason before turn admission |
 | `turn_concurrent_rejected` | Another execution owns the thread/session |
 | `busy-note:<threadKey>` | Durable dedup namespace for bounded concurrent-turn feedback |
 | `turn_interrupted` | Exact turn was stopped |
@@ -540,6 +587,30 @@ defaults with `/config runtime clear`.
 For a concurrent rejection, confirm the request is genuinely distinct. Stable
 redeliveries intentionally stay silent; a distinct ask should produce no more
 than one busy note per thread per minute.
+
+### Slack routing and false active-turn warnings
+
+The bot reads every human reply in a Slack thread, but it does not answer every
+reply. The expected policy is:
+
+- DMs, files, explicit bot mentions, and trusted triggers are eligible;
+- unmentioned questions, action requests, and problem reports are eligible;
+- passive conversation such as `yo` is observed in history and does not wake the
+  agent;
+- top-level unmentioned channel chatter remains silent.
+
+If an explicit mention is delivered by both `app_mention` and threaded
+`message`, the duplicate `message` should be rejected before pre-admission. A
+`slack_message_routed` structured metric records `respond` or `observe` with a
+bounded reason; inspect it with the event ID, channel, and thread key. Do not
+delete an active row manually as the first response. A genuine distinct
+concurrent ask should produce the bounded busy note; a stale warning after a
+completed turn indicates a regression in duplicate admission or final-render
+confirmation and should be reproduced with the focused routing/admission tests.
+
+The deployed `/health` response currently reports `modelConfigured: false` for
+the agent. Routing can still be verified, but a routed turn may end in the
+explicit no-text terminal until the model binding/secret is configured.
 
 ## Failure diagnosis
 
@@ -903,8 +974,11 @@ remain R1 runtime proofs rather than current operational facts.
 
 - [ ] Bot `/health` returns expected bindings/product metadata.
 - [ ] Mention receives a streaming answer and status clears.
-- [ ] An explicitly bot-mentioned thread follow-up works; an unmentioned
-      reply remains history-only and is available to the next admitted mention.
+- [ ] An explicitly bot-mentioned thread follow-up works.
+- [ ] An unmentioned thread question/action/problem report wakes without a tag;
+      passive chatter remains history-only and does not wake the bot.
+- [ ] A duplicate `app_mention`/threaded `message` delivery cannot create a
+      second active turn or a later false busy warning.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
 - [ ] Supported `--model`/`--claudex`/`--claude` flags are stripped and saved
   only when the coding harness is connected; `-rsn`/unsupported harnesses fail visibly.

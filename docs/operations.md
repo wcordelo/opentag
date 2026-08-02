@@ -193,6 +193,7 @@ cd edge
 | `OAUTH_EFFECTER_AUTH_TOKEN` | Secret | OAuth callback/effecter | Internal callback-to-effecter bearer; never a provider credential |
 | `OAUTH_PROVIDER_ADAPTER` | Optional service binding | OAuth effecter | Provider exchange/custody boundary; absent keeps OAuth fail-closed |
 | `OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | OAuth effecter/provider adapter | Separate adapter bearer; never a provider credential in OpenTag |
+| `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
@@ -332,6 +333,13 @@ Marketplace entries must have a `review:` trust reference, actions, and
 auth-mode-consistent scopes. OAuth grants must name the exact curated
 marketplace version and matching provider/scopes. Revoking that marketplace
 version revokes dependent grants through the effect ledger.
+
+Memory deletion is not complete when the request is accepted. An approved
+external executor must submit one epoch-matching receipt per requested source
+through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
+complete a source, while `failed` makes the request terminally failed. The
+Worker stores only the receipt metadata and opaque external reference. It does
+not delete, inspect, or accept memory contents.
 
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and

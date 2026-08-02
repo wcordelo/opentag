@@ -418,6 +418,19 @@ export type MemoryDeletionRequest = Readonly<{
   deletionEpoch: number;
 }>;
 
+export type MemoryDeletionReceipt = Readonly<{
+  schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
+  idempotencyKey: string;
+  requestId: string;
+  tenantId: string;
+  sourceKey: string;
+  deletionEpoch: number;
+  status: "deleted" | "not_found" | "failed";
+  observedAt: string;
+  receiptRef?: string;
+  errorCode?: string;
+}>;
+
 /**
  * A secret-free handoff to an external platform effector.
  *
@@ -644,5 +657,36 @@ export function validateMemoryDeletionRequest(value: unknown): MemoryDeletionReq
     requestedByPrincipalId: identifier(input.requestedByPrincipalId, "requested_by_principal_id"),
     requestedAt: timestamp(input.requestedAt, "requested_at"),
     deletionEpoch: nonNegativeInteger(input.deletionEpoch, "deletion_epoch"),
+  });
+}
+
+export function validateMemoryDeletionReceipt(value: unknown): MemoryDeletionReceipt {
+  rejectSecretMaterial(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new PlatformFoundationError("memory_deletion_receipt_invalid");
+  const input = value as Record<string, unknown>;
+  const status = enumValue(input.status, ["deleted", "not_found", "failed"], "deletion_status");
+  const errorCode = input.errorCode === undefined
+    ? undefined
+    : identifier(input.errorCode, "error_code", 128);
+  if (errorCode !== undefined && !/^[a-z][a-z0-9_.-]*$/.test(errorCode)) {
+    throw new PlatformFoundationError("error_code_invalid");
+  }
+  if (status === "failed" && errorCode === undefined) {
+    throw new PlatformFoundationError("memory_deletion_error_required");
+  }
+  if (status !== "failed" && errorCode !== undefined) {
+    throw new PlatformFoundationError("memory_deletion_error_unexpected");
+  }
+  return Object.freeze({
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    idempotencyKey: identifier(input.idempotencyKey, "idempotency_key"),
+    requestId: identifier(input.requestId, "request_id"),
+    tenantId: identifier(input.tenantId, "tenant_id"),
+    sourceKey: identifier(input.sourceKey, "source_key"),
+    deletionEpoch: nonNegativeInteger(input.deletionEpoch, "deletion_epoch"),
+    status,
+    observedAt: timestamp(input.observedAt, "observed_at"),
+    ...(input.receiptRef !== undefined ? { receiptRef: identifier(input.receiptRef, "receipt_ref") } : {}),
+    ...(errorCode !== undefined ? { errorCode } : {}),
   });
 }

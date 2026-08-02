@@ -47,6 +47,10 @@ class_name = "PlatformStateDO"
 name = "ROUTER_MEASUREMENTS"
 class_name = "RouterMeasurementDO"
 
+[[durable_objects.bindings]]
+name = "OAUTH_STATE"
+class_name = "OAuthStateDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ConversationStateDO"]
@@ -70,6 +74,10 @@ new_sqlite_classes = ["PlatformStateDO"]
 [[migrations]]
 tag = "v6-router-measurements"
 new_sqlite_classes = ["RouterMeasurementDO"]
+
+[[migrations]]
+tag = "v7-oauth-state"
+new_sqlite_classes = ["OAuthStateDO"]
 
 [[r2_buckets]]
 binding = "BLOBS"
@@ -115,6 +123,10 @@ PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
 # HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
 # HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN`
+
+# OAuth state accepts only explicit HTTPS origins. Provider codes/tokens never
+# belong in this Worker; the external effecter owns that exchange and custody.
+# OAUTH_ALLOWED_REDIRECT_ORIGINS = "https://app.example.com"
 
 [env.production]
 vars = { ENVIRONMENT = "production" }

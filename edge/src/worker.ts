@@ -108,7 +108,15 @@ import {
   PLATFORM_MARKETPLACE_OBJECT_NAME,
   platformTenantObjectName,
 } from "./platform/platform-state-do.js";
-import { validateProvisioningRequest } from "./platform/layer3-contract.js";
+import {
+  OAUTH_STATE_OBJECT_NAME,
+} from "./platform/oauth-state-do.js";
+import {
+  assertConnectorMarketplaceEntryActivatable,
+  PlatformFoundationError,
+  validateConnectorMarketplaceEntry,
+  validateProvisioningRequest,
+} from "./platform/layer3-contract.js";
 import {
   enqueuePlatformEffectWakeup,
   handlePlatformEffectQueue,
@@ -125,6 +133,7 @@ export { DeferredIngressDO } from "./deferred-ingress-do.js";
 export { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 export { PlatformStateDO } from "./platform/platform-state-do.js";
 export { RouterMeasurementDO } from "./router/measurement-do.js";
+export { OAuthStateDO } from "./platform/oauth-state-do.js";
 
 const app = new Hono<AppEnv>();
 
@@ -623,6 +632,37 @@ function platformStateStub(
   ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
 }
 
+function oauthStateStub(
+  env: AppEnv["Bindings"],
+): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } | undefined {
+  if (!env.OAUTH_STATE) return undefined;
+  return env.OAUTH_STATE.get(
+    env.OAUTH_STATE.idFromName(OAUTH_STATE_OBJECT_NAME),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+}
+
+async function forwardOAuthState(
+  c: Context<AppEnv>,
+  path: "/issue" | "/consume",
+  body: unknown,
+): Promise<Response> {
+  const stub = oauthStateStub(c.env);
+  if (!stub) return c.json({ error: "oauth_state_unavailable" }, 503);
+  const response = await stub.fetch(`https://oauth-state${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return new Response(text, {
+    status: response.ok ? 200 : adminForwardStatus(response.status),
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 async function forwardPlatformState(
   c: Context<AppEnv>,
   objectName: string,
@@ -863,6 +903,70 @@ app.post("/admin/platform/marketplace/list", requireAdminAuth(), async (c) => {
 
 app.post("/admin/platform/marketplace/revoke", requireAdminAuth(), async (c) => {
   return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace/revoke", await c.req.json());
+});
+
+async function ensureCuratedOAuthMarketplace(
+  c: Context<AppEnv>,
+  body: Record<string, unknown>,
+): Promise<Response | undefined> {
+  if (typeof body.connectorId !== "string" || typeof body.marketplaceVersion !== "string") {
+    return c.json({ error: "oauth_marketplace_identity_required" }, 400);
+  }
+  const marketplaceResponse = await forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/marketplace/list",
+    { connectorId: body.connectorId, version: body.marketplaceVersion },
+  );
+  if (!marketplaceResponse.ok) return marketplaceResponse;
+  const payload = await marketplaceResponse.json() as {
+    entries?: Array<Record<string, unknown>>;
+  };
+  const entry = payload.entries?.[0];
+  if (!entry) return c.json({ error: "oauth_marketplace_not_found" }, 409);
+  let marketplaceEntry;
+  try {
+    marketplaceEntry = assertConnectorMarketplaceEntryActivatable(
+      validateConnectorMarketplaceEntry(entry),
+    );
+  } catch (error) {
+    if (error instanceof PlatformFoundationError) {
+      return c.json({ error: error.code }, 409);
+    }
+    throw error;
+  }
+  if (marketplaceEntry.status !== "curated") return c.json({ error: "oauth_marketplace_not_curated" }, 409);
+  if (marketplaceEntry.authMode !== "oauth2") return c.json({ error: "oauth_connector_not_oauth2" }, 409);
+  if (Array.isArray(body.scopes)) {
+    const allowedScopes = [...marketplaceEntry.oauthScopes];
+    const requestedScopes = body.scopes.filter((scope): scope is string => typeof scope === "string");
+    if (
+      requestedScopes.length === 0 ||
+      requestedScopes.some((scope) => !allowedScopes.includes(scope))
+    ) {
+      return c.json({ error: "oauth_scope_not_allowed" }, 409);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Admin-only architecture seam for an external OAuth effecter. The public
+ * Worker does not own provider redirects or receive authorization codes.
+ */
+app.post("/admin/platform/oauth/state/issue", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  const blocked = await ensureCuratedOAuthMarketplace(c, body);
+  if (blocked) return blocked;
+  return forwardOAuthState(c, "/issue", body);
+});
+
+/** Consume the one-use state after an external effecter completes its flow. */
+app.post("/admin/platform/oauth/state/consume", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  const blocked = await ensureCuratedOAuthMarketplace(c, body);
+  if (blocked) return blocked;
+  return forwardOAuthState(c, "/consume", body);
 });
 
 app.post("/admin/platform/oauth", requireAdminAuth(), async (c) => {

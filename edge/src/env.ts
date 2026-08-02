@@ -12,6 +12,7 @@ import type { SessionEventDO } from "./store/session-event-do.js";
 import type { DeferredIngressDO } from "./deferred-ingress-do.js";
 import type { SlackRateLimitDO } from "./slack/slack-rate-limit-do.js";
 import type { PlatformStateDO } from "./platform/platform-state-do.js";
+import type { OAuthStateDO } from "./platform/oauth-state-do.js";
 import type { RouterMeasurementDO } from "./router/measurement-do.js";
 import type { PlatformEffectWakeup } from "./platform/effect-dispatch.js";
 
@@ -50,6 +51,8 @@ export interface Env {
   EFFECTOR_AUTH_TOKEN?: string;
   /** Workspace-scoped, shadow-only router measurements and misroute feedback. */
   ROUTER_MEASUREMENTS?: DurableObjectNamespace<RouterMeasurementDO>;
+  /** Optional replay-safe OAuth state store; provider token exchange stays external. */
+  OAUTH_STATE?: DurableObjectNamespace<OAuthStateDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */
   DELIVERY_METRICS: AnalyticsEngineDataset;
   BLOBS?: R2Bucket;
@@ -73,6 +76,9 @@ export interface Env {
   CONNECTOR_CREDENTIALS?: Fetcher;
   /** Shared internal bearer for the credential-broker service binding. */
   CONNECTOR_CREDENTIAL_BROKER_TOKEN?: string;
+
+  /** Comma-separated HTTPS origins allowed for OAuth callbacks; fail closed when unset. */
+  OAUTH_ALLOWED_REDIRECT_ORIGINS?: string;
 
   /** Bearer for research Worker /research (forwarded by TaskRuntime). */
   INTERNAL_SECRET?: string;

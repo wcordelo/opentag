@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   provisioningPlan,
   REQUIRED_PROVISIONING_STEPS,
+  assertConnectorMarketplaceEntryActivatable,
   validateProvisioningStepReceipt,
   validateConnectorMarketplaceEntry,
   validateConnectorOAuthGrant,
@@ -102,11 +103,45 @@ describe("Layer 3 platform contracts", () => {
       oauthScopes: ["drive.readonly"],
       trustReviewRef: "review:google-drive:v1",
     })).toMatchObject({ status: "curated", authMode: "oauth2" });
+    expect(() => assertConnectorMarketplaceEntryActivatable({
+      schemaVersion: 1,
+      connectorId: "x",
+      provider: "x",
+      version: "v1",
+      status: "curated",
+      authMode: "oauth2",
+      actions: [],
+      oauthScopes: [],
+      trustReviewRef: "review:x:v1",
+    })).toThrow("marketplace_actions_required");
+    expect(() => assertConnectorMarketplaceEntryActivatable({
+      schemaVersion: 1,
+      connectorId: "x",
+      provider: "x",
+      version: "v1",
+      status: "curated",
+      authMode: "oauth2",
+      actions: ["read"],
+      oauthScopes: ["scope"],
+      trustReviewRef: "unreviewed:x:v1",
+    })).toThrow("marketplace_trust_review_required");
+    expect(() => assertConnectorMarketplaceEntryActivatable({
+      schemaVersion: 1,
+      connectorId: "x",
+      provider: "x",
+      version: "v1",
+      status: "curated",
+      authMode: "service_binding",
+      actions: ["read"],
+      oauthScopes: ["scope"],
+      trustReviewRef: "review:x:v1",
+    })).toThrow("marketplace_oauth_scopes_unexpected");
     expect(validateConnectorOAuthGrant({
       schemaVersion: 1,
       tenantId: "T1",
       principalId: "U1",
       connectorId: "google_drive",
+      marketplaceVersion: "v1",
       credentialRef: "credential:google_drive:workspace",
       providerSubject: "acct-1",
       scopes: ["drive.readonly"],

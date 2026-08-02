@@ -281,11 +281,39 @@ export type ConnectorMarketplaceEntry = Readonly<{
   trustReviewRef: string;
 }>;
 
+/**
+ * A curated connector is an activation decision, not just a catalog row.
+ * Keep this gate separate from structural validation so deprecated/revoked
+ * records can still be represented and audited without becoming callable.
+ */
+export function assertConnectorMarketplaceEntryActivatable(
+  entry: ConnectorMarketplaceEntry,
+): ConnectorMarketplaceEntry {
+  if (entry.status !== "curated") return entry;
+  if (!entry.trustReviewRef.startsWith("review:")) {
+    throw new PlatformFoundationError("marketplace_trust_review_required");
+  }
+  if (entry.trustReviewRef.length <= "review:".length) {
+    throw new PlatformFoundationError("marketplace_trust_review_required");
+  }
+  if (entry.actions.length === 0) {
+    throw new PlatformFoundationError("marketplace_actions_required");
+  }
+  if (entry.authMode === "oauth2" && entry.oauthScopes.length === 0) {
+    throw new PlatformFoundationError("marketplace_oauth_scopes_required");
+  }
+  if (entry.authMode !== "oauth2" && entry.oauthScopes.length > 0) {
+    throw new PlatformFoundationError("marketplace_oauth_scopes_unexpected");
+  }
+  return entry;
+}
+
 export type ConnectorOAuthGrant = Readonly<{
   schemaVersion: typeof PLATFORM_SCHEMA_VERSION;
   tenantId: string;
   principalId: string;
   connectorId: string;
+  marketplaceVersion: string;
   credentialRef: `credential:${string}`;
   providerSubject: string;
   scopes: readonly string[];
@@ -324,6 +352,7 @@ export function validateConnectorOAuthGrant(value: unknown): ConnectorOAuthGrant
     tenantId: identifier(input.tenantId, "tenant_id"),
     principalId: identifier(input.principalId, "principal_id"),
     connectorId: identifier(input.connectorId, "connector_id"),
+    marketplaceVersion: identifier(input.marketplaceVersion, "marketplace_version"),
     credentialRef: credentialRef as `credential:${string}`,
     providerSubject: identifier(input.providerSubject, "provider_subject"),
     scopes: scopeList(input.scopes, "scopes"),

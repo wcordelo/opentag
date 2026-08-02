@@ -16,6 +16,10 @@ The queue-backed effecter implementation is maintained in the isolated
 `codex/weekly-platform-effecter` branch and remains fail-closed until an
 approved provider adapter and custody boundary are configured.
 
+The OAuth/marketplace branch adds replay-safe state, durable trust/version
+gates, and an authenticated provider-adapter protocol, but does not claim a
+provider callback, token exchange, or custody deployment.
+
 ## Scope and source availability
 
 The requested Pacific window is **2026-07-22 through 2026-07-31**, inclusive.
@@ -241,6 +245,9 @@ change, not evidence that all earlier gaps are complete.
   outcome, and feedback measurement while dispatch remains Tier 2;
 - provisioning, identity/credential references, marketplace/OAuth, usage meter,
   memory-policy/deletion contracts; and
+- replay-safe OAuth state/nonce hashing, explicit HTTPS redirect allowlisting,
+  curated marketplace trust gates, exact marketplace-version grant binding,
+  provider/scope checks, and revocation propagation;
 - the merged `platform-state` metadata ledger and the new secret-free
   `platform_effect_intents` handoff with bounded leases,
   retries, idempotency, and terminal completion/failure/cancellation. Local
@@ -277,9 +284,11 @@ change, not evidence that all earlier gaps are complete.
    custody, and supply real receipts for every DO, bundle, OAuth, and identity
    step. The metadata ledger and platform binding are deployed; the external
    provider worker is not.
-3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
-   nonce/state handling, curated trust-review authority, and connector version
-   lifecycle. The ledger is ready; the external effecter is not.
+3. **OAuth/marketplace:** the local state, curation gates, and authenticated
+   adapter/receipt protocol are ready; still choose callback ownership and
+   production allowlisted origins, deploy an independently authenticated
+   provider effecter, perform code exchange outside OpenTag, and return a
+   custody reference. No provider token is live.
 4. **Billing:** choose the billing source of truth, plan/overage policy,
    metering reconciliation, and enforcement behavior. Meter intents exist but
    no billing provider is called.

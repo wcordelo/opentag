@@ -190,6 +190,12 @@ cd edge
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `OAUTH_STATE` | Durable Object binding | Bot | Hashed one-use OAuth state/nonce metadata; never provider codes or tokens |
+| `OAUTH_ALLOWED_REDIRECT_ORIGINS` | Deploy var | Bot/OAuth state | Explicit comma-separated HTTPS origin allowlist; unset keeps OAuth state fail-closed |
+| `OAUTH_EFFECTER` | Service binding | OAuth callback | Authenticated callback handoff destination |
+| `OAUTH_EFFECTER_AUTH_TOKEN` | Secret | OAuth callback/effecter | Internal callback-to-effecter bearer; never a provider credential |
+| `OAUTH_PROVIDER_ADAPTER` | Optional service binding | OAuth effecter | Provider exchange/custody boundary; absent keeps OAuth fail-closed |
+| `OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | OAuth effecter/provider adapter | Separate adapter bearer; never a provider credential in OpenTag |
 | `IDENTITY_CUSTODY_AUTH_TOKEN` | Secret | Identity custody + effect worker | Internal identity-custody service authentication; never a private key |
 | `IDENTITY_PROVIDER_ADAPTER` | Optional service binding | Identity custody | External key generation/signing/custody boundary; absent keeps identity effects fail-closed |
 | `IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | Identity custody/provider adapter | Internal adapter bearer; never key material |
@@ -333,6 +339,32 @@ Never put provider tokens, OAuth codes, prompts, query text, or deletion
 payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
+
+## OAuth state deployment gate
+
+`OAUTH_STATE` is a metadata-only Durable Object. Before any external OAuth
+effecter is enabled:
+
+1. Deploy the bot migration that creates `OAuthStateDO`.
+2. Configure `OAUTH_ALLOWED_REDIRECT_ORIGINS` with exact HTTPS origins; an
+   unset or malformed allowlist makes `/issue` and `/consume` fail closed.
+3. Keep `/admin/platform/oauth/state/issue` and `/consume` behind the admin
+   secret. They are internal seams, not provider callback URLs.
+4. Verify the bot health response reports `oauthState: ok` and the runtime
+   evidence shows both the state namespace and allowlist as configured.
+5. Only then connect the authenticated `oauth-callback` and `oauth-effecter`
+   Workers. If enabling provider exchange, configure the separate
+   `OAUTH_PROVIDER_ADAPTER` binding and bearer. The adapter must implement
+   `edge/src/platform/oauth-provider-contract.ts`, correlate/consume state,
+   validate the exact marketplace version and scopes, exchange the code outside
+   OpenTag, and return only an opaque custody receipt. Do not send an access
+   token, refresh token, or client secret to the callback Worker, effecter, or
+   their Durable Objects.
+
+Marketplace entries must have a `review:` trust reference, actions, and
+auth-mode-consistent scopes. OAuth grants must name the exact curated
+marketplace version and matching provider/scopes. Revoking that marketplace
+version revokes dependent grants through the effect ledger.
 
 The bot publishes a wakeup after platform-state mutations to the
 `opentag-platform-effects` Queue. Each body contains only the internal

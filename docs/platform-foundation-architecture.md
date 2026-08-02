@@ -5,6 +5,12 @@ boundary validated locally; external effecter and connector custody still gated*
 
 Updated: **2026-08-01**
 
+The OAuth state/marketplace gates and authenticated provider-adapter protocol
+are locally validated but remain fail-closed without approved provider custody.
+The effect ledger, router measurement ledger, marketplace trust gates, and
+replay-safe OAuth state store are validated in code; no hosted platform effecter,
+connector credential broker, or live provider OAuth exchange is deployed.
+
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
 connector, OAuth flow, billing path, or memory policy from bypassing the
@@ -74,7 +80,8 @@ provider side effect is implied. It covers:
 - opaque identity and credential custody references with public metadata only;
 - an authenticated identity/key-custody adapter protocol that returns only
   public-key metadata and opaque external receipts;
-- curated connector marketplace entries and OAuth grants;
+- curated connector marketplace entries and OAuth grants; active grants are
+  bound to the exact curated marketplace version, provider, and allowed scopes;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
 - retention, channel opt-out, deletion-epoch, and explicit memory deletion
@@ -92,7 +99,9 @@ one reserved object. The ledger provides:
 - versioned identity and credential custody references with terminal
   revocation;
 - curated marketplace versions and terminal connector revocation;
-- credential-linked OAuth grant versions with terminal revocation;
+- credential-linked OAuth grant versions with terminal revocation; revoking a
+  marketplace version revokes its dependent grants and emits revocation
+  effects;
 - execution-linked, idempotent usage-meter receipts with bounded listing; and
 - monotonic memory policies plus deletion requests that remain `requested`
   until an approved external deletion worker completes them; each requested
@@ -175,6 +184,39 @@ The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
 delete knowledge.
+
+## OAuth state and marketplace activation
+
+`edge/src/platform/oauth-state-do.ts` is a separate SQLite Durable Object for
+browser-flow state. It stores only SHA-256 state/nonce hashes plus bounded
+tenant, principal, connector-version, redirect, scope, issue, expiry, and
+consumption metadata. `/issue` returns the random state and nonce once;
+`/consume` atomically marks a matching pair consumed and refuses replay. The
+state contract rejects authorization-code/token-shaped fields, requires an
+explicit HTTPS redirect-origin allowlist, and bounds state lifetime to 60–900
+seconds.
+
+The bot's `/admin/platform/oauth/state/issue` and `/consume` routes are
+admin-only architecture seams. They first require the exact marketplace
+version to be curated and OAuth-enabled. They are not public provider
+callbacks: no OAuth code, access token, refresh token, or provider exchange is
+accepted by the bot or its Durable Objects.
+
+`edge/workers/oauth-callback` is the public callback boundary and forwards a
+bounded one-request handoff to the authenticated `oauth-effecter` Worker. The
+effecter can call an optional separately authenticated provider adapter using
+the protocol in `edge/src/platform/oauth-provider-contract.ts`. The adapter
+owns provider exchange, state correlation, marketplace/scope validation, and
+external custody, and may return only a bounded receipt with an opaque
+`credential:` reference and exact marketplace/grant metadata. The effecter and
+callback Worker remain fail-closed when that adapter binding or its separate
+bearer is absent; no provider token is stored or returned by OpenTag.
+
+Marketplace curation now requires a `review:` trust reference, at least one
+action, and auth-mode-consistent scopes. OAuth grants carry the exact
+`marketplaceVersion`; the ledger rejects uncurated/non-OAuth entries, provider
+mismatches, and scopes outside the reviewed entry. This is a durable safety
+gate, not proof that any provider OAuth integration is live.
 
 Memory deletion receipts are source-scoped and epoch-bound. The external
 executor may record only a requested source, and duplicate receipt retries are

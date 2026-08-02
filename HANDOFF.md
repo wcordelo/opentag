@@ -18,7 +18,7 @@ synthetic-live, fail-closed, and open-gate states.
 | Merged baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`) |
 | Working branch | `main` |
 | Source hotfix | `9d4538c`, identity read forwarding; focused test added |
-| Bot Worker | version `fbecbc00-2789-4d8f-ba3d-3552265e0165` |
+| Bot Worker | version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` |
 | Harness Container | version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Slack routing smoke | [current routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
 | Passive-only smoke | [top-level plus untagged `yo` stayed silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |

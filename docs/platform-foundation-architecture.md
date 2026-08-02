@@ -72,6 +72,8 @@ provider side effect is implied. It covers:
 - idempotent provisioning requests and the complete DO/Slack/default-bundle
   footprint;
 - opaque identity and credential custody references with public metadata only;
+- an authenticated identity/key-custody adapter protocol that returns only
+  public-key metadata and opaque external receipts;
 - curated connector marketplace entries and OAuth grants;
 - execution-linked, idempotent usage meter events for knowledge, agent,
   connector, and container tiers;
@@ -151,6 +153,24 @@ the approved mapping, and the non-production smoke are configured. This makes
 the architecture deployable and testable without pretending that Drive or
 Linear credentials are live.
 
+## Identity custody adapter boundary
+
+`edge/src/platform/identity-custody-contract.ts` defines the authenticated
+boundary for the `identity_custody` effect. It accepts only a tenant-scoped
+`identity:` reference, custody backend, version, operation, idempotency key,
+requested timestamp, and optional public key. It rejects private-key-shaped
+values and unknown fields. The `opentag-identity-custody` Worker authenticates
+its internal caller, forwards the bounded request to an optional separately
+authenticated `IDENTITY_PROVIDER_ADAPTER`, and validates that the returned
+opaque receipt matches the tenant, identity, backend, operation, and version.
+
+The provider adapter owns key generation, signing, storage, rotation, and
+revocation. Provisioning/rotation receipts must return the public key needed by
+the metadata ledger; revocation receipts need not return a key. With no
+provider adapter binding or bearer configured, the Worker returns an explicit
+configuration error and performs no custody operation. No private key enters
+OpenTag Durable Objects, queues, Worker variables, or logs.
+
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
 Slack install, mint keys, run an OAuth callback, call a billing provider, or
@@ -228,9 +248,9 @@ not a replacement for that worker.
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
 - The platform-state migration, effect leases, admin routes, credential-broker
-  boundary, and optional Secrets Store custody adapter are locally validated,
-  but the production
-  bootstrap authority, tenant locator integration, identity/key custody policy,
+  boundary, optional Secrets Store custody adapter, and identity custody
+  protocol are locally validated, but the production bootstrap authority,
+  tenant locator integration, configured identity provider/key custody adapter,
   Slack OAuth callback, marketplace trust review process, billing/plan
   enforcement, memory deletion executor, configured custody mapping, and
   provider adapters are not live.

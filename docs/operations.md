@@ -190,6 +190,9 @@ cd edge
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `IDENTITY_CUSTODY_AUTH_TOKEN` | Secret | Identity custody + effect worker | Internal identity-custody service authentication; never a private key |
+| `IDENTITY_PROVIDER_ADAPTER` | Optional service binding | Identity custody | External key generation/signing/custody boundary; absent keeps identity effects fail-closed |
+| `IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | Identity custody/provider adapter | Internal adapter bearer; never key material |
 | `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
 | `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
 | `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |

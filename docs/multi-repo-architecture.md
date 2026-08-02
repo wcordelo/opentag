@@ -1,6 +1,6 @@
 # OpenTag multi-repository architecture and implementation report
 
-Status: implementation branch `codex/end-to-end-architecture-local`
+Status: **current synthesis; implementation branch `codex/docs-live-reconciliation`**
 Date: 2026-08-01 (Pacific)
 
 This report is the durable OpenTag synthesis of the complete-history backfill
@@ -8,6 +8,11 @@ and source deep dives for `qm`, Nanocodex, Buzz, and Centaur. The repositories
 remain separate products. Their useful contracts are adapted into the
 OpenTag Workers/Durable Objects/Queues/R2/Containers stack; their deployment
 substrates are not copied by analogy.
+
+The dated deployment and feature matrix is in
+[docs/current-state.md](./current-state.md). Historical backfill reports and
+their current-state addenda are indexed by
+[CURRENT-STATE-RECONCILIATION.md](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md).
 
 ## Backfill result
 
@@ -63,6 +68,16 @@ alarms instead of adding a Postgres run fleet. The qm private-fork boundary is
 adapted as a product-core versus deployment/workspace configuration boundary.
 Fly/AWS/Postgres, the full qm web/portal surface, and Socket Mode are not
 OpenTag requirements.
+
+The attached QM feedback reinforces this boundary. OpenTag should adapt QM's
+capability profiles, durable run leases/heartbeats/reapers, serviceability
+allowlists, typed tool-result provenance, and read-only check/doctor/deployment
+proofs. It should not move the OpenTag spine to Node/Postgres/Fly/AWS, copy QM's
+direct credential model, or add QM's broad web/portal surface without a product
+decision. The current implementation has runtime evidence, harness capability
+profiles, actor-bound knowledge controls, and platform effect leases; the
+provider broker and per-tenant custody semantics remain open as recorded in
+`docs/current-state.md`.
 
 ### Nanocodex
 
@@ -186,9 +201,10 @@ checked against the chosen stack:
   lifecycle contracts are reused where an existing OpenTag job path needs
   them, without adding a second product surface.
 - OAuth connector marketplaces, user keychains, and standing grants are not
-  fabricated. The initial Layer 3 custody choice is Workers Secrets; a later
-  grant/connector layer must add explicit operator identity, revocation, and
-  audit rather than infer them from another repository.
+  fabricated. Worker Secrets are the deployment/bootstrap mechanism, while a
+  later shared-fleet grant/connector layer must add tenant-scoped custody,
+  explicit operator identity, revocation, and audit rather than infer them from
+  another repository.
 
 ## Review and validation record
 
@@ -233,11 +249,12 @@ Publication and deployment evidence:
   `KNOWLEDGE_ACTOR_TOKEN_SECRET`; secret values were never written to source
   or logs.
 
-The live Worker health rollout is verified. A real Slack/model-response
-canary was not executed because no designated test channel or public harness
-route was supplied; the deployed harness is private and reachable through the
-Worker service binding. The implementation therefore does not claim a
-successful end-to-end provider turn until that bounded canary is run.
+The live Worker health and Slack rollout are verified. The designated public
+workspace channel was used for exact normal-turn, native Nanocodex, Claudex,
+knowledge, and concurrency markers. The harness remained private and was
+reached through the Worker service binding. Provider connector calls, an
+authenticated Buzz wake, live Stop/HITL, and external effect execution remain
+unclaimed until their explicit gates are satisfied.
 
 The source-only backfill reports and Notion destinations remain isolated by
 project. Notion is a review index; this Markdown report and the OpenTag source

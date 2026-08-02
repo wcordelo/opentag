@@ -1880,7 +1880,12 @@ export class PlatformStateDO extends DurableObject {
         return Response.json(this.engine.putIdentity(await readJson(request)));
       }
       if (url.pathname === "/identity/get" && request.method === "POST") {
-        return Response.json(this.engine.getIdentity((await readJson(request))));
+        const body = await readJson(request);
+        return Response.json(this.engine.getIdentity(
+          body && typeof body === "object" && !Array.isArray(body)
+            ? (body as Record<string, unknown>).identityRef
+            : body,
+        ));
       }
       if (url.pathname === "/identity/revoke" && request.method === "POST") {
         const body = await readJson(request);

@@ -1,12 +1,18 @@
 # Notion-derived OpenTag feature inventory
 
-Status: source audit completed 2026-08-01; implementation comparison began
-against the merged OpenTag line and is being advanced in isolated weekly
-feature branches. This report is a repository artifact, not a write to the
-Notion baseline or daily-review database. The OAuth/marketplace branch adds a
-replay-safe state store, durable trust/version gates, and an authenticated
-provider-adapter protocol, but does not claim a provider callback, token
-exchange, or custody deployment.
+Status: **historical Notion audit reconciled with the merged connector/platform
+work and the 2026-08-01 live rollout**
+
+Updated: **2026-08-01**
+
+The historical comparison used the source revisions recorded below. Current
+implementation and deployment truth is in
+[current-state.md](./current-state.md); this inventory remains the durable
+mapping from daily Centaur findings to OpenTag decisions.
+
+The OAuth/marketplace branch adds replay-safe state, durable trust/version
+gates, and an authenticated provider-adapter protocol, but does not claim a
+provider callback, token exchange, or custody deployment.
 
 ## Scope and source availability
 
@@ -44,6 +50,24 @@ The [daily database](https://app.notion.com/p/3f174eb0c9b24c51aa28beeae39de4ef),
 [historical baseline](https://app.notion.com/p/39d3444800948128b47cd1093c85e6fd),
 and [OpenTag parent plan](https://app.notion.com/p/39a344480094810c8ba1f84c89f7168d)
 were inspected for schema, historical context, and architecture boundaries.
+
+## Current rollout reconciliation
+
+The connector/platform/router items that were previously described as local or
+blocked now have a precise evidence status:
+
+- connector labels, grants, revocation, citations, platform provisioning,
+  metering, memory requests, and effect leases are **synthetic-live**;
+- native Nanocodex and Claudex are **live-verified through Slack**;
+- router classification is **live-verified in shadow mode** with Tier 2 still
+  dispatched;
+- Drive and Linear remain **fail-closed** because the deployed bot has no
+  `CONNECTOR_CREDENTIALS` broker/provider custody; and
+- the Buzz receive route is **live fail-closed**, not authenticated-live.
+
+The original Notion findings and dates are not rewritten. See the
+[backfill reconciliation](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
+for the complete document-by-document status map.
 
 ## Every finding in the available window
 
@@ -150,10 +174,15 @@ change, not evidence that all earlier gaps are complete.
 
 ### Jul 30 — one Migrate, one Covered, three N/A
 
-- **Migrate — explicit mentions gate channel-thread steering and Stop.** This
-  is implemented in the merged line: unmentioned channel thread replies and
-  unmentioned channel Stops are ignored while DMs retain their behavior; Slack
-  history remains available to a later explicit mention.
+- **Migrate — explicit mentions gate channel-thread steering and Stop (historical
+  review point).** The Jul 30 review recorded mention-only steering and an
+  exact-mentioned Stop. The current reconciliation supersedes the ordinary
+  reply portion: the bot reads every human thread reply, routes clear
+  questions/action requests/problem reports without a tag, keeps passive
+  conversation as history, and still requires an exact bot mention for Stop.
+  Duplicate `app_mention`/threaded `message` delivery is rejected before
+  admission so it cannot create a stale active-turn warning. See
+  `docs/current-state.md` for live evidence.
 - **Covered — explicit reasoning intent and supported-model validation.**
   OpenTag’s stricter explicit-only reasoning policy is equivalent or safer.
 - **N/A — Rails console secret replacement/sync snapshots.** No Rails config

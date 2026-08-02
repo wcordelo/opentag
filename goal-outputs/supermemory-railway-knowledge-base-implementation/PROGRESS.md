@@ -1,3 +1,5 @@
+> **Historical snapshot.** This ledger records B0–B4/R1 work and its earlier gates. Do not infer current source enablement from it; use [docs/current-state.md](../../docs/current-state.md) and [goal-output status](../DOC-STATUS-RECONCILIATION.md).
+
 # PROGRESS — supermemory-railway-knowledge-base-implementation
 
 **Goal:** Implement the approved OpenTag Supermemory Local on Railway knowledge-base SPEC end to end: complete and independently validate B0-B4 source/tests locally, then stage and execute B5-B9 only through their explicit Railway, Cloudflare, Slack, canary, backfill, and cleanup approval gates, preserving repository invariants and unrelated work.

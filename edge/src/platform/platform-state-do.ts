@@ -579,6 +579,9 @@ export class PlatformStateEngine {
         return { ok: true, duplicate: true, receipt: effectReceipt(current) };
       }
       this.assertEffectLease(current, leaseToken);
+      if (!externalReceiptRef) {
+        throw new PlatformStateError("effect_external_receipt_required", 400);
+      }
       const completedAt = nowIso(this.now);
       this.sql.exec(
         `UPDATE platform_effect_intents

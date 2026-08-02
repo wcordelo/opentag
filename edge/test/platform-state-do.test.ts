@@ -356,6 +356,13 @@ describe("PlatformStateDO", () => {
       expect(wrongCompletion.response.status).toBe(409);
       expect(wrongCompletion.body.error).toBe("effect_lease_mismatch");
 
+      const missingReceipt = await call(state, "/effect/complete", {
+        intentId,
+        leaseToken,
+      });
+      expect(missingReceipt.response.status).toBe(400);
+      expect(missingReceipt.body.error).toBe("effect_external_receipt_required");
+
       const failed = await call(state, "/effect/fail", {
         intentId,
         leaseToken,

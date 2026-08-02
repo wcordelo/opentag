@@ -26,6 +26,7 @@ export type PlatformEffectWakeup = Readonly<{
 export type PlatformEffectDispatchBindings = Readonly<{
   PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
   PLATFORM_EFFECTER?: Fetcher;
+  EFFECTOR_AUTH_TOKEN?: string;
   PLATFORM_EFFECTS_QUEUE?: Queue<PlatformEffectWakeup>;
 }>;
 
@@ -95,12 +96,13 @@ type EffectReceipt = Readonly<{
   intentId: string;
   scope: "tenant" | "platform";
   tenantId?: string;
-  status: "pending" | "failed";
+  status: "pending" | "failed" | "leased";
   retryable: boolean;
   availableAt: string;
+  leaseExpiresAt?: string;
 }>;
 
-function receipt(value: unknown, expected: "pending" | "failed"): EffectReceipt {
+function receipt(value: unknown, expected: "pending" | "failed" | "leased"): EffectReceipt {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new PlatformEffectDispatchError("effect_receipt_invalid");
   }
@@ -129,6 +131,7 @@ function receipt(value: unknown, expected: "pending" | "failed"): EffectReceipt 
     status: expected,
     retryable: input.retryable,
     availableAt: input.availableAt,
+    ...(typeof input.leaseExpiresAt === "string" ? { leaseExpiresAt: input.leaseExpiresAt } : {}),
   });
 }
 
@@ -136,7 +139,7 @@ async function readEffectList(
   stub: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> },
   scope: "tenant" | "platform",
   tenantId: string | undefined,
-  status: "pending" | "failed",
+  status: "pending" | "failed" | "leased",
 ): Promise<EffectReceipt[]> {
   const response = await stub.fetch("https://platform-state/effect/list", {
     method: "POST",
@@ -186,10 +189,14 @@ async function effecterRun(
   effecter: Fetcher,
   effect: EffectReceipt,
   workerId: string,
+  authToken: string,
 ): Promise<"completed" | "skipped"> {
   const response = await effecter.fetch("https://platform-effecter/run", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${authToken}`,
+    },
     body: JSON.stringify({
       scope: effect.scope,
       ...(effect.tenantId ? { tenantId: effect.tenantId } : {}),
@@ -208,7 +215,7 @@ async function effecterRun(
 
 export async function dispatchPlatformEffectWakeup(
   value: unknown,
-  bindings: Pick<PlatformEffectDispatchBindings, "PLATFORM_STATE" | "PLATFORM_EFFECTER">,
+  bindings: Pick<PlatformEffectDispatchBindings, "PLATFORM_STATE" | "PLATFORM_EFFECTER" | "EFFECTOR_AUTH_TOKEN">,
   now = Date.now(),
 ): Promise<{ dispatched: number; nextDelaySeconds?: number }> {
   const wakeup = validatePlatformEffectWakeup(value);
@@ -218,16 +225,26 @@ export async function dispatchPlatformEffectWakeup(
   if (!bindings.PLATFORM_EFFECTER) {
     throw new PlatformEffectDispatchError("platform_effecter_unconfigured");
   }
+  if (!bindings.EFFECTOR_AUTH_TOKEN) {
+    throw new PlatformEffectDispatchError("platform_effecter_auth_unconfigured", false);
+  }
   const { scope, tenantId } = objectScope(wakeup.objectName);
   const stub = bindings.PLATFORM_STATE.get(
     bindings.PLATFORM_STATE.idFromName(wakeup.objectName),
   ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
-  const [pending, failed] = await Promise.all([
+  const [pending, failed, leased] = await Promise.all([
     readEffectList(stub, scope, tenantId, "pending"),
     readEffectList(stub, scope, tenantId, "failed"),
+    readEffectList(stub, scope, tenantId, "leased"),
   ]);
-  const candidates = [...pending, ...failed.filter((item) => item.retryable)].sort((left, right) =>
-    Date.parse(left.availableAt) - Date.parse(right.availableAt));
+  const expiredLeased = leased.filter(
+    (item) => item.leaseExpiresAt && Date.parse(item.leaseExpiresAt) <= now,
+  );
+  const candidates = [
+    ...pending,
+    ...expiredLeased,
+    ...failed.filter((item) => item.retryable),
+  ].sort((left, right) => Date.parse(left.availableAt) - Date.parse(right.availableAt));
   const runnable = candidates.filter((item) => Date.parse(item.availableAt) <= now);
   const future = candidates.find((item) => Date.parse(item.availableAt) > now);
   const selected = runnable.slice(0, PLATFORM_EFFECT_MAX_BATCH);
@@ -237,6 +254,7 @@ export async function dispatchPlatformEffectWakeup(
       bindings.PLATFORM_EFFECTER,
       effect,
       `platform-effect-dispatch:${crypto.randomUUID()}`,
+      bindings.EFFECTOR_AUTH_TOKEN,
     );
     if (outcome === "completed") dispatched += 1;
   }

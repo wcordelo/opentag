@@ -1710,8 +1710,17 @@ worker.queue = async (batch, env, _ctx) => {
     batch.retryAll({ delaySeconds: 60 });
     throw new Error("platform_effect_queue_name_invalid");
   }
-  if (env.PLATFORM_EFFECTS_QUEUE_NAME && batch.queue === env.PLATFORM_EFFECTS_QUEUE_NAME) {
-    if (batch.queue === env.KNOWLEDGE_QUEUE_NAME || batch.queue === env.KNOWLEDGE_DLQ_NAME) {
+  const platformEffectsDlqName = env.PLATFORM_EFFECTS_QUEUE_NAME
+    ? `${env.PLATFORM_EFFECTS_QUEUE_NAME}-dlq`
+    : undefined;
+  if (
+    env.PLATFORM_EFFECTS_QUEUE_NAME &&
+    (batch.queue === env.PLATFORM_EFFECTS_QUEUE_NAME || batch.queue === platformEffectsDlqName)
+  ) {
+    if (
+      batch.queue === env.KNOWLEDGE_QUEUE_NAME ||
+      batch.queue === env.KNOWLEDGE_DLQ_NAME
+    ) {
       batch.retryAll({ delaySeconds: 60 });
       throw new Error("platform_effect_queue_name_conflicts_with_knowledge_queue");
     }

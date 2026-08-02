@@ -384,6 +384,7 @@ function effectReceipt(row: PlatformEffectRow): PlatformEffectReceipt {
     attempts: row.attempts,
     retryable: row.retryable === 1,
     availableAt: row.available_at,
+    ...(row.lease_expires_at ? { leaseExpiresAt: row.lease_expires_at } : {}),
     ...(row.last_error_code ? { lastErrorCode: row.last_error_code } : {}),
     ...(row.external_receipt_ref
       ? { externalReceiptRef: row.external_receipt_ref }

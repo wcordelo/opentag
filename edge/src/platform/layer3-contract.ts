@@ -415,6 +415,7 @@ export type PlatformEffectReceipt = Readonly<{
   attempts: number;
   retryable: boolean;
   availableAt: string;
+  leaseExpiresAt?: string;
   lastErrorCode?: string;
   externalReceiptRef?: string;
   requestedAt: string;

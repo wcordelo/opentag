@@ -166,3 +166,5 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 # HARNESS_URL = "https://opentag-harness.<account>.workers.dev"  (fallback when no HARNESS binding)
 # HARNESS_REPO_URL = "https://github.com/<org>/<default-repo>"   (optional default clone target)
 # HARNESS_AUTH_TOKEN is a secret: `wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml`
+# EFFECTOR_AUTH_TOKEN is a secret shared with opentag-platform-effecter:
+# `wrangler secret put EFFECTOR_AUTH_TOKEN --config wrangler.bot.toml`

@@ -30,27 +30,35 @@ function receipt(status: "pending" | "failed", overrides: Record<string, unknown
 function bindings(options: {
   pending?: unknown[];
   failed?: unknown[];
+  leased?: unknown[];
   effecterStatus?: number;
+  authToken?: string;
 } = {}) {
-  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const calls: Array<{ path: string; body: Record<string, unknown>; headers?: Record<string, string> }> = [];
   const stateStub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       const path = new URL(input.toString()).pathname;
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       calls.push({ path, body });
       if (path === "/effect/list") {
-        return Response.json({
-          effects: body.status === "pending" ? (options.pending ?? []) : (options.failed ?? []),
-        });
+        const status = body.status;
+        const effects = status === "pending"
+          ? (options.pending ?? [])
+          : status === "failed"
+            ? (options.failed ?? [])
+            : (options.leased ?? []);
+        return Response.json({ effects });
       }
       return Response.json({ error: "unexpected_path" }, { status: 404 });
     },
   };
   const effecter = {
     async fetch(_input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      const headers = Object.fromEntries(new Headers(init?.headers ?? {}).entries());
       calls.push({
         path: "/run",
         body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+        headers,
       });
       return Response.json(
         { status: "completed" },
@@ -65,6 +73,7 @@ function bindings(options: {
       get: () => stateStub,
     } as never,
     PLATFORM_EFFECTER: effecter as never,
+    EFFECTOR_AUTH_TOKEN: options.authToken ?? "effector-test-token",
   };
 }
 
@@ -100,7 +109,8 @@ describe("platform effect wakeup contract", () => {
     expect(fixture.calls).toEqual(expect.arrayContaining([
       { path: "/effect/list", body: expect.objectContaining({ scope: "tenant", tenantId: "123e4567-e89b-12d3-a456-426614174000", status: "pending" }) },
       { path: "/effect/list", body: expect.objectContaining({ scope: "tenant", tenantId: "123e4567-e89b-12d3-a456-426614174000", status: "failed" }) },
-      { path: "/run", body: expect.objectContaining({ scope: "tenant", tenantId: "123e4567-e89b-12d3-a456-426614174000", intentId: receipt("pending").intentId }) },
+      { path: "/effect/list", body: expect.objectContaining({ scope: "tenant", tenantId: "123e4567-e89b-12d3-a456-426614174000", status: "leased" }) },
+      { path: "/run", body: expect.objectContaining({ scope: "tenant", tenantId: "123e4567-e89b-12d3-a456-426614174000", intentId: receipt("pending").intentId }), headers: { authorization: "Bearer effector-test-token", "content-type": "application/json" } },
     ]));
     expect(JSON.stringify(fixture.calls)).not.toContain("must-not-enter-queue");
   });
@@ -121,6 +131,37 @@ describe("platform effect wakeup contract", () => {
     const fixture = bindings({
       failed: [receipt("failed", { retryable: false })],
     });
+    await expect(dispatchPlatformEffectWakeup(
+      platformEffectWakeup(tenantObject),
+      fixture,
+      Date.parse("2026-08-01T20:00:00.000Z"),
+    )).resolves.toEqual({ dispatched: 0 });
+    expect(fixture.calls.filter((call) => call.path === "/run")).toHaveLength(0);
+  });
+
+  it("redispatches expired leased receipts for reclaim", async () => {
+    const leased = receipt("pending", {
+      status: "leased",
+      leaseExpiresAt: "2026-08-01T19:00:00.000Z",
+    });
+    const fixture = bindings({ leased: [leased] });
+    const result = await dispatchPlatformEffectWakeup(
+      platformEffectWakeup(tenantObject),
+      fixture,
+      Date.parse("2026-08-01T20:00:00.000Z"),
+    );
+    expect(result).toEqual({ dispatched: 1 });
+    expect(fixture.calls).toEqual(expect.arrayContaining([
+      { path: "/run", body: expect.objectContaining({ intentId: leased.intentId }), headers: expect.objectContaining({ authorization: "Bearer effector-test-token" }) },
+    ]));
+  });
+
+  it("skips leased receipts until the lease expires", async () => {
+    const leased = receipt("pending", {
+      status: "leased",
+      leaseExpiresAt: "2026-08-01T21:00:00.000Z",
+    });
+    const fixture = bindings({ leased: [leased] });
     await expect(dispatchPlatformEffectWakeup(
       platformEffectWakeup(tenantObject),
       fixture,

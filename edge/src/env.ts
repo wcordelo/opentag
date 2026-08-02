@@ -46,6 +46,8 @@ export interface Env {
   PLATFORM_EFFECTS_QUEUE_NAME?: string;
   /** Authenticated effecter boundary; absent means dispatch stays fail-closed. */
   PLATFORM_EFFECTER?: Fetcher;
+  /** Bearer shared with the platform-effecter Worker for `POST /run`. */
+  EFFECTOR_AUTH_TOKEN?: string;
   /** Workspace-scoped, shadow-only router measurements and misroute feedback. */
   ROUTER_MEASUREMENTS?: DurableObjectNamespace<RouterMeasurementDO>;
   /** Delivery outcome dataset; logs remain a secondary diagnostic sink. */

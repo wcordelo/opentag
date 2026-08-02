@@ -878,7 +878,10 @@ async function ensureCuratedOAuthMarketplace(
   if (Array.isArray(body.scopes)) {
     const allowedScopes = [...marketplaceEntry.oauthScopes];
     const requestedScopes = body.scopes.filter((scope): scope is string => typeof scope === "string");
-    if (requestedScopes.some((scope) => !allowedScopes.includes(scope))) {
+    if (
+      requestedScopes.length === 0 ||
+      requestedScopes.some((scope) => !allowedScopes.includes(scope))
+    ) {
       return c.json({ error: "oauth_scope_not_allowed" }, 409);
     }
   }

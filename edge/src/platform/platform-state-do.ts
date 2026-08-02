@@ -1212,7 +1212,10 @@ export class PlatformStateEngine {
       if (marketplaceEntry.authMode !== "oauth2") {
         throw new PlatformStateError("oauth_connector_not_oauth2", 409);
       }
-      if (grant.scopes.some((scope) => !marketplaceEntry.oauthScopes.includes(scope))) {
+      if (
+        grant.scopes.length === 0 ||
+        grant.scopes.some((scope) => !marketplaceEntry.oauthScopes.includes(scope))
+      ) {
         throw new PlatformStateError("oauth_scope_not_allowed", 409);
       }
       const credential = this.sql.exec<CredentialRow>(

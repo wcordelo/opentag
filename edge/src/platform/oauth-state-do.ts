@@ -214,10 +214,17 @@ export class OAuthStateDO extends DurableObject {
     void this.ctx.blockConcurrencyWhile(async () => {
       sql.exec(OAUTH_STATE_DDL);
     });
+    let allowedRedirectOrigins: readonly string[] = [];
+    try {
+      allowedRedirectOrigins = parseAllowedRedirectOrigins(env.OAUTH_ALLOWED_REDIRECT_ORIGINS);
+    } catch (error) {
+      if (!(error instanceof OAuthStateError)) throw error;
+      // Malformed allowlist: fail closed per-request via an empty origin list.
+    }
     this.engine = new OAuthStateEngine({
       sql,
       tx: (fn) => this.ctx.storage.transactionSync(fn),
-      allowedRedirectOrigins: parseAllowedRedirectOrigins(env.OAUTH_ALLOWED_REDIRECT_ORIGINS),
+      allowedRedirectOrigins,
     });
   }
 

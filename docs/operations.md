@@ -23,6 +23,7 @@ flowchart LR
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
     Claudex["opentag-claudex-proxy<br/>workers/claudex-proxy"]
+    Broker["opentag-credential-broker<br/>workers/credential-broker"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
 
     Operator -->|"deploy:bot"| Bot
@@ -33,6 +34,7 @@ flowchart LR
 
     Bot -->|"AGENT_RUNTIME"| Agent
     Bot -->|"HARNESS"| Harness
+    Bot -->|"CONNECTOR_CREDENTIALS"| Broker
     Harness -->|"CLAUDEX_PROXY"| Claudex
     Bot -.->|"RESEARCH_TASKS"| Research
 ```
@@ -186,7 +188,14 @@ cd edge
 | `LINEAR_API_KEY` | Secret | Agent | Linear MCP |
 | `LINEAR_TEAM_KEY` | Secret/var | Agent | Linear team display name or ID |
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
+| `CONNECTOR_CREDENTIAL_BROKER_TOKEN` | Secret | Bot + credential broker | Internal service-binding authentication; never a provider credential |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
+| `IDENTITY_CUSTODY_AUTH_TOKEN` | Secret | Identity custody + effect worker | Internal identity-custody service authentication; never a private key |
+| `IDENTITY_PROVIDER_ADAPTER` | Optional service binding | Identity custody | External key generation/signing/custody boundary; absent keeps identity effects fail-closed |
+| `IDENTITY_PROVIDER_ADAPTER_AUTH_TOKEN` | Optional secret | Identity custody/provider adapter | Internal adapter bearer; never key material |
+| `PLATFORM_EFFECTS_QUEUE` | Queue binding | Bot + effecter | Metadata-only wakeups for pending platform effects |
+| `PLATFORM_EFFECTS_QUEUE_NAME` | Var | Bot | Exact platform-effect queue name; must not be a DLQ |
+| `PLATFORM_EFFECTER` | Service binding | Bot | Authenticated effect execution boundary |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
 | `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
@@ -281,6 +290,29 @@ token, not only in the manifest.
 
 ## Platform effect handoff
 
+### Credential broker deployment order
+
+The credential broker can be deployed before its custody backend to publish a
+fail-closed health surface, but it must not be considered connector-ready until
+all three boundaries exist:
+
+1. Deploy `workers/credential-custody/` with an approved
+   `CUSTODY_AUTH_TOKEN`, Secrets Store binding map, and non-production secret
+   smoke; the binding map contains only credential references, versions,
+   binding names, and expiry metadata.
+2. Deploy `workers/credential-broker/` with the cross-Worker
+   `PLATFORM_STATE` binding and its `CUSTODY` service binding. Set the separate
+   `CUSTODY_AUTH_TOKEN`; the custody Worker owns provider tokens and OAuth
+   refresh material, while neither the broker nor the bot may persist them.
+3. Set `CONNECTOR_CREDENTIAL_BROKER_TOKEN` as a secret on the bot and broker,
+   then deploy the bot with its `CONNECTOR_CREDENTIALS` binding.
+
+Verify `/health` reports `providerResolutionEnabled: true` only after the
+custody binding is present. Until then, Drive and Linear must remain disabled
+for live workspaces and resolution must return
+`credential_custody_unavailable` or
+`credential_custody_auth_unconfigured`.
+
 The platform ledger does not call Slack, Google, Linear, a custody system, a
 billing provider, or a memory backend. State transitions create secret-free
 effect intents in the `PLATFORM_STATE` Durable Object. A separately deployed
@@ -302,12 +334,32 @@ payloads in effect metadata. Marketplace updates and credential/OAuth
 rotations create separate intents so external revocation cannot be silently
 skipped when local metadata advances.
 
+The bot publishes a wakeup after platform-state mutations to the
+`opentag-platform-effects` Queue. Each body contains only the internal
+`PlatformStateDO` object name. The effecter consumes the wakeup, lists bounded
+pending/retryable receipts, and calls `/run` through its authenticated service
+boundary. Retryable provider failures are scheduled from `availableAt`; the
+queue DLQ is for repeated dispatch failures, not provider secrets. Deploy the
+effecter and create/configure both queue names before enabling the bot binding.
+If the queue is unavailable, use the admin-only `/admin/platform/effect/wake`
+route after the queue is restored; never copy an effect payload into a queue
+message.
+
 Memory deletion is not complete when the request is accepted. An approved
 external executor must submit one epoch-matching receipt per requested source
 through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
 complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
+
+The provider-independent `edge/workers/memory-deletion/` boundary is an
+additional fail-closed handoff. `POST /delete` carries one source key, tenant,
+request/idempotency identifiers, deletion epoch, and timestamp to an explicitly
+authenticated provider adapter. It has no provider binding by default. Before
+activation, document the provider's source deletion, retention/legal-hold,
+tenant-isolation, idempotency, and test-namespace guarantees; a Worker health
+response or adapter HTTP success is not proof that the platform receipt ledger
+was updated.
 
 Provisioning step updates must include `schemaVersion`, the provisioning
 idempotency key, required step, outcome, opaque `externalReceiptRef`, and

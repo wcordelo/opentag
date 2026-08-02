@@ -222,7 +222,7 @@ describe("PlatformStateDO", () => {
         status: "curated",
         authMode: "oauth2",
         actions: ["search"],
-        oauthScopes: ["drive.readonly"],
+        oauthScopes: ["drive.readonly", "drive.metadata.readonly"],
         trustReviewRef: "review:google-drive:v1",
       };
       expect((await call(state, "/marketplace", marketplace)).response.status).toBe(200);
@@ -240,6 +240,12 @@ describe("PlatformStateDO", () => {
         status: "active",
         issuedAt: now,
       };
+      const scopeMismatch = await call(state, "/oauth", {
+        ...grant,
+        scopes: ["drive.metadata.readonly"],
+      });
+      expect(scopeMismatch.response.status).toBe(409);
+      expect(scopeMismatch.body.error).toBe("oauth_credential_scopes_mismatch");
       expect((await call(state, "/oauth", grant)).response.status).toBe(200);
       expect((await call(state, "/marketplace/revoke", {
         connectorId: marketplace.connectorId,

@@ -168,8 +168,9 @@ bearer is absent; no provider token is stored or returned by OpenTag.
 Marketplace curation now requires a `review:` trust reference, at least one
 action, and auth-mode-consistent scopes. OAuth grants carry the exact
 `marketplaceVersion`; the ledger rejects uncurated/non-OAuth entries, provider
-mismatches, and scopes outside the reviewed entry. This is a durable safety
-gate, not proof that any provider OAuth integration is live.
+mismatches, scopes outside the reviewed entry, and any grant whose scope set
+differs from the custody reference. This is a durable safety gate, not proof
+that any provider OAuth integration is live.
 
 Memory deletion receipts are source-scoped and epoch-bound. The external
 executor may record only a requested source, and duplicate receipt retries are

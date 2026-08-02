@@ -228,9 +228,9 @@ key; rotate that secret to revoke outstanding links.
 
 ## 2026-08-01 live rollout record
 
-The current production smoke used merged baseline `ff8d649` and a narrow
-identity-read fix on the reconciliation branch. The bot deployment is
-`bf1f47bf-b569-46cd-9e85-46141ed86d24`; the harness deployment was
+The current production deployment used exact merged baseline `498164f` from a
+clean detached checkout. The bot deployment is
+`cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1`; the harness deployment was
 `58c47ab9-daf9-456b-b17c-73fc66e6b25d`. The image digest and feature-by-feature
 result matrix are in [current-state.md](./current-state.md).
 

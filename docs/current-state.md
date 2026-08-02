@@ -15,10 +15,10 @@ current status.
 
 | Evidence | Value |
 | --- | --- |
-| Merged OpenTag baseline | `ff8d649ff91e35b7c428de1a45f5e892bcc747a7` (`origin/main`, PR #27 merge) |
-| Reconciliation branch | `codex/docs-live-reconciliation` |
+| Merged OpenTag baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
+| Review-ready feature PRs | [#29](https://github.com/wcordelo/opentag/pull/29), [#30](https://github.com/wcordelo/opentag/pull/30), [#31](https://github.com/wcordelo/opentag/pull/31), and [#32](https://github.com/wcordelo/opentag/pull/32); all non-draft, mergeable, and green at this reconciliation |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `bf1f47bf-b569-46cd-9e85-46141ed86d24` — tightened flexible Slack response routing, duplicate-admission fix, and explicit route-input hardening |
+| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
 | Bot health | `GET /health` returned HTTP 200 with durable stores, service bindings, native Nanocodex, knowledge actor-token configuration, and Buzz directory readiness reported |
@@ -27,10 +27,10 @@ current status.
 | Stale-turn cleanup thread | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 | Cloudflare origin | `https://opentag-bot.williamlopezc.workers.dev` |
 
-The deployment was performed from the reconciliation branch so the identity
-read fix and the tightened Slack routing/finalization correction could be verified
-immediately. The branch still requires the normal review/publication path
-before its source changes become part of `origin/main`.
+The current deployment was performed from the clean detached deployment
+worktree at `/Users/will/Documents/opentag-worktrees/deploy-20260801` after
+`origin/main` advanced through the provisioning and memory-receipt merges.
+The four review-ready feature PRs remain unmerged and were not deployed.
 No secret value is recorded here.
 
 ## Status vocabulary

@@ -15,20 +15,19 @@ synthetic-live, fail-closed, and open-gate states.
 
 | Item | Value |
 | --- | --- |
-| Merged baseline | `ff8d649ff91e35b7c428de1a45f5e892bcc747a7` |
-| Working branch | `codex/docs-live-reconciliation` |
+| Merged baseline | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`) |
+| Working branch | `main` |
 | Source hotfix | `9d4538c`, identity read forwarding; focused test added |
-| Bot Worker | version `bf1f47bf-b569-46cd-9e85-46141ed86d24` |
+| Bot Worker | version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` |
 | Harness Container | version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Slack routing smoke | [current routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
 | Passive-only smoke | [top-level plus untagged `yo` stayed silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
 | Stale-turn cleanup | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 
-The bot and harness were deployed from this reconciliation branch so the
-identity-read defect discovered by the synthetic live platform test and the
-Slack duplicate-admission defect could be fixed and retested. The branch still
-needs the normal code-review/publication path before its source changes are
-part of `origin/main`.
+The bot was deployed from a clean detached checkout of merged `origin/main`
+after the provisioning-receipt and memory-deletion-receipt merges. The
+effecter, custody, OAuth, and billing feature branches remain review-ready but
+are not part of this deployment.
 
 ## What is implemented now
 
@@ -68,11 +67,26 @@ The user decisions are locked:
   validation first, and live rollout permitted; and
 - native typed Nanocodex Responses now, behind the existing harness boundary.
 
-`PlatformStateDO` and `layer3-contract.ts` provide metadata-only provisioning,
-identity/credential references, OAuth grants, marketplace metadata, metering,
-memory governance, and a secret-free effect-intent ledger. A synthetic tenant
-completed provisioning, idempotent reads/writes, revocation, grants, metering,
-memory requests, effect leases, retries, completion, and cancellation.
+`PlatformStateDO` and `layer3-contract.ts` provide metadata-only provisioning
+with external step receipts, identity/credential references, OAuth grants,
+marketplace metadata, metering, memory governance/deletion receipts, and a
+secret-free effect-intent ledger. A synthetic tenant completed provisioning,
+idempotent reads/writes, revocation, grants, metering, memory requests, effect
+leases, retries, completion, and cancellation.
+
+The review-ready follow-on branches are:
+
+- [#29](https://github.com/wcordelo/opentag/pull/29): authenticated platform
+  effect dispatch and queue-backed runner;
+- [#30](https://github.com/wcordelo/opentag/pull/30): tenant/provider/scope
+  revalidated credential broker and optional Secrets Store custody adapter;
+- [#31](https://github.com/wcordelo/opentag/pull/31): replay-safe OAuth state,
+  marketplace gates, and provider-adapter receipt contract; and
+- [#32](https://github.com/wcordelo/opentag/pull/32): versioned billing
+  entitlement and provider-receipt contract.
+
+They are all non-draft and passing review checks, but no unmerged branch is in
+the deployed release.
 
 Worker Secrets are not a per-tenant OAuth/token database in a shared fleet.
 Tenant DOs retain opaque references and grants; a real credential broker/effect

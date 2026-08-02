@@ -216,7 +216,11 @@ async function resolveFromCustody(
     }),
   });
   if (!response.ok) {
-    throw new CredentialBrokerError("credential_custody_resolution_failed", response.status >= 500 ? 503 : 403);
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    const code = typeof body.error === "string" && /^[a-z][a-z0-9_.-]{0,127}$/.test(body.error)
+      ? body.error
+      : "credential_custody_resolution_failed";
+    throw new CredentialBrokerError(code, response.status >= 500 ? 503 : 403);
   }
   let result: CredentialBrokerResponse;
   try {

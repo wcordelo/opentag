@@ -1,3 +1,5 @@
+> **Historical snapshot.** This planning goal remains useful for its gates, but current knowledge deployment/retrieval evidence is in [docs/current-state.md](../../docs/current-state.md).
+
 # PROGRESS — supermemory-railway-knowledge-base
 
 **Goal:** Produce and independently validate an implementation-ready, end-to-end OpenTag Supermemory Local on Railway knowledge-base SPEC, with corrected platform limitations, resumable goal state, verified Railway access/resource inventory, explicit deployment and cleanup gates, dependencies, and deterministic acceptance criteria; do not deploy or delete external resources during this planning phase.

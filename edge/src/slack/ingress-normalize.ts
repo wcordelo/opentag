@@ -251,16 +251,8 @@ export function normalizeSlackEvent(
         files: hasFiles ? event.files : undefined,
       };
     }
-    if (!event.thread_ts) return undefined; // top-level channel chatter
-    // A threaded @-mention is delivered as BOTH an `app_mention` and this
-    // (mirrors the native Slack listener) to avoid a double response. An
-    // unmentioned threaded `message` is history-only and must not become a
-    // second turn path. Match the exact configured bot user before treating
-    // this as the duplicate of an explicit `app_mention`.
+    if (!event.thread_ts) return undefined;
     if (hasExplicitBotMention(text, botUserId)) return undefined;
-    // Late file-share repair and deferred file_turn continuations are admitted
-    // without a repeated bot mention; mirror pre-admission so handoff succeeds.
-    if ((event as { subtype?: string }).subtype !== "file_share") return undefined;
     return {
       kind: "turn",
       source: "thread_reply",

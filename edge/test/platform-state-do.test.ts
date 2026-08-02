@@ -321,6 +321,8 @@ describe("PlatformStateDO", () => {
         status: "completed",
         receipts: [expect.objectContaining({ sourceKey: receipt.sourceKey, status: "deleted" })],
       });
+      const duplicateAfterCompletion = await call(state, "/memory/deletion", deletion);
+      expect(duplicateAfterCompletion.body).toMatchObject({ duplicate: true, status: "completed" });
 
       const effects = await call(state, "/effect/list", { scope: "tenant", tenantId });
       expect(effects.body.effects).toEqual(expect.arrayContaining([

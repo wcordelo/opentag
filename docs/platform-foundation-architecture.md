@@ -124,6 +124,17 @@ quantity, unit, plan revision, and execution correlation cross the boundary,
 and completion requires an opaque `billing:` receipt. Prices, payment methods,
 cards, and provider credentials remain outside OpenTag.
 
+The separate `edge/workers/billing-adapter/` Worker is the provider-independent
+authenticated handoff for a future approved monetary operation. Its fixed
+adapter envelope adds only plan ID, amount in minor units, and currency to the
+existing meter correlation. `billingAdapterRequestFromIntent` requires the
+charge tuple's plan revision to match the metadata-only meter intent, and the
+provider receipt must echo tenant, intent/idempotency, event/execution, plan,
+amount, and currency fields. The Worker forwards no arbitrary payload and
+fails closed when either the internal caller token or provider service binding
+is absent. It does not claim or complete platform effect leases; the generic
+effect runner remains the only lease executor.
+
 The lifecycle is:
 
 1. A state transition records its own metadata and an idempotent effect intent

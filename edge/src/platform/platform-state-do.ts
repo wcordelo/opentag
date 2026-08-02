@@ -1206,6 +1206,7 @@ export class PlatformStateEngine {
       ).toArray()[0];
       if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
       const marketplaceEntry = marketplaceFromRow(marketplace);
+      assertConnectorMarketplaceEntryActivatable(marketplaceEntry);
       if (marketplaceEntry.status !== "curated") {
         throw new PlatformStateError("oauth_marketplace_not_curated", 409);
       }

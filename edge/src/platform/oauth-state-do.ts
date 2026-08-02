@@ -5,7 +5,7 @@ import {
   hashOAuthSecret,
   nowIso,
   OAuthStateError,
-  parseAllowedRedirectOrigins,
+  resolveAllowedRedirectOriginsEnv,
   randomOAuthSecret,
   validateOAuthStateConsumeRequest,
   validateOAuthStateIssueRequest,
@@ -207,6 +207,7 @@ type OAuthStateEnv = {
 
 export class OAuthStateDO extends DurableObject {
   private readonly engine: OAuthStateEngine;
+  private readonly allowlistConfigValid: boolean;
 
   constructor(ctx: DurableObjectState, env: OAuthStateEnv) {
     super(ctx, env as never);
@@ -214,21 +215,19 @@ export class OAuthStateDO extends DurableObject {
     void this.ctx.blockConcurrencyWhile(async () => {
       sql.exec(OAUTH_STATE_DDL);
     });
-    let allowedRedirectOrigins: readonly string[] = [];
-    try {
-      allowedRedirectOrigins = parseAllowedRedirectOrigins(env.OAUTH_ALLOWED_REDIRECT_ORIGINS);
-    } catch (error) {
-      if (!(error instanceof OAuthStateError)) throw error;
-      // Malformed allowlist: fail closed per-request via an empty origin list.
-    }
+    const allowlist = resolveAllowedRedirectOriginsEnv(env.OAUTH_ALLOWED_REDIRECT_ORIGINS);
+    this.allowlistConfigValid = allowlist.configValid;
     this.engine = new OAuthStateEngine({
       sql,
       tx: (fn) => this.ctx.storage.transactionSync(fn),
-      allowedRedirectOrigins,
+      allowedRedirectOrigins: allowlist.origins,
     });
   }
 
   healthCheck(): { ok: true; storage: "sqlite" } {
+    if (!this.allowlistConfigValid) {
+      throw new OAuthStateError("oauth_redirect_origins_invalid", 503);
+    }
     return this.engine.healthCheck();
   }
 

@@ -115,6 +115,22 @@ function rejectSecretMaterial(value: unknown, depth = 0): void {
   }
 }
 
+export function resolveAllowedRedirectOriginsEnv(value: string | undefined): {
+  origins: readonly string[];
+  configValid: boolean;
+} {
+  if (!value?.trim()) {
+    return { origins: [], configValid: true };
+  }
+  try {
+    const origins = parseAllowedRedirectOrigins(value);
+    return { origins, configValid: origins.length > 0 };
+  } catch (error) {
+    if (!(error instanceof OAuthStateError)) throw error;
+    return { origins: [], configValid: false };
+  }
+}
+
 export function parseAllowedRedirectOrigins(value: string | undefined): readonly string[] {
   if (!value?.trim()) return [];
   const parts = value.split(",").map((part) => part.trim()).filter(Boolean);

@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import { resolveAllowedRedirectOriginsEnv } from "./platform/oauth-state.js";
 
 export type RuntimeCapabilityEvidence = Readonly<{
   version: 1;
@@ -106,7 +107,8 @@ export function buildRuntimeCapabilityEvidence(
     },
     oauth: {
       stateNamespaceConfigured: Boolean(env.OAUTH_STATE),
-      allowedRedirectOriginsConfigured: configured(env.OAUTH_ALLOWED_REDIRECT_ORIGINS),
+      allowedRedirectOriginsConfigured:
+        resolveAllowedRedirectOriginsEnv(env.OAUTH_ALLOWED_REDIRECT_ORIGINS).origins.length > 0,
     },
     durability: {
       botStateConfigured: Boolean(env.BOT_STATE),

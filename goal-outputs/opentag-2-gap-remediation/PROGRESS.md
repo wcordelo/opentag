@@ -1,3 +1,5 @@
+> **Historical snapshot.** This remediation ledger predates the merged rollout and still records an earlier `in_progress` state. Current source/deployment truth is in [docs/current-state.md](../../docs/current-state.md).
+
 # PROGRESS — opentag-2-gap-remediation
 
 **Goal:** Resolve every actionable finding in `goal-outputs/opentag-2-gap-audit/gap-audit.md` at source level, with regression tests and truthful documentation, while preserving locked decisions and performing no deployment or live external mutation.

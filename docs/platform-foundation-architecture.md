@@ -1,13 +1,17 @@
 # Platform and routing foundation
 
-Status: local implementation on the goal worktree; the effect ledger, router
-measurement ledger, and credential-broker boundary are validated, but no
-provider custody adapter or hosted platform effecter is deployed.
+Status: **source-complete metadata foundation; synthetic-live; credential-broker
+boundary validated locally; external effecter and connector custody still gated**
+
+Updated: **2026-08-01**
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
 connector, OAuth flow, billing path, or memory policy from bypassing the
 existing durable execution and authorization contracts.
+
+See [current-state.md](./current-state.md) for deployment versions, live
+Slack/Buzz checks, the synthetic platform run, and remaining gates.
 
 ## Request correlation
 
@@ -34,9 +38,10 @@ accepts only these server-owned templates:
 There is no SQL, table, `where`, arbitrary filter, ordering, or caller-chosen
 addressing field in the request. The Knowledge Durable Object owns the fixed
 statements and verifies the requested team before returning state. The result
-is an operator diagnostic/evidence surface, not a replacement for future
-per-principal OAuth authorization; the global `ADMIN_SECRET` remains the
-authorization boundary until Layer 3 tenancy is selected.
+is an operator diagnostic/evidence surface, not a replacement for per-principal
+OAuth authorization. Internal actor-bound knowledge tokens are the selected
+Layer 3 direction; `ADMIN_SECRET` remains restricted to operator/admin routes
+and diagnostic bootstrap operations.
 
 ## Router shadow mode
 
@@ -60,7 +65,9 @@ labels. It is measurement infrastructure only; it cannot dispatch a tier.
 ## Layer 3 contracts
 
 `edge/src/platform/layer3-contract.ts` is deliberately a contract/validation
-layer, not a fake provisioning service. It covers:
+layer, not a fake provisioning service. The deployed `PlatformStateDO` is a
+metadata ledger; a synthetic live run exercised its state transitions, but no
+provider side effect is implied. It covers:
 
 - idempotent provisioning requests and the complete DO/Slack/default-bundle
   footprint;
@@ -144,18 +151,34 @@ The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
 1. shared per-tenant DO isolation versus Workers for Platforms;
-2. whether the optional Cloudflare Secrets Store adapter is the approved
+2. production tenant locator and per-team DO onboarding;
+3. whether the optional Cloudflare Secrets Store adapter is the approved
    custody implementation, or whether an external KMS/envelope/self-hosted
    Worker should replace it;
-3. curated-only marketplace trust and OAuth callback ownership;
-4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
-5. retention/deletion guarantees and compliance requirements for hosted memory.
+4. tenant-scoped custody broker semantics alongside deployment Worker Secrets;
+5. curated-only marketplace trust and OAuth callback ownership;
+6. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
+7. retention/deletion guarantees and compliance requirements for hosted memory.
 
 No code silently chooses one of those alternatives, runs an OAuth callback,
 stores a provider token, charges a plan, or deletes live customer knowledge.
 The platform-state ledger records explicit bootstrap requests and externally
 verified receipts without marking a tenant active until the required steps are
 reported complete.
+
+## Current deployment evidence
+
+The current Worker returned HTTP 200 from `/health`. A synthetic tenant
+completed the idempotent provisioning plan, custody references, OAuth and
+marketplace metadata, metering, memory governance, effect leases, retry/reclaim,
+completion, and cancellation. The identity read path was corrected after the
+first live probe passed the request wrapper an object instead of its
+`identityRef`; the focused test and the post-fix live read both pass.
+
+The platform effect ledger is intentionally not an effect worker. Its pending
+intents are the durable handoff to a separately deployed provisioning,
+credential, OAuth, billing, or deletion worker. The admin forwarding routes are
+not a replacement for that worker.
 
 ## Remaining activation gates
 
@@ -172,10 +195,15 @@ reported complete.
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
 - The platform-state migration, effect leases, admin routes, credential-broker
-  boundary, and optional Secrets Store custody adapter are locally validated,
-  but the production bootstrap authority, tenant locator integration,
-  identity/key custody policy, Slack OAuth callback, marketplace trust review
-  process, billing/plan enforcement, memory deletion executor, configured
-  custody mapping, and provider adapters are not live.
-- Cloudflare deployment is a separate explicit gate; local typechecks and
-  tests do not authorize `wrangler deploy`.
+  boundary, and optional Secrets Store custody adapter are deployed and
+  synthetic-live where recorded in `docs/current-state.md`, but the production
+  bootstrap authority, tenant locator integration, identity/key custody policy,
+  Slack OAuth callback, marketplace trust review process, billing/plan
+  enforcement, memory deletion executor, configured custody mapping, and
+  provider adapters are not live.
+- Worker Secrets are the approved deployment/bootstrap mechanism. They are not
+  a complete per-tenant custody backend for a shared Worker fleet; the broker
+  must preserve tenant isolation, rotation, revocation, and audit.
+- Cloudflare deployment is an explicit operator action. The current deployment
+  evidence is recorded in `docs/current-state.md`; local tests alone never
+  authorize a deploy or prove an external side effect.

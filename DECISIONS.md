@@ -165,10 +165,43 @@ uses its own message timestamp because that becomes the bot reply-thread root;
 a top-level slash command falls back to channel scope because Slack provides no
 message timestamp.
 
-Channel-thread replies and threaded Stop commands require an exact mention of
-the configured bot before admission or cancellation. Unmentioned human thread
-messages remain in Slack history and are read as context by a later admitted
-mention; they never acquire an active-turn row or interrupt an execution.
+Threaded Stop commands still require an exact mention of the configured bot
+before cancellation. Ordinary human thread replies use the response-worthiness
+gate described below: clear questions, action requests, problem reports, file
+shares, and explicit mentions may admit without requiring a tag, while passive
+conversation remains history without acquiring an active-turn row.
+
+## 11A. Slack response routing and duplicate admission
+
+**Decision (2026-08-01):** Slack thread tags are optional for clear asks, but
+OpenTag must not answer every conversational message. The verified ingress path
+normalizes every human thread reply, then applies the deterministic
+`classifySlackResponseRoute()` gate before durable pre-admission.
+
+The gate always admits DMs, explicit bot mentions, trusted triggers, and file
+shares. It also admits an unmentioned thread reply when the existing router
+classifier identifies a question or a non-conversational signal, or when the
+text contains a clear action request or problem report. Passive conversation is
+observed and remains Slack history without creating a turn. Top-level
+unmentioned channel chatter remains silent. The gate is response-worthiness,
+not Router Tier 1/Tier 3 dispatch; admitted events still use the existing Tier
+2 lifecycle while router measurements remain shadow-only.
+
+Slack can deliver the same explicit mention as both `app_mention` and a
+threaded `message`. The duplicate `message` path is therefore rejected before
+it can register an active turn. This closes the stale-lock failure where the
+adapter later discarded the duplicate after pre-admission had already created
+an `active_turns` row.
+
+The existing exact lifecycle remains authoritative after admission: the final
+render must be confirmed before the exact active-turn row is deleted, and the
+busy warning is reserved for a real distinct concurrent turn. We did not add a
+time-based force-delete path because that would trade a visible stale warning
+for possible answer-after-Stop or duplicate execution.
+
+Evidence: `response-routing.test.ts`, `pre-admit-turn.test.ts`,
+`cloudflare-slack-adapter.test.ts`, and the live routing/finalization canary in
+[`docs/current-state.md`](./docs/current-state.md).
 
 ## 12. Exact render, effect, and rejection fences
 
@@ -242,6 +275,61 @@ sticky thread choice, channel default, then deployment default. Merely using a
 channel default never writes sticky state, and an unavailable selected harness
 fails visibly without AG-UI fallback.
 
+## 18. Shared-fleet tenancy
+
+OpenTag uses one shared Worker fleet with strict per-team Durable Object
+isolation. Team and project scope are resolved by server-owned mappings and
+validated helpers; request bodies, Slack text, and connector labels never
+choose arbitrary Durable Object names. Platform metadata is sharded by the
+canonical internal tenant identity, while platform-wide marketplace metadata
+uses a reserved object.
+
+## 19. Worker Secrets and tenant custody
+
+Cloudflare Worker Secrets are the approved deployment/bootstrap mechanism.
+Self-hosters may configure them through the one-click Wrangler flow or the
+Cloudflare CLI, and secret values must never enter Git, prompts, logs, or
+Durable Object metadata.
+
+Worker Secrets are deployment-scoped, so they are not by themselves a
+per-tenant OAuth/token store for a shared fleet. Tenant Durable Objects retain
+only opaque custody references, versions, grants, revocations, and effect
+intents. A credential broker/effect worker must supply tenant-scoped resolution,
+rotation, revocation, and audit before Drive, Linear, billing, or deletion can
+be enabled. The current Layer 3 enum intentionally does not pretend that
+`workers_secrets` is a complete per-tenant custody backend.
+
+## 20. Knowledge, MCP, and live rollout
+
+Internal knowledge/MCP calls use actor-bound bot tokens with exact team/project/
+ACL scope, single-use replay protection, durable audit, and final source
+authorization. External MCP remains operator-only. Synthetic validation is the
+first rollout stage; the user authorized the live rollout without requiring an
+additional approval prompt, but missing provider or relay credentials still
+produce a fail-closed result.
+
+## 21. Native Nanocodex adapter
+
+OpenTag includes a native typed OpenAI Responses adapter for Nanocodex beneath
+the existing authenticated harness boundary. It owns typed event translation,
+checkpoint-aware replay, retry scoping, and completed-only provider-state
+commit. It does not grant shell, repository, or remote-git tools to the native
+adapter; coding turns remain on the existing Claude Code harness wire contract.
+
+## 22. Router rollout
+
+The exact heuristic classifier and workspace measurement ledger are enabled in
+shadow mode. Tier 2 remains the safe dispatch floor. Tier 1 requires measured
+knowledge health, quality/fallback gates, cost evidence, and rollback proof;
+Tier 3 remains dark until its sandbox/capacity contract is separately approved.
+
+## 23. Current evidence
+
+The dated deployment, Slack canaries, synthetic platform ledger run, router
+summary, Buzz fail-closed probe, and open gates are recorded in
+[docs/current-state.md](./docs/current-state.md). Historical backfill reports
+retain their original point-in-time claims and link to that reconciliation.
+
 ---
 
 ## Sign-off
@@ -264,3 +352,8 @@ fails visibly without AG-UI fallback.
 16. **Coding postconditions (§15):** APPROVED
 17. **Research cancellation (§16):** APPROVED
 18. **Non-human actors, permission views, and runtime defaults (§17):** APPROVED
+19. **Shared-fleet tenancy (§18):** APPROVED
+20. **Worker Secrets and tenant custody (§19):** APPROVED with the broker gap
+21. **Knowledge/MCP rollout (§20):** APPROVED
+22. **Native Nanocodex adapter (§21):** APPROVED
+23. **Router shadow rollout (§22):** APPROVED

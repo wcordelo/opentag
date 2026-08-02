@@ -41,6 +41,16 @@ async function computeSlackSignature(
   return `v0=${hex}`;
 }
 
+async function sha256Digest(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return `sha256:${Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
 export function slackVerify(): MiddlewareHandler<AppEnv> {
   return async (c: Context<AppEnv>, next) => {
     const timestamp = c.req.header("X-Slack-Request-Timestamp");
@@ -75,6 +85,15 @@ export function slackVerify(): MiddlewareHandler<AppEnv> {
 
     c.set("rawBody", rawBody);
     c.set("slackPayload", slackPayload);
+    c.set("verifiedIngress", Object.freeze({
+      method: "slack_hmac_v0",
+      // Bind the accepted signature to the exact body without retaining either
+      // the body or signature in the turn context.
+      evidenceDigest: await sha256Digest(`slack-hmac:v0:${timestamp}:${signature}:${rawBody}`),
+      // Use Slack's signed timestamp so retries of the same delivery carry an
+      // identical immutable evidence record into the deferred-ingress DO.
+      verifiedAt: new Date(timestampSeconds * 1000).toISOString(),
+    }));
     await next();
   };
 }

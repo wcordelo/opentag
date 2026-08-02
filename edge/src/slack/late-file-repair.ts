@@ -1,4 +1,5 @@
 import type { SlackFileRef } from "./download-files.js";
+import type { VerifiedIngressEvidence } from "../platform/contract.js";
 
 export const LATE_FILE_WINDOW_MS = 15_000;
 
@@ -10,6 +11,8 @@ export type PendingFilelessMention = {
   threadTs: string;
   eventId: string;
   expiresAt: number;
+  /** Preserved HMAC evidence from the original fileless mention, if available. */
+  verifiedIngress?: VerifiedIngressEvidence;
 };
 
 export type LateFileEvent = {

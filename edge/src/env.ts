@@ -15,6 +15,7 @@ import type { PlatformStateDO } from "./platform/platform-state-do.js";
 import type { OAuthStateDO } from "./platform/oauth-state-do.js";
 import type { RouterMeasurementDO } from "./router/measurement-do.js";
 import type { PlatformEffectWakeup } from "./platform/effect-dispatch.js";
+import type { VerifiedIngressEvidence } from "./platform/contract.js";
 
 /**
  * Worker bindings for the Claude Tag bot spine (PRODUCT.md).
@@ -194,6 +195,7 @@ export interface Env {
 export type BotVariables = {
   rawBody: string;
   slackPayload: unknown;
+  verifiedIngress: VerifiedIngressEvidence;
 };
 
 export type AppEnv = {

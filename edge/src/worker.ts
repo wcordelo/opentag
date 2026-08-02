@@ -126,6 +126,7 @@ import {
   type PlatformEffectWakeup,
 } from "./platform/effect-dispatch.js";
 import type { MessageBatch } from "@cloudflare/workers-types";
+import type { VerifiedIngressEvidence } from "./platform/contract.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -166,9 +167,7 @@ type LateFileRepairJobPayload = {
   candidate: LateFileEvent;
 };
 
-type FileTurnJobPayload = {
-  callback: SlackEventCallbackPayload;
-};
+type FileTurnJobPayload = { callback: SlackEventCallbackPayload };
 
 function fileTurnJobId(
   env: AppEnv["Bindings"],
@@ -188,6 +187,7 @@ async function processFileTurn(
   env: AppEnv["Bindings"],
   value: FileTurnJobPayload,
   teamId: string,
+  verifiedIngress?: VerifiedIngressEvidence,
 ): Promise<void> {
   const identity = preAdmissionIdentityForEvent(
     value.callback,
@@ -211,6 +211,7 @@ async function processFileTurn(
     const { adapter } = await getOrCreateBot(env);
     await adapter.handleEventsBody(value.callback, {
       teamId,
+      ...(verifiedIngress ? { verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
     });
@@ -288,6 +289,7 @@ async function processLateFileRepair(
     const { adapter } = await getOrCreateBot(env);
     await adapter.handleEventsBody(synthetic, {
       teamId: candidate.teamId,
+      ...(pending.verifiedIngress ? { verifiedIngress: pending.verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
     });
@@ -305,7 +307,7 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
       if (quickActionEventId(job.payload) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      const result = await handleQuickAction(c.env, job.payload, job.teamId);
+      const result = await handleQuickAction(c.env, job.payload, job.teamId, job.verifiedIngress);
       if (!result.handled) {
         return c.json({ error: "invalid_quick_action" }, 400);
       }
@@ -320,7 +322,7 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
       if (fileTurnJobId(c.env, payload.callback) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      await processFileTurn(c.env, payload, job.teamId);
+      await processFileTurn(c.env, payload, job.teamId, job.verifiedIngress);
     } else {
       return c.json({ error: "unsupported_deferred_ingress_kind" }, 400);
     }
@@ -1660,6 +1662,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
         id: jobId,
         kind: "file_turn",
         payload: { callback: payload } satisfies FileTurnJobPayload,
+        verifiedIngress: c.get("verifiedIngress"),
         teamId,
       });
     } catch (error) {
@@ -1707,6 +1710,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
       const { adapter } = await getOrCreateBot(c.env);
       await adapter.handleEventsBody(payload, {
         teamId,
+        verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
       });
@@ -1733,6 +1737,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
       threadTs: eventIdentity.threadTs ?? eventIdentity.inboundTs,
       eventId: eventIdentity.eventId,
       expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
+      verifiedIngress: c.get("verifiedIngress"),
     };
     try {
       await store.list.append(
@@ -1807,6 +1812,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     try {
       const { adapter } = await getOrCreateBot(c.env);
       await adapter.handleCommandBody(body, {
+        verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
       });
@@ -1886,6 +1892,7 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
       id: jobId,
       kind: "quick_action",
       payload,
+      verifiedIngress: c.get("verifiedIngress"),
       teamId,
     });
   } catch (err) {

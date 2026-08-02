@@ -10,10 +10,10 @@ import {
   type LinearIssueCreateResult,
 } from "../connectors/linear-write.js";
 import {
-  loadConnectorAuthorization,
   loadTurnAccess,
   verifyConnectorAuthorization,
 } from "../config/workspace-config-do.js";
+import { loadPlatformConnectorAuthorization } from "../connectors/platform-authorization.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
 import { requireRequestContext } from "../request-context.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
@@ -114,20 +114,19 @@ export function createSaveLinearIssueTool(dependencies: {
 
       const env = dependencies.env();
       let access: Awaited<ReturnType<typeof loadTurnAccess>>;
-      let authorization: Awaited<ReturnType<typeof loadConnectorAuthorization>>;
+      let authorization: Awaited<ReturnType<typeof loadPlatformConnectorAuthorization>>["authorization"];
       try {
         access = await loadTurnAccess(env.WORKSPACE_CONFIG, context.teamId, channelId);
-        authorization = await loadConnectorAuthorization(env.WORKSPACE_CONFIG, {
-          workspaceId: context.teamId,
+        authorization = (await loadPlatformConnectorAuthorization({
+          env,
+          context,
           projectId: LINEAR_CONNECTOR_SCOPE_PROJECT,
           channelId,
-          requesterId: context.requesterId,
-          actorKind: "human",
           executionId: exact.executionId,
           threadKey: exact.threadKey,
           connectorId: "linear",
           action: "create_issue",
-        });
+        })).authorization;
       } catch (error) {
         return {
           status: "unauthorized",

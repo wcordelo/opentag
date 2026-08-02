@@ -160,8 +160,9 @@ and rollback evidence meet an explicit rollout decision.
   foundation is implemented. The follow-up snapshot fence now also requires
   an active server-owned OAuth grant bound to a curated marketplace version
   and matching custody reference before the broker can request a token. The
-  runtime identity-binding flow, real broker/custody deployment, and provider
-  token remain outstanding.
+  verified Slack runtime identity-binding seam now resolves that snapshot for
+  normal, deferred-file, and quick-action turns. The real broker/custody
+  deployment and provider token remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
 - **N/A — Codex-specific instruction-size configuration.** OpenTag’s pinned
   Claude Code harness does not need that Centaur-specific setting.

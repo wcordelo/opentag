@@ -3,6 +3,7 @@ import {
   makeWireTurnIdentitySync,
 } from "./harness/wire-id.js";
 import type { ActiveTurnRecord } from "./store/active-turn-types.js";
+import type { VerifiedIngressEvidence } from "./platform/contract.js";
 
 /** Immutable Slack ingress identity bound to concrete per-invocation objects. */
 export type InboundMessageTarget = {
@@ -32,6 +33,8 @@ export type RequestContext = Readonly<{
   /** Compatibility identifier. Authorization must use `actor`, not this label. */
   requesterId: string;
   inbound?: Readonly<InboundMessageTarget>;
+  /** Digest-only proof that the Worker verified the originating platform request. */
+  verifiedIngress?: VerifiedIngressEvidence;
   /** Durable ownership established at verified Worker ingress. */
   preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
 }>;
@@ -50,6 +53,7 @@ export function bindRequestContext(
     actor?: RequestActor;
     requesterId?: string;
     inbound?: InboundMessageTarget;
+    verifiedIngress?: VerifiedIngressEvidence;
     preAdmittedTurn?: Readonly<{ record: ActiveTurnRecord }>;
   },
 ): RequestContext {
@@ -68,6 +72,9 @@ export function bindRequestContext(
     actor,
     requesterId: requesterIdForActor(actor),
     ...(inbound ? { inbound } : {}),
+    ...(context.verifiedIngress
+      ? { verifiedIngress: Object.freeze({ ...context.verifiedIngress }) }
+      : {}),
     ...(context.preAdmittedTurn
       ? { preAdmittedTurn: Object.freeze({ record: Object.freeze({ ...context.preAdmittedTurn.record }) }) }
       : {}),

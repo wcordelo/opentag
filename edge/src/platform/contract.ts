@@ -22,6 +22,16 @@ export type ExternalSubject = Readonly<{
   platformSubjectId: string;
 }>;
 
+/**
+ * Digest-only proof that the Worker accepted a platform ingress request.
+ * Provider payloads, signatures, and secrets never cross the turn boundary.
+ */
+export type VerifiedIngressEvidence = Readonly<{
+  method: string;
+  evidenceDigest: string;
+  verifiedAt: string;
+}>;
+
 export type InternalPrincipal = Readonly<{
   tenantId: CanonicalInternalTenantId;
   principalId: CanonicalInternalPrincipalId;
@@ -52,11 +62,7 @@ export type PlatformRequestContext = Readonly<{
   principal: InternalPrincipal;
   identityLink: VerifiedIdentityLink;
   tenantLocatorVersion: number;
-  verifiedIngress: Readonly<{
-    method: string;
-    evidenceDigest: string;
-    verifiedAt: string;
-  }>;
+  verifiedIngress: VerifiedIngressEvidence;
   preAdmittedTurn: Readonly<{ record: ActiveTurnRecord }>;
 }>;
 

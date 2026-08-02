@@ -218,6 +218,17 @@ included in the signed connector label, so a rotated grant, marketplace
 revocation, credential revocation, or scope change cannot silently reuse an
 older authorization at the custody boundary.
 
+The runtime seam is `edge/src/connectors/platform-authorization.ts`. Slack HMAC
+verification emits only a digest-bound ingress record; the bot copies that
+record into the immutable request context and preserves it through deferred
+file turns and quick-action jobs. Before Drive or Linear asks
+`WorkspaceConfigDO` for labels, the seam resolves the server-owned tenant
+locator and identity link, composes the current OAuth/marketplace/custody
+snapshot, and supplies only the resulting version fence to the DO. Missing
+platform state, missing ingress evidence, stale identity versions, and record
+drift fail closed. Deferred retries reuse the signed Slack timestamp and body
+digest, so the durable job identity is stable across replay.
+
 The broker forwards immutable labels and public credential metadata to a
 separately authenticated `CUSTODY` service binding. The optional
 `opentag-credential-custody` Worker reads only explicitly mapped

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   provisioningPlan,
   REQUIRED_PROVISIONING_STEPS,
+  validateProvisioningStepReceipt,
   validateConnectorMarketplaceEntry,
   validateConnectorOAuthGrant,
   validateCredentialCustodyReference,
@@ -28,6 +29,23 @@ describe("Layer 3 platform contracts", () => {
       requestedAt: now,
     });
     expect(provisioningPlan(request)).toEqual(REQUIRED_PROVISIONING_STEPS);
+    expect(validateProvisioningStepReceipt({
+      schemaVersion: 1,
+      idempotencyKey: request.idempotencyKey,
+      step: "tenant_locator",
+      outcome: "complete",
+      externalReceiptRef: "provisioning:tenant-locator",
+      observedAt: now,
+    })).toMatchObject({ step: "tenant_locator", retryable: false });
+    expect(() => validateProvisioningStepReceipt({
+      schemaVersion: 1,
+      idempotencyKey: request.idempotencyKey,
+      step: "tenant_locator",
+      outcome: "complete",
+      retryable: true,
+      externalReceiptRef: "provisioning:tenant-locator",
+      observedAt: now,
+    })).toThrow("provisioning_complete_retryable_invalid");
   });
 
   it("keeps custody references opaque and rejects secret material", () => {

@@ -234,18 +234,23 @@ change, not evidence that all earlier gaps are complete.
   tenant/provider/scope revalidation, and an external custody service seam;
 - the optional Secrets Store custody Worker, which validates the same immutable
   labels and reference/version pair before reading a named secret binding.
+- receipt-bound provisioning step advancement; a tenant cannot become `active`
+  from a bare outcome and each required footprint retains an opaque external
+  receipt before activation.
 
 ### Still required before “everything” is live
 
-1. **Credential custody:** approve the optional Secrets Store adapter or choose
-   external KMS, wrapped Durable Object envelope, or self-hosted custody;
-   configure reference/version mappings, provider OAuth/token rotation,
-   revocation propagation, and a safe non-production smoke. The custody
-   Worker is implemented locally but no store or provider mapping is configured.
-2. **Provisioning/identity:** choose the tenant locator and isolation model,
-   deploy the bootstrap/effect worker, establish identity/key custody, and only
-   mark provisioning active after every required DO, bundle, OAuth, and identity
-   step has an external receipt.
+1. **Credential custody:** the broker Worker and optional Secrets Store adapter
+   are implemented locally. Approve that adapter or choose external KMS,
+   wrapped Durable Object envelope, or self-hosted custody; configure
+   reference/version mappings, provider OAuth/token rotation, scope checks,
+   revocation propagation, and a safe non-production smoke. No credential
+   store or provider mapping is currently configured.
+2. **Provisioning/identity:** the local tenant ledger now requires an external
+   receipt for every required provisioning step. Choose the tenant locator and
+   isolation model, deploy the bootstrap/effect worker, establish identity/key
+   custody, and supply real receipts for every DO, bundle, OAuth, and identity
+   step.
 3. **OAuth/marketplace:** choose callback ownership and allowlisted origins,
    nonce/state handling, curated trust-review authority, and connector version
    lifecycle. The ledger is ready; the external effecter is not.

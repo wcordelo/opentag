@@ -41,6 +41,24 @@ type CustodyBindingConfig = Readonly<{
   expiresAt: string;
 }>;
 
+type ConnectorPolicy = Readonly<{
+  provider: string;
+  requiredScopes: readonly string[];
+  anyRequiredScope?: boolean;
+}>;
+
+const CONNECTOR_POLICIES: Readonly<Record<string, ConnectorPolicy>> = {
+  "google_drive:search": {
+    provider: "google",
+    requiredScopes: ["drive.readonly"],
+  },
+  "linear:create_issue": {
+    provider: "linear",
+    requiredScopes: ["issues:create", "write"],
+    anyRequiredScope: true,
+  },
+};
+
 class CustodyError extends Error {
   constructor(readonly code: string, readonly status: 400 | 401 | 403 | 404 | 409 | 503) {
     super(code);
@@ -201,9 +219,16 @@ async function readCredentialMetadata(
   }
 }
 
+function policyFor(request: CredentialCustodyResolveRequest): ConnectorPolicy {
+  const policy = CONNECTOR_POLICIES[`${request.labels.connectorId}:${request.labels.action}`];
+  if (!policy) throw new CustodyError("connector_resolution_not_allowed", 403);
+  return policy;
+}
+
 function assertCredentialActive(
   request: CredentialCustodyResolveRequest,
   credential: CredentialCustodyReference,
+  policy: ConnectorPolicy,
 ): void {
   const now = Date.now();
   if (!expiresAtAfter(now, request.labels.expiresAt)) {
@@ -226,6 +251,16 @@ function assertCredentialActive(
   }
   if (credential.expiresAt && Date.parse(request.labels.expiresAt) > Date.parse(credential.expiresAt)) {
     throw new CustodyError("connector_authorization_outlives_credential", 403);
+  }
+  if (credential.provider !== policy.provider) {
+    throw new CustodyError("credential_provider_mismatch", 403);
+  }
+  const hasScope = (scope: string) => credential.scopes.includes(scope);
+  const scopesAllowed = policy.anyRequiredScope
+    ? policy.requiredScopes.some(hasScope)
+    : policy.requiredScopes.every(hasScope);
+  if (!scopesAllowed) {
+    throw new CustodyError("credential_scope_missing", 403);
   }
 }
 
@@ -305,8 +340,9 @@ app.post("/resolve", async (c) => {
       return c.json({ error: error instanceof Error ? error.message : "credential_custody_request_invalid" }, 400);
     }
     await verifyConnectorAuthorization(c.env, request);
+    const policy = policyFor(request);
     const credential = await readCredentialMetadata(c.env, request);
-    assertCredentialActive(request, credential);
+    assertCredentialActive(request, credential, policy);
     const binding = configuredBinding(parseBindingConfig(c.env), request);
     return await resolveSecret(c.env, request, binding, credential);
   } catch (error) {

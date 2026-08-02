@@ -17,15 +17,21 @@ The Worker:
 6. returns a short-lived bearer only in the response body, without persisting
    or logging it.
 
-The custody binding is deliberately absent from the default Wrangler config.
-The deployment is not provider-ready until an approved KMS, envelope, or
-self-hosted custody Worker exists and is bound as `CUSTODY`. A missing custody
-binding returns `credential_custody_unavailable`; it never fabricates success.
+The custody binding points at the separately deployable
+`opentag-credential-custody` Worker, which is itself fail-closed until an
+approved Secrets Store mapping or another reviewed custody implementation is
+configured. The broker and custody Worker use separate internal service
+tokens. A missing binding or custody auth returns an explicit
+`credential_custody_unavailable`/`credential_custody_auth_unconfigured`; it
+never fabricates success.
 
 The bot caller must set the `CONNECTOR_CREDENTIAL_BROKER_TOKEN` secret and
 send it through the `CONNECTOR_CREDENTIALS` service binding. Provider tokens,
 OAuth codes, private keys, and raw secret values are prohibited from the
-broker request, platform ledger, access bundles, and logs.
+broker request, platform ledger, access bundles, and logs. The optional
+Secrets Store adapter maps only `{ref, version}` to a named binding and a
+bounded expiry; the token is read once at the custody boundary and returned
+only in the short-lived broker response.
 
 Dry-run the Worker with:
 

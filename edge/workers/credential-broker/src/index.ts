@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
+  assertConnectorLabelsIntegrity,
   type CredentialBrokerResponse,
   validateCredentialBrokerRequest,
   validateCredentialBrokerResponse,
@@ -20,6 +21,8 @@ type BrokerEnv = {
     PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
     /** External custody service. It is deliberately unconfigured by default. */
     CUSTODY?: Fetcher;
+    /** Separate internal auth for the custody service binding. */
+    CUSTODY_AUTH_TOKEN?: string;
     /** Internal service-binding authentication; never a provider credential. */
     BROKER_AUTH_TOKEN?: string;
     ENVIRONMENT?: string;
@@ -132,38 +135,6 @@ async function readCredentialMetadata(
   return { tenantId, credential };
 }
 
-async function assertLabelsIntegrity(
-  labels: ReturnType<typeof validateCredentialBrokerRequest>["labels"],
-): Promise<void> {
-  const { digest, ...unsigned } = labels;
-  const payload = JSON.stringify([
-    unsigned.schemaVersion,
-    unsigned.workspaceId,
-    unsigned.projectId,
-    unsigned.channelId,
-    unsigned.connectorId,
-    unsigned.action,
-    unsigned.scope,
-    unsigned.requesterId,
-    unsigned.actorKind,
-    unsigned.executionId,
-    unsigned.threadKey,
-    unsigned.accessBundleId,
-    unsigned.accessBundleRevision,
-    unsigned.credentialRef ?? null,
-    unsigned.credentialVersion ?? null,
-    unsigned.issuedAt,
-    unsigned.expiresAt,
-  ]);
-  const computed = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
-  const expected = `sha256:${[...new Uint8Array(computed)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")}`;
-  if (expected !== digest) {
-    throw new CredentialBrokerError("connector_labels_tampered", 403);
-  }
-}
-
 function assertResolutionAllowed(
   request: ReturnType<typeof validateCredentialBrokerRequest>,
   tenantId: string,
@@ -213,10 +184,14 @@ async function resolveFromCustody(
   if (!env.CUSTODY) {
     throw new CredentialBrokerError("credential_custody_unavailable", 503);
   }
+  if (!env.CUSTODY_AUTH_TOKEN) {
+    throw new CredentialBrokerError("credential_custody_auth_unconfigured", 503);
+  }
   const response = await env.CUSTODY.fetch("https://custody/resolve", {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      authorization: `Bearer ${env.CUSTODY_AUTH_TOKEN}`,
       "x-opentag-credential-authorization": request.labels.digest,
     },
     body: JSON.stringify({
@@ -225,12 +200,18 @@ async function resolveFromCustody(
       reference: request.reference,
       labels: request.labels,
       credential: {
+        schemaVersion: credential.schemaVersion,
+        tenantId: credential.tenantId,
         credentialRef: credential.credentialRef,
+        backend: credential.backend,
         provider: credential.provider,
         subject: credential.subject,
         scopes: credential.scopes,
         version: credential.version,
+        status: credential.status,
+        issuedAt: credential.issuedAt,
         ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
+        ...(credential.revokedAt ? { revokedAt: credential.revokedAt } : {}),
       },
     }),
   });
@@ -262,11 +243,13 @@ app.get("/health", (c) => c.json({
   workspaceConfigConfigured: Boolean(c.env.WORKSPACE_CONFIG),
   platformStateConfigured: Boolean(c.env.PLATFORM_STATE),
   custodyConfigured: Boolean(c.env.CUSTODY),
+  custodyAuthConfigured: Boolean(c.env.CUSTODY_AUTH_TOKEN),
   providerResolutionEnabled: Boolean(
     c.env.BROKER_AUTH_TOKEN &&
     c.env.WORKSPACE_CONFIG &&
     c.env.PLATFORM_STATE &&
-    c.env.CUSTODY,
+    c.env.CUSTODY &&
+    c.env.CUSTODY_AUTH_TOKEN,
   ),
 }));
 
@@ -282,7 +265,11 @@ app.post("/resolve", async (c) => {
       }
       throw error;
     }
-    await assertLabelsIntegrity(request.labels);
+    try {
+      await assertConnectorLabelsIntegrity(request.labels);
+    } catch {
+      throw new CredentialBrokerError("connector_labels_tampered", 403);
+    }
     const policy = policyFor(request);
     const { tenantId, credential } = await readCredentialMetadata(c.env, request);
     assertResolutionAllowed(request, tenantId, credential, policy);

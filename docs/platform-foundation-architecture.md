@@ -125,13 +125,15 @@ before contacting custody. It supports only explicitly registered connector
 actions (`google_drive/search` and `linear/create_issue`) and fails closed for
 unknown actions.
 
-The broker forwards immutable labels and public credential metadata to an
-external `CUSTODY` service binding. It never stores or logs the returned bearer.
-The default Wrangler configuration intentionally omits that binding; until an
-approved KMS, envelope, or self-hosted custody Worker is selected,
-`credential_custody_unavailable` is the expected result. This makes the
-architecture deployable and testable without pretending that Drive or Linear
-credentials are live.
+The broker forwards immutable labels and public credential metadata to a
+separately authenticated `CUSTODY` service binding. The optional
+`opentag-credential-custody` Worker reads only explicitly mapped
+Cloudflare Secrets Store bindings; its configuration contains reference,
+version, binding-name, and expiry metadata, never provider token values. The
+broker and custody Worker remain fail-closed until both internal auth tokens,
+the approved mapping, and the non-production smoke are configured. This makes
+the architecture deployable and testable without pretending that Drive or
+Linear credentials are live.
 
 The Worker exposes these operations only behind the existing admin secret. The
 ledger is an audit/state boundary, not the effecter: it does not perform a
@@ -142,7 +144,9 @@ The validators reject secret-bearing fields. The following decisions are
 still required before these contracts become live product surfaces:
 
 1. shared per-tenant DO isolation versus Workers for Platforms;
-2. external KMS versus wrapped DO envelopes versus self-hosted custody;
+2. whether the optional Cloudflare Secrets Store adapter is the approved
+   custody implementation, or whether an external KMS/envelope/self-hosted
+   Worker should replace it;
 3. curated-only marketplace trust and OAuth callback ownership;
 4. hosted billing boundary, plan/overage policy, and source-of-truth ledger;
 5. retention/deletion guarantees and compliance requirements for hosted memory.
@@ -156,8 +160,9 @@ reported complete.
 ## Remaining activation gates
 
 - Drive search is implemented behind the connector authorization contract, but
-  needs the credential-broker Worker, an approved Google OAuth/key custody path,
-  and a non-production validation workspace before it can run live.
+  needs the credential-broker and custody Workers, an approved Google
+  OAuth/key mapping, and a non-production validation workspace before it can
+  run live.
 - Knowledge MCP search still needs the existing Supermemory configuration and
   knowledge rollout gates. Raw templates use the local KnowledgeDO and do not
   imply that Supermemory ingestion is active.
@@ -166,11 +171,11 @@ reported complete.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, admin routes, and
-  credential-broker boundary are locally validated, but the production
-  bootstrap authority, tenant locator integration, identity/key custody worker,
-  Slack OAuth callback, marketplace trust review process, billing/plan
-  enforcement, memory deletion executor, external custody binding, and
-  provider adapters are not live.
+- The platform-state migration, effect leases, admin routes, credential-broker
+  boundary, and optional Secrets Store custody adapter are locally validated,
+  but the production bootstrap authority, tenant locator integration,
+  identity/key custody policy, Slack OAuth callback, marketplace trust review
+  process, billing/plan enforcement, memory deletion executor, configured
+  custody mapping, and provider adapters are not live.
 - Cloudflare deployment is a separate explicit gate; local typechecks and
   tests do not authorize `wrangler deploy`.

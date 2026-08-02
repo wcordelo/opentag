@@ -242,18 +242,22 @@ The credential broker can be deployed before its custody backend to publish a
 fail-closed health surface, but it must not be considered connector-ready until
 all three boundaries exist:
 
-1. Deploy `workers/credential-broker/` with the cross-Worker `PLATFORM_STATE`
-   binding.
-2. Configure an approved external KMS, envelope, or self-hosted custody Worker
-   as its `CUSTODY` service binding. The custody Worker owns provider tokens and
-   OAuth refresh material; neither the broker nor the bot may persist them.
-3. Set the same `CONNECTOR_CREDENTIAL_BROKER_TOKEN` as a secret on the bot and
-   broker, then deploy the bot with its `CONNECTOR_CREDENTIALS` binding.
+1. Deploy `workers/credential-custody/` with an approved
+   `CUSTODY_AUTH_TOKEN`, Secrets Store binding map, and non-production secret
+   smoke; the binding map contains only credential references, versions,
+   binding names, and expiry metadata.
+2. Deploy `workers/credential-broker/` with the cross-Worker
+   `PLATFORM_STATE` binding and its `CUSTODY` service binding. Set the separate
+   `CUSTODY_AUTH_TOKEN`; the custody Worker owns provider tokens and OAuth
+   refresh material, while neither the broker nor the bot may persist them.
+3. Set `CONNECTOR_CREDENTIAL_BROKER_TOKEN` as a secret on the bot and broker,
+   then deploy the bot with its `CONNECTOR_CREDENTIALS` binding.
 
 Verify `/health` reports `providerResolutionEnabled: true` only after the
 custody binding is present. Until then, Drive and Linear must remain disabled
 for live workspaces and resolution must return
-`credential_custody_unavailable`.
+`credential_custody_unavailable` or
+`credential_custody_auth_unconfigured`.
 
 The platform ledger does not call Slack, Google, Linear, a custody system, a
 billing provider, or a memory backend. State transitions create secret-free

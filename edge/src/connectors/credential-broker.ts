@@ -11,6 +11,10 @@ import type {
   CredentialReference,
   ImmutableConnectorLabels,
 } from "./authorization.js";
+import {
+  validateCredentialCustodyReference,
+  type CredentialCustodyReference,
+} from "../platform/layer3-contract.js";
 
 export const CREDENTIAL_BROKER_SCHEMA_VERSION = 1 as const;
 
@@ -31,6 +35,18 @@ export type CredentialBrokerResponse = Readonly<{
   version: number;
   accessToken: string;
   expiresAt?: string;
+}>;
+
+/**
+ * Metadata-only request from the credential broker to an approved custody
+ * adapter. The token itself is never a valid field in this contract.
+ */
+export type CredentialCustodyResolveRequest = Readonly<{
+  schemaVersion: typeof CREDENTIAL_BROKER_SCHEMA_VERSION;
+  tenantId: string;
+  reference: Readonly<{ ref: string; version: number }>;
+  labels: ImmutableConnectorLabels;
+  credential: CredentialCustodyReference;
 }>;
 
 function object(value: unknown, field: string): Record<string, unknown> {
@@ -144,6 +160,79 @@ export function validateCredentialBrokerResponse(value: unknown): CredentialBrok
       : { expiresAt: timestamp(input.expiresAt, "credential_expires_at") }),
   };
   return Object.freeze(response);
+}
+
+export function validateCredentialCustodyResolveRequest(
+  value: unknown,
+): CredentialCustodyResolveRequest {
+  const input = object(value, "credential_custody_request");
+  if (input.schemaVersion !== CREDENTIAL_BROKER_SCHEMA_VERSION) {
+    throw new Error("credential_custody_schema_invalid");
+  }
+  const tenantId = identifier(input.tenantId, "tenant_id");
+  const brokerRequest = validateCredentialBrokerRequest({
+    schemaVersion: CREDENTIAL_BROKER_SCHEMA_VERSION,
+    reference: input.reference,
+    labels: input.labels,
+  });
+  const credential = validateCredentialCustodyReference(input.credential);
+  if (credential.tenantId !== tenantId) {
+    throw new Error("credential_custody_tenant_mismatch");
+  }
+  if (
+    credential.credentialRef !== brokerRequest.reference.ref ||
+    credential.version !== brokerRequest.reference.version
+  ) {
+    throw new Error("credential_custody_reference_mismatch");
+  }
+  return Object.freeze({
+    schemaVersion: CREDENTIAL_BROKER_SCHEMA_VERSION,
+    tenantId,
+    reference: brokerRequest.reference,
+    labels: brokerRequest.labels,
+    credential,
+  });
+}
+
+/** Recompute the immutable label digest at every service boundary. */
+export async function connectorLabelsDigest(
+  labels: ImmutableConnectorLabels,
+): Promise<string> {
+  const { digest: _ignoredDigest, ...unsigned } = labels;
+  const payload = JSON.stringify([
+    unsigned.schemaVersion,
+    unsigned.workspaceId,
+    unsigned.projectId,
+    unsigned.channelId,
+    unsigned.connectorId,
+    unsigned.action,
+    unsigned.scope,
+    unsigned.requesterId,
+    unsigned.actorKind,
+    unsigned.executionId,
+    unsigned.threadKey,
+    unsigned.accessBundleId,
+    unsigned.accessBundleRevision,
+    unsigned.credentialRef ?? null,
+    unsigned.credentialVersion ?? null,
+    unsigned.issuedAt,
+    unsigned.expiresAt,
+  ]);
+  const computed = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(payload),
+  );
+  return `sha256:${[...new Uint8Array(computed)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+export async function assertConnectorLabelsIntegrity(
+  labels: ImmutableConnectorLabels,
+): Promise<void> {
+  if (await connectorLabelsDigest(labels) !== labels.digest) {
+    throw new Error("connector_labels_tampered");
+  }
 }
 
 export async function resolveCredentialBearer(

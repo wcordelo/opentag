@@ -75,6 +75,7 @@ describe("credential broker Worker", () => {
     let stateBody: unknown;
     let authorizationBody: unknown;
     let custodyBody: Record<string, unknown> | undefined;
+    let custodyAuthorization: string | null | undefined;
     const workspaceStub = {
       fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         authorizationBody = JSON.parse(String(init?.body));
@@ -98,6 +99,7 @@ describe("credential broker Worker", () => {
     const custody = {
       fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         custodyBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        custodyAuthorization = new Headers(init?.headers).get("authorization");
         return Response.json({
           schemaVersion: 1,
           ref: reference.ref,
@@ -122,6 +124,7 @@ describe("credential broker Worker", () => {
         WORKSPACE_CONFIG: workspace as never,
         PLATFORM_STATE: state as never,
         CUSTODY: custody as never,
+        CUSTODY_AUTH_TOKEN: "custody-secret",
       },
     );
     expect(response.status).toBe(200);
@@ -137,6 +140,7 @@ describe("credential broker Worker", () => {
       reference: { ref: reference.ref, version: reference.version },
       credential: { provider: "google", scopes: ["drive.readonly"] },
     });
+    expect(custodyAuthorization).toBe("Bearer custody-secret");
     expect(JSON.stringify(custodyBody)).not.toContain("custody-only-token");
   });
 
@@ -204,6 +208,7 @@ describe("credential broker Worker", () => {
           get: () => ({ fetch: async () => Response.json(metadata(tenantId, "revoked")) }),
         } as never,
         CUSTODY: custody as never,
+        CUSTODY_AUTH_TOKEN: "custody-secret",
       },
     );
     expect(response.status).toBe(403);

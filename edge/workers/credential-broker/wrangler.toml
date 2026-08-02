@@ -19,10 +19,17 @@ name = "PLATFORM_STATE"
 class_name = "PlatformStateDO"
 script_name = "opentag-bot"
 
+# The custody Worker is a separate last-mile boundary. It remains fail-closed
+# until its auth token and approved Secrets Store mapping are configured.
+[[services]]
+binding = "CUSTODY"
+service = "opentag-credential-custody"
+
 [vars]
 ENVIRONMENT = "production"
 
 # Secrets:
 # - BROKER_AUTH_TOKEN authenticates the opentag-bot service binding.
-# - The CUSTODY service binding is intentionally omitted until an approved
-#   external KMS/envelope custody Worker exists. Do not add provider tokens.
+# - CUSTODY_AUTH_TOKEN authenticates the custody service binding.
+# The custody Worker remains unconfigured until an operator supplies a
+# Secrets Store binding map; do not add provider tokens to this file.

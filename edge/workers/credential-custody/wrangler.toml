@@ -1,0 +1,20 @@
+name = "opentag-credential-custody"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# CUSTODY_BINDINGS_JSON is metadata only. It maps a credential reference and
+# version to a Secrets Store binding name plus a bounded expiry. Configure it
+# through an approved deployment overlay; never put a provider token here.
+#
+# Each enabled credential also needs a [[secrets_store_secrets]] entry:
+# binding = "GOOGLE_DRIVE_TOKEN_V2"
+# store_id = "<approved-store-id>"
+# secret_name = "<approved-secret-name>"
+#
+# Secret: CUSTODY_AUTH_TOKEN. It must be shared only with the broker's CUSTODY
+# service binding. No provider token is stored as a Worker secret.

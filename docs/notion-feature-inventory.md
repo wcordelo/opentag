@@ -96,10 +96,11 @@ were inspected for schema, historical context, and architecture boundaries.
 - **Evaluate — generic client-credentials token broker.** Merged main has the
   secret-free broker client and durable effect handoff. The isolated branch
   adds a fail-closed broker Worker with platform-state revalidation, provider
-  and scope policy, internal authentication, and an external `CUSTODY` binding.
-  It intentionally has no encrypted provider store, rotation scheduler, or
-  approved custody backend. Do not put provider tokens in OpenTag Durable
-  Objects, Wrangler vars, or access bundles.
+  and scope policy, separate internal custody authentication, and an optional
+  Secrets Store-backed `CUSTODY` Worker. It still has no configured store,
+  provider OAuth exchange, rotation scheduler, or approved production custody
+  policy. Do not put provider tokens in OpenTag Durable Objects, Wrangler vars,
+  queues, or access bundles.
 - **N/A — Kubernetes observable-resource labels.** No Kubernetes/iron-proxy
   equivalent is needed; Cloudflare structured logs and trace correlation are
   the adaptation.
@@ -200,15 +201,17 @@ change, not evidence that all earlier gaps are complete.
   state transitions emit intents for provisioning, custody/OAuth revocation and
   rotation, marketplace changes, billing meters, and memory deletion.
 - the isolated credential-broker Worker boundary with internal authentication,
-  tenant/provider/scope revalidation, and an external custody service seam.
+  tenant/provider/scope revalidation, and an external custody service seam;
+- the optional Secrets Store custody Worker, which validates the same immutable
+  labels and reference/version pair before reading a named secret binding.
 
 ### Still required before “everything” is live
 
-1. **Credential custody:** choose external KMS, wrapped Durable Object
-   envelope, or self-hosted custody; implement the external custody Worker,
-   provider OAuth/token rotation, revocation propagation, and a safe
-   non-production smoke. The broker boundary exists on the isolated branch,
-   but no credential store or custody adapter is configured.
+1. **Credential custody:** approve the optional Secrets Store adapter or choose
+   external KMS, wrapped Durable Object envelope, or self-hosted custody;
+   configure reference/version mappings, provider OAuth/token rotation,
+   revocation propagation, and a safe non-production smoke. The custody
+   Worker is implemented locally but no store or provider mapping is configured.
 2. **Provisioning/identity:** choose the tenant locator and isolation model,
    deploy the bootstrap/effect worker, establish identity/key custody, and only
    mark provisioning active after every required DO, bundle, OAuth, and identity

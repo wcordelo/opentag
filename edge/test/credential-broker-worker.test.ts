@@ -73,7 +73,14 @@ describe("credential broker Worker", () => {
       externalTenantId: labels.workspaceId,
     });
     let stateBody: unknown;
+    let authorizationBody: unknown;
     let custodyBody: Record<string, unknown> | undefined;
+    const workspaceStub = {
+      fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        authorizationBody = JSON.parse(String(init?.body));
+        return Response.json({ ok: true });
+      }),
+    };
     const stateStub = {
       fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         stateBody = JSON.parse(String(init?.body));
@@ -83,6 +90,10 @@ describe("credential broker Worker", () => {
     const state = {
       idFromName: vi.fn((name: string) => name),
       get: vi.fn(() => stateStub),
+    };
+    const workspace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => workspaceStub),
     };
     const custody = {
       fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -106,7 +117,12 @@ describe("credential broker Worker", () => {
         },
         body: JSON.stringify({ schemaVersion: 1, reference: { ref: reference.ref, version: reference.version }, labels }),
       }),
-      { BROKER_AUTH_TOKEN: "broker-secret", PLATFORM_STATE: state as never, CUSTODY: custody as never },
+      {
+        BROKER_AUTH_TOKEN: "broker-secret",
+        WORKSPACE_CONFIG: workspace as never,
+        PLATFORM_STATE: state as never,
+        CUSTODY: custody as never,
+      },
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -114,6 +130,7 @@ describe("credential broker Worker", () => {
       version: reference.version,
       accessToken: "custody-only-token",
     });
+    expect(authorizationBody).toEqual({ labels });
     expect(stateBody).toEqual({ credentialRef: reference.ref });
     expect(custodyBody).toMatchObject({
       tenantId,
@@ -136,6 +153,10 @@ describe("credential broker Worker", () => {
     expect(unauthorized.status).toBe(401);
 
     const tenantId = await deriveInternalTenantId({ externalPlatform: "slack", externalTenantId: labels.workspaceId });
+    const workspace = {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => Response.json({ ok: true }) }),
+    };
     const noCustody = await credentialBrokerApp.fetch(
       new Request("https://broker/resolve", {
         method: "POST",
@@ -147,6 +168,7 @@ describe("credential broker Worker", () => {
       }),
       {
         BROKER_AUTH_TOKEN: "broker-secret",
+        WORKSPACE_CONFIG: workspace as never,
         PLATFORM_STATE: {
           idFromName: (name: string) => name,
           get: () => ({ fetch: async () => Response.json(metadata(tenantId)) }),
@@ -160,6 +182,10 @@ describe("credential broker Worker", () => {
   it("does not call custody for a revoked credential", async () => {
     const labels = await requestBody();
     const tenantId = await deriveInternalTenantId({ externalPlatform: "slack", externalTenantId: labels.workspaceId });
+    const workspace = {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => Response.json({ ok: true }) }),
+    };
     const custody = { fetch: vi.fn() };
     const response = await credentialBrokerApp.fetch(
       new Request("https://broker/resolve", {
@@ -172,6 +198,7 @@ describe("credential broker Worker", () => {
       }),
       {
         BROKER_AUTH_TOKEN: "broker-secret",
+        WORKSPACE_CONFIG: workspace as never,
         PLATFORM_STATE: {
           idFromName: (name: string) => name,
           get: () => ({ fetch: async () => Response.json(metadata(tenantId, "revoked")) }),
@@ -181,6 +208,38 @@ describe("credential broker Worker", () => {
     );
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "credential_revoked" });
+    expect(custody.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a revoked access bundle before reading custody metadata", async () => {
+    const labels = await requestBody();
+    const state = { get: vi.fn() };
+    const custody = { fetch: vi.fn() };
+    const workspace = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async () => Response.json({ error: "access_bundle_changed" }, { status: 403 }),
+      }),
+    };
+    const response = await credentialBrokerApp.fetch(
+      new Request("https://broker/resolve", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer broker-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ schemaVersion: 1, reference: { ref: reference.ref, version: reference.version }, labels }),
+      }),
+      {
+        BROKER_AUTH_TOKEN: "broker-secret",
+        WORKSPACE_CONFIG: workspace as never,
+        PLATFORM_STATE: state as never,
+        CUSTODY: custody as never,
+      },
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "access_bundle_changed" });
+    expect(state.get).not.toHaveBeenCalled();
     expect(custody.fetch).not.toHaveBeenCalled();
   });
 });

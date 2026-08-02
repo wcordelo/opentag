@@ -8,11 +8,14 @@ import {
 import type { CredentialCustodyReference } from "../../../src/platform/layer3-contract.js";
 import { validateCredentialCustodyReference } from "../../../src/platform/layer3-contract.js";
 import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js";
+import type { WorkspaceConfigDO } from "../../../src/config/workspace-config-do.js";
 import { deriveInternalTenantId } from "../../../src/platform/tenant-id.js";
 import { platformTenantObjectName } from "../../../src/platform/tenant-routing.js";
 
 type BrokerEnv = {
   Bindings: {
+    /** Authoritative access-bundle and connector-grant revalidation. */
+    WORKSPACE_CONFIG?: DurableObjectNamespace<WorkspaceConfigDO>;
     /** Cross-Worker namespace owned by opentag-bot; metadata only. */
     PLATFORM_STATE?: DurableObjectNamespace<PlatformStateDO>;
     /** External custody service. It is deliberately unconfigured by default. */
@@ -73,6 +76,32 @@ async function readCredentialMetadata(
   env: BrokerEnv["Bindings"],
   request: ReturnType<typeof validateCredentialBrokerRequest>,
 ): Promise<{ tenantId: string; credential: CredentialCustodyReference }> {
+  if (!env.WORKSPACE_CONFIG) {
+    throw new CredentialBrokerError("workspace_config_unavailable", 503);
+  }
+  const authorizationStub = env.WORKSPACE_CONFIG.get(
+    env.WORKSPACE_CONFIG.idFromName(request.labels.workspaceId),
+  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const authorizationResponse = await authorizationStub.fetch(
+    "https://workspace/verifyConnectorAuthorization",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ labels: request.labels }),
+    },
+  );
+  if (!authorizationResponse.ok) {
+    const body = await authorizationResponse.json().catch(() => ({})) as Record<string, unknown>;
+    const code = typeof body.error === "string" && /^[a-z][a-z0-9_.-]{0,127}$/.test(body.error)
+      ? body.error
+      : "connector_authorization_unavailable";
+    const status = authorizationResponse.status === 403
+      ? 403
+      : authorizationResponse.status === 409
+        ? 409
+        : 503;
+    throw new CredentialBrokerError(code, status);
+  }
   if (!env.PLATFORM_STATE) {
     throw new CredentialBrokerError("platform_state_unavailable", 503);
   }
@@ -230,9 +259,15 @@ app.get("/health", (c) => c.json({
   ok: true,
   role: "credential-broker",
   configured: Boolean(c.env.BROKER_AUTH_TOKEN),
+  workspaceConfigConfigured: Boolean(c.env.WORKSPACE_CONFIG),
   platformStateConfigured: Boolean(c.env.PLATFORM_STATE),
   custodyConfigured: Boolean(c.env.CUSTODY),
-  providerResolutionEnabled: Boolean(c.env.BROKER_AUTH_TOKEN && c.env.PLATFORM_STATE && c.env.CUSTODY),
+  providerResolutionEnabled: Boolean(
+    c.env.BROKER_AUTH_TOKEN &&
+    c.env.WORKSPACE_CONFIG &&
+    c.env.PLATFORM_STATE &&
+    c.env.CUSTODY,
+  ),
 }));
 
 app.post("/resolve", async (c) => {

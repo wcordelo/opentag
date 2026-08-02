@@ -6,13 +6,15 @@ secret-free authorization metadata and an external credential-custody system.
 The Worker:
 
 1. authenticates only the internal `opentag-bot` service binding;
-2. derives the canonical Slack tenant id and reads the versioned public
+2. revalidates the immutable labels against the authoritative
+   `WorkspaceConfigDO` access bundle and connector grant;
+3. derives the canonical Slack tenant id and reads the versioned public
    credential reference from `PlatformStateDO`;
-3. rejects revoked, expired, cross-tenant, provider-mismatched, and
+4. rejects revoked, expired, cross-tenant, provider-mismatched, and
    insufficient-scope references;
-4. forwards only bounded metadata and immutable connector labels to an
+5. forwards only bounded metadata and immutable connector labels to an
    explicitly configured `CUSTODY` service binding; and
-5. returns a short-lived bearer only in the response body, without persisting
+6. returns a short-lived bearer only in the response body, without persisting
    or logging it.
 
 The custody binding is deliberately absent from the default Wrangler config.

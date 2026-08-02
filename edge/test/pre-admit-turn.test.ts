@@ -134,7 +134,7 @@ describe("Slack turn pre-admission identity", () => {
     }, config)?.conversationKey).toBe("C1::12.0");
   });
 
-  it("does not pre-admit an unmentioned channel thread reply", () => {
+  it("routes clear unmentioned thread requests without admitting conversational noise", () => {
     const config = parseTrustedTriggerConfig("UBOT", undefined);
     expect(preAdmissionIdentityForEvent({
       team_id: "T1",
@@ -143,8 +143,23 @@ describe("Slack turn pre-admission identity", () => {
         type: "message",
         channel: "C1",
         user: "U1",
-        text: "follow up without mentioning the bot",
+        text: "what is the deploy status?",
         ts: "13.1",
+        thread_ts: "13.0",
+      },
+    }, config)).toMatchObject({
+      conversationKey: "C1::13.0",
+      eventId: "Ev-unmentioned-thread",
+    });
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-observe-only",
+      event: {
+        type: "message",
+        channel: "C1",
+        user: "U1",
+        text: "yo",
+        ts: "13.2",
         thread_ts: "13.0",
       },
     }, config)).toBeUndefined();
@@ -242,7 +257,53 @@ describe("Slack turn pre-admission identity", () => {
     }, config)).toBeUndefined();
     expect(preAdmissionIdentityForEvent({
       event_id: "Ev-human-reply",
-      event: { ...base, user: "U1" },
+      event: { ...base, user: "U1", text: "what is the status?" },
     }, config)).toMatchObject({ requesterId: "U1" });
+  });
+
+  it("does not register Slack's duplicate message delivery for an app mention", async () => {
+    const config = parseTrustedTriggerConfig("UBOT", undefined);
+    const calls: string[] = [];
+    const env = {
+      BOT_STATE: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          activeTurnGet: async () => undefined,
+          activeTurnRegisterWithObligation: async () => {
+            calls.push("register");
+            return { accepted: true, duplicate: false };
+          },
+        }),
+      },
+    };
+    const appMention = preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-app-mention",
+      event: {
+        type: "app_mention",
+        channel: "C1",
+        user: "U1",
+        text: "<@UBOT> hello",
+        ts: "15.1",
+        thread_ts: "15.0",
+      },
+    }, config);
+    const duplicateMessage = preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-message-duplicate",
+      event: {
+        type: "message",
+        channel: "C1",
+        user: "U1",
+        text: "<@UBOT> hello",
+        ts: "15.1",
+        thread_ts: "15.0",
+      },
+    }, config);
+    expect(appMention).toBeDefined();
+    const admitted = await preAdmitSlackTurnResult(env as never, appMention);
+    expect(admitted.status).toBe("accepted");
+    expect(duplicateMessage).toBeUndefined();
+    expect(calls).toHaveLength(1);
   });
 });

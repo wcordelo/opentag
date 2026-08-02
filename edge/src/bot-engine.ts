@@ -150,6 +150,11 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
     env.SLACK_BOT_USER_ID,
     env.SLACK_TRUSTED_TRIGGER_ACTORS,
   );
+  if (trustedTriggerConfig.botUserIdStatus !== "valid") {
+    console.warn("[slack] bot user id configuration", {
+      status: trustedTriggerConfig.botUserIdStatus,
+    });
+  }
   const trustedReadiness = trustedTriggerReadiness(trustedTriggerConfig);
   if (!trustedReadiness.ok || trustedReadiness.invalidActorCount > 0) {
     console.warn("[trusted-rich-trigger] configuration", {

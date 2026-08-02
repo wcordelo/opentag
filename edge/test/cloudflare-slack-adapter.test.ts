@@ -652,7 +652,7 @@ describe("CloudflareSlackAdapter", () => {
     }
   });
 
-  it("ignores unmentioned channel thread replies while preserving Slack history", async () => {
+  it("routes clear unmentioned requests and preserves conversational history", async () => {
     const adapter = new CloudflareSlackAdapter({
       unsafeAllowUnfencedTestOnly: true,
       botToken: "xoxb-test",
@@ -668,7 +668,7 @@ describe("CloudflareSlackAdapter", () => {
           ok: true,
           messages: [
             { text: "<@UBOT> start here", ts: "1.0", user: "U1" },
-            { text: "follow up without mention", ts: "2.0", user: "U1", thread_ts: "1.0" },
+            { text: "what is the deploy status?", ts: "2.0", user: "U1", thread_ts: "1.0" },
           ],
         });
       }
@@ -688,23 +688,38 @@ describe("CloudflareSlackAdapter", () => {
           channel: "C1",
           channel_type: "channel",
           user: "U1",
-          text: "follow up without mention",
+          text: "what is the deploy status?",
           ts: "2.0",
           thread_ts: "1.0",
         },
       });
-      expect(result).toEqual({ handled: false });
-      expect(sink.turns).toHaveLength(0);
+      expect(result).toEqual({ handled: true });
+      expect(sink.turns).toHaveLength(1);
 
-      // The ignored event is still returned by the normal Slack history read
-      // used by a later explicitly mentioned turn; ingress never mutates it.
+      // The thread event remains available through the normal Slack history read
+      // used by a later turn; ingress never mutates it.
       const history = await adapter.getMessages({
         channel: "C1",
         threadTs: "1.0",
       });
       expect(history.map((message) => message.text)).toContain(
-        "follow up without mention",
+        "what is the deploy status?",
       );
+
+      const observed = await adapter.handleEventsBody({
+        event_id: "EvObserved",
+        event: {
+          type: "message",
+          channel: "C1",
+          channel_type: "channel",
+          user: "U1",
+          text: "yo",
+          ts: "3.0",
+          thread_ts: "1.0",
+        },
+      });
+      expect(observed).toEqual({ handled: true });
+      expect(sink.turns).toHaveLength(1);
     } finally {
       globalThis.fetch = originalFetch;
     }

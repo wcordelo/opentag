@@ -1,0 +1,12 @@
+name = "opentag-oauth-effecter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secret: OAUTH_EFFECTER_AUTH_TOKEN
+# Provider adapters and custody bindings are intentionally absent until the
+# marketplace, tenant, OAuth, and custody decisions are approved.

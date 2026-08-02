@@ -1,6 +1,10 @@
 import { Hono } from "hono";
+import {
+  OAUTH_CALLBACK_SCHEMA_VERSION,
+  validateOAuthCallbackHandoff,
+  type OAuthCallbackHandoff,
+} from "../../../src/platform/oauth-callback-contract.js";
 
-const OAUTH_CALLBACK_SCHEMA_VERSION = 1 as const;
 const CALLBACK_PATH = "/oauth/callback";
 const NONCE_COOKIE = "opentag_oauth_nonce";
 const MAX_STATE_LENGTH = 256;
@@ -20,17 +24,6 @@ type CallbackEnv = {
     OAUTH_CALLBACK_ORIGIN?: string;
   };
 };
-
-type OAuthCallbackHandoff = Readonly<{
-  schemaVersion: typeof OAUTH_CALLBACK_SCHEMA_VERSION;
-  state: string;
-  nonce: string;
-  callbackOrigin: string;
-  receivedAt: string;
-  code?: string;
-  error?: string;
-  errorDescription?: string;
-}>;
 
 class OAuthCallbackError extends Error {
   constructor(readonly code: string, readonly status: 400 | 404 | 502 | 503) {
@@ -101,19 +94,23 @@ function parseCallback(request: Request, origin: string): OAuthCallbackHandoff {
   );
   if (!code && !error) throw new OAuthCallbackError("oauth_result_missing", 400);
   if (code && error) throw new OAuthCallbackError("oauth_result_conflict", 400);
-  if (error && !/^[a-z][a-z0-9_.:-]*$/i.test(error)) {
-    throw new OAuthCallbackError("oauth_error_invalid", 400);
+  try {
+    return validateOAuthCallbackHandoff({
+      schemaVersion: OAUTH_CALLBACK_SCHEMA_VERSION,
+      state,
+      nonce,
+      callbackOrigin: origin,
+      receivedAt: new Date().toISOString(),
+      ...(code ? { code } : {}),
+      ...(error ? { error } : {}),
+      ...(errorDescription ? { errorDescription } : {}),
+    });
+  } catch (error) {
+    throw new OAuthCallbackError(
+      error instanceof Error ? error.message : "oauth_callback_invalid",
+      400,
+    );
   }
-  return Object.freeze({
-    schemaVersion: OAUTH_CALLBACK_SCHEMA_VERSION,
-    state,
-    nonce,
-    callbackOrigin: origin,
-    receivedAt: new Date().toISOString(),
-    ...(code ? { code } : {}),
-    ...(error ? { error } : {}),
-    ...(errorDescription ? { errorDescription } : {}),
-  });
 }
 
 function responseForError(error: unknown): Response {

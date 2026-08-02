@@ -197,4 +197,30 @@ describe("platform effect runner", () => {
     expect(result).not.toHaveProperty("provider detail");
     expect(() => validatePlatformEffectRunRequest({})).toThrow(PlatformEffectRunnerError);
   });
+
+  it("does not mark an effect complete without an external receipt", async () => {
+    const { state, calls } = makeState();
+    const result = await runPlatformEffect({
+      request: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+      state,
+      adapters: {
+        credential_custody: async () => ({} as never),
+      },
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      adapterConfigured: true,
+      errorCode: "external_receipt_ref_invalid",
+    });
+    expect(calls.complete).toHaveLength(0);
+    expect(calls.fail.at(-1)).toMatchObject({
+      errorCode: "external_receipt_ref_invalid",
+      retryable: false,
+    });
+  });
 });

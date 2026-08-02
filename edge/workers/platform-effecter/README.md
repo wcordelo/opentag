@@ -17,6 +17,11 @@ memory. Adapter implementations must be added only after the custody, tenancy,
 provider, and compliance decisions in the platform architecture document are
 approved.
 
+Every successful adapter invocation must return an opaque external receipt
+reference. The runner will not mark an effect completed from an empty or
+malformed adapter result; provider work that cannot produce a receipt is a
+manual reconciliation failure, not a fabricated success.
+
 The Durable Object binding uses `script_name = "opentag-bot"`, so this Worker
 does not create a second platform-state database. Deploying it also requires
 the `EFFECTOR_AUTH_TOKEN` secret and a deliberate decision to make a provider

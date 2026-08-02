@@ -38,7 +38,8 @@ export class PlatformEffectAdapterError extends Error {
 }
 
 export type PlatformEffectAdapterResult = Readonly<{
-  externalReceiptRef?: string;
+  /** Opaque provider-side receipt; required before an effect can complete. */
+  externalReceiptRef: string;
 }>;
 
 export type PlatformEffectAdapter = (
@@ -151,9 +152,12 @@ export function validatePlatformEffectRunRequest(
   });
 }
 
-function receiptReference(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  return identifier(value, "external_receipt_ref", 256);
+function receiptReference(value: unknown): string {
+  try {
+    return identifier(value, "external_receipt_ref", 256);
+  } catch {
+    throw new PlatformEffectAdapterError("external_receipt_ref_invalid", false);
+  }
 }
 
 function normalizeAdapterFailure(error: unknown): EffectFailure {
@@ -253,31 +257,24 @@ export async function runPlatformEffect(input: {
   }
 
   let result: PlatformEffectAdapterResult;
+  let externalReceiptRef: string;
   try {
     result = await adapter(intent);
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       throw new PlatformEffectAdapterError("effect_adapter_result_invalid", false);
     }
+    externalReceiptRef = receiptReference(result.externalReceiptRef);
   } catch (error) {
     const failure = normalizeAdapterFailure(error);
     const receipt = await reportFailure(input.state, claim, failure);
     return { status: "failed", adapterConfigured: true, receipt, errorCode: failure.errorCode };
-  }
-
-  let externalReceiptRef: string | undefined;
-  try {
-    externalReceiptRef = receiptReference(result.externalReceiptRef);
-  } catch {
-    // Provider work already succeeded; drop an invalid ref instead of leaving
-    // the lease open or failing into a retry that could duplicate provider work.
-    externalReceiptRef = undefined;
   }
   let completion: Awaited<ReturnType<PlatformEffectStateClient["complete"]>>;
   try {
     completion = await input.state.complete({
       intentId: intent.intentId,
       leaseToken: claim.leaseToken,
-      ...(externalReceiptRef ? { externalReceiptRef } : {}),
+      externalReceiptRef,
     });
   } catch {
     // The provider call has already happened. Do not call fail after an

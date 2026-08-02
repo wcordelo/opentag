@@ -56,6 +56,19 @@ describe("durability health", () => {
       checks: { platformState: "ok" },
     });
   });
+
+  it("probes the OAuth state binding when it is configured", async () => {
+    await expect(probeDurabilityHealth({
+      BOT_STATE: namespace(async () => ({ ok: true })) as never,
+      SESSION_EVENTS: namespace(async () => ({ ok: true })) as never,
+      DEFERRED_INGRESS: namespace(async () => ({ ok: true })) as never,
+      SLACK_RATE_LIMIT: namespace(async () => ({ ok: true })) as never,
+      OAUTH_STATE: namespace(async () => ({ ok: true })) as never,
+    }, 10)).resolves.toMatchObject({
+      ok: true,
+      checks: { oauthState: "ok" },
+    });
+  });
 });
 
 describe("runtime capability evidence", () => {
@@ -73,6 +86,8 @@ describe("runtime capability evidence", () => {
       SUPERMEMORY_URL: "https://memory.example.test",
       BUZZ_RELAY_HTTP_BASE_URL: "https://relay.example.test",
       BUZZ_CHANNEL_TENANT_MAP: "{\"C123\":\"tenant\"}",
+      OAUTH_STATE: {} as never,
+      OAUTH_ALLOWED_REDIRECT_ORIGINS: "https://app.example.test",
     })).toEqual({
       version: 1,
       environmentConfigured: true,
@@ -87,6 +102,10 @@ describe("runtime capability evidence", () => {
         repositoryConfigured: true,
         nativeNanocodexConfigured: false,
       },
+      credentialBroker: {
+        serviceBindingConfigured: false,
+        authConfigured: false,
+      },
       knowledge: {
         namespaceConfigured: false,
         queueDeliveryConfigured: true,
@@ -94,9 +113,19 @@ describe("runtime capability evidence", () => {
         searchEndpointConfigured: true,
         actorTokenConfigured: false,
       },
+      platformEffects: {
+        stateNamespaceConfigured: false,
+        queueConfigured: false,
+        effecterConfigured: false,
+        dispatchConfigured: false,
+      },
       buzz: {
         relayConfigured: true,
         tenantDirectoryConfigured: true,
+      },
+      oauth: {
+        stateNamespaceConfigured: true,
+        allowedRedirectOriginsConfigured: true,
       },
       durability: {
         botStateConfigured: false,
@@ -118,6 +147,25 @@ describe("runtime capability evidence", () => {
       reconciliationConfigured: false,
       searchEndpointConfigured: false,
       actorTokenConfigured: false,
+    });
+    const evidence = buildRuntimeCapabilityEvidence({
+      CONNECTOR_CREDENTIALS: {} as never,
+      CONNECTOR_CREDENTIAL_BROKER_TOKEN: "broker-secret",
+      PLATFORM_STATE: {} as never,
+      PLATFORM_EFFECTS_QUEUE: {} as never,
+      PLATFORM_EFFECTS_QUEUE_NAME: "opentag-platform-effects",
+      PLATFORM_EFFECTER: {} as never,
+      EFFECTOR_AUTH_TOKEN: "effector-secret",
+    });
+    expect(evidence.credentialBroker).toEqual({
+      serviceBindingConfigured: true,
+      authConfigured: true,
+    });
+    expect(evidence.platformEffects).toEqual({
+      stateNamespaceConfigured: true,
+      queueConfigured: true,
+      effecterConfigured: true,
+      dispatchConfigured: true,
     });
   });
 });

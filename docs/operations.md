@@ -188,6 +188,7 @@ cd edge
 | `CONNECTOR_CREDENTIALS` | Service binding | Bot | Short-lived opaque connector credential resolution |
 | `PLATFORM_STATE` | Durable Object binding | Bot | Secret-free provisioning, custody, OAuth, billing, memory, and effect ledger |
 | `/admin/platform/memory/deletion/receipt` | Admin route | Bot | Source-scoped deletion proof; does not delete memory |
+| `/admin/platform/provision/step` | Admin route | Bot | Receipt-bound provisioning step advancement |
 | `ROUTER_MEASUREMENTS` | Durable Object binding | Bot | Workspace-scoped classifier shadow, outcome, and feedback records |
 | `BUZZ_OPEN_TAG_SIGNER_SECRET` | Secret | Bot | NIP-OA signer for Buzz wake receive; missing or malformed values fail closed |
 | `BUZZ_RELAY_HTTP_BASE_URL` | Deploy var | Bot | Allowlisted Buzz relay query origin |
@@ -307,6 +308,12 @@ through `/admin/platform/memory/deletion/receipt`; `deleted` and `not_found`
 complete a source, while `failed` makes the request terminally failed. The
 Worker stores only the receipt metadata and opaque external reference. It does
 not delete, inspect, or accept memory contents.
+
+Provisioning step updates must include `schemaVersion`, the provisioning
+idempotency key, required step, outcome, opaque `externalReceiptRef`, and
+`observedAt`. A complete step cannot be marked retryable. The platform ledger
+stores the receipt and reaches `active` only after all required steps have
+completed with evidence; it does not perform the external provisioning work.
 
 ## Deploy and connect the harness
 

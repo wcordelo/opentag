@@ -14,6 +14,7 @@ import type {
   ProvisioningRequest,
   ProvisioningStatus,
   ProvisioningStep,
+  ProvisioningStepReceipt,
   UsageMeterEvent,
 } from "./layer3-contract.js";
 import {
@@ -28,6 +29,7 @@ import {
   validateMemoryGovernancePolicy,
   validatePlatformEffectIntent,
   validateProvisioningRequest,
+  validateProvisioningStepReceipt,
   validateUsageMeterEvent,
 } from "./layer3-contract.js";
 import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
@@ -70,6 +72,16 @@ const PLATFORM_DDL = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_provisioning_external
    ON provisioning(external_platform, external_tenant_id)`,
+  `CREATE TABLE IF NOT EXISTS provisioning_step_receipts (
+     idempotency_key TEXT NOT NULL,
+     step TEXT NOT NULL,
+     receipt_json TEXT NOT NULL,
+     outcome TEXT NOT NULL CHECK (outcome IN ('complete', 'failed')),
+     retryable INTEGER NOT NULL CHECK (retryable IN (0, 1)),
+     external_receipt_ref TEXT NOT NULL,
+     observed_at TEXT NOT NULL,
+     PRIMARY KEY (idempotency_key, step)
+   )`,
   `CREATE TABLE IF NOT EXISTS platform_effect_intents (
      intent_id TEXT PRIMARY KEY,
      idempotency_key TEXT NOT NULL UNIQUE,
@@ -326,13 +338,27 @@ type ProvisioningRow = {
   updated_at: string;
 };
 
-function provisioningReceipt(row: ProvisioningRow): {
+type ProvisioningStepReceiptRow = {
+  idempotency_key: string;
+  step: ProvisioningStep;
+  receipt_json: string;
+  outcome: ProvisioningStepReceipt["outcome"];
+  retryable: number;
+  external_receipt_ref: string;
+  observed_at: string;
+};
+
+function provisioningReceipt(
+  row: ProvisioningRow,
+  stepReceipts: readonly ProvisioningStepReceipt[] = [],
+): {
   schemaVersion: 1;
   requestId: string;
   idempotencyKey: string;
   tenantId: string;
   status: ProvisioningStatus;
   completedSteps: readonly ProvisioningStep[];
+  stepReceipts: readonly ProvisioningStepReceipt[];
   failedStep?: ProvisioningStep;
   retryable: boolean;
   observedAt: string;
@@ -345,6 +371,7 @@ function provisioningReceipt(row: ProvisioningRow): {
     tenantId: row.tenant_id,
     status: row.status,
     completedSteps,
+    stepReceipts,
     ...(row.failed_step ? { failedStep: row.failed_step } : {}),
     retryable: row.retryable === 1,
     observedAt: row.updated_at,
@@ -725,7 +752,7 @@ export class PlatformStateEngine {
         if (existingKey.request_json !== requestJson) {
           throw new PlatformStateError("provisioning_idempotency_conflict", 409);
         }
-        return provisioningReceipt(existingKey);
+        return provisioningReceipt(existingKey, this.provisioningStepReceipts(existingKey.idempotency_key));
       }
 
       const existingExternal = this.sql.exec<ProvisioningRow>(
@@ -784,7 +811,8 @@ export class PlatformStateEngine {
         }),
         timestamp,
       );
-      return provisioningReceipt(this.provisioningByKey(request.idempotencyKey)!);
+      const stored = this.provisioningByKey(request.idempotencyKey)!;
+      return provisioningReceipt(stored, this.provisioningStepReceipts(stored.idempotency_key));
     });
   }
 
@@ -805,36 +833,32 @@ export class PlatformStateEngine {
       throw new PlatformStateError("provisioning_lookup_key_required", 400);
     }
     if (!row) throw new PlatformStateError("provisioning_not_found", 404);
-    return provisioningReceipt(row);
+    return provisioningReceipt(row, this.provisioningStepReceipts(row.idempotency_key));
   }
 
   advanceProvisioning(value: unknown): ReturnType<typeof provisioningReceipt> {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new PlatformStateError("provisioning_step_invalid", 400);
-    }
-    const input = value as Record<string, unknown>;
-    const key = id(input.idempotencyKey, "idempotency_key");
-    const step = input.step;
-    if (!REQUIRED_PROVISIONING_STEPS.includes(step as ProvisioningStep)) {
-      throw new PlatformStateError("provisioning_step_invalid", 400);
-    }
-    const outcome = input.outcome;
-    if (outcome !== "complete" && outcome !== "failed") {
-      throw new PlatformStateError("provisioning_step_outcome_invalid", 400);
-    }
-    if (input.retryable !== undefined && typeof input.retryable !== "boolean") {
-      throw new PlatformStateError("provisioning_retryable_invalid", 400);
-    }
-    const retryable = input.retryable === true;
+    const receipt = validateProvisioningStepReceipt(value);
+    const key = receipt.idempotencyKey;
+    const selectedStep = receipt.step;
+    const outcome = receipt.outcome;
+    const retryable = receipt.retryable;
 
     return this.tx(() => {
       const current = this.provisioningByKey(key);
       if (!current) throw new PlatformStateError("provisioning_not_found", 404);
       const steps = stepsFromJson(current.completed_steps_json);
-      const selectedStep = step as ProvisioningStep;
+      const receiptJson = json(receipt);
+      const existingReceipt = this.sql.exec<ProvisioningStepReceiptRow>(
+        `SELECT * FROM provisioning_step_receipts WHERE idempotency_key = ? AND step = ?`,
+        key,
+        selectedStep,
+      ).toArray()[0];
 
-      if (outcome === "complete" && steps.includes(selectedStep)) {
-        return provisioningReceipt(current);
+      if (steps.includes(selectedStep)) {
+        if (!existingReceipt || existingReceipt.receipt_json !== receiptJson) {
+          throw new PlatformStateError("provisioning_step_receipt_conflict", 409);
+        }
+        return provisioningReceipt(current, this.provisioningStepReceipts(current.idempotency_key));
       }
       if (current.status === "active") {
         throw new PlatformStateError("provisioning_already_active", 409);
@@ -860,6 +884,25 @@ export class PlatformStateEngine {
         status = completedAll(completed) ? "active" : "provisioning";
       }
       this.sql.exec(
+        `INSERT INTO provisioning_step_receipts (
+           idempotency_key, step, receipt_json, outcome, retryable,
+           external_receipt_ref, observed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(idempotency_key, step) DO UPDATE SET
+           receipt_json = excluded.receipt_json,
+           outcome = excluded.outcome,
+           retryable = excluded.retryable,
+           external_receipt_ref = excluded.external_receipt_ref,
+           observed_at = excluded.observed_at`,
+        key,
+        selectedStep,
+        receiptJson,
+        outcome,
+        retryable ? 1 : 0,
+        receipt.externalReceiptRef,
+        receipt.observedAt,
+      );
+      this.sql.exec(
         `UPDATE provisioning
          SET status = ?, completed_steps_json = ?, failed_step = ?, retryable = ?, updated_at = ?
          WHERE idempotency_key = ?`,
@@ -870,7 +913,8 @@ export class PlatformStateEngine {
         updatedAt,
         key,
       );
-      return provisioningReceipt(this.provisioningByKey(key)!);
+      const stored = this.provisioningByKey(key)!;
+      return provisioningReceipt(stored, this.provisioningStepReceipts(stored.idempotency_key));
     });
   }
 
@@ -1639,6 +1683,13 @@ export class PlatformStateEngine {
       `SELECT * FROM provisioning WHERE tenant_id = ?`,
       tenantId,
     ).toArray()[0];
+  }
+
+  private provisioningStepReceipts(idempotencyKey: string): ProvisioningStepReceipt[] {
+    return this.sql.exec<ProvisioningStepReceiptRow>(
+      `SELECT * FROM provisioning_step_receipts WHERE idempotency_key = ? ORDER BY step ASC`,
+      idempotencyKey,
+    ).toArray().map((row) => parseJson<ProvisioningStepReceipt>(row.receipt_json));
   }
 
   private insertMarketplaceEffect(

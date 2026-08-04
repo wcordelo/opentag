@@ -68,7 +68,7 @@ describe("extractStopCommandEvent", () => {
     expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
   });
 
-  it("ignores an unmentioned channel-thread Stop before cancellation routing", () => {
+  it("matches an unmentioned channel-thread Stop as a control message", () => {
     const event: SlackStopEvent = {
       type: "message",
       channel: "C1",
@@ -77,7 +77,7 @@ describe("extractStopCommandEvent", () => {
       ts: "1.1",
       thread_ts: "1.0",
     };
-    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBeUndefined();
+    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
   });
 
   it("keeps unthreaded DM Stop behavior without a mention", () => {
@@ -87,6 +87,18 @@ describe("extractStopCommandEvent", () => {
       user: "U1",
       text: "please stop",
       ts: "1.2",
+    };
+    expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
+  });
+
+  it("keeps unthreaded group-DM Stop behavior without a mention", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel_type: "mpim",
+      channel: "G1",
+      user: "U1",
+      text: "please stop",
+      ts: "1.3",
     };
     expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
   });

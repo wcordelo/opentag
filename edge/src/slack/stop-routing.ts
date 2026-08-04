@@ -15,6 +15,7 @@ import {
   SlackApiError,
   sharedSlackRateScheduler,
 } from "./web-api.js";
+import { bindSlackKnowledgeObserver, createSlackKnowledgeObserver } from "./knowledge-observer.js";
 import {
   conversationKeyFromThreadKey,
   firstSlackTs,
@@ -72,6 +73,7 @@ export interface SlackStopEvent {
   team_id?: string;
   type?: string;
   channel?: string;
+  channel_type?: string;
   user?: string;
   text?: string;
   ts?: string;
@@ -116,15 +118,14 @@ interface SessionInterruptRpc {
  *
  * Matches only `event_callback` payloads whose `event.type` is
  * `"app_mention"` or (for threaded replies and DMs) `"message"`, with a
- * non-empty `event.text`, and authored by an exact Slack user. Channel-thread
- * messages must explicitly mention the configured bot; DMs retain their
- * no-mention behavior, and top-level channel stops require an app mention.
- * `event.subtype` is deliberately not inspected — a stop message flows
- * through this check the same way regardless of subtype.
+ * non-empty `event.text`, and authored by an exact Slack user. Threaded
+ * channel stop phrases are control messages and do not require a bot mention;
+ * ordinary threaded messages still flow through normal routing. DMs retain
+ * their no-mention behavior, and top-level channel stops require an app
+ * mention.
  *
  * Returns the matched event on a hit, or `undefined` if this payload must
- * flow to the bot engine unchanged (including: not a stop phrase at all or
- * an unmentioned channel-thread message).
+ * flow to the bot engine unchanged (including text that is not a stop phrase).
  */
 export function extractStopCommandEvent(
   payload: SlackEventCallbackPayload,
@@ -138,9 +139,13 @@ export function extractStopCommandEvent(
   }
   // Ordinary top-level channel chatter must never cancel an unrelated turn.
   // Thread replies and DMs are already scoped to a bot conversation.
+  const isDirectMessage =
+    event.channel_type === "im" ||
+    event.channel_type === "mpim" ||
+    (typeof event.channel === "string" && event.channel.startsWith("D"));
   if (!event.thread_ts && event.type !== "app_mention") {
     const channel = event.channel;
-    if (!(typeof channel === "string" && channel.startsWith("D"))) {
+    if (!isDirectMessage) {
       return undefined;
     }
   }
@@ -156,11 +161,11 @@ export function extractStopCommandEvent(
   const isChannelThread =
     event.type === "message" &&
     Boolean(event.thread_ts) &&
-    !(typeof event.channel === "string" && event.channel.startsWith("D"));
-  if (isChannelThread && !hasExplicitBotMention(text, botUserId)) {
+    !isDirectMessage;
+  if (!isSlackStopCommand({ text })) return undefined;
+  if (isChannelThread && !hasExplicitBotMention(text, botUserId) && event.subtype) {
     return undefined;
   }
-  if (!isSlackStopCommand({ text })) return undefined;
   if (payload.team_id && !event.team_id) event.team_id = payload.team_id;
   return event;
 }
@@ -252,9 +257,17 @@ export async function handleStopCommand(
     }
 
     const slackClient = env.SLACK_BOT_TOKEN
-      ? createSlackWebClient(env.SLACK_BOT_TOKEN, {
-          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
-        })
+      ? (() => {
+          const messageObserver = bindSlackKnowledgeObserver(
+            createSlackKnowledgeObserver(env),
+            teamId,
+          );
+          return createSlackWebClient(env.SLACK_BOT_TOKEN!, {
+            scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+            messageObserverRequired: env.ENVIRONMENT === "production",
+            ...(messageObserver ? { messageObserver } : {}),
+          });
+        })()
       : undefined;
 
     // First make success delivery durably impossible. The short state lock is
@@ -445,6 +458,7 @@ export async function handleStopCommand(
               thread_ts: postThreadTs,
               text: "🛑 Stopped.",
               client_msg_id: clientMessageId,
+              knowledgeIndex: true,
             });
             if (!result.ok) {
               throw new SlackApiError(

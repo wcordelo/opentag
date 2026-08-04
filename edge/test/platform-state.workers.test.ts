@@ -49,4 +49,33 @@ describe("PlatformStateDO in workerd", () => {
     expect(step.body.status).toBe("provisioning");
     expect(step.body.completedSteps).toEqual([REQUIRED_PROVISIONING_STEPS[0]]);
   });
+
+  it("uses the real SQLite Durable Object binding for tenant locator state", async () => {
+    const objectName = `workers-locator-${crypto.randomUUID()}`;
+    const stub = env.PLATFORM_STATE!.get(
+      env.PLATFORM_STATE!.idFromName(objectName),
+    ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const active = {
+      schemaVersion: 1,
+      platform: "slack",
+      platformTenantId: objectName,
+      tenantId,
+      version: 1,
+      status: "active",
+      updatedAt: "2026-08-01T20:00:00.000Z",
+    };
+    const created = await post(stub, "/tenant-locator", active);
+    expect(created.response.status).toBe(200);
+    expect(created.body).toMatchObject({ duplicate: false, locator: active });
+    const resolved = await post(stub, "/tenant-locator/resolve", {
+      schemaVersion: 1,
+      platform: "slack",
+      platformTenantId: objectName,
+    });
+    expect(resolved.body).toMatchObject({
+      status: "resolved",
+      locator: { tenantId, version: 1 },
+    });
+  });
 });

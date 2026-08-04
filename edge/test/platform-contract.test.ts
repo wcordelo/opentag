@@ -13,6 +13,7 @@ import {
 import {
   adaptSlackPermissionSnapshotV1,
   adaptVerifiedSlackRequestContext,
+  adaptVerifiedSlackRequestContextFromRegistry,
 } from "../src/platform/slack-v1-adapter.js";
 import { bindPermissionSnapshot } from "../src/permissions/context.js";
 import { buildPermissionSnapshot } from "../src/permissions/snapshot.js";
@@ -212,6 +213,27 @@ describe("Slack V1 compatibility", () => {
     expect(snapshot).toMatchObject({
       version: 2,
       scope: { tenantId: TENANT, platform: "slack", externalTenantId: "T1", principalId: PRINCIPAL, tenantLocatorVersion: 2 },
+    });
+  });
+
+  it("resolves the locator from the server-owned reader before adapting Slack", async () => {
+    const { locator: _callerLocator, ...withoutCallerLocator } = slackAdapterInput();
+    const context = await adaptVerifiedSlackRequestContextFromRegistry({
+      ...withoutCallerLocator,
+      locatorReader: {
+        resolve: async (subject) => {
+          expect(subject).toMatchObject({ platform: "slack", platformTenantId: "T1" });
+          return {
+            status: "resolved",
+            locator: { platform: "slack", platformTenantId: "T1", tenantId: TENANT, version: 2, status: "active" },
+          };
+        },
+      },
+    });
+    expect(context).toMatchObject({
+      platform: "slack",
+      principal: { tenantId: TENANT },
+      tenantLocatorVersion: 2,
     });
   });
 

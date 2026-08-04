@@ -4,7 +4,7 @@ The `edge/` workspace is the testable Cloudflare target: the Slack bot,
 Durable Object state, optional research Worker, production AG-UI Container,
 Claude Code harness, and private Claudex proxy.
 
-Current architecture: [ARCHITECTURE.md](../ARCHITECTURE.md)
+Current architecture: [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
 
 Operations: [docs/operations.md](../docs/operations.md)
 

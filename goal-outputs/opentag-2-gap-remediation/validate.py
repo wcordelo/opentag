@@ -136,7 +136,7 @@ def check_source_evidence() -> None:
         "L1": [("edge/src/slack/session-link.ts", ("HMAC", "7 * 24 * 60 * 60"))],
         "L2": [
             ("edge/src/store/session-event-do.ts", ("authoritative",)),
-            ("ARCHITECTURE.md", ("reasoning effort", "never falls back to AG-UI")),
+            ("docs/ARCHITECTURE.md", ("reasoning effort", "never falls back to AG-UI")),
             ("edge/test/agent-turn-harness.test.ts", ("channel-selected harness is disconnected", "runAgent")),
             ("docs/centaur-port.md", ("reasoning flags rejected",)),
             ("docs/operations.md", ("fail visibly",)),
@@ -158,9 +158,9 @@ def check_source_evidence() -> None:
     forbid("edge/src/slack/cloudflare-slack-adapter.ts", "markLiveMessageAbsent")
     forbid("edge/src/slack/cloudflare-slack-adapter.ts", ":agui-continuation:", ":continuation:")
     forbid("edge/src/store/conversation-state-do.ts", "stableObligationClientMessageId")
-    forbid("ARCHITECTURE.md", "ordinary non-coding turns may fall back", "selected Claude harness may fall back")
+    forbid("docs/ARCHITECTURE.md", "ordinary non-coding turns may fall back", "selected Claude harness may fall back")
     forbid(
-        "ARCHITECTURE.md",
+        "docs/ARCHITECTURE.md",
         "best-effort basis",
         "mirror failure is logged but does not suppress",
     )

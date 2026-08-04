@@ -57,7 +57,7 @@ noise as history without replying to it.
 | Multi-agent PM/implement/verify product | Deferred | Not in the public TaskRuntime API |
 
 The current deployment and feature-by-feature evidence is maintained in
-[docs/current-state.md](./docs/current-state.md). The platform and connector
+[docs/current-state.md](./current-state.md). The platform and connector
 rows describe metadata and policy foundations; they do not claim that a real
 provider credential broker, OAuth callback, billing worker, deletion worker, or
 external Buzz relay is live.
@@ -135,7 +135,7 @@ effect fences, pre-admission, durable Stop continuation, research quiescence,
 Worker-enforced harness egress, and mechanical coding postconditions. Rails,
 Postgres, Kubernetes, and Centaur's console are not part of this product.
 
-The exact map is [docs/centaur-port.md](./docs/centaur-port.md).
+The exact map is [docs/centaur-port.md](./centaur-port.md).
 
 ## Hard invariants
 
@@ -154,7 +154,7 @@ The exact map is [docs/centaur-port.md](./docs/centaur-port.md).
 ## Canonical documentation
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — implemented topology and lifecycle
-- [docs/centaur-port.md](./docs/centaur-port.md) — port/adaptation inventory
-- [docs/extending.md](./docs/extending.md) — safe extension guide
-- [docs/operations.md](./docs/operations.md) — validation, deploy, and diagnosis
+- [docs/centaur-port.md](./centaur-port.md) — port/adaptation inventory
+- [docs/extending.md](./extending.md) — safe extension guide
+- [docs/operations.md](./operations.md) — validation, deploy, and diagnosis
 - [DECISIONS.md](./DECISIONS.md) — locked technical decisions

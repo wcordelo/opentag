@@ -9,12 +9,12 @@ Worker (`opentag-bot`). It can route conversational turns to the AG-UI triage
 runtime, coding turns to the Claude Code harness, and long-running
 research to a separate task plane. The current deployment evidence and
 remaining activation gates are tracked in
-[docs/current-state.md](./docs/current-state.md).
+[docs/current-state.md](./current-state.md).
 
 This document describes what the current branch implements. For why the team
 ported Centaur's UX patterns instead of its Kubernetes control plane, see
-[docs/centaur-port.md](./docs/centaur-port.md). For implementation recipes, see
-[docs/extending.md](./docs/extending.md).
+[docs/centaur-port.md](./centaur-port.md). For implementation recipes, see
+[docs/extending.md](./extending.md).
 
 ## System topology
 
@@ -546,10 +546,10 @@ become synthetic turns.
 
 ## Where to go next
 
-- [docs/centaur-port.md](./docs/centaur-port.md): what came from Centaur and
+- [docs/centaur-port.md](./centaur-port.md): what came from Centaur and
   what was intentionally not copied
-- [docs/extending.md](./docs/extending.md): safe extension recipes
-- [docs/operations.md](./docs/operations.md): deploy, validate, observe, and
+- [docs/extending.md](./extending.md): safe extension recipes
+- [docs/operations.md](./operations.md): deploy, validate, observe, and
   troubleshoot
 - [DECISIONS.md](./DECISIONS.md): locked technical choices
 - [setup.md](./setup.md): configuration walkthrough

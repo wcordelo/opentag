@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = ROOT / "KNOWLEDGE-BASE-SPEC.md"
+SPEC = ROOT / "docs/KNOWLEDGE-BASE-SPEC.md"
 READINESS = Path(__file__).resolve().parent / "RAILWAY-READINESS.md"
 
 

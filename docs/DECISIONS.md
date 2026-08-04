@@ -201,7 +201,7 @@ for possible answer-after-Stop or duplicate execution.
 
 Evidence: `response-routing.test.ts`, `pre-admit-turn.test.ts`,
 `cloudflare-slack-adapter.test.ts`, and the live routing/finalization canary in
-[`docs/current-state.md`](./docs/current-state.md).
+[`docs/current-state.md`](./current-state.md).
 
 ## 12. Exact render, effect, and rejection fences
 
@@ -327,7 +327,7 @@ Tier 3 remains dark until its sandbox/capacity contract is separately approved.
 
 The dated deployment, Slack canaries, synthetic platform ledger run, router
 summary, Buzz fail-closed probe, and open gates are recorded in
-[docs/current-state.md](./docs/current-state.md). Historical backfill reports
+[docs/current-state.md](./current-state.md). Historical backfill reports
 retain their original point-in-time claims and link to that reconciliation.
 
 ---

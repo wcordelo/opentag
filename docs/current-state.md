@@ -2,10 +2,10 @@
 
 Status: **current reconciliation record**
 
-Updated: **2026-08-01**
+Updated: **2026-08-02**
 
 This document is the evidence index for the merged connector/platform/router
-work and the live rollout performed on 2026-08-01. It reconciles the older
+work and the live rollouts performed on 2026-08-01 and 2026-08-02. It reconciles the older
 backfill reports and design specs without rewriting their historical evidence.
 When a historical report says that a feature was not implemented, read that
 statement as true at its recorded review point and use this document for the
@@ -16,25 +16,30 @@ current status.
 | Evidence | Value |
 | --- | --- |
 | Merged OpenTag baseline at recorded deployment | `498164fd2f63540b14988f028a1d97efa3f9d47d` (`origin/main`, PR #33 merge; includes #27, #28, #35, and #34) |
-| Current merged main | `5b2a2f8` (`origin/main`, including the subsequently merged architecture PRs #29–#39 and #41–#43; PR #40 remains open) |
+| Current merged main | `d075431f25f886842aec5552314afea9d1c9c1dd` (`origin/main`, PR #40 merge; PRs #45–#53 remain open and are not deployed) |
 | Narrow source hotfix | `9d4538c` — extract `identityRef` before `PlatformStateDO` identity reads |
-| Bot deployment | `opentag-bot`, version `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1` — deployed from merged main `498164f` after typecheck, unit, Worker/e2e, deploy-config, and Wrangler dry-run validation; live `/health` returned HTTP 200 |
+| Bot deployment | `opentag-bot`, version `88615a84-1396-4298-bd76-95b423db496c` — deployed from merged main `d075431` on 2026-08-02 after typecheck, 1,226 unit tests, 55 Worker/e2e tests, deploy-config validation, and Wrangler dry-run validation; three repeated live `/health` probes returned HTTP 200 |
+| Provider-independent effect boundaries | `opentag-credential-custody` `253aeab0-244e-456d-a65a-05ea0c9eb166`; `opentag-credential-broker` `618d0d35-07b7-475a-9fde-15af5a65a799`; `opentag-platform-effecter` `79b4d4a9-d039-4441-8532-b70b6826cf6a`; `opentag-provisioning-adapter` `ccf92a82-97c2-45bd-ae7a-64bf61bdf06f`; `opentag-identity-custody` `77e00862-fe2f-4ee6-b06b-9695dc868e9f`; `opentag-oauth-effecter` `a8b6cb82-aa9a-4dda-9d10-4081f89fe0d9`; `opentag-oauth-callback` `f0e20f62-c975-410b-b9ec-cdfb604abfa9`; `opentag-billing-adapter` `d341ec12-8765-486a-ad8e-0b21018b7121`; `opentag-memory-deletion` `ee536f48-32ef-4194-8dc1-776430341545` — deployed from merged main on 2026-08-02; all health endpoints returned HTTP 200, with provider effects fail-closed and no provider adapter configured |
 | Harness deployment | `opentag-harness-harnesscontainer`, version `58c47ab9-daf9-456b-b17c-73fc66e6b25d` |
 | Harness image | `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` |
-| Bot health | `GET /health` returned HTTP 200 from the deployed main version with durable stores, service bindings, model and knowledge configuration, native Nanocodex, and Buzz directory readiness reported |
+| Bot health | `GET /health` returned HTTP 200 after the final redeploy; durable stores and service bindings are healthy, while `modelConfigured`, credential-broker auth, knowledge reconciliation, and OAuth redirect-origin configuration remain false |
 | Slack canary thread | [final routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
 | Slack passive-only canary | [top-level plus untagged `yo` remained silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
 | Stale-turn cleanup thread | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 | Cloudflare origin | `https://opentag-bot.williamlopezc.workers.dev` |
 
-The current deployment was performed from the clean detached deployment
-worktree at `/Users/will/Documents/opentag-worktrees/deploy-20260801` after
-`origin/main` advanced through the provisioning and memory-receipt merges.
-The recorded deployment is the earlier `498164f` baseline. `origin/main` has
-since advanced to `5b2a2f8` through the stacked architecture merges, but this
-conflict-resolution workflow did not deploy that newer main or PR #40. Provider
-adapters and custody integrations must not be treated as live solely because
-their source has merged.
+The current deployment was performed from a clean isolated checkout of
+`origin/main` at `d075431`. The bot and provider-independent effect boundaries
+were deployed after the merged-main validation suite passed. The stacked
+foundation PRs #45–#53 remain open and are not included in this
+deployment. Provider adapters, custody mappings, OAuth origins, internal
+caller secrets, and external credentials must not be treated as live solely
+because their boundary Workers are deployed.
+The support Worker probes also verified the intended negative states: the
+credential broker and custody binding are not authorized for resolution, the
+effecter exposes no provider kinds, the OAuth callback has no allowed origin,
+and provisioning, identity, billing, and memory provider adapters are not
+configured. An unauthenticated effecter `/run` request returned HTTP 401.
 No secret value is recorded here.
 
 ## Status vocabulary
@@ -64,7 +69,7 @@ No secret value is recorded here.
 | Native typed Nanocodex Responses adapter | Live-verified | Slack marker `OPENTAG_NANOCODEX_NATIVE_OK` returned from `--nanocodex`; the typed adapter, provider state, replay, and completed-only commit are source-tested. A live reconnect/checkpoint replay drill remains open. |
 | Claudex model path through the private harness boundary | Live-verified | Slack marker `OPENTAG_CLAUDEX_HARNESS_OK` returned after the harness redeploy. This verifies the private Worker/service-binding path, not a public harness endpoint. |
 | Harness sandbox, egress, sentinels, remote-git postconditions | Source-complete; harness deployed | Harness image and Worker are deployed with the expected binding. No live repository push or PR was performed in this canary. |
-| Runtime/capability identity and deployment evidence | Live-verified | The deployed `/health` reports the current Worker version, `modelConfigured: true`, knowledge namespace/search/reconciliation/actor-token configuration, durable bindings, and native Nanocodex. Configuration presence is not treated as proof of a provider or authenticated Buzz effect; those paths remain separately gated. |
+| Runtime/capability identity and deployment evidence | Live-verified with open configuration gates | The deployed `/health` returned HTTP 200 and reports durable bindings, service bindings, native Nanocodex, knowledge namespace/search/queue configuration, and platform state. It also correctly reports `modelConfigured: false`, `knowledge.reconciliationConfigured: false`, `credentialBroker.authConfigured: false`, and `oauth.allowedRedirectOriginsConfigured: false`. Configuration presence is not treated as proof of a provider or authenticated Buzz effect. |
 | Actor-bound knowledge/MCP authorization | Source-complete; synthetic/admin path only | Token, replay, team/project, ACL, audit, and source-authorization contracts are focused-tested. External MCP remains operator-only; no actor token or real external MCP call was exposed in this rollout. |
 | Slack knowledge search and ordinary retrieval | Live-verified with indexing caveat | An indexed historical marker returned four hits and a normal knowledge question returned a scoped answer. A newly posted marker returned zero exact hits immediately, so indexing latency/eventual consistency remains an explicit operational condition. |
 | Connector labels, opaque credential references, bundle revisions, revocation, citations | Synthetic-live | The synthetic platform run exercised reference writes/reads, grants, marketplace metadata, revocation, and effect creation. Tokens never entered OpenTag state. |
@@ -74,8 +79,8 @@ No secret value is recorded here.
 | Identity custody references | Synthetic-live after hotfix | The deployed admin path put, read, and revoked a synthetic identity. The original live read exposed a route bug; `9d4538c` fixed it and the retest returned HTTP 200 before revocation. |
 | Credential custody references and OAuth grants | Synthetic-live | Put/get/revoke and grant lifecycle calls returned successfully for synthetic metadata. No provider token, OAuth code, or external callback was used. |
 | Marketplace and connector lifecycle | Synthetic-live | Curated entry, list, and revoke paths completed against the platform Durable Object. Trust review and provider execution are still external gates. |
-| Usage metering | Synthetic-live | The live synthetic run recorded a meter event, repeated it idempotently, and listed it. Billing provider reconciliation is not deployed. |
-| Memory policy and deletion request | Synthetic-live; executor open | Policy and deletion request state were recorded and listed. The deletion intent remains pending until a separately deployed effect worker proves source-by-source completion. |
+| Usage metering | Synthetic-live; billing boundary deployed fail-closed | The live synthetic run recorded a meter event, repeated it idempotently, and listed it. The provider-independent billing adapter is deployed, but no billing provider adapter or caller credential is configured. |
+| Memory policy and deletion request | Synthetic-live; executor deployed fail-closed | Policy and deletion request state were recorded and listed. The deletion intent remains pending until the deployed worker has an approved provider adapter and proves source-by-source completion. |
 | Effect intents, leases, retries, completion, cancellation | Synthetic-live | Provisioning intent claim/complete and retryable fail/reclaim/cancel all completed in the deployed DO. This validates the handoff ledger, not a real provider side effect. |
 | Router heuristic classification and measurement ledger | Live-verified in shadow mode | Admin summary/list showed a Tier 1 counterfactual record dispatched to Tier 2 and existing conservative command fallbacks. The separate Slack response-worthiness gate is live and does not enable a tier. `shadowOnly` remains true; Tier 1 and Tier 3 are not user-facing. |
 | Buzz `/buzz/wake` admission | Live fail-closed | A live POST returned HTTP 503 `buzz_receive_not_configured` without touching relay or runtime admission. No local Buzz signer/private key or authenticated relay proof was available, so a valid NIP-OA wake is not claimed. |
@@ -155,13 +160,15 @@ This is an architecture gap, not a documentation omission. Do not add
 `workers_secrets` as a per-tenant custody backend until the access, rotation,
 revocation, and isolation semantics are specified and tested.
 
-### 2. External effect execution is not deployed
+### 2. External effect execution remains provider-gated
 
-The platform Durable Object is a durable metadata ledger. Provisioning, OAuth,
-connector custody, billing, marketplace, and deletion intents still need a
-separately deployed worker with provider-specific credentials, bounded retries,
-external receipts, and reconciliation. The admin effect routes are diagnostic
-and synthetic-test surfaces, not the production effect worker.
+The platform Durable Object is a durable metadata ledger. The provider-
+independent provisioning, OAuth, connector custody, billing, and deletion
+boundaries are now deployed with bounded request contracts and fail-closed
+health states. They still need approved provider adapters, internal caller
+credentials, bounded retries with external receipts, and reconciliation before
+any real external effect is enabled. The admin effect routes remain diagnostic
+and synthetic-test surfaces, not proof of provider execution.
 
 ### 3. Provider integrations remain deliberately gated
 

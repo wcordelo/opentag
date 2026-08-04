@@ -2307,6 +2307,12 @@ async function handleRequest(
       service: "opentag-harness",
       claudeCode: await getClaudeVersion(),
       nanocodex: await getNanocodexVersion(),
+      provenance: {
+        sourceRevision: process.env.OPENTAG_HARNESS_SOURCE_REVISION || "unknown",
+        sourceDigest: process.env.OPENTAG_HARNESS_SOURCE_DIGEST || "unknown",
+        sourceTree: process.env.OPENTAG_HARNESS_SOURCE_TREE || "unknown",
+        sourceState: process.env.OPENTAG_HARNESS_SOURCE_STATE || "unknown",
+      },
     });
     return;
   }

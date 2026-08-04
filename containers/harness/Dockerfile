@@ -73,6 +73,15 @@ RUN npm ci --omit=dev \
 # ─────────────────────────────────────────────────────────────────────────
 FROM ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982 AS harness
 
+ARG OPENTAG_HARNESS_SOURCE_REVISION=unknown
+ARG OPENTAG_HARNESS_SOURCE_DIGEST=unknown
+ARG OPENTAG_HARNESS_SOURCE_TREE=unknown
+ARG OPENTAG_HARNESS_SOURCE_STATE=unknown
+LABEL org.opencontainers.image.revision=$OPENTAG_HARNESS_SOURCE_REVISION \
+      org.opencontainers.image.source-digest=$OPENTAG_HARNESS_SOURCE_DIGEST \
+      org.opencontainers.image.source-tree=$OPENTAG_HARNESS_SOURCE_TREE \
+      org.opencontainers.image.source-state=$OPENTAG_HARNESS_SOURCE_STATE
+
 ENV DEBIAN_FRONTEND=noninteractive
 ARG TARGETARCH
 
@@ -346,6 +355,10 @@ ENV PORT=8080 \
     HOME=/home/harness \
     SYSTEM_PROMPT_PATH=/opt/harness/SYSTEM_PROMPT.md \
     WORK_ROOT=/work \
+    OPENTAG_HARNESS_SOURCE_REVISION=$OPENTAG_HARNESS_SOURCE_REVISION \
+    OPENTAG_HARNESS_SOURCE_DIGEST=$OPENTAG_HARNESS_SOURCE_DIGEST \
+    OPENTAG_HARNESS_SOURCE_TREE=$OPENTAG_HARNESS_SOURCE_TREE \
+    OPENTAG_HARNESS_SOURCE_STATE=$OPENTAG_HARNESS_SOURCE_STATE \
     CLAUDE_BIN=claude \
     NANOCODEX_BIN=nanocodex \
     NANOCODEX_MODEL=gpt-5.6-sol \

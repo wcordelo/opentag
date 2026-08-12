@@ -21,11 +21,12 @@ silently fall back here when that harness is selected.
 cd edge/workers/agent-runtime
 npm ci
 
-npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put DEEPSEEK_API_KEY
+# Keep the existing OPENAI_API_KEY only for an explicit rollback to the OpenAI provider.
+# npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put LINEAR_API_KEY
 npx wrangler secret put LINEAR_TEAM_KEY   # team display name, e.g. Berendo
 # optional:
-# npx wrangler secret put AGENT_MODEL
 # npx wrangler secret put NOTION_TOKEN
 # npx wrangler secret put NOTION_MCP_AUTH_TOKEN
 # npx wrangler secret put AGENT_AUTH_HEADER

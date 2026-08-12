@@ -20,7 +20,10 @@ function envFromProcess(): TriageAgentEnv {
     LINEAR_MCP_URL: process.env["LINEAR_MCP_URL"],
     NOTION_MCP_AUTH_TOKEN: process.env["NOTION_MCP_AUTH_TOKEN"],
     NOTION_MCP_URL: process.env["NOTION_MCP_URL"],
+    AGENT_PROVIDER: process.env["AGENT_PROVIDER"],
+    AGENT_BASE_URL: process.env["AGENT_BASE_URL"],
     AGENT_MODEL: process.env["AGENT_MODEL"],
+    DEEPSEEK_API_KEY: process.env["DEEPSEEK_API_KEY"],
     getSecret: (name) => process.env[name],
     executionControl: { register: registerExecutionControl },
   };

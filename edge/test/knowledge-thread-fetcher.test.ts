@@ -48,6 +48,53 @@ describe("knowledge Slack thread pagination", () => {
     expect(calls).toEqual([undefined, "cursor-2"]);
   });
 
+  it("resumes after a page budget from the persisted next cursor", async () => {
+    const firstCheckpoints: Array<{
+      cursor?: string;
+      pages: number;
+      messages: SlackThreadMessage[];
+      bytes: number;
+    }> = [];
+    const first = await fetchKnowledgeThread({
+      channel: "C1",
+      threadTs: "1.0",
+      limits: { maxPages: 1 },
+      readPage: async ({ cursor }) => {
+        expect(cursor).toBeUndefined();
+        return {
+          ok: true,
+          messages: messages(1, 1),
+          has_more: true,
+          response_metadata: { next_cursor: "cursor-2" },
+        };
+      },
+      onCheckpoint: async (checkpoint) => {
+        firstCheckpoints.push(checkpoint);
+      },
+    });
+    expect(first).toMatchObject({ status: "incomplete", reason: "page_cap", pages: 1 });
+    expect(firstCheckpoints).toHaveLength(1);
+
+    const resumed = await fetchKnowledgeThread({
+      channel: "C1",
+      threadTs: "1.0",
+      limits: { maxPages: 1 },
+      initial: firstCheckpoints[0],
+      readPage: async ({ cursor }) => {
+        expect(cursor).toBe("cursor-2");
+        return {
+          ok: true,
+          messages: messages(2, 1),
+          has_more: false,
+          response_metadata: { next_cursor: "" },
+        };
+      },
+    });
+    expect(resumed).toMatchObject({ status: "complete", pages: 2 });
+    if (resumed.status !== "complete") throw new Error("expected complete");
+    expect(resumed.messages).toHaveLength(2);
+  });
+
   it.each(["not_in_channel", "channel_not_found", "thread_not_found"] as const)(
     "classifies Slack %s as a terminal source skip",
     async (reason) => {

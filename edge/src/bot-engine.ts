@@ -27,11 +27,15 @@ import {
   firstSlackTs,
   slackObligationThreadKey,
 } from "./slack/obligation-thread-key.js";
+import { reactionCleanupIngressId } from "./memory/knowledge-ingress-identity.js";
+import type { DeferredIngressJob } from "./deferred-ingress-do.js";
 import { extractMessageOverrides } from "./slack/overrides.js";
 import { resolveThreadOverrides } from "./store/thread-overrides.js";
 import type { Env } from "./env.js";
+import { ACTIVE_TURN_TTL_MS } from "./store/active-turn-types.js";
 import { runSlackTurnLifecycle } from "./slack/turn-lifecycle.js";
 import { sharedSlackRateScheduler } from "./slack/web-api.js";
+import { createSlackKnowledgeObserver } from "./slack/knowledge-observer.js";
 import {
   adoptSlackShortcut,
   finishSilentShortcut,
@@ -117,6 +121,61 @@ export function agentTraceCorrelationFromRequest(
 }
 
 let singleton: BotHandle | null = null;
+const WORKING_REACTION = "eyes";
+const WORKING_REACTION_CLEANUP_DELAY_MS = ACTIVE_TURN_TTL_MS;
+
+async function prepareWorkingReactionCleanup(
+  env: Env,
+  teamId: string,
+  target: { channel: string; ts: string } | undefined,
+): Promise<(() => Promise<void>) | undefined> {
+  if (!target?.channel || !target.ts) return undefined;
+  if (!env.DEFERRED_INGRESS) {
+    if (env.ENVIRONMENT === "production") {
+      throw new Error("reaction_cleanup_persistence_unavailable");
+    }
+    return undefined;
+  }
+  const id = reactionCleanupIngressId(
+    teamId,
+    target.channel,
+    target.ts,
+    WORKING_REACTION,
+  );
+  const stub = env.DEFERRED_INGRESS.get(
+    env.DEFERRED_INGRESS.idFromName(id),
+  ) as unknown as {
+    prepare(job: DeferredIngressJob): Promise<{
+      accepted: boolean;
+      status: "pending" | "running" | "completed" | "exhausted";
+    }>;
+    complete(jobId: string): Promise<{
+      completed: boolean;
+      status: "pending" | "running" | "completed" | "exhausted" | "missing";
+    }>;
+  };
+  const ownership = await stub.prepare({
+    id,
+    kind: "reaction_cleanup",
+    teamId,
+    notBefore: Date.now() + WORKING_REACTION_CLEANUP_DELAY_MS,
+    payload: {
+      teamId,
+      channelId: target.channel,
+      timestamp: target.ts,
+      name: WORKING_REACTION,
+    },
+  });
+  if (ownership.status === "exhausted") {
+    throw new Error("reaction_cleanup_ingress_exhausted");
+  }
+  return async () => {
+    const result = await stub.complete(id);
+    if (result.status === "exhausted" || result.status === "missing") {
+      throw new Error("reaction_cleanup_completion_" + result.status);
+    }
+  };
+}
 
 export async function resolveBotEngineKind(): Promise<BotEngineKind> {
   return "createBot";
@@ -167,6 +226,10 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       hasBotUserId: trustedTriggerConfig.botUserIdStatus === "valid",
     });
   }
+  const knowledgeObserver = createSlackKnowledgeObserver(env);
+  if (env.ENVIRONMENT === "production" && !knowledgeObserver) {
+    throw new Error("knowledge_observer_required");
+  }
   const adapter = new CloudflareSlackAdapter({
     botToken: env.SLACK_BOT_TOKEN,
     ...(trustedTriggerConfig.botUserId
@@ -174,6 +237,10 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       : {}),
     stateStore,
     slackScheduler,
+    ...(knowledgeObserver
+      ? { knowledgeMessageObserver: knowledgeObserver }
+      : {}),
+    knowledgeMessageObserverRequired: env.ENVIRONMENT === "production",
     deliveryMetrics: env.DELIVERY_METRICS,
     routerShadow: (decision: RouterHeuristicDecision, context) => {
       if (!env.DELIVERY_METRICS) return;
@@ -206,7 +273,6 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
           sessionViewer: {
             baseUrl: env.SESSION_VIEWER_BASE_URL,
             secret: env.ADMIN_SECRET,
-            runtimeLabel: `AG-UI · ${env.AGENT_MODEL ?? "runtime default"}`,
           },
         }
       : {}),
@@ -272,6 +338,8 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
 
   bot.onMention(async ({ thread, message }) => {
     let adopted: AdoptedShortcut | undefined;
+    let removeWorkingReaction: (() => Promise<boolean>) | undefined;
+    let completeWorkingReactionCleanup: (() => Promise<void>) | undefined;
     try {
       const requestContext = copyRequestContext(message.user, thread);
       // Every production mention, including lightweight shortcuts, adopts the
@@ -279,10 +347,39 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       adopted = await adoptSlackShortcut(env, adapter, thread);
       const teamId = requestContext.teamId;
       const channelId = (thread.conversationKey ?? "").split("::")[0] ?? "";
+      const text = message.text ?? "";
       // Snapshot react target for this turn before any concurrent ingress can
       // overwrite request-scoped state; bind to the Thread for tool handlers.
       const reactTarget = requestContext.inbound;
       bindInboundToThread(thread, reactTarget);
+      if (
+        requestContext.actor.kind === "slack_user" &&
+        !trivialAck(text) &&
+        !reactIntent(text)
+      ) {
+        completeWorkingReactionCleanup = await prepareWorkingReactionCleanup(
+          env,
+          teamId,
+          reactTarget,
+        );
+        const reacted = await adapter.react(
+          thread.conversationKey ?? "",
+          WORKING_REACTION,
+          reactTarget,
+          adopted.record,
+        );
+        if (reacted) {
+          removeWorkingReaction = async () => {
+            const removed = await adapter.unreact(
+              thread.conversationKey ?? "",
+              WORKING_REACTION,
+              reactTarget,
+            );
+            if (removed) await completeWorkingReactionCleanup?.();
+            return removed;
+          };
+        }
+      }
 
       const { config, bundle } = await loadTurnAccess(
         env.WORKSPACE_CONFIG,
@@ -307,7 +404,6 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         }
       }
 
-      const text = message.text ?? "";
       const isResearch =
         /^\s*research\b/i.test(text) || /\bresearch:\s*/i.test(text);
 
@@ -478,6 +574,17 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
         );
       } catch {
         /* best-effort error visibility for pre-lifecycle shortcuts */
+      }
+    } finally {
+      if (removeWorkingReaction) {
+        try {
+          await removeWorkingReaction();
+        } catch (error) {
+          console.warn(
+            "[bot] working reaction cleanup failed",
+            error instanceof Error ? error.message : error,
+          );
+        }
       }
     }
   });

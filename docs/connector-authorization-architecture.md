@@ -42,6 +42,20 @@ after the reference has been resolved.
 }
 ```
 
+Repository-backed grants add an exact `repoId`; Graphify tools reject a
+project/workspace grant that is not bound to the requested repository before
+calling the private service binding:
+
+```json
+{
+  "connectorId": "code_graph",
+  "actions": ["code_graph_search", "code_path", "code_impact"],
+  "scope": "project",
+  "projectId": "P1",
+  "repoId": "repo-one"
+}
+```
+
 Bundles have a monotonic revision and an `active`/`revoked` status. Legacy rows
 without this metadata normalize to revision `1`, `active`. Updating a bundle
 increments the revision; revocation increments it again and cannot be silently
@@ -109,6 +123,14 @@ credential reference. The flow is:
    GraphQL mutation, and revalidates the labels after the response. An
    ambiguous network failure retains the active-turn effect fence so a retry
    cannot silently create a duplicate issue.
+
+The shared-fleet platform migration adds a separate `connector_effect`
+envelope for this operation. It carries the approval/request reference and
+digests rather than the draft or credential, so a tenant-scoped provider
+adapter can own execution and return a durable external receipt. The current
+tool has not been switched to that adapter: until the adapter, custody mapping,
+and reconciliation store are configured, the path remains fail-closed and no
+live Linear mutation is claimed.
 
 The current Slack ingress uses the stable connector-project slot `workspace`
 because it does not yet have a separate internal project directory. Linear's

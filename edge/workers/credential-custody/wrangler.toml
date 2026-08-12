@@ -19,6 +19,12 @@ script_name = "opentag-bot"
 
 [vars]
 ENVIRONMENT = "production"
+CUSTODY_BINDINGS_JSON = '[{"ref":"credential:linear:controlled","version":1,"binding":"LINEAR_CONTROLLED_API_KEY","expiresAt":"2026-08-31T23:59:59.000Z"}]'
+
+[[secrets_store_secrets]]
+binding = "LINEAR_CONTROLLED_API_KEY"
+store_id = "d27d5fd480784b1d9172df3442e8ed30"
+secret_name = "LINEAR_CONTROLLED_API_KEY"
 
 # CUSTODY_BINDINGS_JSON is metadata only. It maps a credential reference and
 # version to a Secrets Store binding name plus a bounded expiry. Configure it

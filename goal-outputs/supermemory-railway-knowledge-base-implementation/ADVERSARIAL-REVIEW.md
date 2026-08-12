@@ -8,6 +8,13 @@ tests, inert infrastructure, validators, reports, and governing contracts only.
 No deployment, secret access, external mutation, git-history mutation, or source
 correction was performed.
 
+> **Historical review note (2026-08-02).** This review is retained as evidence
+> of the earlier B0–B4 review cycle. Later source work changed the knowledge
+> ingress ownership boundary, including a pre-ack `DeferredIngressDO` fence and
+> durable outbound observation. Re-evaluate any line references against
+> [`docs/current-state.md`](../../docs/current-state.md) before treating them
+> as current behavior.
+
 **Verdict:** The local command matrix is green, but B0-B4 do not satisfy the
 source, security, durability, and invariant acceptance contract. The findings
 below require correction followed by a different fresh independent re-review.

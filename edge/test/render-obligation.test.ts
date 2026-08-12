@@ -811,10 +811,17 @@ describe("ConversationStateDO render obligations", () => {
     });
     const ambiguousCalls: Array<Record<string, unknown>> = [];
     let call = 0;
-    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-      ambiguousCalls.push(Object.fromEntries(
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const body = Object.fromEntries(
         new URLSearchParams(String(init?.body ?? "")),
-      ));
+      );
+      if (String(url).includes("conversations.replies")) {
+        return Response.json({
+          ok: true,
+          messages: [{ ts: "1.1", client_msg_id: ambiguousCalls.at(-1)?.client_msg_id }],
+        });
+      }
+      ambiguousCalls.push(body);
       call += 1;
       if (call === 1) throw new TypeError("connection reset after dispatch");
       // Slack confirms the first client_msg_id was already applied.
@@ -970,7 +977,6 @@ describe("ConversationStateDO render obligations", () => {
       sessionViewer: {
         baseUrl: "https://bot.example.test",
         secret: "session-secret",
-        runtimeLabel: "OpenTag",
       },
       quickBaseDomain: "quick.example.test",
       slackScheduler: {
@@ -1038,7 +1044,10 @@ describe("ConversationStateDO render obligations", () => {
         new URLSearchParams(String(init?.body ?? "")),
       ) as Record<string, string>;
       if (String(url).includes("conversations.replies")) {
-        return Response.json({ ok: true, messages: [] });
+        return Response.json({
+          ok: true,
+          messages: [{ ts: "8.8", client_msg_id: normalContinuationId }],
+        });
       }
       if (String(url).includes("chat.update")) {
         pageZeroAttempts.push(body);
@@ -1404,10 +1413,10 @@ describe("reconstructRecoveryContent", () => {
       "exec-1",
     );
     expect(recovered.answer).toBe("Final answer.");
-    expect(recovered.contextLine).toContain("provider confirmed");
-    expect(recovered.progressMarkdown).toContain("Coding progress");
+    expect(recovered.contextLine).toBe("");
+    expect(recovered.progressMarkdown).toContain("Read");
     expect(recovered.body).toContain("Final answer.");
-    expect(recovered.body).toContain("provider confirmed");
+    expect(recovered.body).not.toContain("provider confirmed");
     expect(recovered.body).not.toContain("Coding progress");
   });
 });

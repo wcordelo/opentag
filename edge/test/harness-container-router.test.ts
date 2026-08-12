@@ -726,10 +726,79 @@ describe("harness Container frontend", () => {
     const response = await routeHarnessRequest(
       new Request("https://harness/health"),
       fake.namespace,
+      undefined,
+      undefined,
+      undefined,
+      {
+        id: "version-1",
+        tag: "release-1",
+        timestamp: "2026-08-02T20:00:00.000Z",
+      },
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, worker: "opentag-harness" });
+    expect(await response.json()).toEqual({
+      ok: true,
+      worker: "opentag-harness",
+      workerVersion: {
+        id: "version-1",
+        tag: "release-1",
+        timestamp: "2026-08-02T20:00:00.000Z",
+      },
+    });
     expect(fake.getByName).not.toHaveBeenCalled();
+  });
+
+  it("requires the harness secret before probing the container", async () => {
+    const fake = fakeNamespace(
+      Response.json({
+        ok: true,
+        service: "opentag-harness",
+        provenance: {
+          sourceRevision: "abc123",
+          sourceDigest: "sha256:def456",
+        },
+      }),
+    );
+    const unauthorized = await routeHarnessRequest(
+      new Request("https://harness/health/container"),
+      fake.namespace,
+      authToken,
+    );
+    expect(unauthorized.status).toBe(401);
+    expect(fake.getByName).not.toHaveBeenCalled();
+
+    const response = await routeHarnessRequest(
+      new Request("https://harness/health/container", {
+        headers: { Authorization: `Bearer ${authToken}` },
+      }),
+      fake.namespace,
+      authToken,
+      undefined,
+      undefined,
+      {
+        id: "version-2",
+        tag: "release-2",
+        timestamp: "2026-08-02T20:01:00.000Z",
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      worker: "opentag-harness",
+      workerVersion: {
+        id: "version-2",
+        tag: "release-2",
+        timestamp: "2026-08-02T20:01:00.000Z",
+      },
+      container: {
+        service: "opentag-harness",
+        provenance: {
+          sourceRevision: "abc123",
+          sourceDigest: "sha256:def456",
+        },
+      },
+    });
+    expect(fake.getByName).toHaveBeenCalledWith("health");
+    expect(fake.startAndWaitForPorts).toHaveBeenCalledOnce();
   });
 });
 

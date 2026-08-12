@@ -80,6 +80,18 @@ describe("extractStopCommandEvent", () => {
     expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
   });
 
+  it("ignores the structured Slack integration attribution footer", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel: "C1",
+      user: "U1",
+      text: "stop\n*Sent using* <@U0BGP9J4XNJ|ChatGPT>",
+      ts: "1.15",
+      thread_ts: "1.0",
+    };
+    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
+  });
+
   it("keeps unthreaded DM Stop behavior without a mention", () => {
     const event: SlackStopEvent = {
       type: "message",
@@ -609,6 +621,18 @@ describe("handleStopCommand", () => {
       text: "stop",
       ts: "1.0",
     }))).toBeUndefined();
+  });
+
+  it("accepts a user-authored message carrying app metadata", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel: "D1",
+      user: "U1",
+      app_id: "A123",
+      text: "stop",
+      ts: "1.1",
+    };
+    expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
   });
 
   it("does nothing (no throw) when channel or thread timestamp is missing", async () => {

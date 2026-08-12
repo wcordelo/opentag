@@ -82,10 +82,18 @@ describe("runtime capability evidence", () => {
       KNOWLEDGE_QUEUE_NAME: "knowledge",
       KNOWLEDGE_DLQ_NAME: "knowledge-dlq",
       KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED: "true",
+      KNOWLEDGE_RECONCILIATION_CRON: "*/15 * * * *",
       KNOWLEDGE_RECONCILIATION_TEAM_IDS: "T123",
       SUPERMEMORY_URL: "https://memory.example.test",
+      SUPERMEMORY_API_KEY: "sm_fixture",
+      SUPERMEMORY_MIGRATION_MODE: "true",
+      GRAPHIFY: {} as never,
+      GRAPHIFY_SERVICE_AUTH_TOKEN: "graphify-service-token",
       BUZZ_RELAY_HTTP_BASE_URL: "https://relay.example.test",
+      BUZZ_OPEN_TAG_SIGNER_SECRET: "signer-secret",
+      BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN: "https://relay.example.test",
       BUZZ_CHANNEL_TENANT_MAP: "{\"C123\":\"tenant\"}",
+      BOT_STATE: {} as never,
       OAUTH_STATE: {} as never,
       OAUTH_ALLOWED_REDIRECT_ORIGINS: "https://app.example.test",
     })).toEqual({
@@ -99,6 +107,7 @@ describe("runtime capability evidence", () => {
       harness: {
         serviceBindingConfigured: false,
         urlConfigured: false,
+        authConfigured: false,
         repositoryConfigured: true,
         nativeNanocodexConfigured: false,
       },
@@ -110,8 +119,15 @@ describe("runtime capability evidence", () => {
         namespaceConfigured: false,
         queueDeliveryConfigured: true,
         reconciliationConfigured: true,
+        reconciliationTriggerConfigured: true,
         searchEndpointConfigured: true,
+        searchServiceBindingConfigured: false,
+        codeGraphServiceBindingConfigured: true,
+        codeGraphConfigured: true,
+        consumerPaused: false,
+        indexGenerationConfigured: false,
         actorTokenConfigured: false,
+        observerConfigured: false,
       },
       platformEffects: {
         stateNamespaceConfigured: false,
@@ -120,18 +136,28 @@ describe("runtime capability evidence", () => {
         dispatchConfigured: false,
       },
       buzz: {
+        signerConfigured: true,
         relayConfigured: true,
+        allowedRelayOriginConfigured: true,
         tenantDirectoryConfigured: true,
+        wakeConfigured: true,
       },
       oauth: {
         stateNamespaceConfigured: true,
         allowedRedirectOriginsConfigured: true,
       },
       durability: {
-        botStateConfigured: false,
+        botStateConfigured: true,
         sessionEventsConfigured: false,
         deferredIngressConfigured: false,
         slackRateLimitConfigured: false,
+      },
+      slack: {
+        botTokenConfigured: false,
+        signingSecretConfigured: false,
+      },
+      telemetry: {
+        deliveryMetricsConfigured: false,
       },
     });
   });
@@ -141,12 +167,33 @@ describe("runtime capability evidence", () => {
       KNOWLEDGE_QUEUE_NAME: "knowledge",
       KNOWLEDGE_DLQ_NAME: "wrong-dlq-name",
       KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED: "true",
+      BUZZ_OPEN_TAG_SIGNER_SECRET: "signer-secret",
+      BUZZ_RELAY_HTTP_BASE_URL: "https://relay.example.test",
+      BUZZ_CHANNEL_TENANT_MAP: "{}",
     }).knowledge).toEqual({
       namespaceConfigured: false,
       queueDeliveryConfigured: false,
       reconciliationConfigured: false,
+      reconciliationTriggerConfigured: false,
       searchEndpointConfigured: false,
+      searchServiceBindingConfigured: false,
+      codeGraphServiceBindingConfigured: false,
+      codeGraphConfigured: false,
+      consumerPaused: false,
+      indexGenerationConfigured: false,
       actorTokenConfigured: false,
+      observerConfigured: false,
+    });
+    expect(buildRuntimeCapabilityEvidence({
+      BUZZ_OPEN_TAG_SIGNER_SECRET: "signer-secret",
+      BUZZ_RELAY_HTTP_BASE_URL: "https://relay.example.test",
+      BUZZ_CHANNEL_TENANT_MAP: "{}",
+    }).buzz).toEqual({
+      signerConfigured: true,
+      relayConfigured: true,
+      allowedRelayOriginConfigured: false,
+      tenantDirectoryConfigured: true,
+      wakeConfigured: false,
     });
     const evidence = buildRuntimeCapabilityEvidence({
       CONNECTOR_CREDENTIALS: {} as never,

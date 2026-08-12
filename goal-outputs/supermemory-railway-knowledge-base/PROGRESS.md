@@ -1,4 +1,10 @@
 > **Historical snapshot.** This planning goal remains useful for its gates, but current knowledge deployment/retrieval evidence is in [docs/current-state.md](../../docs/current-state.md).
+>
+> The `validate.py` result recorded below validates the historical Railway/B0–B4
+> snapshot. It is not a current-tree gate: the canonical contract and runtime
+> have since moved to the Cloudflare-only architecture, so a fresh run is
+> expected to fail on those superseded assumptions. Use the current rollout
+> preflight and the knowledge contract audit for present acceptance.
 
 # PROGRESS — supermemory-railway-knowledge-base
 

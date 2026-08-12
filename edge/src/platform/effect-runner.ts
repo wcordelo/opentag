@@ -203,6 +203,38 @@ function contractMetadata(
       }
       contractInteger(metadata.version);
       break;
+    case "connector_effect":
+      contractKeys(metadata, [
+        "action",
+        "authorizationDigest",
+        "connectorId",
+        "credentialRef",
+        "credentialVersion",
+        "requestDigest",
+        "requestRef",
+        "requestRevision",
+      ]);
+      contractEnum(metadata.connectorId, ["google_drive", "linear"]);
+      if (
+        (metadata.connectorId === "linear" && metadata.action !== "create_issue") ||
+        (metadata.connectorId === "google_drive" && metadata.action !== "search")
+      ) metadataContractError();
+      contractString(metadata.action);
+      contractString(metadata.credentialRef);
+      contractInteger(metadata.credentialVersion);
+      contractString(metadata.requestRef);
+      contractInteger(metadata.requestRevision);
+      if (!/^(?:linear-write-approval|provider-request):[A-Za-z0-9_-]{16,200}$/.test(metadata.requestRef as string)) {
+        metadataContractError();
+      }
+      if (typeof metadata.authorizationDigest !== "string" ||
+        !/^sha256:[a-f0-9]{64}$/.test(metadata.authorizationDigest)) metadataContractError();
+      if (typeof metadata.requestDigest !== "string" ||
+        !/^sha256:[a-f0-9]{64}$/.test(metadata.requestDigest)) metadataContractError();
+      if (intent.targetRef !== `connector:${metadata.connectorId}:${metadata.action}`) {
+        metadataContractError();
+      }
+      break;
     case "marketplace":
       contractKeys(metadata, [
         "authMode",

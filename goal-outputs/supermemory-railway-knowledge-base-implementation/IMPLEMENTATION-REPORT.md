@@ -14,6 +14,19 @@ Railway mutation, Slack change, Queue mutation, secret operation, git-history
 mutation, source enablement, canary, backfill, or other external action
 occurred.
 
+> **Current-state reconciliation (2026-08-02).** This report is a historical
+> B0–B4/R1 snapshot. Its automatic-ingestion description below reflects the
+> then-current `waitUntil` plan. The current source adds a pre-ack
+> `DeferredIngressDO` ownership fence for inbound knowledge events and durable
+> ownership for outbound observations. Current deployment status and open live
+> gates are maintained in [`docs/current-state.md`](../../docs/current-state.md)
+> and the [knowledge contract audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md).
+> The Python validators referenced by this report are likewise historical
+> snapshot validators, not current-tree gates. They are expected to fail after
+> the canonical contract moved from Railway/B0–B4 to Cloudflare-only derived
+> indexes. Current acceptance is the edge/Worker test matrix, derived-worker
+> typechecks, deploy-config checks, and knowledge-rollout preflight.
+
 ## Goal and local acceptance (copied from PROGRESS)
 
 [GOAL]: Implement the approved OpenTag Supermemory Local on Railway knowledge-base SPEC end to end: complete and independently validate B0-B4 source/tests locally, then stage and execute B5-B9 only through their explicit Railway, Cloudflare, Slack, canary, backfill, and cleanup approval gates, preserving repository invariants and unrelated work.

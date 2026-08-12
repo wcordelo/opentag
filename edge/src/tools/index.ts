@@ -49,6 +49,11 @@ import {
 } from "./search-multi-source.js";
 import { createSearchKnowledgeTool } from "./search-knowledge.js";
 import { createSearchDriveTool } from "./search-drive.js";
+import {
+  createCodeGraphSearchTool,
+  createCodePathTool,
+  createCodeImpactTool,
+} from "./code-graph.js";
 import { createSaveLinearIssueTool } from "./linear-write.js";
 import {
   createLinearWriteApproval,
@@ -679,6 +684,24 @@ export const searchDriveTool = createSearchDriveTool({
   assertActive: assertExactTurnActive,
 });
 
+export const codeGraphSearchTool = createCodeGraphSearchTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const codePathTool = createCodePathTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
+export const codeImpactTool = createCodeImpactTool({
+  env: requireEnv,
+  channel: channelFromThread,
+  assertActive: assertExactTurnActive,
+});
+
 export const startTaskTool = defineBotTool({
   name: "start_task",
   description: "Start a long-running research task for the current thread.",
@@ -834,6 +857,9 @@ const RAW_EDGE_TOOLS = [
   searchCustomTool,
   searchKnowledgeTool,
   searchDriveTool,
+  codeGraphSearchTool,
+  codePathTool,
+  codeImpactTool,
   startTaskTool,
   reactMessageTool,
 ] as const;

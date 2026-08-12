@@ -15,6 +15,12 @@ No Worker or Container was deployed. No Railway, Cloudflare, Slack, Queue,
 secret, source row, canary, backfill, Git reference, or other external state was
 mutated. `PROGRESS.md` and all review artifacts were left unchanged.
 
+> **Historical validator note (2026-08-02).** Validator results in this report
+> belong to the former Railway/B0–B4 snapshot. They are retained for the
+> correction history, not as current-tree acceptance after the Cloudflare-only
+> architecture change. Use the current knowledge contract audit and rollout
+> preflight for present status.
+
 ## Corrections made by this audit
 
 1. A proven root-delete descriptor now has precedence while it is still queued,

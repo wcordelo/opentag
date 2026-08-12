@@ -8,11 +8,15 @@ import { z } from "zod";
 import type { Env } from "../env.js";
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
 import { KNOWLEDGE_LIMITS } from "../memory/knowledge-contract.js";
-import { createSupermemoryClient } from "../memory/supermemory-client.js";
+import { createSupermemoryClientFromEnv } from "../memory/supermemory-client.js";
 import { SupermemoryAdapterError } from "../memory/supermemory-adapter.js";
 import { WikiSearchAdapter } from "../memory/connectors/wiki-connector.js";
 import { CodeSearchAdapter } from "../memory/connectors/code-connector.js";
 import { CustomDbSearchAdapter } from "../memory/connectors/custom-db-connector.js";
+import {
+  currentKnowledgeReadGrantAllows,
+  loadCurrentKnowledgeReadAccess,
+} from "../memory/knowledge-read-authorization.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
 import { requireRequestContext } from "../request-context.js";
 import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
@@ -44,15 +48,43 @@ function toolAllowed(thread: unknown, toolName: string, teamId: string, channelI
 }
 
 function clientFromEnv(env: Env) {
-  if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) return undefined;
   try {
-    return createSupermemoryClient({
-      baseURL: env.SUPERMEMORY_URL,
-      apiKey: env.SUPERMEMORY_API_KEY,
-    });
+    return createSupermemoryClientFromEnv(env);
   } catch {
     return undefined;
   }
+}
+
+async function connectorReadAllowed(input: {
+  env: Env;
+  thread: object;
+  teamId: string;
+  channelId: string;
+  action: string;
+  connectorId: string;
+  projectId: string;
+  repoId?: string;
+  spaceId?: string;
+}): Promise<boolean> {
+  let snapshot;
+  try {
+    snapshot = requirePermissionSnapshot(input.thread);
+  } catch {
+    return false;
+  }
+  if (!toolAllowed(input.thread, input.action, input.teamId, input.channelId)) return false;
+  const access = await loadCurrentKnowledgeReadAccess(input.env, input.teamId, input.channelId);
+  return currentKnowledgeReadGrantAllows(access, {
+    teamId: input.teamId,
+    channelId: input.channelId,
+    projectId: input.projectId,
+    connectorId: input.connectorId,
+    action: input.action,
+    repoId: input.repoId,
+    spaceId: input.spaceId,
+    aclPolicyRef: `bundle:${snapshot.channelAccess.bundleId}`,
+    permissionSnapshot: snapshot,
+  });
 }
 
 export function createSearchWikiTool(dependencies: {
@@ -75,7 +107,16 @@ export function createSearchWikiTool(dependencies: {
       if (!exact) throw new Error("active_turn_context_required");
       const channelId = dependencies.channel(thread);
       await dependencies.assertActive(thread);
-      if (!toolAllowed(thread, "search_wiki", context.teamId, channelId)) {
+      if (!(await connectorReadAllowed({
+        env: dependencies.env(),
+        thread,
+        teamId: context.teamId,
+        channelId,
+        action: "search_wiki",
+        connectorId: "wiki",
+        projectId,
+        spaceId,
+      }))) {
         return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies MultiSourceSearchResult;
       }
       const client = clientFromEnv(dependencies.env());
@@ -125,7 +166,16 @@ export function createSearchCodeTool(dependencies: {
       if (!exact) throw new Error("active_turn_context_required");
       const channelId = dependencies.channel(thread);
       await dependencies.assertActive(thread);
-      if (!toolAllowed(thread, "search_code", context.teamId, channelId)) {
+      if (!(await connectorReadAllowed({
+        env: dependencies.env(),
+        thread,
+        teamId: context.teamId,
+        channelId,
+        action: "search_code",
+        connectorId: "code",
+        projectId,
+        repoId,
+      }))) {
         return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies MultiSourceSearchResult;
       }
       const client = clientFromEnv(dependencies.env());
@@ -175,7 +225,15 @@ export function createSearchCustomTool(dependencies: {
       if (!exact) throw new Error("active_turn_context_required");
       const channelId = dependencies.channel(thread);
       await dependencies.assertActive(thread);
-      if (!toolAllowed(thread, "search_custom", context.teamId, channelId)) {
+      if (!(await connectorReadAllowed({
+        env: dependencies.env(),
+        thread,
+        teamId: context.teamId,
+        channelId,
+        action: "search_custom",
+        connectorId,
+        projectId,
+      }))) {
         return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies MultiSourceSearchResult;
       }
       const client = clientFromEnv(dependencies.env());

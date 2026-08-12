@@ -1,4 +1,4 @@
-import type { KnowledgeJob } from "./knowledge-contract.js";
+import { createKnowledgeJob, slackSourceKey, type KnowledgeJob } from "./knowledge-contract.js";
 import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
 import type {
   DurableKnowledgeBackfillDiscovery,
@@ -9,47 +9,28 @@ import type {
   KnowledgeBackfillPageDisposition,
   KnowledgeBackfillScope,
 } from "./knowledge-backfill.js";
+import type { SlackConversationInventoryReceipt } from "../slack/conversation-inventory.js";
 import type {
   VerifiedKnowledgeBackfillApproval,
 } from "./knowledge-backfill-authorization.js";
+import { normalizeDerivedIndexGeneration } from "./derived-index-generation.js";
+import {
+  knowledgeLedgerTableSql,
+  knowledgeQueryabilityTableSql,
+  migrateKnowledgeQueryability,
+  migrateKnowledgeLedgerSourceTypes,
+} from "./knowledge-ledger-migration.js";
+import {
+  parseKnowledgeSourceType,
+  parseSourceTypeFromKey,
+} from "./knowledge-source-types.js";
 
 export const KNOWLEDGE_LEDGER_DDL = [
-  `CREATE TABLE IF NOT EXISTS knowledge_ledger (
-    source_key TEXT PRIMARY KEY,
-    team_id TEXT NOT NULL,
-    project_id TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    thread_ts TEXT NOT NULL,
-    config_version INTEGER NOT NULL,
-    requested_at TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    desired_revision TEXT,
-    indexed_revision TEXT,
-    local_document_id TEXT,
-    local_document_revision TEXT,
-    add_attempt_token TEXT,
-    add_attempt_revision TEXT,
-    local_workflow_status TEXT,
-    poll_deadline_at INTEGER,
-    next_poll_at INTEGER,
-    poll_count INTEGER NOT NULL DEFAULT 0,
-    last_local_operation TEXT,
-    last_local_error TEXT,
-    status TEXT NOT NULL,
-    queue_attempts INTEGER NOT NULL DEFAULT 0,
-    lease_token TEXT,
-    lease_expires_at INTEGER,
-    last_error_class TEXT,
-    last_error_code TEXT,
-    incomplete_reason TEXT,
-    tombstoned_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(team_id, channel_id, thread_ts)
-  )`,
+  knowledgeLedgerTableSql("knowledge_ledger"),
   `CREATE TABLE IF NOT EXISTS knowledge_events (
     descriptor_key TEXT PRIMARY KEY,
     source_key TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'slack',
     config_version INTEGER NOT NULL,
     requested_at TEXT NOT NULL,
     reason TEXT NOT NULL,
@@ -57,6 +38,7 @@ export const KNOWLEDGE_LEDGER_DDL = [
   )`,
   `CREATE TABLE IF NOT EXISTS knowledge_outbox (
     source_key TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL DEFAULT 'slack',
     descriptor_key TEXT NOT NULL,
     job_json TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -67,6 +49,86 @@ export const KNOWLEDGE_LEDGER_DDL = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_outbox_due
    ON knowledge_outbox(status, next_attempt_at)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_ledger_derived_history (
+    source_key TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'slack',
+    index_generation TEXT NOT NULL,
+    local_document_id TEXT,
+    local_document_revision TEXT,
+    indexed_revision TEXT,
+    status TEXT NOT NULL,
+    archive_reason TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    PRIMARY KEY (source_key, index_generation)
+  )`,
+  `CREATE TABLE IF NOT EXISTS knowledge_query_convergence (
+    source_key TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'slack',
+    team_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    thread_ts TEXT NOT NULL,
+    content_revision TEXT NOT NULL,
+    index_generation TEXT NOT NULL,
+    local_document_id TEXT NOT NULL,
+    query_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    provider_result_count INTEGER NOT NULL,
+    matching_citation_count INTEGER NOT NULL,
+    error_code TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (source_key, content_revision, index_generation)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_query_convergence_current
+   ON knowledge_query_convergence(source_key, checked_at)`,
+  knowledgeQueryabilityTableSql(),
+  `CREATE TABLE IF NOT EXISTS knowledge_recovery_audits (
+    audit_id TEXT PRIMARY KEY,
+    source_key TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'slack',
+    team_id TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    correction_ref TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    previous_status TEXT NOT NULL,
+    previous_error_class TEXT,
+    previous_error_code TEXT,
+    previous_local_operation TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_recovery_audits_created
+   ON knowledge_recovery_audits(created_at, audit_id)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_thread_fetch_checkpoints (
+    source_key TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL DEFAULT 'slack',
+    team_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    thread_ts TEXT NOT NULL,
+    config_version INTEGER NOT NULL,
+    requested_at TEXT NOT NULL,
+    cursor TEXT,
+    pages INTEGER NOT NULL,
+    messages_json TEXT NOT NULL,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    bytes INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_thread_fetch_checkpoints_updated
+   ON knowledge_thread_fetch_checkpoints(updated_at)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_slack_message_threads (
+    team_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    message_ts TEXT NOT NULL,
+    thread_ts TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (team_id, channel_id, message_ts)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_slack_message_threads_source
+   ON knowledge_slack_message_threads(source_key, updated_at)`,
   `CREATE TABLE IF NOT EXISTS knowledge_reconcile_runs (
     run_id TEXT PRIMARY KEY,
     cursor_source_key TEXT,
@@ -107,6 +169,7 @@ export const KNOWLEDGE_LEDGER_DDL = [
     queue_name TEXT NOT NULL,
     body_json TEXT NOT NULL,
     source_key TEXT,
+    source_type TEXT NOT NULL DEFAULT 'slack',
     team_id TEXT,
     attempts INTEGER NOT NULL,
     last_error_code TEXT,
@@ -148,6 +211,13 @@ export const KNOWLEDGE_LEDGER_DDL = [
     scope_json TEXT NOT NULL,
     status TEXT NOT NULL,
     blocked_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS knowledge_backfill_conversation_inventories (
+    manifest_id TEXT PRIMARY KEY,
+    inventory_digest TEXT NOT NULL,
+    inventory_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -216,6 +286,7 @@ export type KnowledgeLedgerStatus =
 
 export type KnowledgeLedgerRow = {
   sourceKey: string;
+  sourceType: KnowledgeJob["sourceType"];
   teamId: string;
   projectId: string;
   channelId: string;
@@ -227,6 +298,7 @@ export type KnowledgeLedgerRow = {
   indexedRevision?: string;
   localDocumentId?: string;
   localDocumentRevision?: string;
+  derivedIndexGeneration?: string;
   addAttemptToken?: string;
   addAttemptRevision?: string;
   localWorkflowStatus?: string;
@@ -247,8 +319,89 @@ export type KnowledgeLedgerRow = {
   updatedAt: string;
 };
 
+export type KnowledgeQueryConvergenceStatus = "queryable" | "not_found" | "failed";
+
+export type KnowledgeQueryConvergenceReceipt = {
+  sourceKey: string;
+  sourceType: KnowledgeJob["sourceType"];
+  teamId: string;
+  projectId: string;
+  channelId: string;
+  threadTs: string;
+  contentRevision: string;
+  indexGeneration: string;
+  localDocumentId: string;
+  queryDigest: string;
+  status: KnowledgeQueryConvergenceStatus;
+  providerResultCount: number;
+  matchingCitationCount: number;
+  errorCode?: string;
+  checkedAt: string;
+};
+
+export type KnowledgeQueryabilityReceiptStatus =
+  | "unverified"
+  | "searchable"
+  | "no_match"
+  | "provider_unavailable";
+
+export type KnowledgeQueryabilityReceiptIdentity = {
+  sourceKey: string;
+  sourceType: KnowledgeJob["sourceType"];
+  teamId: string;
+  projectId: string;
+  channelId: string;
+  threadTs: string;
+  contentRevision: string;
+  indexRevision: string;
+  localDocumentId: string;
+  derivedIndexGeneration: string;
+};
+
+export type KnowledgeQueryabilityReceipt = KnowledgeQueryabilityReceiptIdentity & {
+  status: KnowledgeQueryabilityReceiptStatus;
+  providerResultCount: number;
+  acceptedCitationCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KnowledgeQueryabilityReceiptInput = KnowledgeQueryabilityReceiptIdentity & {
+  status: KnowledgeQueryabilityReceiptStatus;
+  providerResultCount: number;
+  acceptedCitationCount: number;
+};
+
+export type KnowledgeFailureRow = Pick<KnowledgeLedgerRow,
+  | "sourceKey"
+  | "sourceType"
+  | "teamId"
+  | "projectId"
+  | "channelId"
+  | "threadTs"
+  | "configVersion"
+  | "requestedAt"
+  | "reason"
+  | "lastLocalOperation"
+  | "lastLocalError"
+  | "status"
+  | "queueAttempts"
+  | "lastErrorClass"
+  | "lastErrorCode"
+  | "incompleteReason"
+  | "tombstonedAt"
+  | "createdAt"
+  | "updatedAt"
+>;
+
+export type KnowledgeFailureList = {
+  rows: KnowledgeFailureRow[];
+  nextCursor?: string;
+};
+
 type LedgerDbRow = {
   source_key: string;
+  source_type: KnowledgeJob["sourceType"];
   team_id: string;
   project_id: string;
   channel_id: string;
@@ -260,6 +413,7 @@ type LedgerDbRow = {
   indexed_revision: string | null;
   local_document_id: string | null;
   local_document_revision: string | null;
+  derived_index_generation: string | null;
   add_attempt_token: string | null;
   add_attempt_revision: string | null;
   local_workflow_status: string | null;
@@ -280,14 +434,85 @@ type LedgerDbRow = {
   updated_at: string;
 };
 
+type KnowledgeQueryConvergenceDbRow = {
+  source_key: string;
+  source_type: KnowledgeJob["sourceType"];
+  team_id: string;
+  project_id: string;
+  channel_id: string;
+  thread_ts: string;
+  content_revision: string;
+  index_generation: string;
+  local_document_id: string;
+  query_digest: string;
+  status: KnowledgeQueryConvergenceStatus;
+  provider_result_count: number;
+  matching_citation_count: number;
+  error_code: string | null;
+  checked_at: string;
+};
+
+type KnowledgeQueryabilityReceiptDbRow = {
+  source_key: string;
+  source_type: KnowledgeJob["sourceType"];
+  team_id: string;
+  project_id: string;
+  channel_id: string;
+  thread_ts: string;
+  content_revision: string;
+  index_revision: string;
+  local_document_id: string;
+  derived_index_generation: string;
+  status: KnowledgeQueryabilityReceiptStatus;
+  provider_result_count: number;
+  accepted_citation_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
 type OutboxDbRow = {
   source_key: string;
+  source_type: KnowledgeJob["sourceType"];
   descriptor_key: string;
   job_json: string;
   status: "pending" | "sending";
   attempt_count: number;
   next_attempt_at: number;
   last_error: string | null;
+  updated_at: string;
+};
+
+export type KnowledgeThreadFetchCheckpoint = {
+  cursor?: string;
+  pages: number;
+  messages: unknown[];
+  bytes: number;
+};
+
+export type SlackMessageThreadMapping = {
+  teamId: string;
+  projectId: string;
+  channelId: string;
+  messageTs: string;
+  threadTs: string;
+  sourceKey: string;
+  updatedAt: string;
+};
+
+type ThreadFetchCheckpointDbRow = {
+  source_key: string;
+  source_type: KnowledgeJob["sourceType"];
+  team_id: string;
+  project_id: string;
+  channel_id: string;
+  thread_ts: string;
+  config_version: number;
+  requested_at: string;
+  cursor: string | null;
+  pages: number;
+  messages_json: string;
+  message_count: number;
+  bytes: number;
   updated_at: string;
 };
 
@@ -333,6 +558,7 @@ type DlqDbRow = {
   queue_name: string;
   body_json: string;
   source_key: string | null;
+  source_type: KnowledgeJob["sourceType"];
   team_id: string | null;
   attempts: number;
   last_error_code: string | null;
@@ -374,6 +600,14 @@ type BackfillDiscoveryDbRow = {
   scope_json: string;
   status: KnowledgeBackfillDiscoveryStatus;
   blocked_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type BackfillConversationInventoryDbRow = {
+  manifest_id: string;
+  inventory_digest: string;
+  inventory_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -439,8 +673,8 @@ export type LeaseKnowledgeResult =
 
 export type KnowledgeOutcome =
   | { status: "normalized"; desiredRevision: string }
-  | { status: "indexed"; desiredRevision: string; indexedRevision: string; localDocumentId: string; workflowStatus: "done"; pollCount: number }
-  | { status: "processing_unconfirmed"; desiredRevision: string; localDocumentId: string; workflowStatus: string; pollDeadlineAt: number; nextPollAt: number; pollCount: number }
+  | { status: "indexed"; desiredRevision: string; indexedRevision: string; localDocumentId: string; workflowStatus: "done"; pollCount: number; indexGeneration?: string }
+  | { status: "processing_unconfirmed"; desiredRevision: string; localDocumentId: string; workflowStatus: string; pollDeadlineAt: number; nextPollAt: number; pollCount: number; indexGeneration?: string }
   | { status: "tombstoned"; tombstonedAt: string; errorCode?: "unsupported_delete_contract" | "deleted" }
   | {
     status: "preserve_indexed";
@@ -450,12 +684,39 @@ export type KnowledgeOutcome =
   | { status: "retryable_failure"; errorClass: string; errorCode?: string; incompleteReason?: string }
   | { status: "permanent_failure"; errorClass: string; errorCode?: string };
 
+export type KnowledgeRecoveryResult =
+  | {
+    action: "reopened";
+    sourceKey: string;
+    auditId: string;
+    descriptorKey: string;
+    requestedAt: string;
+  }
+  | {
+    action: "blocked";
+    sourceKey: string;
+    auditId?: string;
+    reason:
+      | "not_found"
+      | "identity_mismatch"
+      | "not_permanent_failure"
+      | "tombstoned"
+      | "unsupported_failure"
+      | "ambiguous_add_contract"
+      | "missing_local_document_identity"
+      | "delete_intent";
+  };
+
 export type PrepareRevisionResult =
   | { decision: "add" }
   | { decision: "update"; localDocumentId: string }
   | { decision: "poll"; localDocumentId: string; pollDeadlineAt?: number }
   | { decision: "noop"; reason: "already_indexed" }
-  | { decision: "blocked"; reason: "tombstoned" | "unsupported_update_contract" | "ambiguous_add_contract" };
+  | { decision: "blocked"; reason: "tombstoned" | "unsupported_update_contract" | "ambiguous_add_contract" | "index_generation_mismatch" };
+
+export type ResolveAmbiguousAddResult =
+  | { decision: "add" }
+  | { decision: "poll"; localDocumentId: string; pollDeadlineAt: number };
 
 export type KnowledgeReconcileRun = {
   runId: string;
@@ -466,6 +727,92 @@ export type KnowledgeReconcileRun = {
   skippedCount: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type KnowledgeLedgerStatusSnapshot = {
+  capturedAt: string;
+  ledger: {
+    total: number;
+    byStatus: Partial<Record<KnowledgeLedgerStatus, number>>;
+  };
+  outbox: {
+    pending: number;
+    sending: number;
+    due: number;
+    earliestPendingAt?: number;
+  };
+  dlq: {
+    total: number;
+    pending: number;
+    replaying: number;
+    replayed: number;
+    disposed: number;
+  };
+  reconciliation: {
+    running: number;
+    complete: number;
+    latest?: KnowledgeReconcileRun;
+  };
+  backfill: {
+    active: number;
+    complete: number;
+    latest?: {
+      manifestId: string;
+      status: DurableBackfillManifestRecord["status"];
+      nextJobIndex: number;
+      executionErrorCount: number;
+      updatedAt: string;
+    };
+  };
+  threadFetch: {
+    active: number;
+    messages: number;
+    bytes: number;
+    oldestUpdatedAt?: string;
+  };
+  inventory: {
+    total: number;
+    complete: number;
+    incomplete: number;
+    invalid: number;
+    latest?: {
+      manifestId: string;
+      status: "complete" | "incomplete" | "invalid";
+      visibleCount: number;
+      eligibleCount: number;
+      excludedCount: number;
+      inventoryDigest: string;
+      updatedAt: string;
+    };
+  };
+  messageThreadMap: {
+    total: number;
+    oldestUpdatedAt?: string;
+    newestUpdatedAt?: string;
+  };
+  queryConvergence: {
+    total: number;
+    queryable: number;
+    notFound: number;
+    failed: number;
+    unverified: number;
+  };
+  queryability: {
+    total: number;
+    byStatus: Record<KnowledgeQueryabilityReceiptStatus, number>;
+  };
+  recovery: {
+    total: number;
+    reopened: number;
+    blocked: number;
+    latest?: {
+      auditId: string;
+      sourceKey: string;
+      action: "reopened" | "blocked";
+      reason: string;
+      createdAt: string;
+    };
+  };
 };
 
 export type KnowledgeReconcilePage = {
@@ -515,6 +862,7 @@ export type DurableKnowledgeDlqRecord = {
   queueName: string;
   body: unknown;
   sourceKey?: string;
+  sourceType: KnowledgeJob["sourceType"];
   teamId?: string;
   attempts: number;
   lastErrorCode?: string;
@@ -566,14 +914,15 @@ export type DurableBackfillApprovalAudit = {
 };
 
 export function knowledgeDescriptorKey(job: KnowledgeJob): string {
-  return `${job.sourceKey}|${job.configVersion}|${job.requestedAt}|${job.reason}${
+  return `${job.sourceType}|${job.sourceKey}|${job.configVersion}|${job.requestedAt}|${job.reason}${
     job.messageTs ? `|${job.messageTs}` : ""
-  }`;
+  }${job.observedMessageTs ? `|observed:${job.observedMessageTs}` : ""}`;
 }
 
 function ledgerRow(row: LedgerDbRow): KnowledgeLedgerRow {
   return {
     sourceKey: row.source_key,
+    sourceType: row.source_type,
     teamId: row.team_id,
     projectId: row.project_id,
     channelId: row.channel_id,
@@ -585,6 +934,7 @@ function ledgerRow(row: LedgerDbRow): KnowledgeLedgerRow {
     indexedRevision: row.indexed_revision ?? undefined,
     localDocumentId: row.local_document_id ?? undefined,
     localDocumentRevision: row.local_document_revision ?? undefined,
+    derivedIndexGeneration: row.derived_index_generation ?? undefined,
     addAttemptToken: row.add_attempt_token ?? undefined,
     addAttemptRevision: row.add_attempt_revision ?? undefined,
     localWorkflowStatus: row.local_workflow_status ?? undefined,
@@ -603,6 +953,137 @@ function ledgerRow(row: LedgerDbRow): KnowledgeLedgerRow {
     tombstonedAt: row.tombstoned_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function queryConvergenceReceipt(row: KnowledgeQueryConvergenceDbRow): KnowledgeQueryConvergenceReceipt {
+  return {
+    sourceKey: row.source_key,
+    sourceType: row.source_type,
+    teamId: row.team_id,
+    projectId: row.project_id,
+    channelId: row.channel_id,
+    threadTs: row.thread_ts,
+    contentRevision: row.content_revision,
+    indexGeneration: row.index_generation,
+    localDocumentId: row.local_document_id,
+    queryDigest: row.query_digest,
+    status: row.status,
+    providerResultCount: row.provider_result_count,
+    matchingCitationCount: row.matching_citation_count,
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    checkedAt: row.checked_at,
+  };
+}
+
+const QUERYABILITY_RECEIPT_STATUSES: readonly KnowledgeQueryabilityReceiptStatus[] = [
+  "unverified",
+  "searchable",
+  "no_match",
+  "provider_unavailable",
+];
+const MAX_QUERYABILITY_COUNT = 100_000;
+
+function boundedReceiptText(value: unknown, field: string, maxLength: number): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxLength ||
+    value.trim() !== value ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error(`knowledge queryability ${field} is invalid`);
+  }
+  return value;
+}
+
+function boundedReceiptRevision(value: unknown, field: string): string {
+  const revision = boundedReceiptText(value, field, 256);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(revision)) {
+    throw new Error(`knowledge queryability ${field} is invalid`);
+  }
+  return revision;
+}
+
+function boundedReceiptIdentifier(value: unknown, field: string, maxLength: number): string {
+  const identifier = boundedReceiptText(value, field, maxLength);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(identifier)) {
+    throw new Error(`knowledge queryability ${field} is invalid`);
+  }
+  return identifier;
+}
+
+function boundedReceiptGeneration(value: unknown): string {
+  const generation = boundedReceiptText(value, "derivedIndexGeneration", 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(generation) || generation === "legacy") {
+    throw new Error("knowledge queryability derivedIndexGeneration is invalid");
+  }
+  return generation;
+}
+
+function queryabilityIdentity(
+  input: KnowledgeQueryabilityReceiptIdentity,
+): KnowledgeQueryabilityReceiptIdentity {
+  const sourceKey = boundedReceiptText(input.sourceKey, "sourceKey", 512);
+  const sourceType = parseKnowledgeSourceType(input.sourceType);
+  if (parseSourceTypeFromKey(sourceKey) !== sourceType) {
+    throw new Error("knowledge queryability source identity is invalid");
+  }
+  return {
+    sourceKey,
+    sourceType,
+    teamId: boundedReceiptIdentifier(input.teamId, "teamId", 128),
+    projectId: boundedReceiptIdentifier(input.projectId, "projectId", 128),
+    channelId: boundedReceiptIdentifier(input.channelId, "channelId", 256),
+    threadTs: boundedReceiptIdentifier(input.threadTs, "threadTs", 256),
+    contentRevision: boundedReceiptRevision(input.contentRevision, "contentRevision"),
+    indexRevision: boundedReceiptRevision(input.indexRevision, "indexRevision"),
+    localDocumentId: boundedReceiptIdentifier(input.localDocumentId, "localDocumentId", 256),
+    derivedIndexGeneration: boundedReceiptGeneration(input.derivedIndexGeneration),
+  };
+}
+
+function queryabilityReceipt(row: KnowledgeQueryabilityReceiptDbRow): KnowledgeQueryabilityReceipt {
+  return {
+    sourceKey: row.source_key,
+    sourceType: row.source_type,
+    teamId: row.team_id,
+    projectId: row.project_id,
+    channelId: row.channel_id,
+    threadTs: row.thread_ts,
+    contentRevision: row.content_revision,
+    indexRevision: row.index_revision,
+    localDocumentId: row.local_document_id,
+    derivedIndexGeneration: row.derived_index_generation,
+    status: row.status,
+    providerResultCount: row.provider_result_count,
+    acceptedCitationCount: row.accepted_citation_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function knowledgeFailureRow(row: KnowledgeLedgerRow): KnowledgeFailureRow {
+  return {
+    sourceKey: row.sourceKey,
+    sourceType: row.sourceType,
+    teamId: row.teamId,
+    projectId: row.projectId,
+    channelId: row.channelId,
+    threadTs: row.threadTs,
+    configVersion: row.configVersion,
+    requestedAt: row.requestedAt,
+    reason: row.reason,
+    lastLocalOperation: row.lastLocalOperation,
+    lastLocalError: row.lastLocalError,
+    status: row.status,
+    queueAttempts: row.queueAttempts,
+    lastErrorClass: row.lastErrorClass,
+    lastErrorCode: row.lastErrorCode,
+    incompleteReason: row.incompleteReason,
+    tombstonedAt: row.tombstonedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -650,6 +1131,7 @@ function dlqRecord(row: DlqDbRow): DurableKnowledgeDlqRecord {
     queueName: row.queue_name,
     body: JSON.parse(row.body_json) as unknown,
     sourceKey: row.source_key ?? undefined,
+    sourceType: row.source_type,
     teamId: row.team_id ?? undefined,
     attempts: row.attempts,
     lastErrorCode: row.last_error_code ?? undefined,
@@ -715,6 +1197,20 @@ function parseDlqRecordId(recordId: string): number {
   return id;
 }
 
+const MAX_THREAD_FETCH_CHECKPOINT_JSON_BYTES = 4_000_000;
+const RECOVERABLE_KNOWLEDGE_FAILURE_CLASSES = new Set([
+  "local_add",
+  "local_update",
+  "local_poll",
+]);
+
+function recoveryField(value: string, field: string, maximum: number): string {
+  if (!value || value.length > maximum || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error(`${field} is invalid`);
+  }
+  return value;
+}
+
 export class KnowledgeLedger {
   constructor(
     private readonly sql: SqlExecutor,
@@ -727,6 +1223,7 @@ export class KnowledgeLedger {
     const additions = [
       ["local_document_id", "TEXT"],
       ["local_document_revision", "TEXT"],
+      ["derived_index_generation", "TEXT"],
       ["add_attempt_token", "TEXT"],
       ["add_attempt_revision", "TEXT"],
       ["local_workflow_status", "TEXT"],
@@ -739,6 +1236,8 @@ export class KnowledgeLedger {
     for (const [name, definition] of additions) {
       if (!columns.has(name)) this.sql.exec(`ALTER TABLE knowledge_ledger ADD COLUMN ${name} ${definition}`);
     }
+    migrateKnowledgeLedgerSourceTypes(this.sql);
+    migrateKnowledgeQueryability(this.sql);
     const dlqColumns = new Set(this.sql.exec<{ name: string }>(
       "PRAGMA table_info(knowledge_dlq_records)",
     ).toArray().map((row) => row.name));
@@ -767,6 +1266,14 @@ export class KnowledgeLedger {
           `ALTER TABLE knowledge_backfill_manifests ADD COLUMN ${name} ${definition}`,
         );
       }
+    }
+    const threadCheckpointColumns = new Set(this.sql.exec<{ name: string }>(
+      "PRAGMA table_info(knowledge_thread_fetch_checkpoints)",
+    ).toArray().map((row) => row.name));
+    if (!threadCheckpointColumns.has("message_count")) {
+      this.sql.exec(
+        "ALTER TABLE knowledge_thread_fetch_checkpoints ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0",
+      );
     }
     const approvalColumns = new Set(this.sql.exec<{ name: string }>(
       "PRAGMA table_info(knowledge_backfill_approvals)",
@@ -809,10 +1316,11 @@ export class KnowledgeLedger {
 
       this.sql.exec(
         `INSERT OR IGNORE INTO knowledge_events
-         (descriptor_key, source_key, config_version, requested_at, reason, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         (descriptor_key, source_key, source_type, config_version, requested_at, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         descriptorKey,
         job.sourceKey,
+        job.sourceType,
         job.configVersion,
         job.requestedAt,
         job.reason,
@@ -820,10 +1328,11 @@ export class KnowledgeLedger {
       );
       this.sql.exec(
         `INSERT INTO knowledge_ledger (
-           source_key, team_id, project_id, channel_id, thread_ts,
+           source_key, source_type, team_id, project_id, channel_id, thread_ts,
            config_version, requested_at, reason, status, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
          ON CONFLICT(source_key) DO UPDATE SET
+           source_type = excluded.source_type,
            team_id = excluded.team_id,
            project_id = excluded.project_id,
            channel_id = excluded.channel_id,
@@ -840,6 +1349,7 @@ export class KnowledgeLedger {
            incomplete_reason = NULL,
            updated_at = excluded.updated_at`,
         job.sourceKey,
+        job.sourceType,
         job.teamId,
         job.projectId,
         job.channelId,
@@ -852,10 +1362,11 @@ export class KnowledgeLedger {
       );
       this.sql.exec(
         `INSERT INTO knowledge_outbox (
-           source_key, descriptor_key, job_json, status, attempt_count,
+           source_key, source_type, descriptor_key, job_json, status, attempt_count,
            next_attempt_at, last_error, updated_at
-         ) VALUES (?, ?, ?, 'pending', 0, ?, NULL, ?)
+         ) VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?)
          ON CONFLICT(source_key) DO UPDATE SET
+           source_type = excluded.source_type,
            descriptor_key = excluded.descriptor_key,
            job_json = excluded.job_json,
            status = 'pending',
@@ -864,16 +1375,204 @@ export class KnowledgeLedger {
            last_error = NULL,
            updated_at = excluded.updated_at`,
         job.sourceKey,
+        job.sourceType,
         descriptorKey,
         JSON.stringify(job),
         nowMs,
         now,
+      );
+      this.sql.exec(
+        `DELETE FROM knowledge_thread_fetch_checkpoints WHERE source_key = ?`,
+        job.sourceKey,
       );
       return {
         accepted: true,
         reason: current ? "superseded" : "new",
         descriptorKey,
       };
+    });
+  }
+
+  recoverPermanentFailure(input: {
+    sourceKey: string;
+    teamId: string;
+    expectedConfigVersion: number;
+    expectedRequestedAt: string;
+    operatorId: string;
+    rootCauseCorrectionRef: string;
+  }, nowMs: number): KnowledgeRecoveryResult {
+    const sourceKey = recoveryField(input.sourceKey, "sourceKey", 512);
+    const teamId = recoveryField(input.teamId, "teamId", 256);
+    const operatorId = recoveryField(input.operatorId, "operatorId", 256);
+    const correctionRef = recoveryField(input.rootCauseCorrectionRef, "rootCauseCorrectionRef", 512);
+    if (!Number.isSafeInteger(input.expectedConfigVersion) || input.expectedConfigVersion < 1) {
+      throw new Error("expectedConfigVersion is invalid");
+    }
+    if (!Number.isFinite(Date.parse(input.expectedRequestedAt))) {
+      throw new Error("expectedRequestedAt is invalid");
+    }
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("recovery timestamp is invalid");
+    return this.tx(() => {
+      const current = this.get(sourceKey);
+      if (!current) return { action: "blocked", sourceKey, reason: "not_found" };
+      const auditId = crypto.randomUUID();
+      const audit = (
+        action: "reopened" | "blocked",
+        reason: string,
+      ): void => {
+        this.sql.exec(
+          `INSERT INTO knowledge_recovery_audits (
+             audit_id, source_key, source_type, team_id, operator_id,
+             correction_ref, action, reason, previous_status,
+             previous_error_class, previous_error_code, previous_local_operation,
+             created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          auditId,
+          current.sourceKey,
+          current.sourceType,
+          current.teamId,
+          operatorId,
+          correctionRef,
+          action,
+          reason,
+          current.status,
+          current.lastErrorClass ?? null,
+          current.lastErrorCode ?? null,
+          current.lastLocalOperation ?? null,
+          new Date(nowMs).toISOString(),
+        );
+      };
+      const blocked = (
+        reason:
+          | "identity_mismatch"
+          | "not_permanent_failure"
+          | "tombstoned"
+          | "unsupported_failure"
+          | "ambiguous_add_contract"
+          | "missing_local_document_identity"
+          | "delete_intent",
+      ): KnowledgeRecoveryResult => {
+        audit("blocked", reason);
+        return { action: "blocked", sourceKey, auditId, reason };
+      };
+      if (
+        current.teamId !== teamId ||
+        current.configVersion !== input.expectedConfigVersion ||
+        current.requestedAt !== input.expectedRequestedAt
+      ) return blocked("identity_mismatch");
+      if (current.tombstonedAt || current.status === "tombstoned") return blocked("tombstoned");
+      if (current.reason === "delete" || current.reason === "reply_delete") return blocked("delete_intent");
+      if (current.status !== "permanent_failure") return blocked("not_permanent_failure");
+      const historicalAmbiguousAdd =
+        current.lastErrorClass === "unsupported_capability" &&
+        current.lastErrorCode === "ambiguous_add_contract" &&
+        current.lastLocalOperation === "add_started" &&
+        !current.localDocumentId;
+      const historicalMutationContractFailure =
+        current.lastErrorClass === "unsupported_capability" &&
+        current.lastErrorCode === "unsupported_update_contract" &&
+        (!current.lastLocalOperation || current.lastLocalOperation === "add_accepted") &&
+        Boolean(current.localDocumentId);
+      if (
+        !current.lastErrorClass ||
+        (!RECOVERABLE_KNOWLEDGE_FAILURE_CLASSES.has(current.lastErrorClass) &&
+          !historicalAmbiguousAdd &&
+          !historicalMutationContractFailure)
+      ) {
+        return blocked("unsupported_failure");
+      }
+      if (
+        (current.lastLocalOperation === "update_started" ||
+          current.lastLocalOperation === "poll" ||
+          current.lastLocalOperation === "resume_poll") &&
+        !current.localDocumentId
+      ) return blocked("missing_local_document_identity");
+
+      const preserveAmbiguousAdd = current.lastLocalOperation === "add_started" && !current.localDocumentId;
+      const preservedDesiredRevision = preserveAmbiguousAdd ? current.desiredRevision : undefined;
+      const currentRequestedAtMs = Date.parse(current.requestedAt);
+      const requestedAt = new Date(Math.max(
+        nowMs,
+        Number.isFinite(currentRequestedAtMs) ? currentRequestedAtMs + 1 : nowMs,
+      )).toISOString();
+      const job = createKnowledgeJob({
+        sourceType: current.sourceType,
+        teamId: current.teamId,
+        projectId: current.projectId,
+        channelId: current.channelId,
+        threadTs: current.threadTs,
+        configVersion: current.configVersion,
+        requestedAt,
+        reason: "reconcile",
+      });
+      const descriptorKey = knowledgeDescriptorKey(job);
+      const now = new Date(nowMs).toISOString();
+      this.sql.exec(
+        `INSERT INTO knowledge_events (
+           descriptor_key, source_key, source_type, config_version,
+           requested_at, reason, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        descriptorKey,
+        job.sourceKey,
+        job.sourceType,
+        job.configVersion,
+        job.requestedAt,
+        job.reason,
+        now,
+      );
+      this.sql.exec(
+        `UPDATE knowledge_ledger SET
+           source_type = ?, team_id = ?, project_id = ?, channel_id = ?,
+           thread_ts = ?, config_version = ?, requested_at = ?, reason = ?,
+           desired_revision = ?, status = 'pending', lease_token = NULL,
+           lease_expires_at = NULL, last_error_class = NULL,
+           last_error_code = NULL, incomplete_reason = NULL,
+           add_attempt_token = NULL, add_attempt_revision = NULL,
+           local_workflow_status = NULL, poll_deadline_at = NULL,
+           next_poll_at = NULL, last_local_operation = ?,
+           last_local_error = NULL, updated_at = ?
+         WHERE source_key = ?`,
+        job.sourceType,
+        job.teamId,
+        job.projectId,
+        job.channelId,
+        job.threadTs,
+        job.configVersion,
+        job.requestedAt,
+        job.reason,
+        preservedDesiredRevision ?? null,
+        preserveAmbiguousAdd ? "add_started" : null,
+        now,
+        sourceKey,
+      );
+      this.sql.exec(
+        `INSERT INTO knowledge_outbox (
+           source_key, source_type, descriptor_key, job_json, status,
+           attempt_count, next_attempt_at, last_error, updated_at
+         ) VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?)
+         ON CONFLICT(source_key) DO UPDATE SET
+           source_type = excluded.source_type,
+           descriptor_key = excluded.descriptor_key,
+           job_json = excluded.job_json,
+           status = 'pending', attempt_count = 0,
+           next_attempt_at = excluded.next_attempt_at,
+           last_error = NULL, updated_at = excluded.updated_at`,
+        job.sourceKey,
+        job.sourceType,
+        descriptorKey,
+        JSON.stringify(job),
+        nowMs,
+        now,
+      );
+      this.sql.exec(
+        "DELETE FROM knowledge_thread_fetch_checkpoints WHERE source_key = ?",
+        sourceKey,
+      );
+      audit(
+        "reopened",
+        preserveAmbiguousAdd ? "operator_recovery_ambiguous_add_probe" : "operator_recovery",
+      );
+      return { action: "reopened", sourceKey, auditId, descriptorKey, requestedAt };
     });
   }
 
@@ -1038,10 +1737,12 @@ export class KnowledgeLedger {
           leaseToken,
         );
       } else if (outcome.status === "indexed") {
+        const outcomeGeneration = normalizeDerivedIndexGeneration(outcome.indexGeneration);
         if (
           current.localDocumentId !== outcome.localDocumentId ||
           current.localDocumentRevision !== outcome.desiredRevision ||
-          outcome.indexedRevision !== outcome.desiredRevision
+          outcome.indexedRevision !== outcome.desiredRevision ||
+          current.derivedIndexGeneration !== outcomeGeneration
         ) return false;
         this.sql.exec(
           `UPDATE knowledge_ledger SET status = 'indexed', desired_revision = ?, indexed_revision = ?,
@@ -1054,9 +1755,11 @@ export class KnowledgeLedger {
           outcome.workflowStatus, outcome.pollCount, now, sourceKey, leaseToken,
         );
       } else if (outcome.status === "processing_unconfirmed") {
+        const outcomeGeneration = normalizeDerivedIndexGeneration(outcome.indexGeneration);
         if (
           current.localDocumentId !== outcome.localDocumentId ||
-          current.localDocumentRevision !== outcome.desiredRevision
+          current.localDocumentRevision !== outcome.desiredRevision ||
+          current.derivedIndexGeneration !== outcomeGeneration
         ) return false;
         this.sql.exec(
           `UPDATE knowledge_ledger SET status = 'processing_unconfirmed', desired_revision = ?,
@@ -1130,13 +1833,12 @@ export class KnowledgeLedger {
             `UPDATE knowledge_ledger SET
                status = ?, lease_token = NULL, lease_expires_at = NULL,
                last_error_class = ?, last_error_code = ?, incomplete_reason = ?,
-               last_local_error = ?, last_local_operation = NULL,
-               add_attempt_token = NULL, add_attempt_revision = NULL, updated_at = ?
+               last_local_error = ?, last_local_operation = 'add_started', updated_at = ?
              WHERE source_key = ? AND lease_token = ?`,
             outcome.status,
             outcome.errorClass,
             outcome.errorCode ?? null,
-            outcome.incompleteReason ?? null,
+            outcome.incompleteReason ?? "ambiguous_add_contract",
             outcome.errorCode ?? outcome.errorClass,
             now,
             sourceKey,
@@ -1160,6 +1862,12 @@ export class KnowledgeLedger {
           );
         }
       }
+      if (outcome.status !== "retryable_failure") {
+        this.sql.exec(
+          `DELETE FROM knowledge_thread_fetch_checkpoints WHERE source_key = ?`,
+          sourceKey,
+        );
+      }
       return true;
     });
   }
@@ -1169,12 +1877,58 @@ export class KnowledgeLedger {
     leaseToken: string,
     desiredRevision: string,
     nowMs: number,
-    options?: { mutationsVerified?: boolean },
+    options?: { mutationsVerified?: boolean; indexGeneration?: string },
   ): PrepareRevisionResult {
     return this.tx(() => {
       const current = this.get(sourceKey);
       if (!current || current.leaseToken !== leaseToken) throw new Error("knowledge lease is not current");
       if (current.tombstonedAt || current.status === "tombstoned") return { decision: "blocked", reason: "tombstoned" };
+      const requestedGeneration = normalizeDerivedIndexGeneration(options?.indexGeneration);
+      if (current.derivedIndexGeneration !== requestedGeneration) {
+        // A generation is an isolated provider state store. Never use a
+        // document ID from one store against another. The old binding is kept
+        // in history for rollback/audit; only the derived live pointer is
+        // replaced and the authoritative desired revision remains intact.
+        if (requestedGeneration === undefined) {
+          return { decision: "blocked", reason: "index_generation_mismatch" };
+        }
+        const now = new Date(nowMs).toISOString();
+        if (current.localDocumentId || current.indexedRevision || current.localDocumentRevision) {
+          this.sql.exec(
+            `INSERT OR IGNORE INTO knowledge_ledger_derived_history (
+               source_key, source_type, index_generation, local_document_id,
+               local_document_revision, indexed_revision, status,
+               archive_reason, archived_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            sourceKey,
+            current.sourceType,
+            current.derivedIndexGeneration ?? "legacy",
+            current.localDocumentId ?? null,
+            current.localDocumentRevision ?? null,
+            current.indexedRevision ?? null,
+            current.status,
+            "index_generation_changed",
+            now,
+          );
+        }
+        this.sql.exec(
+          `UPDATE knowledge_ledger SET status = 'writing', desired_revision = ?,
+           indexed_revision = NULL, local_document_id = NULL,
+           local_document_revision = NULL, derived_index_generation = ?,
+           local_workflow_status = NULL, poll_deadline_at = NULL,
+           next_poll_at = NULL, add_attempt_token = ?, add_attempt_revision = ?,
+           last_local_operation = 'add_started', last_local_error = NULL,
+           updated_at = ? WHERE source_key = ? AND lease_token = ?`,
+          desiredRevision,
+          requestedGeneration,
+          leaseToken,
+          desiredRevision,
+          now,
+          sourceKey,
+          leaseToken,
+        );
+        return { decision: "add" };
+      }
       if (current.indexedRevision === desiredRevision && current.status === "indexed") {
         return { decision: "noop", reason: "already_indexed" };
       }
@@ -1237,6 +1991,79 @@ export class KnowledgeLedger {
     });
   }
 
+  resolveAmbiguousAdd(input: {
+    sourceKey: string;
+    leaseToken: string;
+    desiredRevision: string;
+    resolution: "not_found" | "found";
+    localDocumentId?: string;
+    workflowStatus?: string;
+    pollDeadlineAt?: number;
+    nextPollAt?: number;
+  }, nowMs: number): ResolveAmbiguousAddResult {
+    if (!input.sourceKey || !input.leaseToken || !input.desiredRevision) {
+      throw new Error("ambiguous add resolution identity is required");
+    }
+    return this.tx(() => {
+      const current = this.get(input.sourceKey);
+      if (
+        !current ||
+        current.leaseToken !== input.leaseToken ||
+        current.status !== "leased" ||
+        current.lastLocalOperation !== "add_started" ||
+        current.localDocumentId ||
+        (current.desiredRevision !== undefined && current.desiredRevision !== input.desiredRevision)
+      ) throw new Error("ambiguous add resolution is not current");
+      const now = new Date(nowMs).toISOString();
+      if (input.resolution === "not_found") {
+        this.sql.exec(
+          `UPDATE knowledge_ledger SET
+             status = 'writing', desired_revision = ?, add_attempt_token = ?,
+             add_attempt_revision = ?, last_local_error = NULL,
+             updated_at = ? WHERE source_key = ? AND lease_token = ?`,
+          input.desiredRevision,
+          input.leaseToken,
+          input.desiredRevision,
+          now,
+          input.sourceKey,
+          input.leaseToken,
+        );
+        return { decision: "add" };
+      }
+      if (
+        !input.localDocumentId ||
+        !input.workflowStatus ||
+        !Number.isFinite(input.pollDeadlineAt) ||
+        !Number.isFinite(input.nextPollAt)
+      ) throw new Error("found ambiguous add resolution is incomplete");
+      const pollDeadlineAt = input.pollDeadlineAt as number;
+      const nextPollAt = input.nextPollAt as number;
+      this.sql.exec(
+          `UPDATE knowledge_ledger SET
+           status = 'polling', desired_revision = ?, local_document_id = ?,
+           local_document_revision = ?, local_workflow_status = ?,
+           poll_deadline_at = ?, next_poll_at = ?,
+           last_local_operation = 'add_accepted', last_local_error = NULL,
+           add_attempt_token = NULL, add_attempt_revision = NULL,
+           updated_at = ? WHERE source_key = ? AND lease_token = ?`,
+        input.desiredRevision,
+        input.localDocumentId,
+        input.desiredRevision,
+        input.workflowStatus,
+        pollDeadlineAt,
+        nextPollAt,
+        now,
+        input.sourceKey,
+        input.leaseToken,
+      );
+      return {
+        decision: "poll",
+        localDocumentId: input.localDocumentId,
+        pollDeadlineAt,
+      };
+    });
+  }
+
   recordLocalAccepted(input: {
     sourceKey: string;
     leaseToken: string;
@@ -1245,32 +2072,39 @@ export class KnowledgeLedger {
     workflowStatus: string;
     pollDeadlineAt: number;
     nextPollAt: number;
+    indexGeneration?: string;
   }, nowMs: number): boolean {
     return this.tx(() => {
       const current = this.get(input.sourceKey);
       if (!current || current.tombstonedAt) return false;
+      const inputGeneration = normalizeDerivedIndexGeneration(input.indexGeneration);
+      if (current.derivedIndexGeneration !== inputGeneration) return false;
       const ownsCurrentLease = current.leaseToken === input.leaseToken;
-      if (!ownsCurrentLease && current.addAttemptToken !== input.leaseToken) return false;
+      const acceptedAdd = current.addAttemptToken === input.leaseToken &&
+        current.addAttemptRevision === input.desiredRevision;
+      const acceptedUpdate = ownsCurrentLease &&
+        current.lastLocalOperation === "update_started" &&
+        current.desiredRevision === input.desiredRevision;
+      if (!acceptedAdd && !acceptedUpdate) return false;
       if (current.localDocumentId && current.localDocumentId !== input.localDocumentId) {
         throw new Error("local document identity conflict");
       }
-      if (current.addAttemptRevision !== input.desiredRevision) {
-        return false;
-      }
-      if (current.localDocumentRevision && current.localDocumentRevision !== input.desiredRevision) {
+      if (!acceptedUpdate && current.localDocumentRevision && current.localDocumentRevision !== input.desiredRevision) {
         throw new Error("local document revision conflict");
       }
+      const acceptanceOperation = acceptedUpdate ? "update_accepted" : "add_accepted";
       this.sql.exec(
         `UPDATE knowledge_ledger SET
          status = CASE WHEN lease_token = ? THEN 'polling' ELSE status END,
          local_document_id = ?,
          local_document_revision = ?,
+         derived_index_generation = ?,
          local_workflow_status = ?, poll_deadline_at = ?, next_poll_at = ?,
-         last_local_operation = 'add_accepted', last_local_error = NULL, updated_at = ?
-         WHERE source_key = ? AND add_attempt_token = ?`,
-        input.leaseToken, input.localDocumentId, input.desiredRevision, input.workflowStatus,
-        input.pollDeadlineAt, input.nextPollAt,
-        new Date(nowMs).toISOString(), input.sourceKey, input.leaseToken,
+         last_local_operation = ?, last_local_error = NULL, updated_at = ?
+         WHERE source_key = ? AND (add_attempt_token = ? OR lease_token = ?)`,
+        input.leaseToken, input.localDocumentId, input.desiredRevision, inputGeneration ?? null, input.workflowStatus,
+        input.pollDeadlineAt, input.nextPollAt, acceptanceOperation,
+        new Date(nowMs).toISOString(), input.sourceKey, input.leaseToken, input.leaseToken,
       );
       return true;
     });
@@ -1677,12 +2511,20 @@ export class KnowledgeLedger {
     queueName: string;
     body: unknown;
     sourceKey?: string;
+    sourceType?: KnowledgeJob["sourceType"];
     teamId?: string;
     attempts: number;
     lastErrorCode?: string;
     capturedAt: string;
   }): DurableKnowledgeDlqRecord {
     const bodyJson = JSON.stringify(input.body);
+    const sourceType = parseKnowledgeSourceType(
+      input.sourceType ?? (input.sourceKey ? parseSourceTypeFromKey(input.sourceKey) : "slack"),
+    );
+    if (input.sourceKey) {
+      const keySourceType = parseSourceTypeFromKey(input.sourceKey);
+      if (keySourceType !== sourceType) throw new Error("DLQ source identity is invalid");
+    }
     if (!input.messageId || input.messageId.length > 256) throw new Error("DLQ messageId is invalid");
     if (!input.queueName || input.queueName.length > 256) throw new Error("DLQ queueName is invalid");
     if (!bodyJson || bodyJson.length > 64 * 1024) throw new Error("DLQ body is invalid or too large");
@@ -1692,13 +2534,14 @@ export class KnowledgeLedger {
     if (!Number.isFinite(Date.parse(input.capturedAt))) throw new Error("DLQ capturedAt is invalid");
     this.sql.exec(
       `INSERT OR IGNORE INTO knowledge_dlq_records (
-         message_id, queue_name, body_json, source_key, team_id, attempts,
+         message_id, queue_name, body_json, source_key, source_type, team_id, attempts,
          last_error_code, status, captured_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       input.messageId,
       input.queueName,
       bodyJson,
       input.sourceKey ?? null,
+      sourceType,
       input.teamId ?? null,
       input.attempts,
       input.lastErrorCode?.slice(0, 256) ?? null,
@@ -1962,6 +2805,87 @@ export class KnowledgeLedger {
       : undefined;
   }
 
+  putBackfillConversationInventory(input: {
+    manifestId: string;
+    inventoryDigest: string;
+    inventory: SlackConversationInventoryReceipt;
+    createdAt: string;
+  }): SlackConversationInventoryReceipt {
+    if (!input.manifestId || input.manifestId.length > 128) {
+      throw new Error("backfill manifestId is invalid");
+    }
+    if (!/^sha256:[a-f0-9]{64}$/.test(input.inventoryDigest)) {
+      throw new Error("backfill conversation inventory digest is invalid");
+    }
+    if (
+      input.inventory.schemaVersion !== 1 ||
+      input.inventory.visibility !== "installed_bot" ||
+      !["complete", "incomplete"].includes(input.inventory.status) ||
+      input.inventory.inventoryDigest !== input.inventoryDigest ||
+      !Number.isSafeInteger(input.inventory.pages) ||
+      input.inventory.pages < 0 ||
+      !Number.isSafeInteger(input.inventory.visibleCount) ||
+      input.inventory.visibleCount < 0 ||
+      !Number.isSafeInteger(input.inventory.eligibleCount) ||
+      input.inventory.eligibleCount < 0 ||
+      !Number.isSafeInteger(input.inventory.excludedCount) ||
+      input.inventory.excludedCount < 0 ||
+      input.inventory.eligibleCount + input.inventory.excludedCount !== input.inventory.visibleCount ||
+      !Array.isArray(input.inventory.eligibleConversationIds) ||
+      input.inventory.eligibleConversationIds.length !== input.inventory.eligibleCount ||
+      new Set(input.inventory.eligibleConversationIds).size !== input.inventory.eligibleConversationIds.length ||
+      !Array.isArray(input.inventory.excluded) ||
+      input.inventory.excluded.length > input.inventory.excludedCount
+    ) {
+      throw new Error("backfill conversation inventory is invalid");
+    }
+    const inventoryJson = JSON.stringify(input.inventory);
+    if (!inventoryJson || inventoryJson.length > 1024 * 1024) {
+      throw new Error("backfill conversation inventory is too large");
+    }
+    if (!Number.isFinite(Date.parse(input.createdAt))) {
+      throw new Error("backfill conversation inventory timestamp is invalid");
+    }
+    return this.tx(() => {
+      this.sql.exec(
+        `INSERT OR IGNORE INTO knowledge_backfill_conversation_inventories (
+           manifest_id, inventory_digest, inventory_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+        input.manifestId,
+        input.inventoryDigest,
+        inventoryJson,
+        input.createdAt,
+        input.createdAt,
+      );
+      const row = this.sql.exec<BackfillConversationInventoryDbRow>(
+        `SELECT * FROM knowledge_backfill_conversation_inventories
+         WHERE manifest_id = ?`,
+        input.manifestId,
+      ).toArray()[0];
+      if (
+        !row ||
+        row.inventory_digest !== input.inventoryDigest ||
+        row.inventory_json !== inventoryJson
+      ) {
+        throw new Error("backfill conversation inventory identity conflict");
+      }
+      return JSON.parse(row.inventory_json) as SlackConversationInventoryReceipt;
+    });
+  }
+
+  getBackfillConversationInventory(
+    manifestId: string,
+  ): SlackConversationInventoryReceipt | undefined {
+    const row = this.sql.exec<BackfillConversationInventoryDbRow>(
+      `SELECT * FROM knowledge_backfill_conversation_inventories
+       WHERE manifest_id = ?`,
+      manifestId,
+    ).toArray()[0];
+    return row
+      ? JSON.parse(row.inventory_json) as SlackConversationInventoryReceipt
+      : undefined;
+  }
+
   blockBackfillDiscovery(
     manifestId: string,
     scopeDigest: string,
@@ -2163,6 +3087,9 @@ export class KnowledgeLedger {
         executionBudget: input.manifest.executionBudget,
         releaseIds: input.manifest.releaseIds,
         rollbackOwner: input.manifest.rollbackOwner,
+        ...(input.manifest.conversationInventoryDigest
+          ? { conversationInventoryDigest: input.manifest.conversationInventoryDigest }
+          : {}),
       };
       if (JSON.stringify(manifestScope) !== JSON.stringify(scope)) {
         throw new Error("backfill manifest scope differs from discovery");
@@ -2746,6 +3673,802 @@ export class KnowledgeLedger {
       sourceKey,
     ).toArray()[0];
     return row ? ledgerRow(row) : undefined;
+  }
+
+  getQueryConvergence(sourceKey: string): KnowledgeQueryConvergenceReceipt | undefined {
+    const row = this.sql.exec<KnowledgeQueryConvergenceDbRow>(
+      `SELECT query.*
+       FROM knowledge_query_convergence AS query
+       JOIN knowledge_ledger AS ledger ON ledger.source_key = query.source_key
+       WHERE query.source_key = ?
+         AND ledger.indexed_revision = query.content_revision
+         AND ledger.derived_index_generation = query.index_generation
+       ORDER BY query.checked_at DESC
+       LIMIT 1`,
+      sourceKey,
+    ).toArray()[0];
+    return row ? queryConvergenceReceipt(row) : undefined;
+  }
+
+  recordQueryConvergence(input: {
+    sourceKey: string;
+    contentRevision: string;
+    indexGeneration: string;
+    localDocumentId: string;
+    queryDigest: string;
+    status: KnowledgeQueryConvergenceStatus;
+    providerResultCount: number;
+    matchingCitationCount: number;
+    errorCode?: string;
+  }, nowMs: number): boolean {
+    if (!input.sourceKey || input.sourceKey.length > 512 || /[\u0000-\u001f\u007f]/.test(input.sourceKey)) {
+      throw new Error("query convergence sourceKey is invalid");
+    }
+    if (!input.contentRevision || input.contentRevision.length > 512 || /[\u0000-\u001f\u007f]/.test(input.contentRevision)) {
+      throw new Error("query convergence contentRevision is invalid");
+    }
+    const indexGeneration = normalizeDerivedIndexGeneration(input.indexGeneration);
+    if (!indexGeneration) throw new Error("query convergence indexGeneration is invalid");
+    if (!input.localDocumentId || input.localDocumentId.length > 512 || /[\u0000-\u001f\u007f]/.test(input.localDocumentId)) {
+      throw new Error("query convergence localDocumentId is invalid");
+    }
+    if (!/^sha256:[0-9a-f]{64}$/.test(input.queryDigest)) {
+      throw new Error("query convergence queryDigest is invalid");
+    }
+    if (!Number.isSafeInteger(input.providerResultCount) || input.providerResultCount < 0 || input.providerResultCount > 100_000) {
+      throw new Error("query convergence providerResultCount is invalid");
+    }
+    if (!Number.isSafeInteger(input.matchingCitationCount) || input.matchingCitationCount < 0 ||
+      input.matchingCitationCount > input.providerResultCount) {
+      throw new Error("query convergence matchingCitationCount is invalid");
+    }
+    if (input.status === "queryable" && input.matchingCitationCount < 1) {
+      throw new Error("queryable convergence requires a matching citation");
+    }
+    if (input.status === "not_found" && input.matchingCitationCount !== 0) {
+      throw new Error("not_found convergence cannot contain a matching citation");
+    }
+    if (input.status === "failed" && (!input.errorCode || !/^[a-z][a-z0-9_.-]{0,127}$/.test(input.errorCode))) {
+      throw new Error("failed query convergence requires an errorCode");
+    }
+    if (input.errorCode !== undefined && !/^[a-z][a-z0-9_.-]{0,127}$/.test(input.errorCode)) {
+      throw new Error("query convergence errorCode is invalid");
+    }
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("query convergence timestamp is invalid");
+    return this.tx(() => {
+      const current = this.get(input.sourceKey);
+      if (
+        !current ||
+        current.status === "tombstoned" ||
+        current.indexedRevision !== input.contentRevision ||
+        current.derivedIndexGeneration !== indexGeneration ||
+        current.localDocumentId !== input.localDocumentId
+      ) return false;
+      const checkedAt = new Date(nowMs).toISOString();
+      this.sql.exec(
+        `INSERT INTO knowledge_query_convergence (
+           source_key, source_type, team_id, project_id, channel_id, thread_ts,
+           content_revision, index_generation, local_document_id, query_digest,
+           status, provider_result_count, matching_citation_count, error_code, checked_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_key, content_revision, index_generation) DO UPDATE SET
+           source_type = excluded.source_type,
+           team_id = excluded.team_id,
+           project_id = excluded.project_id,
+           channel_id = excluded.channel_id,
+           thread_ts = excluded.thread_ts,
+           local_document_id = excluded.local_document_id,
+           query_digest = excluded.query_digest,
+           status = excluded.status,
+           provider_result_count = excluded.provider_result_count,
+           matching_citation_count = excluded.matching_citation_count,
+           error_code = excluded.error_code,
+           checked_at = excluded.checked_at`,
+        current.sourceKey,
+        current.sourceType,
+        current.teamId,
+        current.projectId,
+        current.channelId,
+        current.threadTs,
+        input.contentRevision,
+        indexGeneration,
+        input.localDocumentId,
+        input.queryDigest,
+        input.status,
+        input.providerResultCount,
+        input.matchingCitationCount,
+        input.errorCode ?? null,
+        checkedAt,
+      );
+      return true;
+    });
+  }
+
+  recordQueryabilityReceipt(
+    input: KnowledgeQueryabilityReceiptInput,
+    nowMs: number,
+  ): KnowledgeQueryabilityReceipt {
+    const identity = queryabilityIdentity(input);
+    if (!QUERYABILITY_RECEIPT_STATUSES.includes(input.status)) {
+      throw new Error("knowledge queryability receipt status is invalid");
+    }
+    if (
+      !Number.isSafeInteger(input.providerResultCount) ||
+      input.providerResultCount < 0 ||
+      input.providerResultCount > MAX_QUERYABILITY_COUNT ||
+      !Number.isSafeInteger(input.acceptedCitationCount) ||
+      input.acceptedCitationCount < 0 ||
+      input.acceptedCitationCount > MAX_QUERYABILITY_COUNT ||
+      input.acceptedCitationCount > input.providerResultCount
+    ) {
+      throw new Error("knowledge queryability receipt counts are invalid");
+    }
+    if (!Number.isSafeInteger(nowMs) || !Number.isFinite(new Date(nowMs).getTime())) {
+      throw new Error("knowledge queryability receipt timestamp is invalid");
+    }
+    const now = new Date(nowMs).toISOString();
+    return this.tx(() => {
+      const current = this.get(identity.sourceKey);
+      if (
+        !current ||
+        current.sourceType !== identity.sourceType ||
+        current.teamId !== identity.teamId ||
+        current.projectId !== identity.projectId ||
+        current.channelId !== identity.channelId ||
+        current.threadTs !== identity.threadTs
+      ) {
+        throw new Error("knowledge queryability source identity mismatch");
+      }
+      if (current.status !== "indexed") {
+        throw new Error("knowledge queryability receipt requires indexed status");
+      }
+      if (
+        current.indexedRevision !== identity.contentRevision ||
+        current.localDocumentRevision !== identity.indexRevision ||
+        current.localDocumentId !== identity.localDocumentId
+      ) {
+        throw new Error("knowledge queryability receipt fence mismatch");
+      }
+      if (current.derivedIndexGeneration && current.derivedIndexGeneration !== identity.derivedIndexGeneration) {
+        throw new Error("knowledge queryability derived index generation mismatch");
+      }
+      if (!current.derivedIndexGeneration) {
+        this.sql.exec(
+          `UPDATE knowledge_ledger
+           SET derived_index_generation = ?, updated_at = ?
+           WHERE source_key = ? AND derived_index_generation IS NULL`,
+          identity.derivedIndexGeneration,
+          now,
+          identity.sourceKey,
+        );
+      }
+      this.sql.exec(
+        `INSERT INTO knowledge_queryability_receipts (
+           source_key, source_type, team_id, project_id, channel_id, thread_ts,
+           content_revision, index_revision, local_document_id,
+           derived_index_generation, status, provider_result_count,
+           accepted_citation_count, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_key, content_revision, index_revision, derived_index_generation)
+         DO UPDATE SET
+           source_type = excluded.source_type,
+           team_id = excluded.team_id,
+           project_id = excluded.project_id,
+           channel_id = excluded.channel_id,
+           thread_ts = excluded.thread_ts,
+           local_document_id = excluded.local_document_id,
+           status = excluded.status,
+           provider_result_count = excluded.provider_result_count,
+           accepted_citation_count = excluded.accepted_citation_count,
+           updated_at = excluded.updated_at`,
+        identity.sourceKey,
+        identity.sourceType,
+        identity.teamId,
+        identity.projectId,
+        identity.channelId,
+        identity.threadTs,
+        identity.contentRevision,
+        identity.indexRevision,
+        identity.localDocumentId,
+        identity.derivedIndexGeneration,
+        input.status,
+        input.providerResultCount,
+        input.acceptedCitationCount,
+        now,
+        now,
+      );
+      const row = this.sql.exec<KnowledgeQueryabilityReceiptDbRow>(
+        `SELECT * FROM knowledge_queryability_receipts
+         WHERE source_key = ? AND content_revision = ? AND index_revision = ?
+           AND derived_index_generation = ?`,
+        identity.sourceKey,
+        identity.contentRevision,
+        identity.indexRevision,
+        identity.derivedIndexGeneration,
+      ).toArray()[0];
+      if (!row) throw new Error("knowledge queryability receipt was not persisted");
+      return queryabilityReceipt(row);
+    });
+  }
+
+  getQueryabilityReceipt(
+    input: KnowledgeQueryabilityReceiptIdentity,
+  ): KnowledgeQueryabilityReceipt | undefined {
+    const identity = queryabilityIdentity(input);
+    const current = this.get(identity.sourceKey);
+    if (!current) return undefined;
+    if (
+      current.sourceType !== identity.sourceType ||
+      current.teamId !== identity.teamId ||
+      current.projectId !== identity.projectId ||
+      current.channelId !== identity.channelId ||
+      current.threadTs !== identity.threadTs
+    ) {
+      throw new Error("knowledge queryability source identity mismatch");
+    }
+    if (
+      current.status !== "indexed" ||
+      current.indexedRevision !== identity.contentRevision ||
+      current.localDocumentRevision !== identity.indexRevision ||
+      current.localDocumentId !== identity.localDocumentId ||
+      current.derivedIndexGeneration !== identity.derivedIndexGeneration
+    ) {
+      return undefined;
+    }
+    const row = this.sql.exec<KnowledgeQueryabilityReceiptDbRow>(
+      `SELECT * FROM knowledge_queryability_receipts
+       WHERE source_key = ? AND content_revision = ? AND index_revision = ?
+         AND derived_index_generation = ?`,
+      identity.sourceKey,
+      identity.contentRevision,
+      identity.indexRevision,
+      identity.derivedIndexGeneration,
+    ).toArray()[0];
+    return row ? queryabilityReceipt(row) : undefined;
+  }
+
+  readQueryabilityReceipt(
+    input: KnowledgeQueryabilityReceiptIdentity,
+  ): KnowledgeQueryabilityReceipt | undefined {
+    return this.getQueryabilityReceipt(input);
+  }
+
+  listFailures(input: {
+    cursor?: string;
+    limit?: number;
+    status?: "permanent_failure" | "retryable_failure";
+  }): KnowledgeFailureList {
+    const cursor = input.cursor ?? "";
+    if (cursor.length > 512) throw new Error("failure cursor is invalid");
+    const limit = input.limit ?? 25;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("failure page limit must be between 1 and 100");
+    }
+    const rows = input.status
+      ? this.sql.exec<LedgerDbRow>(
+        `SELECT * FROM knowledge_ledger
+         WHERE source_key > ? AND status = ?
+         ORDER BY source_key ASC
+         LIMIT ?`,
+        cursor,
+        input.status,
+        limit + 1,
+      ).toArray()
+      : this.sql.exec<LedgerDbRow>(
+        `SELECT * FROM knowledge_ledger
+         WHERE source_key > ? AND status IN ('permanent_failure', 'retryable_failure')
+         ORDER BY source_key ASC
+         LIMIT ?`,
+        cursor,
+        limit + 1,
+      ).toArray();
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit).map((row) => knowledgeFailureRow(ledgerRow(row)));
+    return {
+      rows: page,
+      ...(hasMore && page.length > 0 ? { nextCursor: page.at(-1)!.sourceKey } : {}),
+    };
+  }
+
+  getThreadFetchCheckpoint(job: KnowledgeJob): KnowledgeThreadFetchCheckpoint | undefined {
+    const row = this.sql.exec<ThreadFetchCheckpointDbRow>(
+      `SELECT * FROM knowledge_thread_fetch_checkpoints
+       WHERE source_key = ? AND source_type = ? AND team_id = ?
+         AND project_id = ? AND channel_id = ? AND thread_ts = ?
+         AND config_version = ? AND requested_at = ?`,
+      job.sourceKey,
+      job.sourceType,
+      job.teamId,
+      job.projectId,
+      job.channelId,
+      job.threadTs,
+      job.configVersion,
+      job.requestedAt,
+    ).toArray()[0];
+    if (!row) return undefined;
+    try {
+      const messages = JSON.parse(row.messages_json);
+      if (!Array.isArray(messages)) return undefined;
+      return {
+        ...(row.cursor ? { cursor: row.cursor } : {}),
+        pages: row.pages,
+        messages,
+        bytes: row.bytes,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  saveThreadFetchCheckpoint(
+    job: KnowledgeJob,
+    checkpoint: KnowledgeThreadFetchCheckpoint,
+    nowMs: number,
+  ): void {
+    if (
+      !Number.isSafeInteger(checkpoint.pages) ||
+      checkpoint.pages < 0 ||
+      !Number.isSafeInteger(checkpoint.bytes) ||
+      checkpoint.bytes < 0 ||
+      !Array.isArray(checkpoint.messages) ||
+      (checkpoint.cursor !== undefined && !checkpoint.cursor)
+    ) {
+      throw new Error("knowledge thread checkpoint is invalid");
+    }
+    const messagesJson = JSON.stringify(checkpoint.messages);
+    if (new TextEncoder().encode(messagesJson).byteLength > MAX_THREAD_FETCH_CHECKPOINT_JSON_BYTES) {
+      throw new Error("knowledge thread checkpoint exceeds storage bound");
+    }
+    this.tx(() => {
+      const current = this.get(job.sourceKey);
+      if (
+        !current ||
+        current.sourceType !== job.sourceType ||
+        current.teamId !== job.teamId ||
+        current.projectId !== job.projectId ||
+        current.channelId !== job.channelId ||
+        current.threadTs !== job.threadTs ||
+        current.configVersion !== job.configVersion ||
+        current.requestedAt !== job.requestedAt
+      ) {
+        throw new Error("knowledge thread checkpoint identity is stale");
+      }
+      this.sql.exec(
+        `INSERT INTO knowledge_thread_fetch_checkpoints (
+           source_key, source_type, team_id, project_id, channel_id, thread_ts,
+           config_version, requested_at, cursor, pages, messages_json,
+           message_count, bytes, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_key) DO UPDATE SET
+           source_type = excluded.source_type,
+           team_id = excluded.team_id,
+           project_id = excluded.project_id,
+           channel_id = excluded.channel_id,
+           thread_ts = excluded.thread_ts,
+           config_version = excluded.config_version,
+           requested_at = excluded.requested_at,
+           cursor = excluded.cursor,
+           pages = excluded.pages,
+           messages_json = excluded.messages_json,
+           message_count = excluded.message_count,
+           bytes = excluded.bytes,
+           updated_at = excluded.updated_at`,
+        job.sourceKey,
+        job.sourceType,
+        job.teamId,
+        job.projectId,
+        job.channelId,
+        job.threadTs,
+        job.configVersion,
+        job.requestedAt,
+        checkpoint.cursor ?? null,
+        checkpoint.pages,
+        messagesJson,
+        checkpoint.messages.length,
+        checkpoint.bytes,
+        new Date(nowMs).toISOString(),
+      );
+    });
+  }
+
+  clearThreadFetchCheckpoint(job: KnowledgeJob): void {
+    this.sql.exec(
+      `DELETE FROM knowledge_thread_fetch_checkpoints
+       WHERE source_key = ? AND config_version = ? AND requested_at = ?`,
+      job.sourceKey,
+      job.configVersion,
+      job.requestedAt,
+    );
+  }
+
+  putSlackMessageThreads(input: {
+    teamId: string;
+    projectId: string;
+    channelId: string;
+    threadTs: string;
+    sourceKey: string;
+    messageTs: string[];
+  }, nowMs: number): { stored: number } {
+    const expectedSourceKey = slackSourceKey(input.teamId, input.channelId, input.threadTs);
+    if (input.sourceKey !== expectedSourceKey) {
+      throw new Error("Slack message thread source key is invalid");
+    }
+    const messageTs = [...new Set(input.messageTs)].filter((value) => /^\d+\.\d+$/.test(value));
+    if (messageTs.length === 0) return { stored: 0 };
+    const updatedAt = new Date(nowMs).toISOString();
+    this.tx(() => {
+      for (const message of messageTs) {
+        this.sql.exec(
+          `INSERT INTO knowledge_slack_message_threads (
+             team_id, project_id, channel_id, message_ts, thread_ts, source_key, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(team_id, channel_id, message_ts) DO UPDATE SET
+             project_id = excluded.project_id,
+             thread_ts = excluded.thread_ts,
+             source_key = excluded.source_key,
+             updated_at = excluded.updated_at`,
+          input.teamId,
+          input.projectId,
+          input.channelId,
+          message,
+          input.threadTs,
+          input.sourceKey,
+          updatedAt,
+        );
+      }
+    });
+    return { stored: messageTs.length };
+  }
+
+  getSlackMessageThread(input: {
+    teamId: string;
+    channelId: string;
+    messageTs: string;
+  }): SlackMessageThreadMapping | undefined {
+    const row = this.sql.exec<{
+      team_id: string;
+      project_id: string;
+      channel_id: string;
+      message_ts: string;
+      thread_ts: string;
+      source_key: string;
+      updated_at: string;
+    }>(
+      `SELECT team_id, project_id, channel_id, message_ts, thread_ts, source_key, updated_at
+         FROM knowledge_slack_message_threads
+        WHERE team_id = ? AND channel_id = ? AND message_ts = ?`,
+      input.teamId,
+      input.channelId,
+      input.messageTs,
+    ).toArray()[0];
+    if (!row) return undefined;
+    return {
+      teamId: row.team_id,
+      projectId: row.project_id,
+      channelId: row.channel_id,
+      messageTs: row.message_ts,
+      threadTs: row.thread_ts,
+      sourceKey: row.source_key,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  pruneThreadFetchCheckpoints(nowMs: number, maxAgeMs: number): void {
+    if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1) {
+      throw new Error("thread fetch checkpoint retention is invalid");
+    }
+    this.sql.exec(
+      `DELETE FROM knowledge_thread_fetch_checkpoints
+       WHERE updated_at < ?
+          OR NOT EXISTS (
+               SELECT 1 FROM knowledge_ledger
+               WHERE knowledge_ledger.source_key = knowledge_thread_fetch_checkpoints.source_key
+                 AND knowledge_ledger.config_version = knowledge_thread_fetch_checkpoints.config_version
+                 AND knowledge_ledger.requested_at = knowledge_thread_fetch_checkpoints.requested_at
+                 AND knowledge_ledger.status IN ('pending', 'queued', 'leased', 'fetching', 'retryable_failure')
+             )`,
+      new Date(nowMs - maxAgeMs).toISOString(),
+    );
+  }
+
+  statusSnapshot(nowMs: number): KnowledgeLedgerStatusSnapshot {
+    const ledgerRows = this.sql.exec<{
+      status: KnowledgeLedgerStatus;
+      count: number;
+    }>(
+      `SELECT status, COUNT(*) AS count
+       FROM knowledge_ledger
+       GROUP BY status
+       ORDER BY status ASC`,
+    ).toArray();
+    const byStatus: Partial<Record<KnowledgeLedgerStatus, number>> = {};
+    for (const row of ledgerRows) byStatus[row.status] = Number(row.count);
+
+    const outboxRows = this.sql.exec<{
+      status: "pending" | "sending";
+      count: number;
+    }>(
+      `SELECT status, COUNT(*) AS count
+       FROM knowledge_outbox
+       GROUP BY status`,
+    ).toArray();
+    const outboxPending = Number(outboxRows.find((row) => row.status === "pending")?.count ?? 0);
+    const outboxSending = Number(outboxRows.find((row) => row.status === "sending")?.count ?? 0);
+    const outboxDue = Number(this.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM knowledge_outbox
+       WHERE status = 'pending' AND next_attempt_at <= ?`,
+      nowMs,
+    ).toArray()[0]?.count ?? 0);
+    const earliestPendingAt = this.sql.exec<{ next_attempt_at: number }>(
+      `SELECT next_attempt_at
+       FROM knowledge_outbox
+       WHERE status = 'pending'
+       ORDER BY next_attempt_at ASC
+       LIMIT 1`,
+    ).toArray()[0]?.next_attempt_at;
+
+    const dlqRows = this.sql.exec<{
+      status: "pending" | "replaying" | "replayed" | "disposed";
+      count: number;
+    }>(
+      `SELECT status, COUNT(*) AS count
+       FROM knowledge_dlq_records
+       GROUP BY status`,
+    ).toArray();
+    const dlqPending = Number(dlqRows.find((row) => row.status === "pending")?.count ?? 0);
+    const dlqReplaying = Number(dlqRows.find((row) => row.status === "replaying")?.count ?? 0);
+    const dlqReplayed = Number(dlqRows.find((row) => row.status === "replayed")?.count ?? 0);
+    const dlqDisposed = Number(dlqRows.find((row) => row.status === "disposed")?.count ?? 0);
+
+    const reconcileRows = this.sql.exec<{
+      status: "running" | "complete";
+      count: number;
+    }>(
+      `SELECT status, COUNT(*) AS count
+       FROM knowledge_reconcile_runs
+       GROUP BY status`,
+    ).toArray();
+    const latestReconcileRow = this.sql.exec<ReconcileRunDbRow>(
+      `SELECT * FROM knowledge_reconcile_runs
+       ORDER BY updated_at DESC, run_id DESC
+       LIMIT 1`,
+    ).toArray()[0];
+
+    const backfillRows = this.sql.exec<{
+      status: DurableBackfillManifestRecord["status"];
+      count: number;
+    }>(
+      `SELECT status, COUNT(*) AS count
+       FROM knowledge_backfill_manifests
+       GROUP BY status`,
+    ).toArray();
+    const latestBackfillRow = this.sql.exec<BackfillManifestDbRow>(
+      `SELECT * FROM knowledge_backfill_manifests
+       ORDER BY updated_at DESC, manifest_id DESC
+       LIMIT 1`,
+    ).toArray()[0];
+    const threadFetchSummary = this.sql.exec<{
+      active: number;
+      messages: number | null;
+      bytes: number | null;
+      oldest_updated_at: string | null;
+    }>(
+      `SELECT COUNT(*) AS active,
+              SUM(message_count) AS messages,
+              SUM(bytes) AS bytes,
+              MIN(updated_at) AS oldest_updated_at
+       FROM knowledge_thread_fetch_checkpoints`,
+    ).toArray()[0];
+    const inventoryRows = this.sql.exec<BackfillConversationInventoryDbRow>(
+      `SELECT * FROM knowledge_backfill_conversation_inventories
+       ORDER BY updated_at DESC, manifest_id DESC`,
+    ).toArray();
+    let inventoryComplete = 0;
+    let inventoryIncomplete = 0;
+    let inventoryInvalid = 0;
+    let latestInventory: KnowledgeLedgerStatusSnapshot["inventory"]["latest"];
+    for (const row of inventoryRows) {
+      let inventory: SlackConversationInventoryReceipt | undefined;
+      try {
+        inventory = JSON.parse(row.inventory_json) as SlackConversationInventoryReceipt;
+      } catch {
+        inventory = undefined;
+      }
+      const valid = inventory &&
+        inventory.schemaVersion === 1 &&
+        inventory.visibility === "installed_bot" &&
+        (inventory.status === "complete" || inventory.status === "incomplete") &&
+        Number.isSafeInteger(inventory.visibleCount) &&
+        Number.isSafeInteger(inventory.eligibleCount) &&
+        Number.isSafeInteger(inventory.excludedCount) &&
+        typeof inventory.inventoryDigest === "string" &&
+        inventory.inventoryDigest === row.inventory_digest;
+      const status = valid ? inventory!.status : "invalid";
+      if (status === "complete") inventoryComplete += 1;
+      if (status === "incomplete") inventoryIncomplete += 1;
+      if (status === "invalid") inventoryInvalid += 1;
+      if (!latestInventory) {
+        latestInventory = {
+          manifestId: row.manifest_id,
+          status,
+          visibleCount: valid ? inventory!.visibleCount : 0,
+          eligibleCount: valid ? inventory!.eligibleCount : 0,
+          excludedCount: valid ? inventory!.excludedCount : 0,
+          inventoryDigest: row.inventory_digest,
+          updatedAt: row.updated_at,
+        };
+      }
+    }
+    const messageThreadMapSummary = this.sql.exec<{
+      total: number;
+      oldest_updated_at: string | null;
+      newest_updated_at: string | null;
+    }>(
+      `SELECT COUNT(*) AS total,
+              MIN(updated_at) AS oldest_updated_at,
+              MAX(updated_at) AS newest_updated_at
+       FROM knowledge_slack_message_threads`,
+    ).toArray()[0];
+    const queryConvergenceRows = this.sql.exec<{
+      status: KnowledgeQueryConvergenceStatus;
+      count: number;
+    }>(
+      `SELECT query.status, COUNT(*) AS count
+       FROM knowledge_query_convergence AS query
+       JOIN knowledge_ledger AS ledger ON ledger.source_key = query.source_key
+       WHERE ledger.indexed_revision = query.content_revision
+         AND ledger.derived_index_generation = query.index_generation
+         AND ledger.status != 'tombstoned'
+       GROUP BY query.status`,
+    ).toArray();
+    const queryable = Number(queryConvergenceRows.find((row) => row.status === "queryable")?.count ?? 0);
+    const notFound = Number(queryConvergenceRows.find((row) => row.status === "not_found")?.count ?? 0);
+    const failed = Number(queryConvergenceRows.find((row) => row.status === "failed")?.count ?? 0);
+    const queryableSources = queryable + notFound + failed;
+    const indexedSources = Number(this.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM knowledge_ledger
+       WHERE indexed_revision IS NOT NULL
+         AND local_document_id IS NOT NULL
+         AND status != 'tombstoned'`,
+    ).toArray()[0]?.count ?? 0);
+    const queryability: Record<KnowledgeQueryabilityReceiptStatus, number> = {
+      unverified: 0,
+      searchable: 0,
+      no_match: 0,
+      provider_unavailable: 0,
+    };
+    const queryabilityRows = this.sql.exec<{
+      status: KnowledgeQueryabilityReceiptStatus;
+      count: number;
+    }>(
+      `SELECT COALESCE(receipt.status, 'unverified') AS status, COUNT(*) AS count
+       FROM knowledge_ledger AS ledger
+       LEFT JOIN knowledge_queryability_receipts AS receipt
+         ON receipt.source_key = ledger.source_key
+        AND receipt.content_revision = ledger.indexed_revision
+        AND receipt.index_revision = ledger.local_document_revision
+        AND receipt.local_document_id = ledger.local_document_id
+        AND receipt.derived_index_generation = ledger.derived_index_generation
+       WHERE ledger.status = 'indexed'
+       GROUP BY COALESCE(receipt.status, 'unverified')`,
+    ).toArray();
+    for (const row of queryabilityRows) {
+      if (QUERYABILITY_RECEIPT_STATUSES.includes(row.status)) {
+        queryability[row.status] = Number(row.count);
+      }
+    }
+    const recoveryRows = this.sql.exec<{
+      action: "reopened" | "blocked";
+      count: number;
+    }>(
+      `SELECT action, COUNT(*) AS count
+       FROM knowledge_recovery_audits
+       GROUP BY action`,
+    ).toArray();
+    const latestRecovery = this.sql.exec<{
+      audit_id: string;
+      source_key: string;
+      action: "reopened" | "blocked";
+      reason: string;
+      created_at: string;
+    }>(
+      `SELECT audit_id, source_key, action, reason, created_at
+       FROM knowledge_recovery_audits
+       ORDER BY created_at DESC, audit_id DESC
+       LIMIT 1`,
+    ).toArray()[0];
+
+    return {
+      capturedAt: new Date(nowMs).toISOString(),
+      ledger: {
+        total: Object.values(byStatus).reduce((total, count) => total + (count ?? 0), 0),
+        byStatus,
+      },
+      outbox: {
+        pending: outboxPending,
+        sending: outboxSending,
+        due: outboxDue,
+        ...(earliestPendingAt === undefined ? {} : { earliestPendingAt }),
+      },
+      dlq: {
+        total: dlqPending + dlqReplaying + dlqReplayed + dlqDisposed,
+        pending: dlqPending,
+        replaying: dlqReplaying,
+        replayed: dlqReplayed,
+        disposed: dlqDisposed,
+      },
+      reconciliation: {
+        running: Number(reconcileRows.find((row) => row.status === "running")?.count ?? 0),
+        complete: Number(reconcileRows.find((row) => row.status === "complete")?.count ?? 0),
+        ...(latestReconcileRow ? { latest: reconcileRun(latestReconcileRow) } : {}),
+      },
+      backfill: {
+        active: backfillRows
+          .filter((row) => row.status === "dry_run" || row.status === "approved" || row.status === "running")
+          .reduce((total, row) => total + Number(row.count), 0),
+        complete: Number(backfillRows.find((row) => row.status === "complete")?.count ?? 0),
+        ...(latestBackfillRow ? {
+          latest: {
+            manifestId: latestBackfillRow.manifest_id,
+            status: latestBackfillRow.status,
+            nextJobIndex: latestBackfillRow.next_job_index,
+            executionErrorCount: latestBackfillRow.execution_error_count,
+            updatedAt: latestBackfillRow.updated_at,
+          },
+        } : {}),
+      },
+      threadFetch: {
+        active: Number(threadFetchSummary?.active ?? 0),
+        messages: Number(threadFetchSummary?.messages ?? 0),
+        bytes: Number(threadFetchSummary?.bytes ?? 0),
+        ...(threadFetchSummary?.oldest_updated_at
+          ? { oldestUpdatedAt: threadFetchSummary.oldest_updated_at }
+          : {}),
+      },
+      inventory: {
+        total: inventoryRows.length,
+        complete: inventoryComplete,
+        incomplete: inventoryIncomplete,
+        invalid: inventoryInvalid,
+        ...(latestInventory ? { latest: latestInventory } : {}),
+      },
+      messageThreadMap: {
+        total: Number(messageThreadMapSummary?.total ?? 0),
+        ...(messageThreadMapSummary?.oldest_updated_at
+          ? { oldestUpdatedAt: messageThreadMapSummary.oldest_updated_at }
+          : {}),
+        ...(messageThreadMapSummary?.newest_updated_at
+          ? { newestUpdatedAt: messageThreadMapSummary.newest_updated_at }
+          : {}),
+      },
+      queryConvergence: {
+        total: indexedSources,
+        queryable,
+        notFound,
+        failed,
+        unverified: Math.max(0, indexedSources - queryableSources),
+      },
+      queryability: {
+        total: Object.values(queryability).reduce((total, count) => total + count, 0),
+        byStatus: queryability,
+      },
+      recovery: {
+        total: recoveryRows.reduce((total, row) => total + Number(row.count), 0),
+        reopened: Number(recoveryRows.find((row) => row.action === "reopened")?.count ?? 0),
+        blocked: Number(recoveryRows.find((row) => row.action === "blocked")?.count ?? 0),
+        ...(latestRecovery ? {
+          latest: {
+            auditId: latestRecovery.audit_id,
+            sourceKey: latestRecovery.source_key,
+            action: latestRecovery.action,
+            reason: latestRecovery.reason,
+            createdAt: latestRecovery.created_at,
+          },
+        } : {}),
+      },
+    };
   }
 
   getOutbox(sourceKey: string): {

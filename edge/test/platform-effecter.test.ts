@@ -12,13 +12,22 @@ const { default: worker } = await import("../workers/platform-effecter/src/index
 
 const intent = validatePlatformEffectIntent({
   schemaVersion: 1,
-  intentId: "effect:credential:rotate:worker",
-  idempotencyKey: "credential-rotate-worker",
+  intentId: "effect:linear:create-issue:worker",
+  idempotencyKey: "linear-create-issue-worker",
   scope: "tenant",
   tenantId: "tenant-1",
-  kind: "credential_custody",
-  targetRef: "credential:google:workspace",
-  metadata: { operation: "rotate", provider: "google", version: 2 },
+  kind: "connector_effect",
+  targetRef: "connector:linear:create_issue",
+  metadata: {
+    action: "create_issue",
+    authorizationDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    connectorId: "linear",
+    credentialRef: "credential:linear:controlled",
+    credentialVersion: 1,
+    requestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    requestRef: "linear-write-approval:ABCDEFGHIJKLMNOP",
+    requestRevision: 1,
+  },
   requestedAt: "2026-08-01T22:00:00.000Z",
 });
 
@@ -144,21 +153,18 @@ describe("platform effecter Worker", () => {
 
     const enabled = await fetchWorker("/health", {
       token: "expected",
-      providerAdapter: { fetch: async () => Response.json({}) },
+      providerAdapter: {
+        fetch: async (input) => new URL(input.toString()).pathname === "/health"
+          ? Response.json({ providerEffectsEnabled: true })
+          : Response.json({}),
+      },
       providerToken: "provider-secret",
     });
     expect(enabled.body).toMatchObject({
       adapterConfigured: true,
-      adapterKinds: [
-        "provisioning",
-        "identity_custody",
-        "credential_custody",
-        "connector_oauth",
-        "marketplace",
-        "billing_meter",
-        "memory_deletion",
-      ],
+      adapterKinds: ["connector_effect"],
       providerEffectsEnabled: true,
+      providerAdapterReady: true,
     });
   });
 

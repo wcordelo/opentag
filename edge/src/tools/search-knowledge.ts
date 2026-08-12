@@ -8,11 +8,17 @@ import { z } from "zod";
 import type { Env } from "../env.js";
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
 import { KNOWLEDGE_LIMITS } from "../memory/knowledge-contract.js";
-import { createSupermemoryClient } from "../memory/supermemory-client.js";
+import { createSupermemoryClientFromEnv } from "../memory/supermemory-client.js";
 import { WikiSearchAdapter } from "../memory/connectors/wiki-connector.js";
 import { CodeSearchAdapter } from "../memory/connectors/code-connector.js";
 import { CustomDbSearchAdapter } from "../memory/connectors/custom-db-connector.js";
 import { SupermemoryAdapter } from "../memory/supermemory-adapter.js";
+import { searchSlackKnowledge } from "./search-slack.js";
+import {
+  currentKnowledgeReadGrantAllows,
+  currentKnowledgeToolAllows,
+  loadCurrentKnowledgeReadAccess,
+} from "../memory/knowledge-read-authorization.js";
 import {
   unifiedKnowledgeSearch,
   type SearchListFn,
@@ -66,34 +72,47 @@ export function createSearchKnowledgeTool(dependencies: {
         return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies UnifiedSearchResult;
       }
       const env = dependencies.env();
-      if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
-        return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies UnifiedSearchResult;
-      }
       let client;
       try {
-        client = createSupermemoryClient({
-          baseURL: env.SUPERMEMORY_URL,
-          apiKey: env.SUPERMEMORY_API_KEY,
-        });
+        client = createSupermemoryClientFromEnv(env);
       } catch {
         return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies UnifiedSearchResult;
       }
+      if (!client) {
+        return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies UnifiedSearchResult;
+      }
 
+      const currentAccess = await loadCurrentKnowledgeReadAccess(env, context.teamId, channelId);
+      if (!currentKnowledgeToolAllows(currentAccess, {
+        teamId: context.teamId,
+        channelId,
+        action: "search",
+        permissionSnapshot: snapshot,
+      })) {
+        return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies UnifiedSearchResult;
+      }
       const aclPolicyRef = `bundle:${snapshot.channelAccess.bundleId}`;
       const lists: SearchListFn[] = [];
-      const slackChannel = args.channelId ?? channelId;
 
-      if (snapshot.channelAccess.allowedTools.includes("search_slack")) {
+      if (args.channelId === undefined && snapshot.channelAccess.allowedTools.includes("search_slack")) {
         const slackAdapter = new SupermemoryAdapter(client);
         lists.push(async (query, limit) => {
-          const citations = await slackAdapter.searchSlack({
+          const result = await searchSlackKnowledge({
+            env,
             teamId: context.teamId,
-            projectId: args.projectId,
-            channelId: slackChannel,
-            aclPolicyRef,
+            channelId,
+            authorization: {
+              permissionSnapshot: snapshot,
+              conversationKey: (thread as { conversationKey?: string }).conversationKey ?? "",
+              executionId: exact.executionId,
+              actorId: context.requesterId,
+            },
             query,
             limit,
+            adapter: slackAdapter,
           });
+          if (result.status !== "ok") return [];
+          const citations = result.citations;
           return citations.map((c) => ({
             id: c.sourceKey,
             citation: c,
@@ -101,7 +120,17 @@ export function createSearchKnowledgeTool(dependencies: {
           }));
         });
       }
-      if (args.spaceId && snapshot.channelAccess.allowedTools.includes("search_wiki")) {
+      if (args.spaceId && snapshot.channelAccess.allowedTools.includes("search_wiki") &&
+        currentKnowledgeReadGrantAllows(currentAccess, {
+          teamId: context.teamId,
+          channelId,
+          projectId: args.projectId,
+          connectorId: "wiki",
+          action: "search_wiki",
+          spaceId: args.spaceId,
+          aclPolicyRef,
+          permissionSnapshot: snapshot,
+        })) {
         const wiki = new WikiSearchAdapter(client);
         lists.push(async (query, limit) => {
           const citations = await wiki.search({
@@ -115,7 +144,17 @@ export function createSearchKnowledgeTool(dependencies: {
           return citations.map((c) => ({ id: c.sourceKey, citation: c, score: c.score }));
         });
       }
-      if (args.repoId && snapshot.channelAccess.allowedTools.includes("search_code")) {
+      if (args.repoId && snapshot.channelAccess.allowedTools.includes("search_code") &&
+        currentKnowledgeReadGrantAllows(currentAccess, {
+          teamId: context.teamId,
+          channelId,
+          projectId: args.projectId,
+          connectorId: "code",
+          action: "search_code",
+          repoId: args.repoId,
+          aclPolicyRef,
+          permissionSnapshot: snapshot,
+        })) {
         const code = new CodeSearchAdapter(client);
         lists.push(async (query, limit) => {
           const citations = await code.search({
@@ -129,7 +168,16 @@ export function createSearchKnowledgeTool(dependencies: {
           return citations.map((c) => ({ id: c.sourceKey, citation: c, score: c.score }));
         });
       }
-      if (args.connectorId && snapshot.channelAccess.allowedTools.includes("search_custom")) {
+      if (args.connectorId && snapshot.channelAccess.allowedTools.includes("search_custom") &&
+        currentKnowledgeReadGrantAllows(currentAccess, {
+          teamId: context.teamId,
+          channelId,
+          projectId: args.projectId,
+          connectorId: args.connectorId,
+          action: "search_custom",
+          aclPolicyRef,
+          permissionSnapshot: snapshot,
+        })) {
         const custom = new CustomDbSearchAdapter(client);
         lists.push(async (query, limit) => {
           const citations = await custom.search({

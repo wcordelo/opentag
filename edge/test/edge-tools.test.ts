@@ -34,6 +34,9 @@ describe("edge triage tools", () => {
     }
     expect(DEFAULT_BUNDLE.tools).not.toContain("render_chart");
     expect(DEFAULT_BUNDLE.tools).not.toContain("render_diagram");
+    expect(DEFAULT_BUNDLE.tools).not.toContain("code_graph_search");
+    expect(DEFAULT_BUNDLE.tools).not.toContain("code_path");
+    expect(DEFAULT_BUNDLE.tools).not.toContain("code_impact");
   });
 
   it("IssueCard / IssueList / PageList / StatusCard return Message trees", () => {

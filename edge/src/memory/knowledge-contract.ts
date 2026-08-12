@@ -2,7 +2,14 @@
 
 import type { KnowledgeSourceScope } from "../config/knowledge-config.js";
 import type { ImmutableConnectorLabels } from "../connectors/authorization.js";
-import type { KnowledgeSourceType } from "./knowledge-source-types.js";
+import {
+  codeSourceKey,
+  customDbSourceKey,
+  driveSourceKey,
+  parseKnowledgeSourceType,
+  wikiSourceKey,
+  type KnowledgeSourceType,
+} from "./knowledge-source-types.js";
 
 export type { KnowledgeSourceType } from "./knowledge-source-types.js";
 
@@ -15,6 +22,20 @@ export const KNOWLEDGE_LIMITS = Object.freeze({
   maxCitationExcerptLength: 1_000,
   maxSearchLimit: 10,
 });
+
+export async function knowledgeQueryDigest(query: string): Promise<string> {
+  const normalized = query.trim();
+  if (!normalized || normalized.length > 1_000 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error("knowledge query is invalid");
+  }
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(normalized),
+  );
+  return `sha256:${[...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
 
 /**
  * One Queue attempt is bounded below the durable ledger/config-effect leases.
@@ -100,6 +121,9 @@ export type SlackKnowledgeMetadata = {
   slackPermalink?: string;
   rootAuthorId?: string;
   rootTs: string;
+  reactionCount?: number;
+  distillStatus?: "ok" | "skipped";
+  burstCount?: number;
   observedAt: string;
   indexedAt: string;
   aclPolicyRef: string;
@@ -113,7 +137,7 @@ export type SlackKnowledgeMetadata = {
 export type KnowledgeCitationBase = {
   sourceKey: string;
   /** Defaults to slack for legacy search_slack consumers; always set by citationFromResult. */
-  sourceType?: KnowledgeSourceType;
+  sourceType?: KnowledgeSourceType | "code_graph";
   projectId: string;
   contentRevision: string;
   excerpt: string;
@@ -129,7 +153,18 @@ export type KnowledgeCitationBase = {
   mimeType?: string;
   sourceUrl?: string;
   repoId?: string;
+  /** Exact source revision used by a code graph artifact. */
+  commitSha?: string;
   path?: string;
+  /** Graphify point locations are represented as a one-line range. */
+  startLine?: number;
+  endLine?: number;
+  relation?: string;
+  confidence?: number;
+  /** Graphify's qualitative confidence label, when no numeric score exists. */
+  confidenceLabel?: string;
+  /** Immutable R2 artifact prefix/revision, not a caller-controlled path. */
+  artifactKey?: string;
   connectorId?: string;
   rowId?: string;
   /** Server-derived proof that the result was returned under one authorization snapshot. */
@@ -178,6 +213,7 @@ export type KnowledgeCitation = KnowledgeCitationBase & {
 
 export type KnowledgeJob = {
   version: typeof KNOWLEDGE_SCHEMA_VERSION;
+  sourceType: KnowledgeSourceType;
   teamId: string;
   projectId: string;
   channelId: string;
@@ -194,6 +230,8 @@ export type KnowledgeJob = {
     | "reply_delete";
   /** Exact Slack message ts for deletion events; never rounded or rewritten. */
   messageTs?: string;
+  /** Exact Slack message ts that must be present before a thread is indexed. */
+  observedMessageTs?: string;
 };
 
 function identifier(value: string, field: string): string {
@@ -225,6 +263,26 @@ export function workspaceTag(teamId: string): `workspace:${string}` {
 
 export function slackSourceKey(teamId: string, channelId: string, threadTs: string): string {
   return `slack:${identifier(teamId, "teamId")}:${identifier(channelId, "channelId")}:${encodeSlackTsForSourceKey(threadTs)}`;
+}
+
+export function knowledgeSourceKey(
+  sourceType: KnowledgeSourceType,
+  teamId: string,
+  scopeId: string,
+  resourceId: string,
+): string {
+  switch (sourceType) {
+    case "slack":
+      return slackSourceKey(teamId, scopeId, resourceId);
+    case "wiki":
+      return wikiSourceKey(teamId, scopeId, resourceId);
+    case "code":
+      return codeSourceKey(teamId, scopeId, resourceId);
+    case "custom_db":
+      return customDbSourceKey(teamId, scopeId, resourceId);
+    case "drive":
+      return driveSourceKey(teamId, scopeId, resourceId);
+  }
 }
 
 export function isIndexedDocumentStatus(status: LocalDocumentStatus): boolean {
@@ -293,6 +351,7 @@ export function createKnowledgeJob(input: KnowledgeSourceScope & {
   requestedAt: string;
   reason: KnowledgeJob["reason"];
   messageTs?: string;
+  observedMessageTs?: string;
 }): KnowledgeJob {
   if (!Number.isSafeInteger(input.configVersion) || input.configVersion < 1) {
     throw new Error("configVersion must be a positive integer");
@@ -301,20 +360,33 @@ export function createKnowledgeJob(input: KnowledgeSourceScope & {
   if (!Number.isFinite(requestedAtMs) || new Date(requestedAtMs).toISOString() !== input.requestedAt) {
     throw new Error("requestedAt must be a canonical ISO timestamp");
   }
+  const sourceType = parseKnowledgeSourceType(input.sourceType ?? "slack");
   const threadTs = sourcePart(input.threadTs, "threadTs");
   const messageTs = input.messageTs === undefined
     ? undefined
     : sourcePart(input.messageTs, "messageTs");
-  if (input.reason === "delete" && messageTs !== threadTs) {
+  const observedMessageTs = input.observedMessageTs === undefined
+    ? undefined
+    : sourcePart(input.observedMessageTs, "observedMessageTs");
+  if (observedMessageTs !== undefined &&
+    (sourceType !== "slack" || !/^\d+\.\d+$/.test(observedMessageTs))) {
+    throw new Error("observedMessageTs must be an exact Slack timestamp");
+  }
+  if (sourceType !== "slack" && messageTs !== undefined) {
+    throw new Error("messageTs is only valid for Slack deletion descriptors");
+  }
+  if (sourceType === "slack" && input.reason === "delete" && messageTs !== threadTs) {
     throw new Error("root deletion messageTs must equal threadTs");
   }
   if (
+    sourceType === "slack" &&
     input.reason === "reply_delete" &&
     (!messageTs || messageTs === threadTs)
   ) {
     throw new Error("reply deletion requires an exact non-root messageTs");
   }
   if (
+    sourceType === "slack" &&
     input.reason !== "delete" &&
     input.reason !== "reply_delete" &&
     messageTs !== undefined
@@ -323,14 +395,21 @@ export function createKnowledgeJob(input: KnowledgeSourceScope & {
   }
   return {
     version: KNOWLEDGE_SCHEMA_VERSION,
+    sourceType,
     teamId: identifier(input.teamId, "teamId"),
     projectId: identifier(input.projectId, "projectId"),
     channelId: identifier(input.channelId, "channelId"),
     threadTs,
-    sourceKey: slackSourceKey(input.teamId, input.channelId, input.threadTs),
+    sourceKey: knowledgeSourceKey(
+      sourceType,
+      input.teamId,
+      input.channelId,
+      input.threadTs,
+    ),
     configVersion: input.configVersion,
     requestedAt: input.requestedAt,
     reason: input.reason,
     ...(messageTs ? { messageTs } : {}),
+    ...(observedMessageTs ? { observedMessageTs } : {}),
   };
 }

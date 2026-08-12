@@ -6,17 +6,27 @@ on:
   push:
     paths:
       - "edge/**"
+      - "infra/supermemory/**"
+      - "KNOWLEDGE-BASE-SPEC.md"
+      - "docs/supermemory-cloudflare-migration.md"
+      - "docs/graphify-local-mcp.md"
+      - "docs/operations.md"
       - "PRODUCT.md"
       - ".github/workflows/edge-ci.yml"
   pull_request:
     paths:
       - "edge/**"
+      - "infra/supermemory/**"
+      - "KNOWLEDGE-BASE-SPEC.md"
+      - "docs/supermemory-cloudflare-migration.md"
+      - "docs/graphify-local-mcp.md"
+      - "docs/operations.md"
       - "PRODUCT.md"
       - ".github/workflows/edge-ci.yml"
 
 jobs:
   bot-spine:
-    name: bot-spine (typecheck + unit + StateStore e2e)
+    name: bot-spine (typecheck + unit + StateStore/Graphify e2e)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,3 +42,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:e2e
+      - run: npm run test:e2e:graphify
+      - run: npm run test:graphify-policy
+      - run: npm run check:knowledge-rollout
+      - run: npm ci --prefix workers/supermemory
+      - run: npm ci --prefix workers/graphify
+      - run: npm --prefix workers/supermemory run typecheck
+      - run: npm --prefix workers/graphify run typecheck
+      - run: npm run validate:deploy-config

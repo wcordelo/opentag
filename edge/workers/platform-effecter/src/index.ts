@@ -11,7 +11,6 @@ import {
 } from "../../../src/platform/effect-runner.js";
 import type {
   PlatformEffectClaim,
-  PlatformEffectKind,
   PlatformEffectReceipt,
 } from "../../../src/platform/layer3-contract.js";
 import {
@@ -37,27 +36,30 @@ type Env = {
 
 const app = new Hono<Env>();
 
-const EFFECT_ADAPTER_KINDS: readonly PlatformEffectKind[] = [
-  "provisioning",
-  "identity_custody",
-  "credential_custody",
-  "connector_oauth",
-  "marketplace",
-  "billing_meter",
-  "memory_deletion",
-];
-
 function configuredAdapters(env: Env["Bindings"]): PlatformEffectAdapters {
   const token = env.PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN;
   if (!env.PLATFORM_EFFECT_ADAPTER || !token?.trim()) return {};
   const adapter = createRemotePlatformEffectAdapter(env.PLATFORM_EFFECT_ADAPTER, token);
-  return Object.fromEntries(
-    EFFECT_ADAPTER_KINDS.map((kind) => [kind, adapter]),
-  ) as PlatformEffectAdapters;
+  return { connector_effect: adapter } as PlatformEffectAdapters;
 }
 
 function providerAdapterConfigured(env: Env["Bindings"]): boolean {
   return Boolean(env.PLATFORM_EFFECT_ADAPTER && env.PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN?.trim());
+}
+
+async function providerAdapterReady(env: Env["Bindings"]): Promise<boolean> {
+  if (!providerAdapterConfigured(env)) return false;
+  try {
+    const response = await env.PLATFORM_EFFECT_ADAPTER!.fetch(
+      "https://platform-provider-adapter/health",
+      { method: "GET" },
+    );
+    if (!response.ok) return false;
+    const body = await response.json() as Record<string, unknown>;
+    return body.providerEffectsEnabled === true;
+  } catch {
+    return false;
+  }
 }
 
 function requireEffectorAuth(c: { env: Env["Bindings"]; req: { header(name: string): string | undefined } }): Response | undefined {
@@ -102,16 +104,18 @@ function stateClient(
   };
 }
 
-app.get("/health", (c) => {
+app.get("/health", async (c) => {
   const adapterConfigured = providerAdapterConfigured(c.env);
+  const providerEffectsEnabled = await providerAdapterReady(c.env);
   return c.json({
     ok: true,
     role: "platform-effecter",
     configured: Boolean(c.env.EFFECTOR_AUTH_TOKEN),
     effectQueueConfigured: Boolean(c.env.PLATFORM_EFFECTS_QUEUE),
     adapterConfigured,
-    adapterKinds: adapterConfigured ? EFFECT_ADAPTER_KINDS : [],
-    providerEffectsEnabled: adapterConfigured,
+    adapterKinds: adapterConfigured ? ["connector_effect"] : [],
+    providerEffectsEnabled,
+    providerAdapterReady: providerEffectsEnabled,
   });
 });
 

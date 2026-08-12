@@ -40,6 +40,7 @@ import {
   isDefinitiveSlackFailure,
   sharedSlackRateScheduler,
 } from "./slack/web-api.js";
+import { bindSlackKnowledgeObserver, createSlackKnowledgeObserver } from "./slack/knowledge-observer.js";
 import { getInboundMessage } from "./slack/inbound-target.js";
 import {
   firstSlackTs,
@@ -65,10 +66,6 @@ import { markThreadNextRenderFinal } from "./slack/cloudflare-slack-adapter.js";
 import { getTurnExecutionContext } from "./slack/turn-execution-context.js";
 import { reconstructSessionHistory } from "./slack/session-history.js";
 import { createHarnessProgressLiveRenderer } from "./slack/harness-progress-live.js";
-import {
-  formatContextLine,
-  type HarnessContextLine,
-} from "./slack/harness-progress.js";
 import { AUTOMATION_SAFE_TOOLS } from "./permissions/contract.js";
 import { bindPermissionSnapshot } from "./permissions/context.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
@@ -632,6 +629,8 @@ export async function runBundledAgentTurn(
   const channelId = channelFromThread(thread);
   const conversationKey = thread.conversationKey ?? "";
   const store = createDurableObjectStore(env.BOT_STATE);
+  const knowledgeObserver = createSlackKnowledgeObserver(env);
+  const boundKnowledgeObserver = bindSlackKnowledgeObserver(knowledgeObserver, teamId);
   const exact = getTurnExecutionContext(thread);
   if (executionIdentity && !exact) {
     throw new Error("active_turn_context_required");
@@ -1236,22 +1235,14 @@ export async function runBundledAgentTurn(
     let progressLive:
       | ReturnType<typeof createHarnessProgressLiveRenderer>
       | undefined;
-    let harnessContextForAnswer: HarnessContextLine | undefined;
-    const harnessContextEvidenceRank: Record<
-      HarnessContextLine["modelEvidence"],
-      number
-    > = {
-      unknown: 0,
-      requested: 1,
-      container_argument: 2,
-      provider_reported: 3,
-    };
     if (env.SLACK_BOT_TOKEN) {
       const inbound = requireRequestContext(thread).inbound;
       progressLive = createHarnessProgressLiveRenderer({
         store,
         client: createSlackWebClient(env.SLACK_BOT_TOKEN, {
           scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+          messageObserverRequired: env.ENVIRONMENT === "production",
+          ...(boundKnowledgeObserver ? { messageObserver: boundKnowledgeObserver } : {}),
         }),
         channelId,
         ...(inbound?.threadTs || inbound?.ts
@@ -1291,29 +1282,6 @@ export async function runBundledAgentTurn(
           }
         : {}),
       onHarnessEvent: async (event) => {
-        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
-          const p = event.payload as Record<string, unknown>;
-          const next: HarnessContextLine = {
-            harnessType:
-              typeof p.harnessType === "string" ? p.harnessType : "claudecode",
-            model: typeof p.model === "string" ? p.model : undefined,
-            modelEvidence:
-              p.modelEvidence === "requested" ||
-              p.modelEvidence === "container_argument" ||
-              p.modelEvidence === "provider_reported" ||
-              p.modelEvidence === "unknown"
-                ? p.modelEvidence
-                : "unknown",
-          };
-          // Match SessionEventDO: only upgrade on strictly higher evidence.
-          if (
-            !harnessContextForAnswer ||
-            harnessContextEvidenceRank[next.modelEvidence] >
-              harnessContextEvidenceRank[harnessContextForAnswer.modelEvidence]
-          ) {
-            harnessContextForAnswer = next;
-          }
-        }
         await progressLive?.handleEvent(event);
       },
     });
@@ -1341,11 +1309,7 @@ export async function runBundledAgentTurn(
     if (harnessResult.ok) {
       const text = harnessResult.text.trim();
       // Final answer is separate from the live progress message.
-      const prefix =
-        progressLive?.finalAnswerPrefix() ??
-        (harnessContextForAnswer
-          ? `${formatContextLine(harnessContextForAnswer)}\n\n`
-          : "");
+      const prefix = progressLive?.finalAnswerPrefix() ?? "";
       const body =
         `${prefix}${text || `_(OpenTag ${selectedHarness} harness turn completed with no output.)_`}`.trim();
       await progressLive?.markTerminal({ ok: true });

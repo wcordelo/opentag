@@ -7,6 +7,13 @@ import type { SlackRateLimitDO } from "./slack-rate-limit-do.js";
 
 export type SlackWebClient = {
   authTest(): Promise<{ ok: boolean; userId?: string; error?: string }>;
+  listConversations(args?: {
+    pageSize?: number;
+    cursor?: string;
+  }): Promise<{
+    conversations: SlackConversationSummary[];
+    nextCursor?: string;
+  }>;
   postMessage(args: {
     channel: string;
     thread_ts?: string;
@@ -14,12 +21,17 @@ export type SlackWebClient = {
     blocks?: unknown[];
     attachments?: unknown[];
     client_msg_id?: string;
+    knowledgeIndex?: boolean;
+    knowledgeTeamId?: string;
   }): Promise<{ ok: boolean; ts?: string; error?: string; duplicate?: boolean }>;
   updateMessage(args: {
     channel: string;
     ts: string;
     text: string;
     blocks?: unknown[];
+    thread_ts?: string;
+    knowledgeIndex?: boolean;
+    knowledgeTeamId?: string;
   }): Promise<{ ok: boolean; error?: string }>;
   setStatus(args: {
     channel_id: string;
@@ -81,8 +93,22 @@ export type SlackWebClient = {
       blocks?: unknown[];
       attachments?: unknown[];
       files?: unknown[];
-    }>
+      }>
   >;
+  getMessageByTimestamp(args: {
+    channel: string;
+    timestamp: string;
+  }): Promise<{
+    found: boolean;
+    message?: {
+      ts?: string;
+      thread_ts?: string;
+    };
+  }>;
+  getChannelMembers(args: {
+    channel: string;
+    pageSize?: number;
+  }): Promise<string[]>;
   getFileInfo(fileId: string): Promise<{
     id?: string;
     name?: string;
@@ -92,6 +118,31 @@ export type SlackWebClient = {
     size?: number;
   } | undefined>;
 };
+
+export type SlackConversationSummary = {
+  id: string;
+  isArchived?: boolean;
+  isMember?: boolean;
+  isIm?: boolean;
+  isMpim?: boolean;
+  isPrivate?: boolean;
+};
+
+export type SlackMessageObservation = {
+  operation: "posted" | "updated";
+  teamId?: string;
+  channel: string;
+  ts: string;
+  threadTs?: string;
+  text: string;
+  blocks?: unknown[];
+  attachments?: unknown[];
+  observationId?: string;
+};
+
+export type SlackMessageObserver = (
+  observation: SlackMessageObservation,
+) => Promise<void> | void;
 
 /** A parsed Slack `ok:false` is a definitive rejection, unlike a thrown
  * transport error where the request may already have been applied. */
@@ -103,17 +154,39 @@ export class SlackApiError extends Error {
   }
 }
 
+export class SlackEgressPreemptedError extends Error {
+  readonly definitive = true;
+  constructor() {
+    super("slack_egress_preempted");
+    this.name = "SlackEgressPreemptedError";
+  }
+}
+
+export type SlackRatePriority = "normal" | "control";
+
 export interface SlackRateScheduler {
-  run<T>(channel: string, operation: () => Promise<T>): Promise<T>;
+  run<T>(
+    channel: string,
+    operation: () => Promise<T>,
+    priority?: SlackRatePriority,
+  ): Promise<T>;
+  preempt?(channel: string): Promise<void>;
 }
 
 export interface SlackWebClientOptions {
   /** Shared scheduler; pass one instance to every renderer in an isolate. */
   scheduler?: SlackRateScheduler;
+  /** Control writes may preempt queued normal writes for the same channel. */
+  priority?: SlackRatePriority;
   /** Bounded HTTP-429 retries. Defaults to two retries after the first call. */
   maxRateLimitRetries?: number;
   /** Injectable sleep seam for deterministic Retry-After tests. */
   sleep?: (ms: number) => Promise<void>;
+  messageObserver?: SlackMessageObserver;
+  /** Reject indexed writes before the Slack request when durable observation is absent. */
+  messageObserverRequired?: boolean;
+  knowledgeTeamId?: () => string | undefined;
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -124,6 +197,7 @@ export interface SlackWebClientOptions {
 export class SlackChannelRateScheduler implements SlackRateScheduler {
   private readonly tails = new Map<string, Promise<void>>();
   private readonly nextAllowedAt = new Map<string, number>();
+  private readonly generations = new Map<string, number>();
 
   constructor(
     private readonly minIntervalMs = 1_000,
@@ -132,7 +206,13 @@ export class SlackChannelRateScheduler implements SlackRateScheduler {
       (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ) {}
 
-  async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+  async run<T>(
+    channel: string,
+    operation: () => Promise<T>,
+    priority: SlackRatePriority = "normal",
+  ): Promise<T> {
+    if (priority === "control") return operation();
+    const generation = this.generations.get(channel) ?? 0;
     const prior = this.tails.get(channel) ?? Promise.resolve();
     let release!: () => void;
     const tail = new Promise<void>((resolve) => { release = resolve; });
@@ -140,8 +220,14 @@ export class SlackChannelRateScheduler implements SlackRateScheduler {
     this.tails.set(channel, queued);
     await prior.catch(() => undefined);
     try {
+      if ((this.generations.get(channel) ?? 0) !== generation) {
+        throw new SlackEgressPreemptedError();
+      }
       const waitMs = Math.max(0, (this.nextAllowedAt.get(channel) ?? 0) - this.now());
       if (waitMs > 0) await this.sleep(waitMs);
+      if ((this.generations.get(channel) ?? 0) !== generation) {
+        throw new SlackEgressPreemptedError();
+      }
       this.nextAllowedAt.set(channel, this.now() + this.minIntervalMs);
       return await operation();
     } finally {
@@ -149,9 +235,50 @@ export class SlackChannelRateScheduler implements SlackRateScheduler {
       if (this.tails.get(channel) === queued) this.tails.delete(channel);
     }
   }
+
+  async preempt(channel: string): Promise<void> {
+    this.generations.set(channel, (this.generations.get(channel) ?? 0) + 1);
+    this.nextAllowedAt.set(channel, this.now());
+  }
 }
 
 const sharedSchedulers = new Map<string, SlackChannelRateScheduler>();
+const MAX_CHANNEL_MEMBER_PAGES = 100;
+const MAX_CHANNEL_MEMBER_IDS = 100_000;
+export const MAX_SLACK_API_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_SLACK_API_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw new Error("slack_api_response_too_large");
+  }
+  if (!response.body) return response.text();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > MAX_SLACK_API_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error("slack_api_response_too_large");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 class DurableSlackRateScheduler implements SlackRateScheduler {
   constructor(
@@ -161,13 +288,38 @@ class DurableSlackRateScheduler implements SlackRateScheduler {
       (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ) {}
 
-  async run<T>(channel: string, operation: () => Promise<T>): Promise<T> {
+  async run<T>(
+    channel: string,
+    operation: () => Promise<T>,
+    priority: SlackRatePriority = "normal",
+  ): Promise<T> {
     const stub = this.namespace.get(this.namespace.idFromName(channel)) as unknown as {
-      reserve(args: { minIntervalMs: number }): Promise<{ delayMs: number }>;
+      reserve(args: {
+        minIntervalMs: number;
+        priority?: SlackRatePriority;
+      }): Promise<{ delayMs: number; generation: number }>;
+      commit(args: { generation: number; minIntervalMs: number }): Promise<{
+        accepted: boolean;
+      }>;
     };
-    const { delayMs } = await stub.reserve({ minIntervalMs: this.minIntervalMs });
+    const { delayMs, generation } = await stub.reserve({
+      minIntervalMs: this.minIntervalMs,
+      priority,
+    });
     if (delayMs > 0) await this.sleep(delayMs);
+    const committed = await stub.commit({
+      generation,
+      minIntervalMs: this.minIntervalMs,
+    });
+    if (!committed.accepted) throw new SlackEgressPreemptedError();
     return operation();
+  }
+
+  async preempt(channel: string): Promise<void> {
+    const stub = this.namespace.get(this.namespace.idFromName(channel)) as unknown as {
+      preempt(): Promise<unknown>;
+    };
+    await stub.preempt();
   }
 }
 
@@ -214,7 +366,7 @@ export function retryAfterMs(response: Response): number {
 }
 
 export function isDefinitiveSlackFailure(error: unknown): boolean {
-  return error instanceof SlackApiError;
+  return error instanceof SlackApiError || error instanceof SlackEgressPreemptedError;
 }
 
 /**
@@ -324,7 +476,7 @@ export function createSlackWebClient(
     const maxRetries = options.maxRateLimitRetries ?? 2;
     for (let attempt = 0; ; attempt += 1) {
       const dispatch = async (): Promise<Response> =>
-        fetch(`https://slack.com/api/${method}`, {
+        (options.fetchImpl ?? fetch)(`https://slack.com/api/${method}`, {
           method: "POST",
           headers,
           body: encoded || undefined,
@@ -333,7 +485,7 @@ export function createSlackWebClient(
       // channel slot. Reserving only once around the whole retry loop lets a
       // bot retry race a research write in another script.
       const res = channel && options.scheduler
-        ? await options.scheduler.run(channel, dispatch)
+        ? await options.scheduler.run(channel, dispatch, options.priority)
         : await dispatch();
       if (res.status === 429 && attempt < maxRetries) {
         await (options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(
@@ -341,7 +493,70 @@ export function createSlackWebClient(
         );
         continue;
       }
-      return (await res.json()) as T & { ok: boolean; error?: string };
+      return JSON.parse(await readBoundedResponseText(res)) as T & { ok: boolean; error?: string };
+    }
+  }
+
+  async function observeMessage(observation: SlackMessageObservation): Promise<void> {
+    if (!options.messageObserver) {
+      if (options.messageObserverRequired) {
+        throw new Error("knowledge_observer_required");
+      }
+      return;
+    }
+    try {
+      await options.messageObserver(observation);
+    } catch (error) {
+      console.error(
+        "[slack] outbound knowledge observation failed",
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
+  }
+
+  type PostArgs = Parameters<SlackWebClient["postMessage"]>[0];
+
+  async function observePostedMessage(args: PostArgs, ts: string): Promise<void> {
+    const teamId = args.knowledgeTeamId ?? options.knowledgeTeamId?.();
+    await observeMessage({
+      operation: "posted",
+      ...(teamId ? { teamId } : {}),
+      channel: args.channel,
+      ts,
+      ...(args.thread_ts ? { threadTs: args.thread_ts } : {}),
+      text: args.text,
+      ...(args.blocks ? { blocks: args.blocks } : {}),
+      ...(args.attachments ? { attachments: args.attachments } : {}),
+    });
+  }
+
+  async function observeDuplicatePost(args: PostArgs): Promise<void> {
+    if (!options.messageObserver || !args.client_msg_id || args.knowledgeIndex === false) return;
+    const method = args.thread_ts ? "conversations.replies" : "conversations.history";
+    try {
+      const response = await api<{
+        messages?: Array<{ ts?: string; client_msg_id?: string }>;
+      }>(method, {
+        channel: args.channel,
+        ...(args.thread_ts ? { ts: args.thread_ts } : {}),
+        limit: 100,
+        inclusive: true,
+      });
+      if (!response.ok) {
+        throw new SlackApiError(method, response.error ?? "duplicate_lookup_failed");
+      }
+      const ts = (response.messages ?? []).find(
+        (message) => message.client_msg_id === args.client_msg_id,
+      )?.ts;
+      if (!ts) throw new Error("duplicate_message_timestamp_unavailable");
+      await observePostedMessage(args, ts);
+    } catch (error) {
+      console.error(
+        "[slack] duplicate outbound knowledge lookup failed",
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
     }
   }
 
@@ -352,20 +567,125 @@ export function createSlackWebClient(
       const r = await api<{ user_id?: string }>("auth.test", {});
       return { ok: r.ok, userId: r.user_id, error: r.error };
     },
+    async listConversations({ pageSize = 200, cursor } = {}) {
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize >= 1_000) {
+        throw new Error("slack_conversations_page_size_invalid");
+      }
+      if (cursor !== undefined && (!cursor || cursor.length > 4_096)) {
+        throw new Error("slack_conversations_cursor_invalid");
+      }
+      const response = await api<{
+        channels?: unknown;
+        response_metadata?: { next_cursor?: unknown };
+      }>("conversations.list", {
+        types: "public_channel,private_channel,im,mpim",
+        exclude_archived: false,
+        limit: pageSize,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!response.ok) {
+        throw new SlackApiError(
+          "conversations.list",
+          response.error ?? "unknown",
+        );
+      }
+      if (!Array.isArray(response.channels)) {
+        throw new Error("slack_conversations_response_invalid");
+      }
+      const conversations = response.channels.map((value): SlackConversationSummary => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error("slack_conversations_response_invalid");
+        }
+        const raw = value as Record<string, unknown>;
+        if (typeof raw.id !== "string" || !raw.id) {
+          throw new Error("slack_conversations_response_invalid");
+        }
+        const booleanField = (key: string): boolean | undefined => {
+          const field = raw[key];
+          if (field === undefined) return undefined;
+          if (typeof field !== "boolean") {
+            throw new Error("slack_conversations_response_invalid");
+          }
+          return field;
+        };
+        return {
+          id: raw.id,
+          ...(booleanField("is_archived") === undefined
+            ? {}
+            : { isArchived: booleanField("is_archived") }),
+          ...(booleanField("is_member") === undefined
+            ? {}
+            : { isMember: booleanField("is_member") }),
+          ...(booleanField("is_im") === undefined
+            ? {}
+            : { isIm: booleanField("is_im") }),
+          ...(booleanField("is_mpim") === undefined
+            ? {}
+            : { isMpim: booleanField("is_mpim") }),
+          ...(booleanField("is_private") === undefined
+            ? {}
+            : { isPrivate: booleanField("is_private") }),
+        };
+      });
+      const nextCursor = typeof response.response_metadata?.next_cursor === "string"
+        ? response.response_metadata.next_cursor.trim() || undefined
+        : undefined;
+      return { conversations, ...(nextCursor ? { nextCursor } : {}) };
+    },
     async postMessage(args) {
-      const r = await api<{ ts?: string }>("chat.postMessage", args);
+      const {
+        knowledgeIndex,
+        knowledgeTeamId: _knowledgeTeamId,
+        ...wireArgs
+      } = args;
+      if (knowledgeIndex !== false && options.messageObserverRequired && !options.messageObserver) {
+        throw new Error("knowledge_observer_required");
+      }
+      const r = await api<{ ts?: string }>("chat.postMessage", wireArgs);
       // A replay of the same client_msg_id can be reported as an explicit
       // duplicate instead of returning the original timestamp. The original
       // idempotent write is already visible, so this is a committed success.
       if (!r.ok && (r.error === "duplicate_message" || r.error === "duplicate_client_msg_id")) {
+        if (knowledgeIndex !== false) {
+          if (r.ts) await observePostedMessage(args, r.ts);
+          else await observeDuplicatePost(args);
+        }
         return { ok: true, ts: r.ts, error: r.error, duplicate: true };
       }
       if (!r.ok) throw new SlackApiError("chat.postMessage", r.error ?? "unknown");
+      if (knowledgeIndex !== false) {
+        if (r.ts) {
+          await observePostedMessage(args, r.ts);
+        } else if (options.messageObserver || options.messageObserverRequired) {
+          throw new Error("chat.postMessage_timestamp_missing");
+        }
+      }
       return { ok: r.ok, ts: r.ts, error: r.error };
     },
     async updateMessage(args) {
-      const r = await api("chat.update", args);
+      const {
+        thread_ts: threadTs,
+        knowledgeIndex,
+        knowledgeTeamId: _knowledgeTeamId,
+        ...wireArgs
+      } = args;
+      if (knowledgeIndex !== false && options.messageObserverRequired && !options.messageObserver) {
+        throw new Error("knowledge_observer_required");
+      }
+      const r = await api("chat.update", wireArgs);
       if (!r.ok) throw new SlackApiError("chat.update", r.error ?? "unknown");
+      if (knowledgeIndex !== false) {
+        const teamId = args.knowledgeTeamId ?? options.knowledgeTeamId?.();
+        await observeMessage({
+          operation: "updated",
+          ...(teamId ? { teamId } : {}),
+          channel: args.channel,
+          ts: args.ts,
+          ...(threadTs ? { threadTs } : {}),
+          text: args.text,
+          ...(args.blocks ? { blocks: args.blocks } : {}),
+        });
+      }
       return { ok: r.ok, error: r.error };
     },
     async setStatus(args) {
@@ -620,6 +940,24 @@ export function createSlackWebClient(
       if (!r.ok) throw new SlackApiError("files.info", r.error ?? "unknown");
       return r.file;
     },
+    async getMessageByTimestamp({ channel, timestamp }) {
+      if (!/^\d+\.\d+$/.test(timestamp)) {
+        throw new Error("slack_message_timestamp_invalid");
+      }
+      const r = await api<{
+        messages?: Array<{ ts?: string; thread_ts?: string }>;
+      }>("conversations.history", {
+        channel,
+        latest: timestamp,
+        inclusive: true,
+        limit: 1,
+      });
+      if (!r.ok) {
+        throw new SlackApiError("conversations.history", r.error ?? "unknown");
+      }
+      const message = (r.messages ?? []).find((candidate) => candidate.ts === timestamp);
+      return message?.ts ? { found: true, message } : { found: false };
+    },
     async getChannelHistory({ channel, limit = 50 }) {
       try {
         const r = await api<{
@@ -654,6 +992,43 @@ export function createSlackWebClient(
         );
         return [];
       }
+    },
+    async getChannelMembers({ channel, pageSize = 1_000 }) {
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1_000) {
+        throw new Error("slack_channel_members_page_size_invalid");
+      }
+      const members = new Set<string>();
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_CHANNEL_MEMBER_PAGES; page += 1) {
+        const response = await api<{
+          members?: string[];
+          response_metadata?: { next_cursor?: string };
+        }>("conversations.members", {
+          channel,
+          limit: pageSize,
+          ...(cursor ? { cursor } : {}),
+        });
+        if (!response.ok) {
+          throw new SlackApiError(
+            "conversations.members",
+            response.error ?? "unknown",
+          );
+        }
+        for (const memberId of response.members ?? []) {
+          if (typeof memberId !== "string" || !memberId) {
+            throw new Error("slack_channel_members_response_invalid");
+          }
+          members.add(memberId);
+          if (members.size > MAX_CHANNEL_MEMBER_IDS) {
+            throw new Error("slack_channel_members_limit_exceeded");
+          }
+        }
+        const nextCursor = response.response_metadata?.next_cursor?.trim() || undefined;
+        if (!nextCursor) return [...members].sort();
+        if (nextCursor === cursor) throw new Error("slack_channel_members_cursor_loop");
+        cursor = nextCursor;
+      }
+      throw new Error("slack_channel_members_pagination_limit_exceeded");
     },
   };
 }

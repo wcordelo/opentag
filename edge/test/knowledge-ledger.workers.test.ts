@@ -123,6 +123,167 @@ describe("KnowledgeDO additive descriptor ledger", () => {
     expect(fetchedChannels.slice(20)).toEqual(["C1", "C2"]);
   });
 
+  it("uses a durable server-owned conversation inventory for discover-all backfills", async () => {
+    const teamId = `knowledge-discover-all-${crypto.randomUUID()}`;
+    const manifestId = `manifest-${crypto.randomUUID()}`;
+    const config = tenantStub(env.WORKSPACE_CONFIG, teamId);
+    expect((await config.fetch(
+      "https://do/putKnowledgeAdmissionPolicy",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          teamId,
+          mode: "all_delivered",
+          defaultProjectId: "P1",
+          readerPolicyRef: "bundle:test-readers",
+          retentionDays: 30,
+        }),
+      },
+    )).ok).toBe(true);
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = String(input).split("/").pop()!;
+      calls.push(method);
+      if (method === "conversations.list") {
+        return Response.json({
+          ok: true,
+          channels: [
+            { id: "C1", is_member: true, is_archived: false, is_im: false, is_mpim: false },
+            { id: "D1", is_member: true, is_im: true },
+            { id: "C2", is_member: false, is_archived: false, is_im: false, is_mpim: false },
+          ],
+          response_metadata: { next_cursor: "" },
+        });
+      }
+      const body = new URLSearchParams(String(init?.body ?? ""));
+      const channel = body.get("channel");
+      expect(method).toBe("conversations.history");
+      return Response.json({
+        ok: true,
+        messages: [{ ts: channel === "C1" ? "1784422800.000100" : "1784422900.000100" }],
+        has_more: false,
+        response_metadata: { next_cursor: "" },
+      });
+    });
+
+    const input = {
+      manifestId,
+      teamId,
+      projectId: "P1",
+      channelIds: [] as string[],
+      discoverAll: true,
+      from: "2026-07-19T00:00:00.000Z",
+      to: "2026-07-20T00:00:00.000Z",
+      maximumCount: 10,
+      maximumRatePerMinute: 10,
+      maximumErrors: 1,
+      releaseIds: ["worker:test-r1"],
+      rollbackOwner: "operator:test-rollback",
+      fetchImpl,
+    };
+    const first = await discoverAndStoreKnowledgeBackfill({
+      ...env,
+      SLACK_BOT_TOKEN: "xoxb-test",
+    }, input);
+    expect(first).toMatchObject({
+      status: "dry_run",
+      manifest: {
+        channelIds: ["C1", "D1"],
+        count: 2,
+        conversationInventoryDigest: expect.stringMatching(/^sha256:/),
+      },
+    });
+    expect(calls).toEqual([
+      "conversations.list",
+      "conversations.history",
+      "conversations.history",
+    ]);
+
+    const knowledge = tenantStub(env.KNOWLEDGE, teamId);
+    const storedInventory = await knowledge.fetch(
+      "https://do/backfill/inventory/get",
+      {
+        method: "POST",
+        body: JSON.stringify({ manifestId }),
+      },
+    ).then((response) => response.json()) as {
+      inventory: {
+        status: string;
+        eligibleConversationIds: string[];
+        excludedCount: number;
+        inventoryDigest: string;
+      };
+    };
+    expect(storedInventory.inventory).toMatchObject({
+      status: "complete",
+      eligibleConversationIds: ["C1", "D1"],
+      excludedCount: 1,
+      inventoryDigest: first.manifest?.conversationInventoryDigest,
+    });
+    const adminSecret = (env as unknown as { ADMIN_SECRET: string }).ADMIN_SECRET;
+    const adminReadback = await SELF.fetch(
+      "https://worker/admin/knowledge/backfill/inventory",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${adminSecret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ teamId, manifestId }),
+      },
+    );
+    expect(adminReadback.status).toBe(200);
+    await expect(adminReadback.json()).resolves.toMatchObject({
+      inventory: { inventoryDigest: first.manifest?.conversationInventoryDigest },
+    });
+
+    const secondFetch = vi.fn(async () => {
+      throw new Error("inventory_must_not_be_reenumerated");
+    });
+    const resumed = await discoverAndStoreKnowledgeBackfill({
+      ...env,
+      SLACK_BOT_TOKEN: "xoxb-test",
+    }, { ...input, fetchImpl: secondFetch });
+    expect(resumed.status).toBe("dry_run");
+    expect(secondFetch).not.toHaveBeenCalled();
+  });
+
+  it("persists and resolves body-free Slack message thread mappings", async () => {
+    const teamId = `knowledge-message-map-${crypto.randomUUID()}`;
+    const source = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "1784422800.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    });
+    const knowledge = tenantStub(env.KNOWLEDGE, teamId);
+    await expect(knowledge.fetch("https://do/message-thread/put", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        projectId: source.projectId,
+        channelId: source.channelId,
+        threadTs: source.threadTs,
+        sourceKey: source.sourceKey,
+        messageTs: [source.threadTs, "1784422801.000100"],
+      }),
+    }).then((response) => response.json())).resolves.toEqual({ stored: 2 });
+    await expect(knowledge.fetch("https://do/message-thread/resolve", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId,
+        channelId: "C1",
+        messageTs: "1784422801.000100",
+      }),
+    }).then((response) => response.json())).resolves.toEqual({
+      found: true,
+      threadTs: source.threadTs,
+    });
+  });
+
   it("resumes a caller-known manifest after the first Slack page fails", async () => {
     const teamId = `knowledge-discovery-first-failure-${crypto.randomUUID()}`;
     const manifestId = `manifest-${crypto.randomUUID()}`;
@@ -466,6 +627,364 @@ describe("KnowledgeDO additive descriptor ledger", () => {
       body: JSON.stringify({ teamId, channelId: "C1", query: "searchable" }),
     }).then((response) => response.json()) as Array<{ id: string }>;
     expect(search).toEqual([expect.objectContaining({ id: "manual-1" })]);
+  });
+
+  it("returns a tenant-scoped persisted status snapshot", async () => {
+    const teamId = `knowledge-status-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    const descriptor = await stub.fetch("https://do/descriptor", {
+      method: "POST",
+      body: JSON.stringify(job),
+    });
+    expect(descriptor.ok).toBe(true);
+
+    const status = await stub.fetch("https://do/status", {
+      method: "POST",
+      body: JSON.stringify({ teamId }),
+    }).then((response) => response.json()) as {
+      ledger: { total: number; byStatus: Record<string, number> };
+      outbox: { pending: number; due: number };
+      dlq: { total: number };
+    };
+    expect(status).toMatchObject({
+      ledger: { total: 1, byStatus: { pending: 1 } },
+      outbox: { pending: 1, due: 1 },
+      dlq: { total: 0 },
+    });
+  });
+
+  it("records a query-convergence receipt only for the current indexed revision", async () => {
+    const teamId = `knowledge-query-convergence-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    const post = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+      const response = await stub.fetch(`https://do${path}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      expect(response.ok).toBe(true);
+      return response.json() as Promise<Record<string, unknown>>;
+    };
+    const generation = "supermemory-v1";
+    const revision = "sha256:revision-one";
+    await post("/descriptor", job);
+    await post("/lease", {
+      job,
+      authoritativeConfigVersion: 1,
+      leaseToken: "query-lease",
+      leaseMs: 60_000,
+    });
+    await post("/prepareRevision", {
+      sourceKey: job.sourceKey,
+      leaseToken: "query-lease",
+      desiredRevision: revision,
+      indexGeneration: generation,
+    });
+    await post("/localAccepted", {
+      sourceKey: job.sourceKey,
+      leaseToken: "query-lease",
+      localDocumentId: "doc-query",
+      desiredRevision: revision,
+      workflowStatus: "queued",
+      pollDeadlineAt: Date.now() + 20_000,
+      nextPollAt: Date.now(),
+      indexGeneration: generation,
+    });
+    await post("/outcome", {
+      sourceKey: job.sourceKey,
+      leaseToken: "query-lease",
+      outcome: {
+        status: "indexed",
+        desiredRevision: revision,
+        indexedRevision: revision,
+        localDocumentId: "doc-query",
+        workflowStatus: "done",
+        pollCount: 1,
+        indexGeneration: generation,
+      },
+    });
+    expect(await post("/query-convergence", {
+      sourceKey: job.sourceKey,
+      contentRevision: revision,
+      indexGeneration: generation,
+      localDocumentId: "doc-query",
+      queryDigest: `sha256:${"a".repeat(64)}`,
+      status: "queryable",
+      providerResultCount: 1,
+      matchingCitationCount: 1,
+    })).toEqual({ recorded: true });
+    const state = await post("/state", { sourceKey: job.sourceKey });
+    expect(state.queryConvergence).toMatchObject({
+      sourceKey: job.sourceKey,
+      contentRevision: revision,
+      status: "queryable",
+      matchingCitationCount: 1,
+    });
+  });
+
+  it("lists failure metadata without exposing lease or add-attempt secrets", async () => {
+    const teamId = `knowledge-failures-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    const post = async (path: string, body: unknown): Promise<void> => {
+      const response = await stub.fetch(`https://do${path}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      expect(response.ok).toBe(true);
+    };
+    await post("/descriptor", job);
+    await post("/lease", {
+      job,
+      authoritativeConfigVersion: 1,
+      leaseToken: "failure-lease",
+      leaseMs: 60_000,
+    });
+    await post("/prepareRevision", {
+      sourceKey: job.sourceKey,
+      leaseToken: "failure-lease",
+      desiredRevision: "sha256:one",
+    });
+    await post("/localAccepted", {
+      sourceKey: job.sourceKey,
+      leaseToken: "failure-lease",
+      localDocumentId: "doc-failure",
+      desiredRevision: "sha256:one",
+      workflowStatus: "queued",
+      pollDeadlineAt: Date.now() + 20_000,
+      nextPollAt: Date.now(),
+    });
+    await post("/outcome", {
+      sourceKey: job.sourceKey,
+      leaseToken: "failure-lease",
+      outcome: {
+        status: "permanent_failure",
+        errorClass: "local_poll",
+        errorCode: "local_document_failed",
+      },
+    });
+
+    const adminSecret = (env as unknown as { ADMIN_SECRET: string }).ADMIN_SECRET;
+    const response = await SELF.fetch("https://worker/admin/knowledge/failures", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminSecret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ teamId, status: "permanent_failure", limit: 10 }),
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      rows: Array<Record<string, unknown>>;
+    };
+    expect(payload.rows).toHaveLength(1);
+    expect(payload.rows[0]).toMatchObject({
+      sourceKey: job.sourceKey,
+      teamId,
+      configVersion: 1,
+      requestedAt: job.requestedAt,
+      status: "permanent_failure",
+      lastErrorClass: "local_poll",
+      lastErrorCode: "local_document_failed",
+    });
+    expect(payload.rows[0]).not.toHaveProperty("leaseToken");
+    expect(payload.rows[0]).not.toHaveProperty("addAttemptToken");
+  });
+
+  it("recovers an exact terminal knowledge failure through the admin route", async () => {
+    const teamId = `knowledge-recovery-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    const post = async <T>(path: string, body: unknown): Promise<T> => {
+      const response = await stub.fetch(`https://do${path}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json() as Promise<T>;
+    };
+    await post("/descriptor", job);
+    await post("/lease", {
+      job,
+      authoritativeConfigVersion: 1,
+      leaseToken: "recovery-lease",
+      leaseMs: 60_000,
+    });
+    await post("/prepareRevision", {
+      sourceKey: job.sourceKey,
+      leaseToken: "recovery-lease",
+      desiredRevision: "sha256:one",
+    });
+    await post("/localAccepted", {
+      sourceKey: job.sourceKey,
+      leaseToken: "recovery-lease",
+      localDocumentId: "doc-recovery",
+      desiredRevision: "sha256:one",
+      workflowStatus: "queued",
+      pollDeadlineAt: Date.now() + 20_000,
+      nextPollAt: Date.now(),
+    });
+    await post("/outcome", {
+      sourceKey: job.sourceKey,
+      leaseToken: "recovery-lease",
+      outcome: {
+        status: "permanent_failure",
+        errorClass: "local_poll",
+        errorCode: "local_document_failed",
+      },
+    });
+    const adminSecret = (env as unknown as { ADMIN_SECRET: string }).ADMIN_SECRET;
+    const response = await SELF.fetch("https://worker/admin/knowledge/recover", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminSecret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        teamId,
+        sourceKey: job.sourceKey,
+        expectedConfigVersion: job.configVersion,
+        expectedRequestedAt: job.requestedAt,
+        operatorId: "test-operator",
+        rootCauseCorrectionRef: "test-incident-123",
+      }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      action: "reopened",
+      sourceKey: job.sourceKey,
+    });
+    await expect(post<{ ledger: { status: string; localDocumentId?: string } }>("/state", {
+      sourceKey: job.sourceKey,
+    })).resolves.toMatchObject({
+      ledger: { status: "pending", localDocumentId: "doc-recovery" },
+    });
+  });
+
+  it("persists an exact thread fetch checkpoint and clears it after completion", async () => {
+    const teamId = `knowledge-thread-checkpoint-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    expect((await stub.fetch("https://do/descriptor", {
+      method: "POST",
+      body: JSON.stringify(job),
+    })).ok).toBe(true);
+    const save = await stub.fetch("https://do/thread-fetch/progress/save", {
+      method: "POST",
+      body: JSON.stringify({
+        job,
+        checkpoint: {
+          cursor: "cursor-2",
+          pages: 2,
+          messages: [{ ts: "171234.000100", text: "partial" }],
+          bytes: 32,
+        },
+      }),
+    });
+    expect(save.ok).toBe(true);
+    await expect(stub.fetch("https://do/thread-fetch/progress/get", {
+      method: "POST",
+      body: JSON.stringify({ job }),
+    }).then((response) => response.json())).resolves.toMatchObject({
+      checkpoint: {
+        cursor: "cursor-2",
+        pages: 2,
+        messages: [{ ts: "171234.000100", text: "partial" }],
+      },
+    });
+    await expect(stub.fetch("https://do/status", {
+      method: "POST",
+      body: JSON.stringify({ teamId }),
+    }).then((response) => response.json())).resolves.toMatchObject({
+      threadFetch: { active: 1, messages: 1, bytes: 32 },
+    });
+    const clear = await stub.fetch("https://do/thread-fetch/progress/clear", {
+      method: "POST",
+      body: JSON.stringify({ job }),
+    });
+    expect(clear.ok).toBe(true);
+    await expect(stub.fetch("https://do/thread-fetch/progress/get", {
+      method: "POST",
+      body: JSON.stringify({ job }),
+    }).then((response) => response.json())).resolves.toEqual({ checkpoint: null });
+  });
+
+  it("keeps the knowledge status snapshot behind admin authorization", async () => {
+    const teamId = `knowledge-status-admin-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const job = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    expect((await stub.fetch("https://do/descriptor", {
+      method: "POST",
+      body: JSON.stringify(job),
+    })).ok).toBe(true);
+    const unauthenticated = await SELF.fetch("https://worker/admin/knowledge/status", {
+      method: "POST",
+      body: JSON.stringify({ teamId }),
+    });
+    expect(unauthenticated.status).toBe(401);
+
+    const adminSecret = (env as unknown as { ADMIN_SECRET: string }).ADMIN_SECRET;
+    const response = await SELF.fetch("https://worker/admin/knowledge/status", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminSecret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ teamId }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ledger: { total: 1, byStatus: { pending: 1 } },
+    });
   });
 
   it("holds an uncommitted reconciliation page across continuation/restart", async () => {
@@ -876,5 +1395,97 @@ describe("KnowledgeDO additive descriptor ledger", () => {
       status: "complete",
       nextJobIndex: 2,
     });
+  });
+
+  it("records and reads a fenced queryability receipt without storing request text", async () => {
+    const teamId = `knowledge-queryability-${crypto.randomUUID()}`;
+    const stub = tenantStub(env.KNOWLEDGE, teamId);
+    const post = (path: string, body?: unknown) => stub.fetch(`https://do${path}`, {
+      method: "POST",
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const source = createKnowledgeJob({
+      teamId,
+      projectId: "P1",
+      channelId: "C1",
+      threadTs: "171234.000100",
+      configVersion: 1,
+      requestedAt: "2026-07-19T01:00:00.000Z",
+      reason: "event",
+    });
+    expect((await post("/descriptor", source)).ok).toBe(true);
+    expect(await post("/lease", {
+      job: source,
+      authoritativeConfigVersion: 1,
+      leaseToken: "lease-queryability",
+    }).then((response) => response.json())).toMatchObject({ decision: "lease" });
+    expect(await post("/prepareRevision", {
+      sourceKey: source.sourceKey,
+      leaseToken: "lease-queryability",
+      desiredRevision: "sha256:one",
+      indexGeneration: "generation-1",
+    }).then((response) => response.json())).toEqual({ decision: "add" });
+    expect(await post("/localAccepted", {
+      sourceKey: source.sourceKey,
+      leaseToken: "lease-queryability",
+      localDocumentId: "doc-queryability",
+      desiredRevision: "sha256:one",
+      workflowStatus: "done",
+      pollDeadlineAt: Date.now() + 20_000,
+      nextPollAt: Date.now(),
+      indexGeneration: "generation-1",
+    }).then((response) => response.json())).toEqual({ recorded: true });
+    expect(await post("/outcome", {
+      sourceKey: source.sourceKey,
+      leaseToken: "lease-queryability",
+      outcome: {
+        status: "indexed",
+        desiredRevision: "sha256:one",
+        indexedRevision: "sha256:one",
+        localDocumentId: "doc-queryability",
+        workflowStatus: "done",
+        pollCount: 1,
+        indexGeneration: "generation-1",
+      },
+    }).then((response) => response.json())).toEqual({ recorded: true });
+    const identity = {
+      sourceKey: source.sourceKey,
+      sourceType: "slack",
+      teamId,
+      projectId: source.projectId,
+      channelId: source.channelId,
+      threadTs: source.threadTs,
+      contentRevision: "sha256:one",
+      indexRevision: "sha256:one",
+      localDocumentId: "doc-queryability",
+      derivedIndexGeneration: "generation-1",
+    };
+    const recorded = await post("/queryability/receipt", {
+      ...identity,
+      status: "searchable",
+      providerResultCount: 1,
+      acceptedCitationCount: 1,
+      body: "message body",
+      query: "query text",
+      token: "secret-token",
+    });
+    expect(recorded.ok).toBe(true);
+    const recordedText = await recorded.text();
+    expect(recordedText).not.toMatch(/message body|query text|secret-token/);
+    expect(JSON.parse(recordedText)).toMatchObject({ ...identity, status: "searchable" });
+    const read = await post("/queryability/receipt/read", identity);
+    expect(read.ok).toBe(true);
+    expect(await read.text()).not.toMatch(/message body|query text|secret-token/);
+    const status = await post("/status");
+    expect(status.ok).toBe(true);
+    expect(await status.text()).not.toMatch(/message body|query text|secret-token/);
+    const stale = await post("/queryability/receipt", {
+      ...identity,
+      derivedIndexGeneration: "generation-2",
+      status: "no_match",
+      providerResultCount: 0,
+      acceptedCitationCount: 0,
+    });
+    expect(stale.ok).toBe(false);
   });
 });

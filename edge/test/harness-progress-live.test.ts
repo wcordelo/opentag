@@ -107,9 +107,9 @@ describe("harness progress live renderer", () => {
     ]>)[0]?.[0];
     expect(firstPost).toMatchObject({
       client_msg_id: harnessProgressClientMessageId(executionId),
-      text: expect.stringContaining("container argument"),
+      text: expect.stringContaining("Read"),
     });
-    expect(live.finalAnswerPrefix()).toContain("container argument");
+    expect(live.finalAnswerPrefix()).toBe("");
     expect(live.finalAnswerPrefix()).not.toContain("Coding progress");
 
     clock = 2_000;
@@ -138,7 +138,7 @@ describe("harness progress live renderer", () => {
     expect(terminalUpdate?.text).toContain("Complete");
   });
 
-  it("uses Working heading for AG-UI progress messages", async () => {
+  it("does not expose AG-UI context or a Working placeholder", async () => {
     const store = makeStore();
     const threadKey = "slack:C1:agui.0";
     const executionId = "exec-agui-1";
@@ -161,7 +161,7 @@ describe("harness progress live renderer", () => {
       threadKey,
       executionId,
       now: () => clock,
-      progressHeading: "*Working…*",
+      progressHeading: "",
     });
 
     await live.handleEvent({
@@ -194,10 +194,10 @@ describe("harness progress live renderer", () => {
     const text = (updateMessage.mock.calls as unknown as Array<
       [{ text?: string }]
     >)[0]?.[0]?.text ?? "";
-    expect(text).toContain("OpenTag AG-UI");
-    expect(text).toContain("*Working…*");
     expect(text).toContain("Searching Slack");
     expect(text).not.toContain("Coding progress");
+    expect(text).not.toContain("OpenTag AG-UI");
+    expect(text).not.toContain("Working");
   });
 
   it("ignores equal-or-lower modelEvidence for live context", async () => {
@@ -248,10 +248,7 @@ describe("harness progress live renderer", () => {
         modelEvidence: "unknown",
       },
     });
-    expect(live.finalAnswerPrefix()).toContain("strong-model");
-    expect(live.finalAnswerPrefix()).toContain("provider confirmed");
-    expect(live.finalAnswerPrefix()).not.toContain("same-rank-other-model");
-    expect(live.finalAnswerPrefix()).not.toContain("weaker-model");
+    expect(live.finalAnswerPrefix()).toBe("");
   });
 });
 

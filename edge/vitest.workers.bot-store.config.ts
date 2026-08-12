@@ -31,6 +31,7 @@ export default defineConfig({
   ],
   test: {
     include: ["test/**/*.workers.test.ts"],
+    exclude: ["test/**/*.graphify.workers.test.ts"],
     // Four workerd files cold-start multiple SQLite-backed DOs concurrently.
     // Preserve behavioral timeouts without failing on host startup contention.
     testTimeout: 15_000,

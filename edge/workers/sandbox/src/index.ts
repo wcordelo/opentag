@@ -25,6 +25,7 @@ export default {
         ),
       },
       env.BLOBS,
+      env.CF_VERSION_METADATA,
     );
   },
 };

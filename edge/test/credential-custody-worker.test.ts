@@ -116,6 +116,7 @@ type CustodyTestOptions = Readonly<{
   credential?: () => unknown;
   authorization?: () => Response | Promise<Response>;
   requestBodies?: unknown[];
+  requestTenants?: string[];
   bindingConfig?: readonly Record<string, unknown>[];
 }>;
 
@@ -127,6 +128,8 @@ function durableObjects(
   const workspaceStub = {
     fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       options.requestBodies?.push(JSON.parse(String(init?.body)));
+      const tenant = new Headers(init?.headers).get("x-opentag-tenant-id");
+      if (tenant) options.requestTenants?.push(tenant);
       return await (options.authorization?.() ?? Response.json({ ok: true }));
     }),
   };
@@ -190,6 +193,7 @@ describe("credential custody Worker", () => {
   it("resolves a configured Secrets Store binding without accepting token material", async () => {
     const secret = { get: vi.fn(async () => "drive-token") };
     const requestBodies: unknown[] = [];
+    const requestTenants: string[] = [];
     const body = await requestBody(await labels());
     const response = await credentialCustodyApp.fetch(
       new Request("https://custody/resolve", {
@@ -200,7 +204,7 @@ describe("credential custody Worker", () => {
         },
         body: JSON.stringify(body),
       }),
-      await envBindings(secret, "active", { requestBodies }) as never,
+      await envBindings(secret, "active", { requestBodies, requestTenants }) as never,
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -214,6 +218,7 @@ describe("credential custody Worker", () => {
     expect(secret.get).toHaveBeenCalledOnce();
     expect(JSON.stringify(body)).not.toContain("drive-token");
     expect(requestBodies).toHaveLength(4);
+    expect(requestTenants[0]).toBe("T1");
     expect(JSON.stringify(requestBodies)).not.toContain("drive-token");
   });
 

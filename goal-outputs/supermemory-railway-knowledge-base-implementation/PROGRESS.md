@@ -1,4 +1,14 @@
-> **Historical snapshot.** This ledger records B0–B4/R1 work and its earlier gates. Do not infer current source enablement from it; use [docs/current-state.md](../../docs/current-state.md) and [goal-output status](../DOC-STATUS-RECONCILIATION.md).
+> **Historical snapshot.** This ledger records B0–B4/R1 work and its earlier
+> gates. Its `waitUntil -> KnowledgeDO -> Queue` wording predates the current
+> durable `DeferredIngressDO` ownership fence. Do not infer current source
+> enablement from it; use [docs/current-state.md](../../docs/current-state.md)
+> and [goal-output status](../DOC-STATUS-RECONCILIATION.md).
+>
+> The Python validator results recorded in this historical ledger are retained
+> as snapshot evidence, not as current-tree gates. They target the former
+> Railway/B0–B4 contract and are expected to fail against the current
+> Cloudflare-only specification and source. Current acceptance is recorded in
+> `goal-outputs/knowledge-contract-validation/`.
 
 # PROGRESS — supermemory-railway-knowledge-base-implementation
 

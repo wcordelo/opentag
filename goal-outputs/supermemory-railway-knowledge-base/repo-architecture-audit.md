@@ -5,6 +5,15 @@
 not authority to deploy, create a Railway project/service/volume/domain, set a
 secret, ingest Slack, or delete data.
 
+> **Current-state reconciliation (2026-08-02).** This is a historical design
+> audit. Its proposed `waitUntil -> KnowledgeDO -> Queue` ingress describes the
+> original plan, not the current implementation. The current source first owns
+> inbound events in `DeferredIngressDO`, then schedules `KnowledgeDO`; outbound
+> observations use the same durable owner. Use
+> [`docs/current-state.md`](../../docs/current-state.md) and the current
+> [knowledge contract audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md)
+> for present status and remaining live gates.
+
 ## Bottom line
 
 The checked-in `KNOWLEDGE-BASE-SPEC.md` is an obsolete hybrid of a former

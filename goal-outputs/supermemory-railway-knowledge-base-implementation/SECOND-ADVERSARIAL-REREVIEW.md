@@ -13,6 +13,19 @@ validator conclusion as evidence of correctness. No source/configuration,
 external resource, secret, deployment, Git state, or prior artifact was
 modified.
 
+> **Historical validator note (2026-08-02).** The validator PASS rows below
+> target the former Railway/B0–B4 contract and are not current-tree gates.
+> Current Cloudflare-only source and live status are authoritative in
+> [`docs/current-state.md`](../../docs/current-state.md) and the
+> [knowledge contract audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md).
+
+> **Historical review note (2026-08-02).** This rereview predates the current
+> `DeferredIngressDO` pre-ack knowledge-event owner and durable outbound
+> observation owner. Retain it as a record of the earlier finding, but use
+> [`docs/current-state.md`](../../docs/current-state.md) and the
+> [current knowledge audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md)
+> for present source and deployment status.
+
 # BLOCKING
 
 ## B-01 — A channel member can permanently tombstone an indexed thread by deleting one reply

@@ -135,6 +135,36 @@ export async function verifyNostrEvent(raw: unknown): Promise<boolean> {
   }
 }
 
+export function verifyNipOaAuthTag(input: Readonly<{
+  ownerPubkeyHex: string;
+  conditions: string;
+  signatureHex: string;
+  agentPubkeyHex: string;
+}>): boolean {
+  if (
+    !HEX64_RE.test(input.ownerPubkeyHex)
+    || !HEX64_RE.test(input.agentPubkeyHex)
+    || !HEX128_RE.test(input.signatureHex)
+    || input.ownerPubkeyHex === input.agentPubkeyHex
+  ) {
+    return false;
+  }
+  const message = sha256(
+    new TextEncoder().encode(
+      `nostr:agent-auth:${input.agentPubkeyHex}:${input.conditions}`,
+    ),
+  );
+  try {
+    return schnorr.verify(
+      hexToBytes(input.signatureHex),
+      message,
+      hexToBytes(input.ownerPubkeyHex),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** SHA-256 hex of arbitrary request body bytes (NIP-98 payload tag). */
 export async function sha256HexBytes(body: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", body);

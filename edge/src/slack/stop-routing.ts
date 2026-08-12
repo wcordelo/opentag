@@ -152,7 +152,6 @@ export function extractStopCommandEvent(
   if (
     !event.user ||
     event.bot_id ||
-    event.app_id ||
     event.bot_profile ||
     event.subtype === "bot_message"
   ) return undefined;
@@ -256,6 +255,15 @@ export async function handleStopCommand(
       return;
     }
 
+    const slackScheduler = env.SLACK_BOT_TOKEN
+      ? sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT)
+      : undefined;
+    try {
+      await slackScheduler?.preempt?.(channel);
+    } catch (err) {
+      console.error("[stop-command] Slack egress preemption failed", threadKey, err);
+    }
+
     const slackClient = env.SLACK_BOT_TOKEN
       ? (() => {
           const messageObserver = bindSlackKnowledgeObserver(
@@ -263,7 +271,8 @@ export async function handleStopCommand(
             teamId,
           );
           return createSlackWebClient(env.SLACK_BOT_TOKEN!, {
-            scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+            scheduler: slackScheduler,
+            priority: "control",
             messageObserverRequired: env.ENVIRONMENT === "production",
             ...(messageObserver ? { messageObserver } : {}),
           });

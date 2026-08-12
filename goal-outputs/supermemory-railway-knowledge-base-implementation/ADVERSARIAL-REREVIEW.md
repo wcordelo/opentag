@@ -2,6 +2,12 @@ BLOCKING
 
 # Fresh independent adversarial rereview — Supermemory Local B0–B4
 
+> **Historical review note (2026-08-02).** This review and its validator
+> references target the former Railway/B0–B4 contract. They are retained for
+> historical findings; the current Cloudflare-only architecture and live gaps
+> are authoritative in [`docs/current-state.md`](../../docs/current-state.md)
+> and the [knowledge contract audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md).
+
 Date: 2026-07-25
 
 Scope: the current dirty working tree in `/Users/will/Documents/opentag`

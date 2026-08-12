@@ -31,6 +31,7 @@ import {
 import type { CloudflareSlackAdapter } from "./cloudflare-slack-adapter.js";
 import { markThreadNextRenderFinal } from "./cloudflare-slack-adapter.js";
 import { createSlackWebClient, sharedSlackRateScheduler } from "./web-api.js";
+import { bindSlackKnowledgeObserver, createSlackKnowledgeObserver } from "./knowledge-observer.js";
 import { firstSlackTs, slackObligationThreadKey } from "./obligation-thread-key.js";
 import { bindTurnExecutionContext } from "./turn-execution-context.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
@@ -174,6 +175,7 @@ export async function postTurnRejectedFeedback(
   stateStore: ReturnType<typeof createBotStoreAdapter>,
   args: {
     reason: "duplicate" | "concurrent";
+    teamId?: string;
     channelId: string;
     threadTs?: string;
     liveClientMessageId?: string;
@@ -182,14 +184,23 @@ export async function postTurnRejectedFeedback(
 ): Promise<void> {
   if (args.reason !== "concurrent") return;
   if (!env.SLACK_BOT_TOKEN) return;
+  const dedupKey = `busy-note:${args.threadKey}`;
+  let claimed = false;
   try {
     const seen = await stateStore.dedup.seen(
-      `busy-note:${args.threadKey}`,
+      dedupKey,
       60_000,
     );
     if (seen) return;
+    claimed = true;
+    const messageObserver = bindSlackKnowledgeObserver(
+      createSlackKnowledgeObserver(env),
+      args.teamId,
+    );
     await createSlackWebClient(env.SLACK_BOT_TOKEN, {
       scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+      messageObserverRequired: env.ENVIRONMENT === "production",
+      ...(messageObserver ? { messageObserver } : {}),
     }).postMessage({
       channel: args.channelId,
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
@@ -197,8 +208,20 @@ export async function postTurnRejectedFeedback(
         "⚠️ This thread still has an active turn. It may be running or waiting " +
         "on an approval card. Use the card, wait for completion, or send *Stop* " +
         "to cancel it before retrying.",
+      client_msg_id: stableSlackClientMessageId(dedupKey),
+      knowledgeIndex: true,
     });
   } catch (err) {
+    if (claimed) {
+      try {
+        await stateStore.dedup.forget(dedupKey);
+      } catch (forgetError) {
+        console.warn(
+          "[turn] rejection feedback dedup release failed",
+          forgetError instanceof Error ? forgetError.message : forgetError,
+        );
+      }
+    }
     console.warn(
       "[turn] rejection feedback failed",
       err instanceof Error ? err.message : err,
@@ -436,6 +459,7 @@ export async function runSlackTurnLifecycle(
     if (!registration.accepted) {
       await postTurnRejectedFeedback(env, stateStore, {
         reason: registration.duplicate ? "duplicate" : "concurrent",
+        teamId: requestContext.teamId,
         channelId,
         threadTs: statusThreadTs,
         liveClientMessageId: activeTurn.liveClientMessageId,
@@ -554,6 +578,7 @@ export async function runSlackTurnLifecycle(
       } else {
         await postTurnRejectedFeedback(env, stateStore, {
           reason: "concurrent",
+          teamId: requestContext.teamId,
           channelId,
           threadTs: statusThreadTs,
           threadKey: obligationThreadKey,
@@ -600,24 +625,6 @@ export async function runSlackTurnLifecycle(
       threadTs: statusThreadTs,
       liveClientMessageId: activeTurn.liveClientMessageId,
     });
-    if (statusThreadTs) {
-      try {
-        await adapter.setStatus({
-          channel: channelId,
-          threadTs: statusThreadTs,
-          status: "Thinking…",
-          fence: activeTurn,
-        });
-      } catch (err) {
-        // Progress is cosmetic. Exact output/effect fences remain authoritative;
-        // rate limits or missing Slack status support must not abort execution.
-        console.warn(
-          "[turn] initial status failed",
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
-
     const remoteGit = needsRemoteGitApproval
       ? await awaitRemoteGitApproval(
           thread as Parameters<typeof awaitRemoteGitApproval>[0],
@@ -692,6 +699,7 @@ export async function runSlackTurnLifecycle(
       });
       await postTurnRejectedFeedback(env, stateStore, {
         reason: outcome.reason === "duplicate" ? "duplicate" : "concurrent",
+        teamId: requestContext.teamId,
         channelId,
         threadTs: statusThreadTs,
         threadKey: obligationThreadKey,

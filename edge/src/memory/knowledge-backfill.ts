@@ -9,7 +9,10 @@ import {
   type KnowledgeJob,
 } from "./knowledge-contract.js";
 import type { KnowledgeDO } from "./knowledge-do.js";
-import type { EnqueueKnowledgeResult } from "./knowledge-ledger.js";
+import {
+  knowledgeDescriptorKey,
+  type EnqueueKnowledgeResult,
+} from "./knowledge-ledger.js";
 import {
   proveKnowledgeDescriptorDisposition,
   type KnowledgeDescriptorDisposition,
@@ -20,6 +23,11 @@ import {
   type VerifiedKnowledgeBackfillApproval,
 } from "./knowledge-backfill-authorization.js";
 import { tenantStub } from "../tenancy.js";
+import {
+  enumerateSlackConversations,
+  type SlackConversationInventoryReceipt,
+} from "../slack/conversation-inventory.js";
+import { createSlackWebClient } from "../slack/web-api.js";
 
 export const KNOWLEDGE_BACKFILL_LIMITS = Object.freeze({
   maxChannels: 50,
@@ -48,6 +56,7 @@ export type KnowledgeBackfillRequest = {
   maximumErrors?: number;
   releaseIds?: string[];
   rollbackOwner?: string;
+  conversationInventoryDigest?: string;
 };
 
 export type KnowledgeBackfillCandidate = {
@@ -91,6 +100,7 @@ export type KnowledgeBackfillScope = {
   };
   releaseIds: string[];
   rollbackOwner: string;
+  conversationInventoryDigest?: string;
 };
 
 export type KnowledgeBackfillManifest = KnowledgeBackfillScope & {
@@ -196,7 +206,7 @@ function exactText(value: string, label: string, maximum = 256): void {
   }
 }
 
-function validate(request: KnowledgeBackfillRequest): void {
+function validate(request: KnowledgeBackfillRequest, allowEmptyChannels = false): void {
   exactText(request.teamId, "teamId");
   exactText(request.projectId, "projectId");
   if (!request.dryRun) {
@@ -204,10 +214,14 @@ function validate(request: KnowledgeBackfillRequest): void {
   }
   const channels = [...new Set(request.channelIds)];
   if (
-    channels.length === 0 ||
+    (!allowEmptyChannels && channels.length === 0) ||
     channels.length > KNOWLEDGE_BACKFILL_LIMITS.maxChannels
   ) {
-    throw new Error("a non-empty bounded explicit channel list is required");
+    throw new Error(
+      allowEmptyChannels
+        ? "backfill channel list exceeds its bounded maximum"
+        : "a non-empty bounded explicit channel list is required",
+    );
   }
   for (const channelId of channels) exactText(channelId, "channel ID");
   if (
@@ -285,6 +299,10 @@ function validate(request: KnowledgeBackfillRequest): void {
   if (request.rollbackOwner !== undefined) {
     exactText(request.rollbackOwner, "rollback owner");
   }
+  if (request.conversationInventoryDigest !== undefined &&
+      !/^sha256:[a-f0-9]{64}$/.test(request.conversationInventoryDigest)) {
+    throw new Error("conversation inventory digest is invalid");
+  }
 }
 
 function slackTimestampToIso(value: string): string | undefined {
@@ -316,6 +334,9 @@ function buildScope(request: KnowledgeBackfillRequest): KnowledgeBackfillScope {
     },
     releaseIds: [...(request.releaseIds ?? ["test-release"])],
     rollbackOwner: request.rollbackOwner ?? "test-rollback-owner",
+    ...(request.conversationInventoryDigest
+      ? { conversationInventoryDigest: request.conversationInventoryDigest }
+      : {}),
   };
 }
 
@@ -494,13 +515,18 @@ async function authoritativeBackfillSource(
   env: KnowledgeBackfillEnv,
   input: { teamId: string; projectId: string; channelId: string },
 ): Promise<TrackedKnowledgeSource> {
-  const source = await backfillDoRequest<TrackedKnowledgeSource>(
+  const resolved = await backfillDoRequest<{
+    source?: TrackedKnowledgeSource | null;
+    reason?: string;
+  }>(
     env.WORKSPACE_CONFIG,
     input.teamId,
-    "/getTrackedKnowledgeSource",
-    input,
+    "/resolveSlackKnowledgeSource",
+    { teamId: input.teamId, channelId: input.channelId },
   );
+  const source = resolved.source;
   if (
+    !source ||
     !isTrackedKnowledgeSourceEnabled(source) ||
     source.teamId !== input.teamId ||
     source.projectId !== input.projectId ||
@@ -526,6 +552,7 @@ function sameScopeInput(
     maximumErrors: number;
     releaseIds: string[];
     rollbackOwner: string;
+    conversationInventoryDigest?: string;
   },
 ): boolean {
   const channels = [...new Set(input.channelIds)].sort();
@@ -538,6 +565,7 @@ function sameScopeInput(
       input.maximumRatePerMinute &&
     scope.executionBudget.maximumErrors === input.maximumErrors &&
     scope.rollbackOwner === input.rollbackOwner &&
+    scope.conversationInventoryDigest === input.conversationInventoryDigest &&
     canonicalJson(scope.channelIds) === canonicalJson(channels) &&
     canonicalJson(scope.releaseIds) === canonicalJson(input.releaseIds);
 }
@@ -553,7 +581,7 @@ export async function discoverAndStoreKnowledgeBackfill(
     manifestId: string;
     teamId: string;
     projectId: string;
-    channelIds: string[];
+    channelIds?: string[];
     from: string;
     to: string;
     maximumCount: number;
@@ -561,6 +589,7 @@ export async function discoverAndStoreKnowledgeBackfill(
     maximumErrors: number;
     releaseIds: string[];
     rollbackOwner: string;
+    discoverAll?: boolean;
     fetchImpl?: typeof fetch;
   },
 ): Promise<{
@@ -574,8 +603,18 @@ export async function discoverAndStoreKnowledgeBackfill(
     throw new Error("Slack token is unavailable for backfill discovery");
   }
   exactText(input.manifestId, "manifestId", 128);
-  const channelIds = [...new Set(input.channelIds)].sort();
-  const validationRequest: KnowledgeBackfillRequest = {
+  if (input.discoverAll !== undefined && typeof input.discoverAll !== "boolean") {
+    throw new Error("discoverAll must be a boolean");
+  }
+  const discoverAll = input.discoverAll === true;
+  const requestedChannelIds = [...new Set(input.channelIds ?? [])].sort();
+  if (discoverAll && requestedChannelIds.length > 0) {
+    throw new Error("discoverAll does not accept caller channel IDs");
+  }
+  const makeValidationRequest = (
+    channelIds: string[],
+    conversationInventoryDigest?: string,
+  ): KnowledgeBackfillRequest => ({
     manifestId: input.manifestId,
     teamId: input.teamId,
     projectId: input.projectId,
@@ -588,11 +627,13 @@ export async function discoverAndStoreKnowledgeBackfill(
     releaseIds: input.releaseIds,
     rollbackOwner: input.rollbackOwner,
     dryRun: true,
+    ...(conversationInventoryDigest ? { conversationInventoryDigest } : {}),
     sourceConfigVersions: Object.fromEntries(
       channelIds.map((channelId) => [channelId, 1]),
     ),
-  };
-  validate(validationRequest);
+  });
+  const initialValidationRequest = makeValidationRequest(requestedChannelIds);
+  validate(initialValidationRequest, discoverAll);
 
   const prior = await backfillDoRequest<{
     discovery: DurableKnowledgeBackfillDiscovery | null;
@@ -602,7 +643,76 @@ export async function discoverAndStoreKnowledgeBackfill(
     "/backfill/discovery/get",
     { manifestId: input.manifestId, includeCandidates: false },
   ).then((result) => result.discovery ?? undefined);
-  if (prior && !sameScopeInput(prior.scope, input)) {
+
+  let inventory: SlackConversationInventoryReceipt | undefined;
+  let channelIds = requestedChannelIds;
+  if (discoverAll) {
+    if (prior) {
+      if (!prior.scope.conversationInventoryDigest) {
+        throw new Error("backfill discovery lacks a server-owned conversation inventory");
+      }
+      const stored = await backfillDoRequest<{
+        inventory: SlackConversationInventoryReceipt | null;
+      }>(
+        env.KNOWLEDGE,
+        input.teamId,
+        "/backfill/inventory/get",
+        { manifestId: input.manifestId },
+      ).then((result) => result.inventory ?? undefined);
+      if (
+        !stored ||
+        stored.status !== "complete" ||
+        stored.inventoryDigest !== prior.scope.conversationInventoryDigest
+      ) {
+        throw new Error("backfill server-owned conversation inventory is not complete");
+      }
+      inventory = stored;
+      channelIds = [...stored.eligibleConversationIds].sort();
+    } else {
+      inventory = await enumerateSlackConversations(
+        createSlackWebClient(env.SLACK_BOT_TOKEN, {
+          fetchImpl: input.fetchImpl,
+        }),
+      );
+      await backfillDoRequest(
+        env.KNOWLEDGE,
+        input.teamId,
+        "/backfill/inventory/put",
+        {
+          manifestId: input.manifestId,
+          inventoryDigest: inventory.inventoryDigest,
+          inventory,
+          createdAt: new Date().toISOString(),
+        },
+      );
+      if (inventory.status !== "complete") {
+        throw new Error(
+          `backfill server-owned conversation inventory is incomplete: ${
+            inventory.incompleteReason ?? "unknown"
+          }`,
+        );
+      }
+      channelIds = [...inventory.eligibleConversationIds].sort();
+    }
+    if (channelIds.length === 0) {
+      throw new Error("backfill server-owned conversation inventory found no eligible conversations");
+    }
+    if (channelIds.length > KNOWLEDGE_BACKFILL_LIMITS.maxChannels) {
+      throw new Error("backfill server-owned conversation inventory exceeds its bounded channel limit");
+    }
+  }
+
+  const validationRequest = makeValidationRequest(
+    channelIds,
+    inventory?.inventoryDigest,
+  );
+  validate(validationRequest);
+  const scopeInput = {
+    ...input,
+    channelIds,
+    conversationInventoryDigest: inventory?.inventoryDigest,
+  };
+  if (prior && !sameScopeInput(prior.scope, scopeInput)) {
     throw new Error("backfill discovery scope changed; create a new manifest");
   }
 
@@ -642,6 +752,7 @@ export async function discoverAndStoreKnowledgeBackfill(
     ...validationRequest,
     manifestId,
     sourceConfigVersions,
+    conversationInventoryDigest: inventory?.inventoryDigest,
   });
   const scopeDigest = await knowledgeBackfillManifestDigest(scope);
   let discovery = await backfillDoRequest<DurableKnowledgeBackfillDiscovery>(
@@ -986,9 +1097,7 @@ export async function executeKnowledgeBackfillPage(
   const results = { ...(claimed.pendingResults ?? {}) };
   let newlyEnqueued = 0;
   for (const job of pendingJobs) {
-    const descriptorKey = `${job.sourceKey}|${job.configVersion}|${
-      job.requestedAt
-    }|${job.reason}`;
+    const descriptorKey = knowledgeDescriptorKey(job);
     if (results[descriptorKey]) continue;
     try {
       const pinned = manifest.sources.find((source) =>

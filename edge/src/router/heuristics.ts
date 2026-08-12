@@ -51,6 +51,7 @@ const TIER1_RULES: readonly Rule[] = [
   { id: "t1.06", pattern: /^(summarize|recap|catch me up on|tl;?dr)\b/ },
   { id: "t1.07", pattern: /^(when did|when was|when do)\b/ },
   { id: "t1.08", pattern: /^(link|find|show) (me )?(the|that|our)\b/ },
+  { id: "t1.12", pattern: /^(search|look up|lookup|retrieve|query)\b/ },
   {
     id: "t1.09",
     pattern: /^(update me on|give me an update on|any update on|status on|status of)\b/,

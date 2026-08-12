@@ -42,7 +42,7 @@ function sourcePart(value: string, field: string): string {
 
 export function parseKnowledgeSourceType(value: unknown): KnowledgeSourceType {
   if (typeof value !== "string" || !SOURCE_TYPES.includes(value as KnowledgeSourceType)) {
-    throw new Error("sourceType must be slack, wiki, code, or custom_db");
+    throw new Error("sourceType must be slack, wiki, code, custom_db, or drive");
   }
   return value as KnowledgeSourceType;
 }

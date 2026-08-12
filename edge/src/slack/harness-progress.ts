@@ -22,29 +22,6 @@ const MAX_VISIBLE = 8;
 const TITLE_MAX = 120;
 const SUMMARY_MAX = 500;
 
-export function formatContextLine(ctx: HarnessContextLine): string {
-  const harnessLabel =
-    ctx.harnessType === "claudex"
-      ? "Claude Code (Claudex)"
-      : ctx.harnessType === "nanocodex"
-        ? "Nanocodex"
-        : ctx.harnessType === "claudecode"
-          ? "Claude Code"
-          : ctx.harnessType === "agui"
-            ? "OpenTag AG-UI"
-            : ctx.harnessType;
-  if (!ctx.model || ctx.modelEvidence === "unknown") {
-    return `_${harnessLabel} · model unconfirmed_`;
-  }
-  const evidence =
-    ctx.modelEvidence === "provider_reported"
-      ? "provider confirmed"
-      : ctx.modelEvidence === "container_argument"
-        ? "container argument"
-        : "requested";
-  return `_${harnessLabel} · ${ctx.model} · ${evidence}_`;
-}
-
 /** User-facing tool titles for AG-UI live progress (not raw snake_case names). */
 export function humanizeToolProgressTitle(toolName: string): string {
   const known: Record<string, string> = {
@@ -144,7 +121,7 @@ export function renderProgressMarkdown(
   );
   const visible = [...active, ...completed].slice(-MAX_VISIBLE);
   const earlier = Math.max(0, list.length - visible.length);
-  const lines: string[] = [opts.heading ?? "*Coding progress*"];
+  const lines: string[] = opts.heading ? [opts.heading] : [];
   if (earlier > 0) lines.push(`_${earlier} earlier item(s)_`);
   for (const item of visible) {
     const mark =

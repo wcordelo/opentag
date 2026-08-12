@@ -66,6 +66,13 @@ export type SkippedThread = {
 
 export type KnowledgeThreadFetchOutcome = CompleteThread | IncompleteThread | SkippedThread;
 
+export type KnowledgeThreadFetchCheckpoint = {
+  cursor?: string;
+  pages: number;
+  messages: SlackThreadMessage[];
+  bytes: number;
+};
+
 export type KnowledgeThreadPageReader = (args: {
   channel: string;
   threadTs: string;
@@ -140,6 +147,8 @@ export async function fetchKnowledgeThread(args: {
   readPage: KnowledgeThreadPageReader;
   limits?: Partial<KnowledgeThreadFetchLimits>;
   overallTimeoutMs?: number;
+  initial?: KnowledgeThreadFetchCheckpoint;
+  onCheckpoint?: (checkpoint: KnowledgeThreadFetchCheckpoint) => Promise<void>;
 }): Promise<KnowledgeThreadFetchOutcome> {
   const limits = {
     ...DEFAULT_KNOWLEDGE_THREAD_LIMITS,
@@ -158,16 +167,39 @@ export async function fetchKnowledgeThread(args: {
   const overallTimer = setTimeout(() => overallController.abort(), overallTimeoutMs);
 
   try {
-    const messages: SlackThreadMessage[] = [];
+    const initial = args.initial ?? { pages: 0, messages: [], bytes: 0 };
+    if (
+      !Number.isSafeInteger(initial.pages) ||
+      initial.pages < 0 ||
+      !Number.isSafeInteger(initial.bytes) ||
+      initial.bytes < 0 ||
+      !Array.isArray(initial.messages)
+    ) {
+      throw new Error("knowledge thread checkpoint is invalid");
+    }
+    if (initial.cursor !== undefined && !initial.cursor) {
+      throw new Error("knowledge thread checkpoint cursor is invalid");
+    }
+    const messages: SlackThreadMessage[] = [...initial.messages];
     const seenTimestamps = new Set<string>();
     const seenClientIds = new Set<string>();
     const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    let pages = 0;
-    let bytes = 0;
+    let cursor: string | undefined = initial.cursor;
+    let pages = initial.pages;
+    let pagesThisInvocation = 0;
+    let bytes = initial.bytes;
+    for (const message of messages) {
+      const ts = typeof message.ts === "string" && message.ts ? message.ts : undefined;
+      const clientId = typeof message.client_msg_id === "string" && message.client_msg_id
+        ? message.client_msg_id
+        : undefined;
+      if (ts) seenTimestamps.add(ts);
+      if (clientId) seenClientIds.add(clientId);
+    }
+    if (cursor) seenCursors.add(cursor);
 
     for (;;) {
-      if (pages >= limits.maxPages) {
+      if (pagesThisInvocation >= limits.maxPages) {
         return { status: "incomplete", reason: "page_cap", cursor, pages, messages: messages.length, bytes };
       }
       let page: SlackThreadPage;
@@ -199,6 +231,7 @@ export async function fetchKnowledgeThread(args: {
         return { status: "incomplete", reason, cursor, pages, messages: messages.length, bytes };
       }
       pages += 1;
+      pagesThisInvocation += 1;
       if (page.ok === false) {
         const skipReason = classifySlackKnowledgeError(page.error);
         if (skipReason) {
@@ -245,6 +278,14 @@ export async function fetchKnowledgeThread(args: {
         return { status: "incomplete", reason: "cursor_loop", cursor: nextCursor, pages, messages: messages.length, bytes };
       }
       seenCursors.add(nextCursor);
+      if (args.onCheckpoint) {
+        await args.onCheckpoint({
+          cursor: nextCursor,
+          pages,
+          messages: [...messages],
+          bytes,
+        });
+      }
       cursor = nextCursor;
     }
   } finally {

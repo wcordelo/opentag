@@ -15,7 +15,7 @@ import type { Env } from "../env.js";
 import { parseConnectorAccessGrant } from "../connectors/authorization.js";
 import { KNOWLEDGE_LIMITS, type KnowledgeCitation } from "../memory/knowledge-contract.js";
 import { SupermemoryAdapter, SupermemoryAdapterError } from "../memory/supermemory-adapter.js";
-import { createSupermemoryClient } from "../memory/supermemory-client.js";
+import { createSupermemoryClientFromEnv } from "../memory/supermemory-client.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
 import {
   assertPermissionSnapshotV1SlackOnly,
@@ -46,6 +46,7 @@ export type SearchSlackAuthorization = Readonly<{
   permissionSnapshot: PermissionSnapshotV1;
   conversationKey: string;
   executionId: string;
+  actorId: string;
 }>;
 
 type CurrentTurnAccess = Readonly<{
@@ -221,11 +222,94 @@ async function enabledSource(env: Env, teamId: string, channelId: string): Promi
     if (!candidate || typeof candidate !== "object") return false;
     const source = candidate as Partial<TrackedKnowledgeSource>;
     return source.teamId === teamId && source.channelId === channelId &&
+      (source.sourceType === undefined || source.sourceType === "slack") &&
       typeof source.projectId === "string" && typeof source.readerPolicyRef === "string" &&
       isTrackedKnowledgeSourceEnabled({ enabled: source.enabled === true, configVersion: source.configVersion ?? 0 });
   });
   if (sources.length > 1) throw new Error("tracked_source_project_conflict");
   return sources[0];
+}
+
+type SlackAclLease = {
+  leaseId: string;
+  revision: number;
+};
+
+async function acquireSlackAclLease(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  actorId: string,
+): Promise<SlackAclLease | undefined> {
+  const stub = tenantStub(env.KNOWLEDGE, teamId);
+  const response = await stub.fetch("https://do/acl/authorize", {
+    method: "POST",
+    body: JSON.stringify({ teamId, channelId, actorId }),
+  });
+  if (response.status === 403 || response.status === 404) return undefined;
+  if (!response.ok) throw new Error("slack_acl_state_lookup_unavailable");
+  const value = await response.json() as Partial<SlackAclLease> | null;
+  if (value === null) return undefined;
+  const revision = value.revision;
+  const leaseId = value.leaseId;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0 ||
+    typeof leaseId !== "string" ||
+    !leaseId
+  ) throw new Error("slack_acl_state_lookup_invalid");
+  return { leaseId, revision };
+}
+
+async function checkSlackAclLease(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  actorId: string,
+  leaseId: string,
+): Promise<boolean> {
+  const response = await tenantStub(env.KNOWLEDGE, teamId).fetch("https://do/acl/check", {
+    method: "POST",
+    body: JSON.stringify({ teamId, channelId, actorId, leaseId }),
+  });
+  if (response.status === 403 || response.status === 404) return false;
+  if (!response.ok) throw new Error("slack_acl_lease_check_unavailable");
+  const value = await response.json() as { authorized?: unknown };
+  if (typeof value.authorized !== "boolean") throw new Error("slack_acl_lease_check_invalid");
+  return value.authorized;
+}
+
+async function releaseSlackAclLease(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  leaseId: string,
+): Promise<void> {
+  await tenantStub(env.KNOWLEDGE, teamId).fetch("https://do/acl/release", {
+    method: "POST",
+    body: JSON.stringify({ teamId, channelId, leaseId }),
+  });
+}
+
+export async function isSlackKnowledgeMember(
+  env: Env,
+  teamId: string,
+  channelId: string,
+  actorId: string,
+): Promise<boolean> {
+  let lease: SlackAclLease | undefined;
+  try {
+    lease = await acquireSlackAclLease(env, teamId, channelId, actorId);
+    if (!lease) return false;
+    return await checkSlackAclLease(env, teamId, channelId, actorId, lease.leaseId);
+  } catch {
+    return false;
+  } finally {
+    if (lease) {
+      await releaseSlackAclLease(env, teamId, channelId, lease.leaseId).catch(() => undefined);
+    }
+  }
 }
 
 async function citationIsCurrent(
@@ -299,23 +383,29 @@ export async function searchSlackKnowledge(input: {
   if (!access || !accessAuthorizesSource(input.authorization, access, source)) {
     return { status: "unauthorized", citations: [], reason: "policy_denied" };
   }
-
-  let adapter = input.adapter;
-  if (!adapter) {
-    if (!input.env.SUPERMEMORY_URL || !input.env.SUPERMEMORY_API_KEY) {
-      return { status: "knowledge_unavailable", citations: [], retryable: true };
-    }
-    try {
-      adapter = new SupermemoryAdapter(createSupermemoryClient({
-        baseURL: input.env.SUPERMEMORY_URL,
-        apiKey: input.env.SUPERMEMORY_API_KEY,
-      }));
-    } catch {
-      return { status: "knowledge_unavailable", citations: [], retryable: true };
-    }
-  }
-
+  let aclLease: SlackAclLease | undefined;
   try {
+    aclLease = await acquireSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.authorization.actorId,
+    );
+    if (!aclLease) {
+      return { status: "knowledge_unavailable", citations: [], retryable: true };
+    }
+    let adapter = input.adapter;
+    if (!adapter) {
+      const client = createSupermemoryClientFromEnv(input.env);
+      if (!client) {
+        return { status: "knowledge_unavailable", citations: [], retryable: true };
+      }
+      try {
+        adapter = new SupermemoryAdapter(client);
+      } catch {
+        return { status: "knowledge_unavailable", citations: [], retryable: true };
+      }
+    }
     const candidates = await adapter.searchSlack({
       teamId: input.teamId,
       projectId: source.projectId,
@@ -329,9 +419,17 @@ export async function searchSlackKnowledge(input: {
     // authoritative and must still resolve to the same exact bundle/policy.
     const currentSource = await enabledSource(input.env, input.teamId, input.channelId);
     const currentAccess = await currentTurnAccess(input.env, input.teamId, input.channelId);
+    const aclCurrent = await checkSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.authorization.actorId,
+      aclLease.leaseId,
+    );
     if (!sourceMatches(source, currentSource) ||
       !accessMatches(access, currentAccess) ||
-      !accessAuthorizesSource(input.authorization, currentAccess, currentSource)) {
+      !accessAuthorizesSource(input.authorization, currentAccess, currentSource) ||
+      !aclCurrent) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
     const current: KnowledgeCitation[] = [];
@@ -342,9 +440,17 @@ export async function searchSlackKnowledge(input: {
     // bundle/source change during those reads cannot release stale excerpts.
     const finalSource = await enabledSource(input.env, input.teamId, input.channelId);
     const finalAccess = await currentTurnAccess(input.env, input.teamId, input.channelId);
+    const aclFinal = await checkSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.authorization.actorId,
+      aclLease.leaseId,
+    );
     if (!sourceMatches(source, finalSource) ||
       !accessMatches(access, finalAccess) ||
-      !accessAuthorizesSource(input.authorization, finalAccess, finalSource)) {
+      !accessAuthorizesSource(input.authorization, finalAccess, finalSource) ||
+      !aclFinal) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
     return { status: "ok", citations: current };
@@ -354,6 +460,146 @@ export async function searchSlackKnowledge(input: {
       citations: [],
       retryable: error instanceof SupermemoryAdapterError ? error.retryable : true,
     };
+  } finally {
+    if (aclLease) {
+      await releaseSlackAclLease(
+        input.env,
+        input.teamId,
+        input.channelId,
+        aclLease.leaseId,
+      ).catch(() => undefined);
+    }
+  }
+}
+
+export async function searchSlackKnowledgeForActor(input: {
+  env: Env;
+  teamId: string;
+  channelId: string;
+  projectId: string;
+  actorId: string;
+  aclPolicyRef: string;
+  query: string;
+  limit?: number;
+  adapter?: SearchSlackAdapter;
+}): Promise<SearchSlackResult> {
+  const query = input.query.trim();
+  if (!query || query.length > SEARCH_SLACK_LIMITS.maxQueryLength) {
+    return { status: "knowledge_unavailable", citations: [], retryable: false };
+  }
+  const limit = Math.min(SEARCH_SLACK_LIMITS.maxLimit, Math.max(1, input.limit ?? SEARCH_SLACK_LIMITS.defaultLimit));
+  let source: TrackedKnowledgeSource | undefined;
+  let access: CurrentTurnAccess | undefined;
+  try {
+    source = await enabledSource(input.env, input.teamId, input.channelId);
+    access = await currentTurnAccess(input.env, input.teamId, input.channelId);
+  } catch {
+    return { status: "knowledge_unavailable", citations: [], retryable: true };
+  }
+  if (
+    !source ||
+    source.projectId !== input.projectId ||
+    source.readerPolicyRef !== input.aclPolicyRef ||
+    !access ||
+    !access.searchAllowed ||
+    access.readerPolicyRef !== input.aclPolicyRef
+  ) {
+    return { status: "unauthorized", citations: [], reason: "policy_denied" };
+  }
+
+  let aclLease: SlackAclLease | undefined;
+  try {
+    aclLease = await acquireSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.actorId,
+    );
+    if (!aclLease) {
+      return { status: "knowledge_unavailable", citations: [], retryable: true };
+    }
+    let adapter = input.adapter;
+    if (!adapter) {
+      const client = createSupermemoryClientFromEnv(input.env);
+      if (!client) {
+        return { status: "knowledge_unavailable", citations: [], retryable: true };
+      }
+      adapter = new SupermemoryAdapter(client);
+    }
+    const candidates = await adapter.searchSlack({
+      teamId: input.teamId,
+      projectId: input.projectId,
+      channelId: input.channelId,
+      aclPolicyRef: input.aclPolicyRef,
+      query,
+      limit,
+    });
+    const currentSource = await enabledSource(input.env, input.teamId, input.channelId);
+    const currentAccess = await currentTurnAccess(input.env, input.teamId, input.channelId);
+    const aclCurrent = await checkSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.actorId,
+      aclLease.leaseId,
+    );
+    if (
+      !sourceMatches(source, currentSource) ||
+      !currentSource ||
+      currentSource.projectId !== input.projectId ||
+      currentSource.readerPolicyRef !== input.aclPolicyRef ||
+      !accessMatches(access, currentAccess) ||
+      !currentAccess ||
+      !currentAccess.searchAllowed ||
+      currentAccess.readerPolicyRef !== input.aclPolicyRef ||
+      !aclCurrent
+    ) {
+      return { status: "unauthorized", citations: [], reason: "policy_denied" };
+    }
+    const current: KnowledgeCitation[] = [];
+    for (const citation of candidates.slice(0, limit)) {
+      if (await citationIsCurrent(input.env, input.teamId, citation, currentSource.configVersion)) {
+        current.push(citation);
+      }
+    }
+    const finalSource = await enabledSource(input.env, input.teamId, input.channelId);
+    const finalAccess = await currentTurnAccess(input.env, input.teamId, input.channelId);
+    const aclFinal = await checkSlackAclLease(
+      input.env,
+      input.teamId,
+      input.channelId,
+      input.actorId,
+      aclLease.leaseId,
+    );
+    if (
+      !sourceMatches(source, finalSource) ||
+      !finalSource ||
+      finalSource.projectId !== input.projectId ||
+      finalSource.readerPolicyRef !== input.aclPolicyRef ||
+      !accessMatches(access, finalAccess) ||
+      !finalAccess ||
+      !finalAccess.searchAllowed ||
+      finalAccess.readerPolicyRef !== input.aclPolicyRef ||
+      !aclFinal
+    ) {
+      return { status: "unauthorized", citations: [], reason: "policy_denied" };
+    }
+    return { status: "ok", citations: current };
+  } catch (error) {
+    return {
+      status: "knowledge_unavailable",
+      citations: [],
+      retryable: error instanceof SupermemoryAdapterError ? error.retryable : true,
+    };
+  } finally {
+    if (aclLease) {
+      await releaseSlackAclLease(
+        input.env,
+        input.teamId,
+        input.channelId,
+        aclLease.leaseId,
+      ).catch(() => undefined);
+    }
   }
 }
 
@@ -384,6 +630,7 @@ export function createSearchSlackTool(dependencies: {
           permissionSnapshot: requirePermissionSnapshot(thread),
           conversationKey: (thread as { conversationKey?: string }).conversationKey ?? "",
           executionId: exact.executionId,
+          actorId: context.requesterId,
         },
         query,
         limit,

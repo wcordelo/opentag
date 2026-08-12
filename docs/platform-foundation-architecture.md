@@ -153,6 +153,21 @@ The lifecycle is:
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
+
+Connector writes and reads use the same boundary through the reviewed
+`connector_effect` kind. Its closed metadata vocabulary contains only the
+connector/action pair, opaque credential reference and version, immutable
+authorization and request digests, and an opaque durable request reference.
+The first approved pairs are Linear `create_issue` and Google Drive `search`;
+the request reference is resolved by the provider adapter and never carries a
+prompt, query, document body, or token through the effect queue. The adapter
+must revalidate the tenant grant and custody reference, use the intent
+idempotency key, and return an external receipt before the effect can complete.
+
+The existing guarded Linear tool is not yet routed through this envelope. It
+remains source-tested and fail-closed behind its direct credential-broker path
+until the tenant-scoped provider adapter can return the issue receipt and
+reconcile ambiguous outcomes.
 The ledger still does not perform the external effect. The isolated branch now
 contains a separately authenticated baseline effecter Worker for this boundary;
 it registers no provider adapters and therefore fails closed until custody,
@@ -305,10 +320,12 @@ completion, and cancellation. The identity read path was corrected after the
 first live probe passed the request wrapper an object instead of its
 `identityRef`; the focused test and the post-fix live read both pass.
 
-The platform effect ledger is intentionally not an effect worker. Its pending
-intents are the durable handoff to a separately deployed provisioning,
-credential, OAuth, billing, or deletion worker. The admin forwarding routes are
-not a replacement for that worker.
+The platform effect ledger is intentionally not a provider executor. Its
+pending intents are the durable handoff to separately deployed provisioning,
+credential, OAuth, billing, or deletion workers. Those Workers now have
+fail-closed health surfaces, but no provider adapter or credential resolution is
+enabled; the admin forwarding routes are not a replacement for a configured
+executor.
 
 ## Remaining activation gates
 

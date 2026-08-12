@@ -1,6 +1,7 @@
 import type {
   AnalyticsEngineDataset,
   DurableObjectNamespace,
+  Fetcher,
   Queue,
   R2Bucket,
 } from "@cloudflare/workers-types";
@@ -31,8 +32,11 @@ export interface Env {
   KNOWLEDGE_DLQ_NAME?: string;
   /** Explicit C1 scheduler gate; only the exact string `true` activates it. */
   KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED?: string;
+  KNOWLEDGE_RECONCILIATION_CRON?: string;
   /** Exact comma-separated team IDs covered by scheduled reconciliation. */
   KNOWLEDGE_RECONCILIATION_TEAM_IDS?: string;
+  /** Maximum age in milliseconds for a private Slack membership snapshot. */
+  KNOWLEDGE_SLACK_ACL_MAX_AGE_MS?: string;
   /** Required per-thread durable session log and exact execute/forward dedup. */
   SESSION_EVENTS: DurableObjectNamespace<SessionEventDO>;
   /** Stable click/late-file jobs; alarm retries survive request-isolate loss. */
@@ -76,6 +80,12 @@ export interface Env {
   CONNECTOR_CREDENTIALS?: Fetcher;
   /** Shared internal bearer for the credential-broker service binding. */
   CONNECTOR_CREDENTIAL_BROKER_TOKEN?: string;
+  /** Private metadata-only provider request resolver for approved effects. */
+  PROVIDER_REQUEST_RESOLVER?: Fetcher;
+  /** Bearer shared only with the provider request resolver service binding. */
+  PROVIDER_REQUEST_RESOLVER_AUTH_TOKEN?: string;
+  /** Explicit opt-in for routing selected connector writes through PlatformStateDO. */
+  PLATFORM_PROVIDER_EFFECTS_MODE?: string;
 
   /** Comma-separated HTTPS origins allowed for OAuth callbacks; fail closed when unset. */
   OAUTH_ALLOWED_REDIRECT_ORIGINS?: string;
@@ -120,6 +130,20 @@ export interface Env {
   SUPERMEMORY_URL?: string;
   /** Local bearer credential; never logged or accepted from tool callers. */
   SUPERMEMORY_API_KEY?: string;
+  /** Explicit migration-only opt-in for the retained legacy URL/key path. */
+  SUPERMEMORY_MIGRATION_MODE?: string;
+  /** Private Worker service binding to the Cloudflare-hosted Supermemory facade. */
+  SUPERMEMORY?: Fetcher;
+  /** Shared bot-to-Supermemory facade token; never forwarded to callers. */
+  SUPERMEMORY_SERVICE_AUTH_TOKEN?: string;
+  /** Exact `paused` value holds knowledge Queue deliveries for a controlled index migration. */
+  SUPERMEMORY_CONSUMER_MODE?: string;
+  /** Server-owned generation for the isolated Supermemory derived index state. */
+  SUPERMEMORY_INDEX_GENERATION?: string;
+  /** Private Worker service binding to the Graphify facade. */
+  GRAPHIFY?: Fetcher;
+  /** Shared bot-to-Graphify facade token; never forwarded to callers. */
+  GRAPHIFY_SERVICE_AUTH_TOKEN?: string;
   /** Workers Secret used only to mint and verify short-lived internal knowledge actor tokens. */
   KNOWLEDGE_ACTOR_TOKEN_SECRET?: string;
   /**

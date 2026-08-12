@@ -12,6 +12,7 @@ import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js
 import type { WorkspaceConfigDO } from "../../../src/config/workspace-config-do.js";
 import { deriveInternalTenantId } from "../../../src/platform/tenant-id.js";
 import { platformTenantObjectName } from "../../../src/platform/tenant-routing.js";
+import { tenantStub } from "../../../src/tenancy.js";
 
 type BrokerEnv = {
   Bindings: {
@@ -82,9 +83,7 @@ async function readCredentialMetadata(
   if (!env.WORKSPACE_CONFIG) {
     throw new CredentialBrokerError("workspace_config_unavailable", 503);
   }
-  const authorizationStub = env.WORKSPACE_CONFIG.get(
-    env.WORKSPACE_CONFIG.idFromName(request.labels.workspaceId),
-  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const authorizationStub = tenantStub(env.WORKSPACE_CONFIG, request.labels.workspaceId);
   const authorizationResponse = await authorizationStub.fetch(
     "https://workspace/verifyConnectorAuthorization",
     {
@@ -240,7 +239,19 @@ async function resolveFromCustody(
   return result;
 }
 
-app.get("/health", (c) => c.json({
+async function custodyProviderResolutionEnabled(env: BrokerEnv["Bindings"]): Promise<boolean> {
+  if (!env.CUSTODY) return false;
+  try {
+    const response = await env.CUSTODY.fetch("https://credential-custody/health");
+    if (!response.ok) return false;
+    const body = await response.json() as Record<string, unknown>;
+    return body.ok === true && body.providerResolutionEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
+app.get("/health", async (c) => c.json({
   ok: true,
   role: "credential-broker",
   configured: Boolean(c.env.BROKER_AUTH_TOKEN),
@@ -253,7 +264,8 @@ app.get("/health", (c) => c.json({
     c.env.WORKSPACE_CONFIG &&
     c.env.PLATFORM_STATE &&
     c.env.CUSTODY &&
-    c.env.CUSTODY_AUTH_TOKEN,
+    c.env.CUSTODY_AUTH_TOKEN &&
+    await custodyProviderResolutionEnabled(c.env),
   ),
 }));
 

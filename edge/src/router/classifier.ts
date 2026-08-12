@@ -103,6 +103,7 @@ function tier1Rule(text: string): string | undefined {
     ["t1.06", /^(summarize|recap|catch me up on|tl;?dr)\b/],
     ["t1.07", /^(when did|when was|when do)\b/],
     ["t1.08", /^(link|find|show) (me )?(the|that|our)\b/],
+    ["t1.12", /^(search|look up|lookup|retrieve|query)\b/],
     ["t1.09", /^(update me on|give me an update on|any update on|status on|status of)\b/],
     ["t1.10", /^(tell me|explain|describe|remind me)\s+(what|how|why|who|where|when|about)\b/],
   ];

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createKnowledgeJob } from "../src/memory/knowledge-contract.js";
 import { KnowledgeLedger } from "../src/memory/knowledge-ledger.js";
+import { knowledgeLedgerTableSql } from "../src/memory/knowledge-ledger-migration.js";
 import {
   createKnowledgeBackfillDryRun,
   knowledgeBackfillManifestDigest,
@@ -11,6 +12,7 @@ import type {
   VerifiedKnowledgeBackfillApproval,
 } from "../src/memory/knowledge-backfill-authorization.js";
 import type { SqlCursor, SqlExecutor, SqlValue } from "../src/store/sql.js";
+import type { SlackConversationInventoryReceipt } from "../src/slack/conversation-inventory.js";
 
 const databases: DatabaseSync[] = [];
 
@@ -60,11 +62,355 @@ function job(configVersion: number, requestedAt: string) {
   });
 }
 
+function markIndexed(
+  ledger: KnowledgeLedger,
+  source: ReturnType<typeof job>,
+  revision = "sha256:one",
+  localDocumentId = "doc-1",
+  indexGeneration = "generation-1",
+): void {
+  ledger.enqueue(source, 1_000);
+  ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+  ledger.acquireLease(source, source.configVersion, "lease-1", 1_002, 60_000);
+  expect(ledger.prepareRevision(
+    source.sourceKey,
+    "lease-1",
+    revision,
+    1_003,
+    { indexGeneration },
+  )).toEqual({ decision: "add" });
+  expect(ledger.recordLocalAccepted({
+    sourceKey: source.sourceKey,
+    leaseToken: "lease-1",
+    localDocumentId,
+    desiredRevision: revision,
+    workflowStatus: "done",
+    pollDeadlineAt: 2_000,
+    nextPollAt: 1_500,
+    indexGeneration,
+  }, 1_004)).toBe(true);
+  expect(ledger.recordOutcome(source.sourceKey, "lease-1", {
+    status: "indexed",
+    desiredRevision: revision,
+    indexedRevision: revision,
+    localDocumentId,
+    workflowStatus: "done",
+    pollCount: 1,
+    indexGeneration,
+  }, 1_005)).toBe(true);
+}
+
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
 
 describe("KnowledgeLedger", () => {
+  it("exposes persisted queue, ledger, DLQ, reconciliation, and backfill state", () => {
+    const ledger = makeLedger();
+    const now = Date.parse("2026-07-01T00:00:00.000Z");
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    expect(ledger.enqueue(source, now)).toMatchObject({ accepted: true });
+    expect(ledger.startReconcileRun("reconcile-1", now)).toMatchObject({
+      status: "running",
+    });
+
+    const snapshot = ledger.statusSnapshot(now);
+    expect(snapshot.capturedAt).toBe("2026-07-01T00:00:00.000Z");
+    expect(snapshot.ledger).toEqual({
+      total: 1,
+      byStatus: { pending: 1 },
+    });
+    expect(snapshot.outbox).toEqual({
+      pending: 1,
+      sending: 0,
+      due: 1,
+      earliestPendingAt: now,
+    });
+    expect(snapshot.dlq).toEqual({
+      total: 0,
+      pending: 0,
+      replaying: 0,
+      replayed: 0,
+      disposed: 0,
+    });
+    expect(snapshot.reconciliation).toMatchObject({
+      running: 1,
+      complete: 0,
+      latest: { runId: "reconcile-1", status: "running" },
+    });
+    expect(snapshot.backfill).toEqual({
+      active: 0,
+      complete: 0,
+    });
+    expect(snapshot.threadFetch).toEqual({
+      active: 0,
+      messages: 0,
+      bytes: 0,
+    });
+    expect(snapshot.inventory).toEqual({
+      total: 0,
+      complete: 0,
+      incomplete: 0,
+      invalid: 0,
+    });
+    expect(snapshot.messageThreadMap).toEqual({
+      total: 0,
+    });
+    expect(snapshot.queryConvergence).toEqual({
+      total: 0,
+      queryable: 0,
+      notFound: 0,
+      failed: 0,
+      unverified: 0,
+    });
+  });
+
+  it("keeps query convergence durable, revisioned, and separate from provider indexing", () => {
+    const ledger = makeLedger();
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    const generation = "supermemory-v1";
+    const revision = "sha256:revision-one";
+    ledger.enqueue(source, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(source, 1, "lease-1", 1_002, 70_000);
+    expect(ledger.prepareRevision(source.sourceKey, "lease-1", revision, 1_003, {
+      indexGeneration: generation,
+    })).toEqual({ decision: "add" });
+    expect(ledger.recordLocalAccepted({
+      sourceKey: source.sourceKey,
+      leaseToken: "lease-1",
+      localDocumentId: "doc-1",
+      desiredRevision: revision,
+      workflowStatus: "queued",
+      pollDeadlineAt: 20_000,
+      nextPollAt: 1_004,
+      indexGeneration: generation,
+    }, 1_004)).toBe(true);
+    expect(ledger.recordOutcome(source.sourceKey, "lease-1", {
+      status: "indexed",
+      desiredRevision: revision,
+      indexedRevision: revision,
+      localDocumentId: "doc-1",
+      workflowStatus: "done",
+      pollCount: 1,
+      indexGeneration: generation,
+    }, 1_005)).toBe(true);
+
+    expect(ledger.getQueryConvergence(source.sourceKey)).toBeUndefined();
+    expect(ledger.recordQueryConvergence({
+      sourceKey: source.sourceKey,
+      contentRevision: revision,
+      indexGeneration: generation,
+      localDocumentId: "doc-1",
+      queryDigest: `sha256:${"a".repeat(64)}`,
+      status: "not_found",
+      providerResultCount: 0,
+      matchingCitationCount: 0,
+    }, 1_006)).toBe(true);
+    expect(ledger.getQueryConvergence(source.sourceKey)).toMatchObject({
+      sourceKey: source.sourceKey,
+      contentRevision: revision,
+      indexGeneration: generation,
+      localDocumentId: "doc-1",
+      status: "not_found",
+      providerResultCount: 0,
+      matchingCitationCount: 0,
+    });
+    expect(ledger.statusSnapshot(1_006).queryConvergence).toEqual({
+      total: 1,
+      queryable: 0,
+      notFound: 1,
+      failed: 0,
+      unverified: 0,
+    });
+
+    expect(ledger.recordQueryConvergence({
+      sourceKey: source.sourceKey,
+      contentRevision: "sha256:stale",
+      indexGeneration: generation,
+      localDocumentId: "doc-1",
+      queryDigest: `sha256:${"b".repeat(64)}`,
+      status: "queryable",
+      providerResultCount: 1,
+      matchingCitationCount: 1,
+    }, 1_007)).toBe(false);
+    expect(() => ledger.recordQueryConvergence({
+      sourceKey: source.sourceKey,
+      contentRevision: revision,
+      indexGeneration: generation,
+      localDocumentId: "doc-1",
+      queryDigest: `sha256:${"c".repeat(64)}`,
+      status: "queryable",
+      providerResultCount: 0,
+      matchingCitationCount: 0,
+    }, 1_008)).toThrow("queryable convergence requires a matching citation");
+  });
+
+  it("persists and resumes a thread fetch checkpoint only for the exact job", () => {
+    const ledger = makeLedger();
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    ledger.enqueue(source, 1_000);
+    ledger.saveThreadFetchCheckpoint(source, {
+      cursor: "cursor-2",
+      pages: 3,
+      messages: [{ ts: "1.0", text: "partial" }],
+      bytes: 42,
+    }, 2_000);
+    expect(ledger.getThreadFetchCheckpoint(source)).toEqual({
+      cursor: "cursor-2",
+      pages: 3,
+      messages: [{ ts: "1.0", text: "partial" }],
+      bytes: 42,
+    });
+    expect(ledger.statusSnapshot(2_000).threadFetch).toMatchObject({
+      active: 1,
+      messages: 1,
+      bytes: 42,
+    });
+    expect(ledger.getThreadFetchCheckpoint(job(2, source.requestedAt))).toBeUndefined();
+    ledger.clearThreadFetchCheckpoint(source);
+    expect(ledger.getThreadFetchCheckpoint(source)).toBeUndefined();
+    ledger.saveThreadFetchCheckpoint(source, {
+      cursor: "cursor-old",
+      pages: 1,
+      messages: [{ ts: "1.0" }],
+      bytes: 8,
+    }, 3_000);
+    ledger.pruneThreadFetchCheckpoints(10_000, 6_000);
+    expect(ledger.getThreadFetchCheckpoint(source)).toBeUndefined();
+  });
+
+  it("rejects semantically invalid conversation inventory counts", () => {
+    const ledger = makeLedger();
+    const digest = `sha256:${"a".repeat(64)}`;
+    const inventory: SlackConversationInventoryReceipt = {
+      schemaVersion: 1,
+      visibility: "installed_bot",
+      status: "complete",
+      pages: 1,
+      visibleCount: -1,
+      eligibleCount: 0,
+      eligibleConversationIds: [],
+      excludedCount: 0,
+      excluded: [],
+      excludedTruncated: false,
+      inventoryDigest: digest,
+    };
+    expect(() => ledger.putBackfillConversationInventory({
+      manifestId: "manifest-invalid-counts",
+      inventoryDigest: digest,
+      inventory,
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })).toThrow("backfill conversation inventory is invalid");
+  });
+
+  it("persists body-free Slack message-to-thread mappings for deletion resolution", () => {
+    const ledger = makeLedger();
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    expect(ledger.putSlackMessageThreads({
+      teamId: source.teamId,
+      projectId: source.projectId,
+      channelId: source.channelId,
+      threadTs: source.threadTs,
+      sourceKey: source.sourceKey,
+      messageTs: [source.threadTs, "171234.000199", "171234.000199", "not-a-ts"],
+    }, 2_000)).toEqual({ stored: 2 });
+    expect(ledger.getSlackMessageThread({
+      teamId: source.teamId,
+      channelId: source.channelId,
+      messageTs: "171234.000199",
+    })).toMatchObject({
+      projectId: source.projectId,
+      threadTs: source.threadTs,
+      sourceKey: source.sourceKey,
+    });
+    expect(ledger.getSlackMessageThread({
+      teamId: source.teamId,
+      channelId: source.channelId,
+      messageTs: "171234.000200",
+    })).toBeUndefined();
+    expect(ledger.statusSnapshot(2_000).messageThreadMap).toEqual({
+      total: 2,
+      oldestUpdatedAt: "1970-01-01T00:00:02.000Z",
+      newestUpdatedAt: "1970-01-01T00:00:02.000Z",
+    });
+  });
+
+  it("migrates the legacy Slack identity unique and keeps source types isolated", () => {
+    const db = new DatabaseSync(":memory:");
+    const legacyTable = knowledgeLedgerTableSql("knowledge_ledger")
+      .replace(
+        /    source_type TEXT NOT NULL DEFAULT 'slack'\n      CHECK \(source_type IN \('slack', 'wiki', 'code', 'custom_db', 'drive'\)\),\n/,
+        "",
+      )
+      .replace(
+        "UNIQUE(team_id, source_type, channel_id, thread_ts)",
+        "UNIQUE(team_id, channel_id, thread_ts)",
+      );
+    db.exec(legacyTable);
+    const ledger = makeLedger(db);
+    const slack = job(1, "2026-07-01T00:00:00.000Z");
+    const wiki = createKnowledgeJob({
+      sourceType: "wiki",
+      teamId: slack.teamId,
+      projectId: slack.projectId,
+      channelId: slack.channelId,
+      threadTs: slack.threadTs,
+      configVersion: 1,
+      requestedAt: "2026-07-01T00:00:01.000Z",
+      reason: "event",
+    });
+
+    expect(ledger.enqueue(slack, 1)).toMatchObject({ accepted: true });
+    expect(ledger.enqueue(wiki, 2)).toMatchObject({ accepted: true });
+    expect(ledger.get(slack.sourceKey)).toMatchObject({ sourceType: "slack" });
+    expect(ledger.get(wiki.sourceKey)).toMatchObject({ sourceType: "wiki" });
+
+    const indexes = db.prepare("PRAGMA index_list(knowledge_ledger)").all() as Array<{
+      name: string;
+      unique: number;
+    }>;
+    const identityIndex = indexes.find((index) => index.unique === 1 && !index.name.includes("sqlite_autoindex_knowledge_ledger_1"));
+    expect(identityIndex).toBeDefined();
+    const indexColumns = db.prepare(`PRAGMA index_info("${identityIndex!.name.replaceAll('"', '""')}")`).all() as Array<{
+      name: string;
+      seqno: number;
+    }>;
+    expect(indexColumns.sort((left, right) => left.seqno - right.seqno).map((row) => row.name))
+      .toContain("source_type");
+  });
+
+  it("derives DLQ source type from the typed source key and rejects mismatches", () => {
+    const ledger = makeLedger();
+    const wiki = createKnowledgeJob({
+      sourceType: "wiki",
+      teamId: "T1",
+      projectId: "P1",
+      channelId: "docs",
+      threadTs: "page-1",
+      configVersion: 1,
+      requestedAt: "2026-07-01T00:00:00.000Z",
+      reason: "event",
+    });
+    expect(ledger.captureDlqRecord({
+      messageId: "wiki-dlq-1",
+      queueName: "knowledge-dlq",
+      body: wiki,
+      sourceKey: wiki.sourceKey,
+      attempts: 1,
+      capturedAt: "2026-07-01T00:00:01.000Z",
+    })).toMatchObject({ sourceKey: wiki.sourceKey, sourceType: "wiki" });
+    expect(() => ledger.captureDlqRecord({
+      messageId: "wiki-dlq-2",
+      queueName: "knowledge-dlq",
+      body: wiki,
+      sourceKey: wiki.sourceKey,
+      sourceType: "slack",
+      attempts: 1,
+      capturedAt: "2026-07-01T00:00:02.000Z",
+    })).toThrow("DLQ source identity is invalid");
+  });
+
   it("durably resumes every per-channel discovery state and never hides unvisited channels", () => {
     const ledger = makeLedger();
     const scope: KnowledgeBackfillScope = {
@@ -404,10 +750,10 @@ describe("KnowledgeLedger", () => {
       manifestDigest,
       Date.parse("2026-07-01T01:00:06.000Z"),
     )).toThrow("expired");
-    const firstKey = `${manifest.jobs[0]!.sourceKey}|3|${
+    const firstKey = `${manifest.jobs[0]!.sourceType}|${manifest.jobs[0]!.sourceKey}|3|${
       manifest.jobs[0]!.requestedAt
     }|backfill`;
-    const secondKey = `${manifest.jobs[1]!.sourceKey}|3|${
+    const secondKey = `${manifest.jobs[1]!.sourceType}|${manifest.jobs[1]!.sourceKey}|3|${
       manifest.jobs[1]!.requestedAt
     }|backfill`;
     ledger.recordBackfillJobDisposition({
@@ -752,6 +1098,198 @@ describe("KnowledgeLedger", () => {
       .toEqual({ decision: "noop", reason: "permanent_failure" });
   });
 
+  it("reopens an exact terminal Local poll failure with an audit and fresh outbox job", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:one", 2_001);
+    ledger.recordLocalAccepted({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "lease-1",
+      localDocumentId: "doc-1",
+      desiredRevision: "sha256:one",
+      workflowStatus: "queued",
+      pollDeadlineAt: 10_000,
+      nextPollAt: 2_100,
+    }, 2_002);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "local_poll",
+      errorCode: "local_document_failed",
+    }, 2_003)).toBe(true);
+    const recovered = ledger.recoverPermanentFailure({
+      sourceKey: descriptor.sourceKey,
+      teamId: descriptor.teamId,
+      expectedConfigVersion: descriptor.configVersion,
+      expectedRequestedAt: descriptor.requestedAt,
+      operatorId: "operator-1",
+      rootCauseCorrectionRef: "incident-123",
+    }, 3_000);
+    expect(recovered).toMatchObject({
+      action: "reopened",
+      sourceKey: descriptor.sourceKey,
+    });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "pending",
+      localDocumentId: "doc-1",
+      lastErrorClass: undefined,
+    });
+    expect(ledger.getOutbox(descriptor.sourceKey)).toMatchObject({ status: "pending" });
+    expect(ledger.statusSnapshot(3_000).recovery).toMatchObject({
+      total: 1,
+      reopened: 1,
+      blocked: 0,
+    });
+  });
+
+  it("audits and reopens an ambiguous add for provider identity probing", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:one", 2_001);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "local_add",
+      errorCode: "local_http_502",
+    }, 2_002)).toBe(true);
+    const result = ledger.recoverPermanentFailure({
+      sourceKey: descriptor.sourceKey,
+      teamId: descriptor.teamId,
+      expectedConfigVersion: descriptor.configVersion,
+      expectedRequestedAt: descriptor.requestedAt,
+      operatorId: "operator-1",
+      rootCauseCorrectionRef: "incident-123",
+    }, 3_000);
+    expect(result).toMatchObject({
+      action: "reopened",
+    });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "pending",
+      lastLocalOperation: "add_started",
+      localDocumentId: undefined,
+      desiredRevision: "sha256:one",
+    });
+    expect(ledger.getOutbox(descriptor.sourceKey)).toMatchObject({ status: "pending" });
+    const outbox = ledger.claimDueOutbox(3_000)!;
+    ledger.markOutboxSent(outbox, 3_001);
+    expect(ledger.acquireLease(outbox.job, 3, "lease-2", 3_002, 60_000))
+      .toMatchObject({ decision: "lease" });
+    expect(ledger.prepareRevision(descriptor.sourceKey, "lease-2", "sha256:one", 3_003))
+      .toEqual({ decision: "blocked", reason: "ambiguous_add_contract" });
+    expect(ledger.resolveAmbiguousAdd({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "lease-2",
+      desiredRevision: "sha256:one",
+      resolution: "not_found",
+    }, 3_004)).toEqual({ decision: "add" });
+    expect(ledger.statusSnapshot(3_000).recovery).toMatchObject({
+      total: 1,
+      reopened: 1,
+      blocked: 0,
+    });
+  });
+
+  it("reopens legacy ambiguous-add rows recorded under unsupported_capability", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:one", 2_001);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "unsupported_capability",
+      errorCode: "ambiguous_add_contract",
+    }, 2_002)).toBe(true);
+    expect(ledger.recoverPermanentFailure({
+      sourceKey: descriptor.sourceKey,
+      teamId: descriptor.teamId,
+      expectedConfigVersion: descriptor.configVersion,
+      expectedRequestedAt: descriptor.requestedAt,
+      operatorId: "operator-1",
+      rootCauseCorrectionRef: "incident-legacy-ambiguous-add",
+    }, 3_000)).toMatchObject({ action: "reopened", sourceKey: descriptor.sourceKey });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "pending",
+      lastLocalOperation: "add_started",
+      desiredRevision: "sha256:one",
+    });
+  });
+
+  it("reopens legacy ambiguous-add rows without a saved revision for normalized probing", () => {
+    const db = new DatabaseSync(":memory:");
+    const ledger = makeLedger(db);
+    const descriptor = job(3, "2026-07-19T04:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:legacy", 2_001);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "unsupported_capability",
+      errorCode: "ambiguous_add_contract",
+    }, 2_002)).toBe(true);
+    db.prepare(
+      `UPDATE knowledge_ledger
+       SET desired_revision = NULL, last_local_operation = 'add_started'
+       WHERE source_key = ?`,
+    ).run(descriptor.sourceKey);
+    expect(ledger.recoverPermanentFailure({
+      sourceKey: descriptor.sourceKey,
+      teamId: descriptor.teamId,
+      expectedConfigVersion: descriptor.configVersion,
+      expectedRequestedAt: descriptor.requestedAt,
+      operatorId: "operator-1",
+      rootCauseCorrectionRef: "incident-legacy-ambiguous-add-no-revision",
+    }, 3_000)).toMatchObject({ action: "reopened", sourceKey: descriptor.sourceKey });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "pending",
+      lastLocalOperation: "add_started",
+      desiredRevision: undefined,
+    });
+    expect(ledger.getOutbox(descriptor.sourceKey)).toMatchObject({ status: "pending" });
+  });
+
+  it("reopens historical mutation-contract failures with a durable Local ID", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T05:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:one", 2_001);
+    ledger.recordLocalAccepted({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "lease-1",
+      localDocumentId: "doc-1",
+      desiredRevision: "sha256:one",
+      workflowStatus: "queued",
+      pollDeadlineAt: 10_000,
+      nextPollAt: 2_100,
+    }, 2_002);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "preserve_indexed",
+      errorClass: "unsupported_capability",
+      errorCode: "unsupported_update_contract",
+    }, 2_003)).toBe(true);
+    expect(ledger.recoverPermanentFailure({
+      sourceKey: descriptor.sourceKey,
+      teamId: descriptor.teamId,
+      expectedConfigVersion: descriptor.configVersion,
+      expectedRequestedAt: descriptor.requestedAt,
+      operatorId: "operator-1",
+      rootCauseCorrectionRef: "incident-mutation-contract-repair",
+    }, 3_000)).toMatchObject({ action: "reopened", sourceKey: descriptor.sourceKey });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "pending",
+      localDocumentId: "doc-1",
+      lastLocalOperation: undefined,
+    });
+  });
+
   it("persists the exact Slack terminal skip code and blocks reconciliation leases", () => {
     const ledger = makeLedger();
     const descriptor = job(3, "2026-07-19T01:00:00.000Z");
@@ -772,7 +1310,7 @@ describe("KnowledgeLedger", () => {
       .toEqual({ decision: "noop", reason: "permanent_failure" });
   });
 
-  it("clears add_started after a retryable add failure with no Local ID", () => {
+  it("preserves add_started after a retryable add failure with no Local ID", () => {
     const ledger = makeLedger();
     const descriptor = job(3, "2026-07-19T01:00:00.000Z");
     ledger.enqueue(descriptor, 1_000);
@@ -788,11 +1326,108 @@ describe("KnowledgeLedger", () => {
     expect(ledger.get(descriptor.sourceKey)).toMatchObject({
       status: "retryable_failure",
     });
-    expect(ledger.get(descriptor.sourceKey)?.lastLocalOperation).toBeUndefined();
+    expect(ledger.get(descriptor.sourceKey)?.lastLocalOperation).toBe("add_started");
     expect(ledger.get(descriptor.sourceKey)?.localDocumentId).toBeUndefined();
     ledger.acquireLease(descriptor, 3, "lease-2", 3_000, 60_000);
     expect(ledger.prepareRevision(descriptor.sourceKey, "lease-2", "sha256:one", 3_001))
+      .toEqual({ decision: "blocked", reason: "ambiguous_add_contract" });
+  });
+
+  it("resolves an ambiguous add only while its lease and revision are current", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    expect(ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:one", 2_001))
       .toEqual({ decision: "add" });
+    ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "retryable_failure",
+      errorClass: "local_add",
+      errorCode: "knowledge_http_503",
+    }, 2_002);
+    ledger.acquireLease(descriptor, 3, "lease-2", 3_000, 60_000);
+    expect(ledger.prepareRevision(descriptor.sourceKey, "lease-2", "sha256:one", 3_001))
+      .toEqual({ decision: "blocked", reason: "ambiguous_add_contract" });
+    expect(ledger.resolveAmbiguousAdd({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "lease-2",
+      desiredRevision: "sha256:one",
+      resolution: "not_found",
+    }, 3_002)).toEqual({ decision: "add" });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "writing",
+      addAttemptToken: "lease-2",
+      addAttemptRevision: "sha256:one",
+    });
+
+    const second = makeLedger();
+    const secondDescriptor = job(3, "2026-07-19T02:00:00.000Z");
+    second.enqueue(secondDescriptor, 1_000);
+    second.markOutboxSent(second.claimDueOutbox(1_000)!, 1_001);
+    second.acquireLease(secondDescriptor, 3, "lease-2", 2_000, 60_000);
+    second.prepareRevision(secondDescriptor.sourceKey, "lease-2", "sha256:two", 2_001);
+    second.recordOutcome(secondDescriptor.sourceKey, "lease-2", {
+      status: "retryable_failure",
+      errorClass: "local_add",
+      errorCode: "knowledge_http_503",
+    }, 2_002);
+    second.acquireLease(secondDescriptor, 3, "lease-3", 3_000, 60_000);
+    expect(second.prepareRevision(secondDescriptor.sourceKey, "lease-3", "sha256:two", 3_001))
+      .toEqual({ decision: "blocked", reason: "ambiguous_add_contract" });
+    expect(second.resolveAmbiguousAdd({
+      sourceKey: secondDescriptor.sourceKey,
+      leaseToken: "lease-3",
+      desiredRevision: "sha256:two",
+      resolution: "found",
+      localDocumentId: "doc-existing",
+      workflowStatus: "queued",
+      pollDeadlineAt: 20_000,
+      nextPollAt: 2_003,
+    }, 3_002)).toEqual({
+      decision: "poll",
+      localDocumentId: "doc-existing",
+      pollDeadlineAt: 20_000,
+    });
+    expect(second.get(secondDescriptor.sourceKey)).toMatchObject({
+      status: "polling",
+      localDocumentId: "doc-existing",
+      localDocumentRevision: "sha256:two",
+      lastLocalOperation: "add_accepted",
+    });
+  });
+
+  it("adopts the normalized revision for a legacy ambiguous row that lost its revision", () => {
+    const db = new DatabaseSync(":memory:");
+    const ledger = makeLedger(db);
+    const descriptor = job(3, "2026-07-19T03:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    expect(ledger.prepareRevision(descriptor.sourceKey, "lease-1", "sha256:legacy", 2_001))
+      .toEqual({ decision: "add" });
+    ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "permanent_failure",
+      errorClass: "local_add",
+      errorCode: "local_http_502",
+    }, 2_002);
+    db.prepare(
+      `UPDATE knowledge_ledger
+       SET status = 'leased', lease_token = ?, lease_expires_at = ?, desired_revision = NULL,
+           last_local_operation = 'add_started'
+       WHERE source_key = ?`,
+    ).run("legacy-lease", 100_000, descriptor.sourceKey);
+    expect(ledger.resolveAmbiguousAdd({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "legacy-lease",
+      desiredRevision: "sha256:recovered",
+      resolution: "not_found",
+    }, 3_000)).toEqual({ decision: "add" });
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      status: "writing",
+      desiredRevision: "sha256:recovered",
+      addAttemptRevision: "sha256:recovered",
+    });
   });
 
   it("persists the first Local ID before polling and resumes that same ID after timeout", () => {
@@ -828,6 +1463,114 @@ describe("KnowledgeLedger", () => {
       .toMatchObject({ decision: "poll", localDocumentId: "doc-1" });
   });
 
+  it("switches an existing derived binding to a new index generation before replay", () => {
+    const ledger = makeLedger();
+    const original = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(original, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(original, 3, "legacy-lease", 2_000, 60_000);
+    expect(ledger.prepareRevision(original.sourceKey, "legacy-lease", "sha256:old", 2_001))
+      .toEqual({ decision: "add" });
+    expect(ledger.recordLocalAccepted({
+      sourceKey: original.sourceKey,
+      leaseToken: "legacy-lease",
+      localDocumentId: "railway-doc-1",
+      desiredRevision: "sha256:old",
+      workflowStatus: "queued",
+      pollDeadlineAt: 10_000,
+      nextPollAt: 2_100,
+    }, 2_002)).toBe(true);
+    expect(ledger.recordOutcome(original.sourceKey, "legacy-lease", {
+      status: "indexed",
+      desiredRevision: "sha256:old",
+      indexedRevision: "sha256:old",
+      localDocumentId: "railway-doc-1",
+      workflowStatus: "done",
+      pollCount: 1,
+    }, 3_000)).toBe(true);
+
+    const replay = job(3, "2026-07-19T02:00:00.000Z");
+    ledger.enqueue(replay, 4_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(4_000)!, 4_001);
+    ledger.acquireLease(replay, 3, "cloudflare-lease", 5_000, 60_000);
+    expect(ledger.prepareRevision(
+      replay.sourceKey,
+      "cloudflare-lease",
+      "sha256:old",
+      5_001,
+      { indexGeneration: "cloudflare-r2-v1" },
+    )).toEqual({ decision: "add" });
+    expect(ledger.get(replay.sourceKey)).toMatchObject({
+      derivedIndexGeneration: "cloudflare-r2-v1",
+      localDocumentId: undefined,
+      indexedRevision: undefined,
+      lastLocalOperation: "add_started",
+    });
+    expect(ledger.recordLocalAccepted({
+      sourceKey: replay.sourceKey,
+      leaseToken: "cloudflare-lease",
+      localDocumentId: "cloudflare-doc-1",
+      desiredRevision: "sha256:old",
+      workflowStatus: "queued",
+      pollDeadlineAt: 15_000,
+      nextPollAt: 5_100,
+      indexGeneration: "cloudflare-r2-v1",
+    }, 5_002)).toBe(true);
+    expect(ledger.recordOutcome(replay.sourceKey, "cloudflare-lease", {
+      status: "indexed",
+      desiredRevision: "sha256:old",
+      indexedRevision: "sha256:old",
+      localDocumentId: "cloudflare-doc-1",
+      workflowStatus: "done",
+      pollCount: 1,
+      indexGeneration: "cloudflare-r2-v1",
+    }, 6_000)).toBe(true);
+    expect(ledger.get(replay.sourceKey)).toMatchObject({
+      status: "indexed",
+      derivedIndexGeneration: "cloudflare-r2-v1",
+      localDocumentId: "cloudflare-doc-1",
+      indexedRevision: "sha256:old",
+    });
+  });
+
+  it("rejects writes that omit the active derived-index generation", () => {
+    const ledger = makeLedger();
+    const descriptor = job(3, "2026-07-19T01:00:00.000Z");
+    ledger.enqueue(descriptor, 1_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(1_000)!, 1_001);
+    ledger.acquireLease(descriptor, 3, "lease-1", 2_000, 60_000);
+    expect(ledger.prepareRevision(
+      descriptor.sourceKey,
+      "lease-1",
+      "sha256:one",
+      2_001,
+      { indexGeneration: "cloudflare-r2-v1" },
+    )).toEqual({ decision: "add" });
+    expect(ledger.recordLocalAccepted({
+      sourceKey: descriptor.sourceKey,
+      leaseToken: "lease-1",
+      localDocumentId: "cloudflare-doc-1",
+      desiredRevision: "sha256:one",
+      workflowStatus: "queued",
+      pollDeadlineAt: 10_000,
+      nextPollAt: 2_100,
+      indexGeneration: "cloudflare-r2-v1",
+    }, 2_002)).toBe(true);
+    expect(ledger.recordOutcome(descriptor.sourceKey, "lease-1", {
+      status: "indexed",
+      desiredRevision: "sha256:one",
+      indexedRevision: "sha256:one",
+      localDocumentId: "cloudflare-doc-1",
+      workflowStatus: "done",
+      pollCount: 1,
+    }, 3_000)).toBe(false);
+    expect(ledger.get(descriptor.sourceKey)).toMatchObject({
+      derivedIndexGeneration: "cloudflare-r2-v1",
+      leaseToken: "lease-1",
+      status: "polling",
+    });
+  });
+
   it("blocks a changed indexed revision rather than guessing Local update semantics", () => {
     const ledger = makeLedger();
     const original = job(3, "2026-07-19T01:00:00.000Z");
@@ -859,6 +1602,46 @@ describe("KnowledgeLedger", () => {
       lastLocalOperation: "update_started",
       desiredRevision: "sha256:new",
     });
+  });
+
+  it("records a Local update acceptance against the active lease and new revision", () => {
+    const ledger = makeLedger();
+    const original = job(3, "2026-07-19T01:00:00.000Z");
+    markIndexed(ledger, original, "sha256:old", "doc-1", "generation-1");
+    const edit = job(3, "2026-07-19T02:00:00.000Z");
+    ledger.enqueue(edit, 4_000);
+    ledger.markOutboxSent(ledger.claimDueOutbox(4_000)!, 4_001);
+    ledger.acquireLease(edit, 3, "lease-2", 5_000, 60_000);
+    expect(ledger.prepareRevision(edit.sourceKey, "lease-2", "sha256:new", 5_001, {
+      mutationsVerified: true,
+      indexGeneration: "generation-1",
+    })).toEqual({ decision: "update", localDocumentId: "doc-1" });
+    expect(ledger.recordLocalAccepted({
+      sourceKey: edit.sourceKey,
+      leaseToken: "lease-2",
+      localDocumentId: "doc-1",
+      desiredRevision: "sha256:new",
+      workflowStatus: "done",
+      pollDeadlineAt: 10_000,
+      nextPollAt: 5_100,
+      indexGeneration: "generation-1",
+    }, 5_002)).toBe(true);
+    expect(ledger.get(edit.sourceKey)).toMatchObject({
+      status: "polling",
+      localDocumentId: "doc-1",
+      localDocumentRevision: "sha256:new",
+      desiredRevision: "sha256:new",
+      lastLocalOperation: "update_accepted",
+    });
+    expect(ledger.recordOutcome(edit.sourceKey, "lease-2", {
+      status: "indexed",
+      desiredRevision: "sha256:new",
+      indexedRevision: "sha256:new",
+      localDocumentId: "doc-1",
+      workflowStatus: "done",
+      pollCount: 1,
+      indexGeneration: "generation-1",
+    }, 5_003)).toBe(true);
   });
 
   it("releases the lease and restores indexed state for an unchanged newer event", () => {
@@ -1152,5 +1935,133 @@ describe("KnowledgeLedger", () => {
       reason: "unsupported_update_contract",
     });
     expect(ledger.get(replyDeletion.sourceKey)?.tombstonedAt).toBeUndefined();
+  });
+
+  it("persists a fenced queryability receipt and replaces the same fence idempotently", () => {
+    const db = new DatabaseSync(":memory:");
+    const ledger = makeLedger(db);
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    const columns = db.prepare("PRAGMA table_info(knowledge_queryability_receipts)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "content_revision",
+      "index_revision",
+      "local_document_id",
+      "derived_index_generation",
+      "status",
+      "provider_result_count",
+      "accepted_citation_count",
+      "created_at",
+      "updated_at",
+    ]));
+    markIndexed(ledger, source);
+    const identity = {
+      sourceKey: source.sourceKey,
+      sourceType: "slack" as const,
+      teamId: source.teamId,
+      projectId: source.projectId,
+      channelId: source.channelId,
+      threadTs: source.threadTs,
+      contentRevision: "sha256:one",
+      indexRevision: "sha256:one",
+      localDocumentId: "doc-1",
+      derivedIndexGeneration: "generation-1",
+    };
+    const first = ledger.recordQueryabilityReceipt({
+      ...identity,
+      status: "searchable",
+      providerResultCount: 2,
+      acceptedCitationCount: 1,
+    }, 2_000);
+    const replacement = ledger.recordQueryabilityReceipt({
+      ...identity,
+      status: "no_match",
+      providerResultCount: 0,
+      acceptedCitationCount: 0,
+    }, 3_000);
+    expect(first).toMatchObject({ status: "searchable", createdAt: "1970-01-01T00:00:02.000Z" });
+    expect(replacement).toMatchObject({
+      ...identity,
+      status: "no_match",
+      createdAt: first.createdAt,
+      updatedAt: "1970-01-01T00:00:03.000Z",
+    });
+    expect(ledger.readQueryabilityReceipt(identity)).toEqual(replacement);
+    expect(JSON.stringify(replacement)).not.toMatch(/body|query|secret/i);
+  });
+
+  it("fails closed for stale receipt fences and aggregates body-free status", () => {
+    const ledger = makeLedger();
+    const source = job(1, "2026-07-01T00:00:00.000Z");
+    const identity = {
+      sourceKey: source.sourceKey,
+      sourceType: "slack" as const,
+      teamId: source.teamId,
+      projectId: source.projectId,
+      channelId: source.channelId,
+      threadTs: source.threadTs,
+      contentRevision: "sha256:one",
+      indexRevision: "sha256:one",
+      localDocumentId: "doc-1",
+      derivedIndexGeneration: "generation-1",
+    };
+    ledger.enqueue(source, 1_000);
+    expect(() => ledger.recordQueryabilityReceipt({
+      ...identity,
+      status: "searchable",
+      providerResultCount: 1,
+      acceptedCitationCount: 1,
+    }, 2_000)).toThrow("requires indexed status");
+    markIndexed(ledger, source);
+    ledger.recordQueryabilityReceipt({
+      ...identity,
+      status: "searchable",
+      providerResultCount: 1,
+      acceptedCitationCount: 1,
+    }, 2_001);
+    expect(() => ledger.recordQueryabilityReceipt({
+      ...identity,
+      derivedIndexGeneration: "generation-2",
+      status: "no_match",
+      providerResultCount: 0,
+      acceptedCitationCount: 0,
+    }, 2_002)).toThrow("generation mismatch");
+
+    const second = createKnowledgeJob({
+      teamId: "T1", projectId: "P1", channelId: "C2", threadTs: "171234.000200",
+      configVersion: 1, requestedAt: "2026-07-01T00:00:01.000Z", reason: "event",
+    });
+    const third = createKnowledgeJob({
+      teamId: "T1", projectId: "P1", channelId: "C3", threadTs: "171234.000300",
+      configVersion: 1, requestedAt: "2026-07-01T00:00:02.000Z", reason: "event",
+    });
+    const fourth = createKnowledgeJob({
+      teamId: "T1", projectId: "P1", channelId: "C4", threadTs: "171234.000400",
+      configVersion: 1, requestedAt: "2026-07-01T00:00:03.000Z", reason: "event",
+    });
+    markIndexed(ledger, second);
+    markIndexed(ledger, third);
+    markIndexed(ledger, fourth);
+    const receiptIdentity = (value: typeof second) => ({
+      sourceKey: value.sourceKey,
+      sourceType: "slack" as const,
+      teamId: value.teamId,
+      projectId: value.projectId,
+      channelId: value.channelId,
+      threadTs: value.threadTs,
+      contentRevision: "sha256:one",
+      indexRevision: "sha256:one",
+      localDocumentId: "doc-1",
+      derivedIndexGeneration: "generation-1",
+    });
+    ledger.recordQueryabilityReceipt({ ...receiptIdentity(second), status: "no_match", providerResultCount: 0, acceptedCitationCount: 0 }, 2_003);
+    ledger.recordQueryabilityReceipt({ ...receiptIdentity(third), status: "provider_unavailable", providerResultCount: 0, acceptedCitationCount: 0 }, 2_003);
+    const snapshot = ledger.statusSnapshot(2_003);
+    expect(snapshot.queryability).toEqual({
+      total: 4,
+      byStatus: { unverified: 1, searchable: 1, no_match: 1, provider_unavailable: 1 },
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("message body");
+    expect(JSON.stringify(snapshot)).not.toContain("query text");
+    expect(JSON.stringify(snapshot)).not.toContain("secret-token");
   });
 });

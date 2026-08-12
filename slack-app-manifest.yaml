@@ -57,6 +57,7 @@ oauth_config:
       - users:read.email # resolve user emails to match Slack users to Linear/Notion
       - users.profile:read # resolve labeled custom fields such as GitHub attribution
       - team:read # workspace info
+      - reactions:read # reaction changes refresh indexed Slack threads
       # --- Write replies and generative UI ---
       - chat:write # post and edit messages in channels bot is in
       - chat:write.public # post in channels bot isn't a member of
@@ -85,6 +86,23 @@ settings:
       - message.groups
       - message.im
       - message.mpim
+      - reaction_added
+      - reaction_removed
+      - member_joined_channel
+      - member_left_channel
+      - app_uninstalled
+      - tokens_revoked
+      - channel_archive
+      - channel_unarchive
+      - channel_deleted
+      - channel_left
+      - channel_unshared
+      - group_archive
+      - group_unarchive
+      - group_deleted
+      - group_close
+      - group_open
+      - group_left
   interactivity:
     is_enabled: true
     request_url: https://opentag-bot.williamlopezc.workers.dev/slack/interactions

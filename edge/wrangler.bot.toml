@@ -85,7 +85,17 @@ service = "opentag-orchestrator"
 binding = "BOT_SELF"
 service = "opentag-bot"
 
-# Knowledge Queue/DLQ — C1 approved 2026-07-28 for connected E2E with Railway Local.
+# Private knowledge retrieval boundaries. These replace the production
+# Railway URL/key path; the old Env fields remain only for migration tests.
+[[services]]
+binding = "SUPERMEMORY"
+service = "opentag-supermemory"
+
+[[services]]
+binding = "GRAPHIFY"
+service = "opentag-graphify"
+
+# Knowledge Queue/DLQ — authoritative ingestion ledger and derived-index wakeups.
 [[queues.producers]]
 binding = "KNOWLEDGE_QUEUE"
 queue = "opentag-knowledge"
@@ -121,6 +131,10 @@ service = "opentag-harness"
 binding = "CONNECTOR_CREDENTIALS"
 service = "opentag-credential-broker"
 
+[[services]]
+binding = "PROVIDER_REQUEST_RESOLVER"
+service = "opentag-platform-provider-request-resolver"
+
 # Metadata-only platform-effect wakeups. The queue body contains only an
 # internal PlatformStateDO object name; provider payloads and secrets never
 # enter this queue.
@@ -139,6 +153,9 @@ queue = "opentag-platform-effects-dlq"
 max_batch_size = 10
 max_retries = 3
 
+[triggers]
+crons = ["*/5 * * * *"]
+
 # Separately deploy the authenticated effecter before enabling production
 # dispatch. Its provider adapters remain independently fail-closed.
 [[services]]
@@ -147,14 +164,30 @@ service = "opentag-platform-effecter"
 
 [vars]
 ENVIRONMENT = "production"
+PLATFORM_PROVIDER_EFFECTS_MODE = "linear"
 NANOCODEX_NATIVE_RESPONSES = "true"
+AGENT_MODEL = "gpt-5.6-sol"
 HARNESS_REPO_URL = "https://github.com/wcordelo/opentag"
 KNOWLEDGE_QUEUE_NAME = "opentag-knowledge"
 KNOWLEDGE_DLQ_NAME = "opentag-knowledge-dlq"
+KNOWLEDGE_RECONCILIATION_CRON = "*/5 * * * *"
+KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED = "true"
+KNOWLEDGE_RECONCILIATION_TEAM_IDS = "T0BBBEDLEGY"
+KNOWLEDGE_SLACK_ACL_MAX_AGE_MS = "600000"
+# Queue-level delivery pause is the authoritative prolonged migration freeze:
+# `npx wrangler queues pause-delivery opentag-knowledge`. This variable is only
+# optional defense-in-depth; retryAll is bounded by max_retries and can reach
+# the DLQ. KnowledgeDO and the authoritative ledger remain writable.
+# SUPERMEMORY_CONSUMER_MODE = "paused"
+# Immutable identity of the isolated Supermemory state store used by the
+# service-bound Queue consumer and derived-index receipts.
+SUPERMEMORY_INDEX_GENERATION = "cloudflare-r2-v1"
+SUPERMEMORY_MUTATION_CONTRACT = "verified"
 PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
 SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
+BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN = "https://berendo.communities.buzz.xyz"
 # Trusted rich-payload triggers remain disabled until actors are configured.
 # SLACK_TRUSTED_TRIGGER_ACTORS = "bot:B0123456789,app:A0123456789"
 # AGENT_URL: https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run
@@ -172,14 +205,17 @@ SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET, KNOWLEDGE_ACTOR_TOKEN_SECRET,
-# SUPERMEMORY_API_KEY
+# SUPERMEMORY_SERVICE_AUTH_TOKEN, GRAPHIFY_SERVICE_AUTH_TOKEN,
+# CONNECTOR_BROKER_SHARED_SECRET, EFFECTOR_AUTH_TOKEN,
+# CONNECTOR_CREDENTIAL_BROKER_TOKEN, IDENTITY_CUSTODY_AUTH_TOKEN,
+# OAUTH_EFFECTER_AUTH_TOKEN, OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN.
 # OAuth callback origins are non-secret and must be an explicit comma-separated
 # HTTPS origin allowlist before the external OAuth effecter is enabled:
 # OAUTH_ALLOWED_REDIRECT_ORIGINS = "https://app.example.com"
-# CONNECTOR_CREDENTIAL_BROKER_TOKEN, IDENTITY_CUSTODY_AUTH_TOKEN,
-# OAUTH_EFFECTER_AUTH_TOKEN, OAUTH_PROVIDER_ADAPTER_AUTH_TOKEN
-# SUPERMEMORY_URL is a deploy-time non-secret var; configure it through
-# OPENTAG_VAR_SUPERMEMORY_URL in scripts/deploy-opentag.mjs.
+# SUPERMEMORY_URL/SUPERMEMORY_API_KEY are legacy migration-only values and
+# are ignored unless SUPERMEMORY_MIGRATION_MODE=true is explicitly set during
+# read-only parity burn-in. They must not be provisioned for the normal
+# Cloudflare-only production path.
 #
 # Harness container (Phase A5). The active HARNESS service binding above means
 # opentag-harness must be deployed before this bot config:

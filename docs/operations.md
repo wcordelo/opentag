@@ -1,18 +1,305 @@
 # OpenTag operations guide
 
 Status: **current runbook**
-Updated: **2026-08-01**
+Updated: **2026-08-05 14:52 PDT**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
 [setup.md](../setup.md); system design is in
 [ARCHITECTURE.md](../ARCHITECTURE.md).
+Local Graphify stdio usage is documented in
+[graphify-local-mcp.md](./graphify-local-mcp.md).
 
 The dated production evidence for the current release is in
 [current-state.md](./current-state.md). This runbook separates deployed
 configuration from provider readiness: a binding or health flag is not proof
 that an authenticated external broker, relay, OAuth callback, billing worker,
 or deletion effect has completed.
+
+## 2026-08-05 recovery and rollout checkpoint
+
+Docker Desktop has been repaired and is available for local image builds. The
+Supermemory R2 pair is provisioned as Worker Secrets and the deployed
+Supermemory singleton passes the tigrisfs/FUSE staging mount, read/write probe,
+and provider search readiness. `GET /ready?profile=knowledge` returns HTTP 200
+with no blockers and the active-instance rollout check passes.
+
+The strict `healthy` instance count is not equivalent to the running/queryable
+state in this checkpoint: Cloudflare reports `healthy=0` for the Supermemory
+and Graphify singleton applications while their instances are `running` and
+the bot's authenticated dependency probes return true. Track both signals;
+do not suppress the discrepancy by weakening a release gate without recording
+why the control-plane aggregate is not authoritative for these services.
+
+The current harness image was rebuilt and rolled out with seven healthy
+instances. A direct deployment from the intentionally dirty checkout proves
+runtime health but does not prove clean source provenance. The deployed agent
+also passed a direct DeepSeek AG-UI canary. The provenance gate requires a
+clean source snapshot or an explicitly recorded dirty-source attestation
+before production claims are made.
+
+The bot is currently deployed at version
+`617b73ca-2114-4723-a819-2086100fa10e`. Operator Slack searches now record a
+body-free query-convergence receipt when a returned citation matches an
+indexed ledger row and its document/generation fence. The current tenant
+readback is 55 indexed rows with zero searchable queryability receipts; the
+R2-backed search path is reachable but has no compliant recent canary hits.
+Replaying or rebuilding authoritative Slack descriptors is required before
+claiming provider parity.
+
+The Slack app has not been reinstalled. The actual OpenTag bot canary is
+visible in `#general` but produced no reply, and the current Worker tail
+showed no `/slack/events` invocation. If a Slack canary returns
+`SANDBOX_BACKEND=local requires a running Docker daemon`, treat that as stale
+Slack app routing to the legacy QM/local path, not as evidence about the
+Cloudflare harness. The operator must unlock the Mac, update/reinstall the
+manifest, and read back the installed request URL, scopes, and event
+subscriptions before retrying live Slack tests.
+
+Buzz wake tests must use an event from a server-bound pilot channel. A valid
+event from an unbound channel should return HTTP 400
+`buzz_wake_unbound_channel`; that is a tenant-isolation proof, not a successful
+admission. A successful pilot receipt must include canonical fetch, signature
+verification, server-resolved tenant, authoritative dedupe, runtime admission,
+and reply publication.
+
+## Live Slack readback — 2026-08-02 22:08 PDT
+
+The source manifest regression passes 2 tests and asserts the required Slack
+history/read, reaction, profile, team, and channel-join scopes. Authenticated
+membership readback confirms the bot in `#general`, `#new-channel`, `#social`,
+and `#skills`. A human explicit canary returned
+`OPENTAG_MILESTONE_EXPLICIT_OK`; a bot-message event canary returned
+`OPENTAG_MESSAGE_EVENT_TAIL_OK` with an `indexed` queue outcome; and a
+reaction lifecycle canary showed the working `eyes` reaction, returned
+`OPENTAG_REACTION_LIFECYCLE_OK`, and had no reaction after terminal cleanup.
+
+These are live Slack surface receipts, not complete-history or derived-index
+queryability receipts. The strict rollout check still reports zero healthy
+query instances for Supermemory and Graphify. The deployed harness image is
+`sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880`,
+while the local source manifest is dirty at
+`sha256:8b003407364eb9c96499e71294f7d421b5028f365d92bcea63fe6d7f1aaf6baa`;
+Docker/FUSE and clean source-to-image verification remain open.
+
+## Final local and strict live gate rerun — 2026-08-02 22:14 PDT
+
+The final local edge unit suite passes 145 files / 1,379 tests; bot Worker
+e2e passes 8 files / 69 tests; typecheck and `git diff --check` pass.
+Graphify Worker e2e passes 5 tests, Graphify policy passes 10 tests,
+deploy-config validation passes, the Slack manifest test passes 2 tests, shell
+syntax passes, and downloaded Supermemory/tigrisfs artifact verification
+passes.
+
+The strict read-only rollout check passes all static, R2, deployment,
+secret-name, pin, and artifact assertions. It fails exactly two live health
+gates: Supermemory and Graphify each report
+`instance_state=running; active=1; healthy=0; failed=0`. No deployment,
+restart, Queue mutation, credential change, or provider action was attempted.
+
+## Audit reconciliation — 2026-08-02 21:16 PDT
+
+The current read-only state is knowledge-ready (`/ready?profile=knowledge`
+HTTP 200) but not full-ready (HTTP 503: credential-broker reachability,
+platform-effecter reachability, and OAuth). The tenant ledger is 84 rows: 55
+indexed, 2 pending, and 27 permanent failures; tenant outbox and DLQ are
+empty. Queue `indexed` means that the provider document poll reached `done`;
+it does not prove a searchable citation. The exact fresh marker still returns
+zero authenticated citations, and the local adapter regression now covers
+`add -> documents.get(done) -> search` as two separate receipts.
+
+Supermemory version 18 and Graphify query version 6 each report one active
+instance but zero assigned/healthy query instances, so the strict rollout
+check remains blocked. Buzz source tests pass, but live signed admission is
+blocked at relay HTTP 526. No provider effect adapter or default custody
+Secrets Store mapping is configured; the Linear fixture is not on the
+broker/effect-ledger path. Harness version 4 has seven healthy instances, but
+the dirty local source manifest does not map to its deployed image; Docker is
+unavailable. No additional deployment or external mutation was performed in
+this checkpoint.
+
+## Local source reconciliation — 2026-08-02 21:56 PDT
+
+The current Supermemory source uses the approved pinned tigrisfs Container
+mount. `R2_ACCOUNT_ID` and `R2_BUCKET_NAME` are non-secret Worker variables;
+`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are Worker Secrets mapped only
+into Container `envVars` as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`. The Supermemory child process receives none of the
+storage or facade credentials. The entrypoint writes the R2-ready sentinel
+only after mount and unprivileged read/write checks; the Worker does not call
+the Sandbox SDK bucket mount methods.
+
+The ledger now exposes a body-free queryability receipt separate from
+provider-poll `indexed` completion. Fresh local validation passes 145 edge unit
+files / 1,376 tests, 8 bot Worker e2e files / 69 tests, Graphify e2e (5
+tests), Graphify policy (10 tests), focused Supermemory/checker tests,
+typecheck, deploy-config validation, source-pinned rollout preflight, shell
+syntax, diff checks, and live artifact download/checksum/member verification.
+Docker/FUSE, deployment, provider search convergence, Buzz admission, provider
+effects, and harness source-to-image provenance remain open.
+
+## Final read-only gate sweep — 2026-08-02 20:59 PDT (historical snapshot)
+
+Bot health is HTTP 200 and the harness Container info endpoint reports version
+4 with seven healthy instances. The deployed harness image is
+`sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880`,
+but the dirty local source manifest differs, so provenance is not closed.
+The empty Buzz probe returns HTTP 400 `buzz_wake_unexpected_fields`; this is
+schema reachability only. The latest tenant status is 83 rows (55 indexed, 2
+pending, 26 permanent failures), with empty outbox and tenant-local DLQ.
+The exact fresh unmentioned marker still has zero authenticated citations
+despite a queue `indexed` outcome. Strict rollout still fails both query
+Container health aggregates. No deployment or external mutation occurred.
+
+The affected local Slack/knowledge source slice passes 8 files and 95 tests;
+typecheck and staged/unstaged diff checks pass. This does not change the
+deployment gate for the local routing, inclusion-fence, or readiness repairs.
+The follow-up queue/normalization/Web API rerun passed 3 files and 70 tests,
+including the bot-message Events API indexing contract.
+The full edge unit suite then passed 145 files / 1,372 tests and the bot Worker
+e2e suite passed 8 files / 67 tests; typecheck and diff checks also passed.
+The focused failure/recovery slice passes 9 files / 140 tests; live recovery
+and restart gates remain separate.
+Deploy-config validation, Graphify e2e (5 tests), Graphify policy (10 tests),
+and static rollout checks also pass; live query-container health remains open.
+The 21:13 PDT strict read-only rerun passed every static/resource/deployment
+check and failed only the two query-container health aggregates.
+
+## Fresh operator readback — 2026-08-02 20:41 PDT
+
+The latest knowledge readiness probe is HTTP 200, but full readiness is not:
+credential broker, platform effecter, and OAuth checks remain blocked. Tenant
+status is 80 rows (53 indexed, 2 pending, 25 permanent), with an empty
+outbox and tenant-local DLQ summary zero. The separate operator DLQ endpoint
+has 100 pending records. Treat those as different durable scopes and do not
+replay or dispose operator records without an explicit action.
+
+The deployed Slack control wrote marker 1785725283.368069, left the
+unmentioned retrieval request 1785725304.390959 silent, and returned
+OPENTAG_SUPERMEMORY_SEARCH_OK for explicit retrieval 1785725373.889899 at
+1785725391.260059. The installed bot token returns missing_scope for
+reactions.get, users.profile.get, and apps.manifest.export. Four visible
+public channels are confirmed; private, MPIM, workspace-wide, and
+complete-history coverage are not.
+
+The strict knowledge rollout check still fails only the aggregate health
+checks for Supermemory and Graphify: active=1, assigned=0, healthy=0,
+failed=0. The local successful-2xx readiness correction is not deployed.
+The current local harness source is dirty and cannot be matched to the
+deployed image digest until a clean build is available. Buzz remains blocked
+at the Worker-to-relay HTTP 526 boundary.
+
+## Local indexing inclusion fence — 2026-08-02 20:16 PDT
+
+For every non-delete Slack observation, the queue job now includes the exact
+message timestamp that must be present in the fetched canonical thread. The
+worker records `observed_message_missing` as retryable and does not write the
+thread to KnowledgeDO's derived-body record or Supermemory until that exact
+message is present. This protects bot posts, edits, reactions, and human
+messages from a transient stale `conversations.replies` response. It is a
+local source contract only until the bot is redeployed and the live canary
+proves the receipt path.
+
+Validated locally with 144 unit test files / 1,370 tests, 67 bot Worker tests,
+5 Graphify Worker tests, typecheck, artifact verification, and read-only live
+rollout checks. Docker/FUSE restart evidence remains unavailable.
+
+The local Supermemory port gate has a bootstrap-only exception for the
+Cloudflare supervisor: `GET /health` returns `200` before the Worker-owned R2
+mount so the lifecycle hook can run, while non-health traffic returns `503`.
+Once R2 is mounted, health remains `503` until the provider-ready sentinel is
+written after `/v3/openapi` returns a successful `2xx`; a reachable `4xx`/`5xx`
+application remains degraded. Only then is the application proxied. This
+repair is tested locally and is not deployed.
+
+## Prior operator checkpoint — 2026-08-02 19:45 PDT
+
+The upgraded Supermemory Worker/Container path is live at version 18 with the
+Worker-owned `STATE_BUCKET` mount and disposable local model-cache overlay.
+Authenticated knowledge readiness is HTTP 200 and provider tail readback shows
+document write/poll plus `/v4/search` HTTP 200. This is service reachability,
+not complete ledger convergence.
+
+The latest tenant status readback is 77 ledger rows: 32 `indexed`, 19
+`leased`, 2 `pending`, and 24 `permanent_failure`; outbox and DLQ counts are
+zero. Thirty old `local_add` failures were reopened with correction reference
+`supermemory-v18-r2-model-cache-repair-da95429a`, and the recovery endpoint
+reported 30 reopened, 0 blocked, and 0 failed. The latest reconciliation
+scanned 77 rows, enqueued 19, and skipped 58. Do not declare the knowledge
+rollout complete while the leased rows remain unresolved.
+
+Bot version `764a18ea-bda9-4209-bdbc-0b9cc81a6cba` records Buzz receive
+failure phase `relay_http` with status 526 for the known wake. Re-provisioning
+the canonical relay origin did not change the response. Local direct relay
+checks reach the endpoint and return 401/403 authorization responses, so no
+valid Buzz admission receipt exists yet.
+
+The same deployment contains the ambiguous-add recovery repair and expired
+poll-window renewal. Live Queue tail evidence shows three rows reaching
+`indexed` and `recorded_success` after the repair; earlier tail evidence shows
+four additional recorded successes. Read the tenant status endpoint after the
+drain before claiming all reopened rows converged.
+
+The current local harness provenance is dirty
+(`sha256:8b003407364eb9c96499e71294f7d421b5028f365d92bcea63fe6d7f1aaf6baa`),
+and Docker is unavailable. The deployed image/source mapping remains an open
+release gate. Do not pause/resume the knowledge Queue as part of this
+checkpoint; that requires a separate explicit operator decision.
+
+Authenticated `/ready?profile=knowledge` is HTTP 200 with all knowledge and
+code-graph checks true. The upgraded Supermemory Container is running version
+18, and provider tail readback shows successful document write/poll responses
+and `/v4/search` HTTP 200 after the local model-cache overlay. This closes the
+immediate provider reachability incident, not the migration or durability
+gates: restart/remount persistence, update/delete/tombstone behavior, parity,
+latency, and recovery of old ledger failures remain open.
+
+The telemetry-enabled live bot deployment is
+`764a18ea-bda9-4209-bdbc-0b9cc81a6cba`. Its reconciliation schedule is every
+five minutes and `KNOWLEDGE_SLACK_ACL_MAX_AGE_MS` is 600000, so the scheduled
+ACL refresh cadence now has headroom over the authorization freshness bound.
+The live [cadence canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719827818089)
+returned `OPENTAG_KNOWLEDGE_CADENCE_OK`.
+
+The live retrieval canary exposed one deployment gap: the deployed bot did not
+answer the unmentioned action request at
+[`1785725304.390959`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725304390959),
+while the explicit-mention control at
+[`1785725373.889899`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725373889899)
+returned `OPENTAG_SUPERMEMORY_SEARCH_OK`. The current local source contains
+retrieval rule `t1.12` and its route/pre-admission tests pass; deploy and rerun
+this canary only after the explicit production-deployment gate is approved.
+
+The latest read-only validation pass completed 1,368 unit tests, 67 bot Worker
+tests, 5 Graphify Worker tests, typecheck, Graphify policy tests, deploy-config
+validation, Supermemory artifact verification, static/live knowledge preflight,
+Graphify pin verification, shell syntax, and both staged and unstaged diff
+checks. Docker is unavailable, so image rebuild, FUSE remount, and restart
+persistence remain unverified.
+
+The fresh human Supermemory canary wrote a unique marker and retrieved it with
+an explicit bot mention, returning `Searching Slack` and
+`OPENTAG_SUPERMEMORY_SEARCH_OK`; no reaction remained on the parent. An
+untagged equivalent was silent on the deployed version. The local routing fix
+recognizes search/lookup/query action language, but deployment remains gated.
+
+Use `npm run check:knowledge-rollout -- --live --require-healthy-instances` for
+the strict Container gate. It currently fails for both query Containers because
+their Cloudflare state is `running`, not `healthy`; the local `/health`
+port-gate repair is tested but not deployed.
+
+The current tenant status is 77 ledger rows (32 indexed, 19 leased, 2 pending,
+24 permanent failures), with no pending outbox/DLQ work and no completed
+history inventory or backfill. Thirty old local-add rows were reopened with an
+operator correction reference; keep the leased rows open until each has a
+provider receipt or a durable expiry/retry outcome.
+
+The installed Slack token still lacks the source-declared `reactions:read`
+and `users.profile:read` scopes. The bot is confirmed in four visible public
+channels, but `all_delivered` remains an installed-bot delivery policy rather
+than a workspace export. Reinstall/read back the Slack app before claiming
+reaction/profile/lifecycle coverage. The known Buzz wake reaches the relay
+HTTP phase and receives HTTP 526; valid signed admission is still required.
 
 ## Deployment map
 
@@ -24,27 +311,39 @@ flowchart LR
     Harness["opentag-harness<br/>workers/sandbox"]
     Claudex["opentag-claudex-proxy<br/>workers/claudex-proxy"]
     Broker["opentag-credential-broker<br/>workers/credential-broker"]
+    Supermemory["opentag-supermemory<br/>workers/supermemory"]
+    Graphify["opentag-graphify<br/>workers/graphify"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
 
     Operator -->|"deploy:bot"| Bot
     Operator -->|"deploy:agent"| Agent
     Operator -->|"explicit coding deploy"| Claudex
     Operator -->|"explicit coding deploy"| Harness
+    Operator -->|"one-click knowledge dependency deploy"| Supermemory
+    Operator -->|"one-click knowledge dependency deploy"| Graphify
     Operator -.->|"deploy:research"| Research
 
     Bot -->|"AGENT_RUNTIME"| Agent
     Bot -->|"HARNESS"| Harness
     Bot -->|"CONNECTOR_CREDENTIALS"| Broker
+    Bot -->|"SUPERMEMORY"| Supermemory
+    Bot -->|"GRAPHIFY"| Graphify
     Harness -->|"CLAUDEX_PROXY"| Claudex
     Bot -.->|"RESEARCH_TASKS"| Research
 ```
 
-The bot, AG-UI agent, and coding harness are deployed in the current production
-configuration. Research remains optional. The coding plane runs Claude Code
+The bot, AG-UI agent, coding harness, Supermemory facade, and Graphify facade
+are deployed in the current production configuration. Research remains
+optional. The coding plane runs Claude Code
 (native Anthropic and Claudex/CLIProxyAPI) plus the native Nanocodex CLI in the
 same sandbox. Active service bindings require target-before-caller deploy order:
-Claudex proxy, harness, bot. Nanocodex needs harness Worker secret
-`OPENAI_API_KEY` (no Claudex proxy dependency).
+Claudex proxy, harness, bot. The Supermemory and Graphify services are
+deployed privately, but Supermemory is assigned and unhealthy because its
+embedding model cache performs an EIO rename on the R2/FUSE mount; Graphify is
+unassigned and unhealthy. Provider storage/parity receipts and a successful
+derived-index read/write are still required before treating them as ready.
+Nanocodex needs
+harness Worker secret `OPENAI_API_KEY` (no Claudex proxy dependency).
 
 ## Local prerequisites
 
@@ -66,6 +365,9 @@ npm ci
 npm run typecheck
 npm test
 npm run test:e2e
+npm run test:e2e:graphify
+npm run test:graphify-policy
+npm run check:knowledge-rollout
 ```
 
 This is the sequence in `.github/workflows/edge-ci.yml`. It uses only
@@ -90,6 +392,21 @@ docker build --platform linux/amd64 \
   -t opentag-harness:local .
 ```
 
+Before a release, inspect the deterministic source manifest:
+
+```bash
+node scripts/harness-provenance.mjs
+```
+
+The one-click deploy script computes the same manifest and writes an ephemeral
+Wrangler config with `image_vars` for the harness build. The image embeds the
+source revision, source tree, content digest, and working-tree state in OCI
+labels and runtime variables. The Worker `GET /health` response includes its
+Cloudflare version metadata; an authenticated `GET /health/container` returns
+the container's embedded provenance. A clean working tree is required for a
+release-quality mapping; a dirty manifest is explicit evidence, not a release
+attestation.
+
 The harness pins an `amd64` Ubuntu package and Cloudflare's deployment image
 target is `linux/amd64`. Apple Silicon Docker otherwise selects `arm64` and
 fails at `dpkg` before project code runs.
@@ -105,6 +422,57 @@ npm run typecheck
 Its Container image is also `linux/amd64`. The Worker is private
 (`workers_dev = false`) and is reached from the harness only through the
 `CLAUDEX_PROXY` service binding.
+
+### Cloudflare knowledge services
+
+The knowledge services are separate deploy units and remain disabled until
+their named staging gates pass:
+
+```bash
+cd edge/workers/supermemory
+npm ci
+npm run typecheck
+cd ../graphify
+npm ci
+npm run typecheck
+npm run test:policy
+cd ../..
+npx wrangler deploy --config workers/supermemory/wrangler.toml --dry-run --containers-rollout=none
+npx wrangler deploy --config workers/graphify/wrangler.toml --dry-run --containers-rollout=none
+```
+
+The dry-runs validate bindings and Container declarations without building or
+deploying images. Real deployment requires explicit approval, dedicated R2
+bucket creation, scoped tokens, and the FUSE/R2, parity, CAS, and ACL gates in
+the knowledge-base specification.
+
+The standalone knowledge-service deploy scripts are fail-closed on placeholder
+R2 account IDs and invalid Graphify catalogs. A non-dry service deployment also
+requires `OPENTAG_KNOWLEDGE_DEPLOY_APPROVED=true` after the staging approval;
+the flag is not needed for dry-runs.
+
+#### Provider startup diagnosis
+
+Use the authenticated bot readiness route and Cloudflare Container state
+together:
+
+```bash
+set -a; source edge/.dev.vars; set +a
+curl -H "Authorization: Bearer $ADMIN_SECRET" \
+  'https://opentag-bot.williamlopezc.workers.dev/ready?profile=knowledge'
+npx wrangler containers info <application-id> --json
+npx wrangler containers instances <application-id> --json
+```
+
+Treat `active/running` without `healthy` and `assigned` capacity as a
+provisioning/port-readiness failure. Do not infer that the application is
+ready from the Worker upload, image digest, R2 object, or a configured secret.
+For the current Supermemory trace, the request enters the Sandbox SDK
+`containerFetch` path and is canceled before `onStart`, the R2 mount, the
+port-gate release, or the application health probe. The next valid receipt is
+an assigned healthy instance followed by an authenticated provider `/health`,
+R2 persistence/remount, and a fresh add/poll/search/delete test. Keep the
+readiness gate fail-closed while that receipt is absent.
 
 ### Root runtime and research
 
@@ -159,8 +527,26 @@ cd edge
 | `AGENT_URL` | Secret/string | Bot | AG-UI request URL/path |
 | `AGENT_RUNTIME` | Service binding | Bot | Same-zone call to `opentag-agent` |
 | `AGENT_AUTH_HEADER` | Secret | Bot + agent | Optional AG-UI authentication |
-| `SUPERMEMORY_API_KEY` | Secret | Bot | Knowledge retrieval provider credential |
-| `SUPERMEMORY_URL` | Deploy var | Bot | Knowledge retrieval provider origin |
+| `SUPERMEMORY` | Service binding | Bot | Private `opentag-supermemory` facade |
+| `SUPERMEMORY_SERVICE_AUTH_TOKEN` | Secret | Bot + Supermemory facade | Bot-to-facade authentication; not a Supermemory server key |
+| `SUPERMEMORY_CONSUMER_MODE` | Var | Bot | Optional defense-in-depth handler fence; `paused` retries batches and can exhaust the configured retry/DLQ budget, so prolonged freezes must use Queue delivery pause |
+| `SUPERMEMORY_INDEX_GENERATION` | Var | Bot | Immutable server-owned identity of the isolated Supermemory state store; required when the service binding is active |
+| `SUPERMEMORY_MIGRATION_MODE` | Explicit migration var | Bot | Enables the retained legacy URL/key fallback only during read-only parity burn-in |
+| `SUPERMEMORY_URL`, `SUPERMEMORY_API_KEY` | Legacy migration-only | Bot | Railway/read-only compatibility path; ignored unless migration mode is exactly `true` |
+| `STATE_BUCKET` | R2 binding | Supermemory facade | Dedicated `opentag-supermemory-state` binding used for the `api-key` bootstrap; the singleton Container mounts the same bucket through tigrisfs |
+| `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Var | Supermemory Worker/Container | Non-secret R2 endpoint and bucket identifiers passed only to the Container mount command |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Secrets | Supermemory Worker/Container | R2 S3 credentials mapped to AWS-compatible Container envVars; never sent to the bot or Supermemory child |
+| `OPENAI_API_KEY` | Secret | Supermemory Container | Existing extraction/model boundary; not exposed to the bot |
+| `OPENAI_BASE_URL` and documented provider/embedding vars | Var/Secret | Supermemory Container | Optional self-hosted provider, embedding, performance, and telemetry configuration; forwarded only to the Container |
+| `GRAPHIFY` | Service binding | Bot | Private `opentag-graphify` facade |
+| `GRAPHIFY_SERVICE_AUTH_TOKEN` | Secret | Bot + Graphify facade | Bot-to-facade authentication |
+| `ARTIFACTS` | R2 binding | Graphify facade + query Container | Dedicated read-only `opentag-code-graphs` binding mounted by the Worker |
+| `GRAPHIFY_ALLOWED_REPO_ORGS` | Var | Graphify facade + builder | Server-owned tracked GitHub organization allowlist |
+| `GRAPHIFY_REPOSITORY_CATALOG` | Var | Graphify facade | Server-owned JSON map of tracked `repoId` to GitHub source/ref; registration never accepts caller URLs or filesystem paths |
+| `GRAPHIFY_ADMIN_TOKEN` | Secret | Graphify facade | Scheduled/manual registry and rebuild administration |
+| `GRAPHIFY_CONTAINER_AUTH_TOKEN` | Secret | Graphify facade + Containers | Worker-to-Container authentication |
+| `GRAPHIFY_COMMIT` | Var | Graphify facade | Exact Graphify source pin |
+| `GITHUB_TOKEN` | Secret | Graphify builder | Private tracked-repository clone only |
 | `ADMIN_SECRET` | Secret | Bot | `/admin/*`, `/debug/*`, `/tasks/start` |
 | `SESSION_VIEWER_BASE_URL` | Var | Bot | Public bot origin for signed, expiring session links |
 | `QUICK_BASE_DOMAIN` | Var | Bot | Artifact host suffix eligible for final action cards |
@@ -226,9 +612,9 @@ success after the runtime returns matching accepted/quiescent proof. Signed
 `Cache-Control: private, no-store`, and require `ADMIN_SECRET` as their HMAC
 key; rotate that secret to revoke outstanding links.
 
-## 2026-08-01 live rollout record
+## 2026-08-01 live rollout record (historical deployment baseline)
 
-The current production deployment used exact merged baseline `498164f` from a
+The historical production deployment used exact merged baseline `498164f` from a
 clean detached checkout. The bot deployment is
 `cd2ab9e0-a2d1-411e-8a5c-73add31e6ac1`; the harness deployment was
 `58c47ab9-daf9-456b-b17c-73fc66e6b25d`. The image digest and feature-by-feature
@@ -258,7 +644,54 @@ Do not report the following as live passes from this rollout: Drive or Linear
 provider calls, OAuth callback, billing, deletion execution, authenticated Buzz
 NIP-OA admission, a live Stop/HITL click, provider checkpoint reconnect, or a
 fresh one-click installation. Those require credentials, external effecters,
-or a controlled test workspace.
+and a configured adapter/custody path for the isolated provider fixture.
+
+## 2026-08-02 reconciliation checkpoint — 10:30 PDT
+
+`main` remains fast-forwarded to `d075431` with user-owned knowledge, ACL,
+reaction, Supermemory, Graphify, and documentation changes preserved. The
+current bot code deployment is `636be4c0-d8ec-4023-8af4-4157cdb6a6ac` with a
+later secret-only rollout. Live `/health` is HTTP 200 and reports the pinned
+model, reconciliation trigger, knowledge bindings, relay allowlist, and broker
+auth as configured. The authenticated `/ready` route exists, but no operator
+readiness receipt has been recorded.
+
+Supermemory and Graphify are now deployed privately. Their Container images are
+ready and `npm run check:knowledge-rollout -- --live` passes deployment,
+binding, bucket, and fail-closed architecture checks. Bucket-scoped R2
+credentials and provider boot values remain unavailable, so derived indexing is
+not yet an operational happy path. The broker/custody internal auth mismatch is
+fixed, but custody has no approved Secrets Store binding map and the effecter
+has no provider adapters.
+
+The current bot declares a 15-minute reconciliation trigger and the live team
+scope. This is configuration evidence, not a cron execution receipt or a
+readback of the live `all_delivered` WorkspaceConfigDO policy. The bot is
+confirmed as a member of `#general` but not the other listed public channels;
+installed manifest/scopes, complete history backfill, and event delivery remain
+open coverage gates.
+
+Buzz now has signer, relay, channel-map, and independent relay-allowlist
+configuration. A live empty `/buzz/wake` request returns HTTP 400
+`buzz_wake_unexpected_fields`, proving the configuration gate is passed. No
+valid signed NIP-OA admission, authenticated relay fetch, dedupe, or
+tenant-scoped callback is claimed.
+
+The new bot-authored Slack marker was written and read back in `#general`; this
+proves connector write/read only. The earlier human canary predates the current
+deployment, so a real human reaction/indexing/silent-UI canary remains open.
+
+The local backfill runner now supports `discoverAll: true`. In that mode the
+server calls Slack `conversations.list` for public/private channels, IMs, and
+MPIMs with archived records included, classifies only non-archived conversations
+where the installed bot is a member as eligible, and stores a digest-bound inventory receipt in the tenant
+KnowledgeDO before history discovery begins. A missing next cursor, API error,
+pagination/record bound, zero eligible conversations, or more than the bounded
+50-conversation manifest limit fails closed; it never claims that a partial
+inventory is complete. Re-running the same manifest reuses the durable receipt
+and does not re-enumerate Slack. This is source- and Worker-tested only until a
+new bot deployment and live Slack installation readback prove the account's
+actual coverage.
 
 ## Deploy the AG-UI agent
 
@@ -284,7 +717,7 @@ npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
 npx wrangler secret put AGENT_URL --config wrangler.bot.toml
 npx wrangler secret put ADMIN_SECRET --config wrangler.bot.toml
 npx wrangler secret put INTERNAL_SECRET --config wrangler.bot.toml
-npm run deploy:bot
+OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' npm run deploy:bot
 ```
 
 Slack Request URLs must point to the deployed bot Worker:
@@ -515,7 +948,7 @@ npm run deploy
 cd ../..
 npx wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml
 # configure HARNESS_REPO_URL as a non-secret var or deployment-specific value
-npm run deploy:bot
+OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' npm run deploy:bot
 ```
 
 For a new installation, the same order is available through the one-command
@@ -533,15 +966,51 @@ OPENTAG_SECRET_SLACK_SIGNING_SECRET='...' \
 OPENTAG_SECRET_AGENT_URL='...' \
 OPENTAG_SECRET_ADMIN_SECRET='...' \
 OPENTAG_SECRET_INTERNAL_SECRET='...' \
-OPENTAG_SECRET_SUPERMEMORY_API_KEY='...' \
-OPENTAG_VAR_SUPERMEMORY_URL='https://memory.example' \
-npm run deploy:one-click -- --require-secrets
+npm run deploy:one-click -- --skip-knowledge --require-secrets
 ```
 
-Existing secrets can be left in place by omitting their corresponding
-environment variables. Use `npm run deploy:one-click -- --no-deploy` to
-configure only the supplied secrets, or `--dry-run` to inspect the Wrangler
-commands without sending values or deploying.
+The default deploy path requires values for every selected secret and fails
+closed when one is missing. For a code-only rollout that retains already
+configured Cloudflare secrets, use `--preserve-existing-secrets`; it performs a
+read-only secret-name check and never sends or prints secret values. Use
+`npm run deploy:one-click -- --no-deploy` to configure only supplied secrets,
+or `--dry-run` to inspect Wrangler commands without sending values or deploying.
+
+The `--skip-knowledge` flag is only for an installation whose
+`opentag-supermemory` and `opentag-graphify` Workers already exist. The bot
+configuration requires those service bindings; omitting the flag makes the
+one-click installer validate and deploy the knowledge dependencies first.
+
+For a new Cloudflare-only installation, run the [staging resource gate](./supermemory-cloudflare-migration.md#staging-resource-gate)
+first and provide the service-specific secret environment variables.
+Supermemory uses its Worker R2 binding for bootstrap metadata and passes the
+R2 endpoint credentials only into its singleton tigrisfs Container. Graphify's
+query Container remains read-only and separately bound. Neither bot binding
+receives an R2 or provider credential. The default one-click path
+automatically requires every configured knowledge secret, including the
+Supermemory R2 access-key pair, and deploys
+`opentag-supermemory` and `opentag-graphify` before the caller Workers, and
+never creates buckets:
+
+```bash
+cd edge
+OPENTAG_SECRET_SUPERMEMORY_SERVICE_AUTH_TOKEN='...' \
+OPENTAG_SECRET_SUPERMEMORY_R2_ACCESS_KEY_ID='...' \
+OPENTAG_SECRET_SUPERMEMORY_R2_SECRET_ACCESS_KEY='...' \
+OPENTAG_SECRET_SUPERMEMORY_OPENAI_API_KEY='...' \
+OPENTAG_SECRET_GRAPHIFY_SERVICE_AUTH_TOKEN='...' \
+OPENTAG_SECRET_GRAPHIFY_ADMIN_TOKEN='...' \
+OPENTAG_SECRET_GRAPHIFY_CONTAINER_AUTH_TOKEN='...' \
+OPENTAG_SECRET_GRAPHIFY_GITHUB_TOKEN='...' \
+OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' \
+npm run deploy:one-click
+```
+
+This still requires explicit approval and passing the binding-mount/R2,
+parity, CAS, ACL, and cutover gates; `--dry-run` validates the immutable
+Supermemory generation and catalog without changing Cloudflare state. Use
+`--skip-knowledge --dry-run` only to inspect the harness/bot portion when the
+derived Workers are already provisioned.
 
 `NANOCODEX_NATIVE_RESPONSES=true` enables the typed native Responses adapter
 for non-coding Nanocodex turns. Coding turns continue through the CLI harness
@@ -587,15 +1056,28 @@ the click identity, and then enter the ordinary synthetic-turn sink.
 
 | Surface | Request | Expected |
 | --- | --- | --- |
-| Bot | `GET /health` | `ok`, product, StateStore, bot engine, trusted-rich-trigger readiness |
+| Bot liveness | `GET /health` | Bounded Durable Object liveness, product, StateStore, bot engine, trusted-rich-trigger readiness; this is not a complete release gate |
+| Bot readiness | Authenticated `GET /ready` | Strict production `full` profile by default; HTTP 503 lists missing feature contracts without exposing secret values |
+| Bot readiness diagnostics | Authenticated `GET /ready?profile=core\|knowledge\|full` | Explicit profile check for core Slack/agent/indexing, knowledge derived services, or the complete configured product surface; configured service bindings receive bounded `/health` probes |
 | Agent | Agent Worker health route | Worker/Container reachable |
-| Harness Worker | `GET /health` | `{ok:true, worker:"opentag-harness"}` |
-| Harness container | Internal `GET /health` | Claude Code version |
+| Harness Worker | `GET /health` | `{ok:true, worker:"opentag-harness", workerVersion:{id,tag,timestamp}}` |
+| Harness container | Authenticated `GET /health/container` | Claude Code, Nanocodex, and embedded source provenance |
 | Claudex proxy | Internal `GET /health` through `CLAUDEX_PROXY` | `{ok:true, proxy:"ready", auth:"configured"}` |
 | Research | `GET /health` | `role:"research-task"`, `slack:"demoted"` |
 
 The bot's `/debug/store` is admin-authenticated and exercises KV, list, lock,
 and dedup. Do not expose admin secrets in shell history or logs.
+
+`/health` is intentionally a liveness signal. A deployment must use an
+admin-authenticated `/ready` request as the release gate: production defaults to `full`, which requires the Slack
+credentials, production agent service binding, durable indexing path, derived
+knowledge services, reconciliation, Buzz wake contract, platform effect
+dispatch, harness, credential broker, and OAuth state configured for this
+release. `core` and `knowledge` are diagnostic scopes, not substitutes for the
+production gate. The route also performs bounded non-mutating health probes for
+the configured agent, derived services, harness, broker, and effecter service
+bindings; Queue delivery, cron execution, Buzz admission, and external
+provider effects still require the live canaries below.
 
 ## Structured lifecycle metrics
 
@@ -708,14 +1190,15 @@ than one busy note per thread per minute.
 
 ### Slack routing and false active-turn warnings
 
-The bot reads every human reply in a Slack thread, but it does not answer every
-reply. The expected policy is:
+The bot classifies every eligible human Slack message, but it does not answer
+every message. The expected policy is:
 
-- DMs, files, explicit bot mentions, and trusted triggers are eligible;
+- DMs, MPIMs, files, explicit bot mentions, and trusted triggers are eligible;
 - unmentioned questions, action requests, and problem reports are eligible;
 - passive conversation such as `yo` is observed in history and does not wake the
   agent;
-- top-level unmentioned channel chatter remains silent.
+- top-level channel messages follow the same classifier: clear asks may wake the
+  bot, while conversational chatter remains silent.
 
 If an explicit mention is delivered by both `app_mention` and threaded
 `message`, the duplicate `message` should be rejected before pre-admission. A
@@ -726,9 +1209,9 @@ concurrent ask should produce the bounded busy note; a stale warning after a
 completed turn indicates a regression in duplicate admission or final-render
 confirmation and should be reproduced with the focused routing/admission tests.
 
-The deployed `/health` response currently reports `modelConfigured: false` for
-the agent. Routing can still be verified, but a routed turn may end in the
-explicit no-text terminal until the model binding/secret is configured.
+The deployed `/health` response now reports `modelConfigured: true` for the
+configured agent model. This proves configuration presence only; run a current
+human answer canary before treating model-backed delivery as live-verified.
 
 ## Failure diagnosis
 
@@ -837,14 +1320,82 @@ Reproduce from `edge/` using `npm ci` under Node 22. Do not rely on a nested
 `workers/sandbox/node_modules`; edge TypeScript includes `workers/**/*.ts` and
 must declare their compile-time packages in `edge/package.json`.
 
-## Slack knowledge index operations (disabled until named gates)
+## Slack knowledge and code-index operations (disabled until named gates)
 
-The Supermemory Local integration is an optional sidecar index. Slack still
-terminates only at `opentag-bot`; `ConversationStateDO`, `SessionEventDO`,
-`WorkspaceConfigDO`, and existing durable fences remain authoritative. A
-tracked source is disabled unless one exact `(teamId, projectId, channelId)`
-row is explicitly enabled, and only one project may be enabled for a team and
-channel. Disabling a source is an immediate authorization change.
+Supermemory and Graphify are optional derived indexes. Slack still terminates
+only at `opentag-bot`; `KnowledgeDO`, the ingestion ledger, Queue/DLQ,
+`ConversationStateDO`, `SessionEventDO`, `WorkspaceConfigDO`, and existing
+durable fences remain authoritative. Workspace admission is server-owned in
+`WorkspaceConfigDO`: `explicit` requires one exact `(teamId, projectId,
+channelId)` row, while `all_delivered` materializes the configured default
+project/reader/retention source on the first delivered Slack event. Only one
+project may be enabled for a team and channel. Disabling a source is an
+immediate authorization change and remains an opt-out under `all_delivered`.
+Switching an existing team from `all_delivered` to `explicit` disables its
+workspace-default rows in the same durable policy transaction after active
+ingestion effects drain; switching back does not recreate those opt-outs.
+
+Outbound Slack observation uses the same exact source admission. If a committed
+bot write targets a channel without an enabled source, its durable observation
+fails and retries instead of completing with zero descriptors. Under
+`all_delivered`, the same server-owned resolver creates the default source
+before the observation is queued. A duplicate or out-of-order descriptor under
+an enabled source is an idempotent success. No caller can choose the fallback
+project or widen authorization.
+
+### Inspect durable knowledge progress
+
+The tenant-scoped status endpoint is the operational readback for authoritative
+knowledge workflow state. It requires the bot's admin credential and accepts
+exactly one team ID; it does not return message bodies, search results, or
+derived-index contents:
+
+```bash
+curl -sS -X POST "$OPENTAG_BOT_URL/admin/knowledge/status" \
+  -H "Authorization: Bearer $ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  --data '{"teamId":"T123"}'
+```
+
+For a `discoverAll: true` backfill, inspect the server-owned inventory receipt
+with the exact team and manifest ID:
+
+```bash
+curl -sS -X POST "$OPENTAG_BOT_URL/admin/knowledge/backfill/inventory" \
+  -H "Authorization: Bearer $ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  --data '{"teamId":"T123","manifestId":"backfill-2026-08-02"}'
+```
+
+Require `status: "complete"`, a stable `inventoryDigest`, and an eligible ID
+set before approving the history manifest. The receipt is visibility to the
+installed bot at one checkpoint, not proof that history, threads, files, or
+derived-index writes have converged.
+
+The response contains a capture time plus tenant-scoped counts for the ledger
+by status, pending and due outbox work, DLQ states, reconciliation runs,
+backfill manifests, server-owned inventory receipts, message-to-thread mappings,
+and active thread-fetch checkpoints. `outbox.pending`,
+`outbox.due`, `dlq.pending`, or `threadFetch.active` indicate
+authoritative work that still needs delivery or operator recovery. A running
+reconciliation or backfill is progress, not completion; inspect its persisted
+`latest` record and continue using the reconciliation or backfill runbooks.
+This endpoint proves durable state visibility only. It does not prove that a
+Cloudflare Queue consumer, reconciliation cron, Supermemory/Graphify service, Slack history
+backfill, ACL refresh, or external provider is reachable or current. Pair it
+with Queue/DLQ readback, source-specific service health, and an authorized
+retrieval canary before declaring the knowledge rollout ready.
+
+The controlled Supermemory migration sequence is documented in
+[`docs/supermemory-cloudflare-migration.md`](./supermemory-cloudflare-migration.md).
+For a prolonged derived-index freeze, pause delivery for the exact primary
+Queue with `npx wrangler queues pause-delivery opentag-knowledge`; the Queue
+continues to accept authoritative work while the consumer is stopped. Resume
+only after the new service passes its staging gates with
+`npx wrangler queues resume-delivery opentag-knowledge`. The handler variable
+`SUPERMEMORY_CONSUMER_MODE=paused` is a bounded defense-in-depth fence, not a
+replacement for the Queue control-plane pause, because repeated `retryAll`
+calls can exhaust `max_retries` and route messages to the DLQ.
 
 Source lifecycle administration is a separate fail-closed surface. Every call
 requires both `ADMIN_SECRET` and a one-use Ed25519 artifact in
@@ -866,6 +1417,12 @@ The routes are deliberately distinct:
 - `POST /admin/knowledge/sources/enable-first` performs the sole first-enable
   transition, and `/disable` performs the later disable transition. Re-enable
   remains blocked until the pinned Local deletion/reindex contract is proven.
+- `POST /admin/knowledge/admission-policy` sets the team-scoped `explicit` or
+  `all_delivered` policy with an expected policy version; `/get` reads it.
+  `all_delivered` requires a server-owned default project and reader policy.
+  A rollback to `explicit` is rejected while a workspace-default source has an
+  active ingestion effect, then disables those rows and preserves them as
+  explicit opt-outs.
 
 The Worker has no grant issuer, private key, or fallback authority.
 `KNOWLEDGE_SOURCE_AUTH_PUBLIC_KEY`, `KNOWLEDGE_SOURCE_AUTH_ISSUER`, and
@@ -874,10 +1431,27 @@ the external authority and exact staging matrix. With any verifier field
 missing, lifecycle routes return unavailable; `ADMIN_SECRET` alone never
 authorizes a source.
 
-Automatic ingestion is `waitUntil -> KnowledgeDO -> Cloudflare Queue ->
-opentag-bot queue() -> Supermemory Local`. The production Queue and DLQ binding
-remain absent until the named C1 gate approves exact resources and retry
-policy. C1 must configure distinct exact `KNOWLEDGE_QUEUE_NAME` and
+Slack installation lifecycle is a separate transport-owned safety fence. The
+verified Events API handler subscribes to workspace uninstall and bot-token
+revocation, the public-channel lifecycle family, and the private-channel
+`group_*` lifecycle family. WorkspaceConfigDO stores the installation
+generation and channel status, deduplicates each event by `(team_id,event_id)`,
+disables Slack sources and active ingestion leases on bot revocation,
+archive/deletion/unsharing/close, or bot leave, and causes affected KnowledgeDO
+ACL state to become stale. A user-only OAuth token revocation does not revoke
+the bot installation. Unarchive/open only records the channel as active; it
+does not re-enable a disabled source. After a reinstall, an operator must call
+`POST /admin/slack/installation/activate` with the team ID and an opaque
+activation ID. Activation is idempotent for the same activation ID and creates
+a new generation; old disabled sources still require the deletion/reindex
+contract before re-enablement. This lifecycle path is source-tested but not
+live-proven until the installed manifest, event delivery, and derived-index
+tombstone/reconciliation readback are captured.
+
+Automatic ingestion is `DeferredIngressDO -> KnowledgeDO -> Cloudflare Queue
+-> opentag-bot queue() -> private Supermemory service binding`. The Queue and DLQ
+remain authoritative workflow state; Supermemory only receives derived index
+operations. C1 must configure distinct exact `KNOWLEDGE_QUEUE_NAME` and
 `KNOWLEDGE_DLQ_NAME` values; the primary name cannot use the `-dlq` role suffix
 and the DLQ name must use it. Any Queue delivery with missing, identical,
 swapped, or unknown names is retried and throws before a message body is parsed.
@@ -893,20 +1467,23 @@ It returns `knowledge_unavailable` without failing the turn when Local is down,
 and it returns no citation after a source disable, policy/version change,
 tombstone, or ledger/revision mismatch.
 
-Local update and delete semantics for the pinned server remain unverified.
+Supermemory update and delete semantics for the pinned server remain a release
+gate and must be proven against the Cloudflare Container/R2 mount.
 Edits to an already indexed revision stop as
-`unsupported_update_contract`. Slack `message_deleted` handling preserves the
-exact deleted `ts`: only a well-formed deletion proving that timestamp is the
-actual root emits `delete`, persists a source tombstone, and stops as
-`unsupported_delete_contract`. A reply or `thread_broadcast` deletion emits
-`reply_delete` for the exact parent `thread_ts`, refetches the whole thread, and
-uses the edit/reconciliation path. If canonical content changed after an
-indexed revision, it stops non-searchable as `unsupported_update_contract`;
-it never tombstones the parent. Missing or contradictory `previous_message`
-identity is never granted root-tombstone authority; where an exact distinct
-parent and envelope `deleted_ts` remain available it can only request a parent
-refetch, otherwise it is ignored. Operators
-must not simulate deletion with a second add. Disabling config removes
+`unsupported_update_contract`. Slack's documented `message_deleted` event may
+contain only `deleted_ts`, so the Worker resolves that exact timestamp through
+the durable body-free message-to-thread map populated by complete thread
+fetches. A mapped root emits `delete`, persists a source tombstone, and stops as
+`unsupported_delete_contract`; a mapped reply emits `reply_delete` for the
+exact deleted message and parent thread, refetches the whole thread, and uses
+the edit/reconciliation path. A directly proven parent may request the same
+reply refetch, but contradictory or incomplete identity never grants root
+tombstone authority. If the map has no answer, the deletion remains a
+retryable `knowledge_deleted_message_thread_unresolved` outcome and may later
+be recovered by backfill/reconciliation; it is never guessed or silently
+ignored. If canonical content changed after an indexed revision, it stops
+non-searchable as `unsupported_update_contract`; it never tombstones the
+parent. Operators must not simulate deletion with a second add. Disabling config removes
 authorization immediately, and the
 config RPC rejects later re-enable until a verified deletion/reindex contract
 exists, so an old indexed revision cannot become authorized again. Retention
@@ -923,14 +1500,15 @@ get-by-custom-ID/idempotency recovery contract or an operator resolves it under
 an approved synthetic procedure.
 
 Knowledge recovery controls remain inert until their corresponding
-bindings/data gates are approved. The source-level scheduled entry is the
-convergence engine, but no live cron trigger or production configuration exists
-in `wrangler.bot.toml`. C1 must approve the trigger, Queue resources, and exact
-comma-separated `KNOWLEDGE_RECONCILIATION_TEAM_IDS` scope before setting
+bindings/data gates are approved. The bot config declares a five-minute
+scheduled entry for the convergence engine, but the live deployment must still
+read back that trigger and configure the exact scope. C1 must approve the
+trigger, Queue resources, and exact comma-separated
+`KNOWLEDGE_RECONCILIATION_TEAM_IDS` scope before setting
 `KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED=true`. The scheduled reconciliation
 coordinator requires that explicit flag, producer binding, exact primary/DLQ
-names, and nonempty exact team scope together; partial configuration fails
-closed.
+names, declared cron, and nonempty exact team scope together; partial
+configuration fails closed.
 
 The scheduled reconciliation coordinator in the global operator KnowledgeDO
 durably fences one scheduler cycle, freezes the
@@ -947,6 +1525,20 @@ Structured JSON metrics are
 `knowledge_reconcile_lag_seconds`, `knowledge_reconcile_run_error`, and
 `knowledge_reconcile_run_completed`; they expose scope digest/team ordinal and
 counts, not source content.
+
+When `SLACK_BOT_TOKEN` is configured, the same scheduled pass performs a
+separate bounded ACL repair for each team's enabled Slack source. It lists the
+server-owned tracked channels, reads all `conversations.members` pages through
+the shared Slack rate limiter, and submits the sorted member IDs to the
+tenant's KnowledgeDO with the current ACL revision. The KnowledgeDO computes
+the digest and commits only on an exact revision match. Membership events run
+the same refresh path after invalidating the channel; a Slack or membership
+failure leaves the channel stale and records
+`knowledge_slack_acl_reconcile_failed` rather than reopening retrieval. The
+completion metric is `knowledge_slack_acl_reconcile_completed`. This source
+implementation is local/test-validated; production activation still requires
+the Slack manifest readback, token scopes, Queue/cron configuration, and a live
+canary.
 
 Manual diagnostic reconciliation is one exact team at a time:
 `POST /admin/knowledge/reconcile` remains a one-page control for that exact
@@ -1005,6 +1597,17 @@ an operator must start a new exact manifest. Only complete persisted candidates
 produce the canonical version-2 dry-run manifest, jobs, count, per-channel page
 evidence, and SHA-256 digest. Discovery never executes jobs.
 
+Thread ingestion uses a separate tenant-scoped checkpoint in KnowledgeDO. After
+each successful `conversations.replies` page, the next Slack cursor and the
+accepted messages are persisted under the exact source/job identity. A Queue
+retry or isolate restart resumes from that cursor instead of starting the
+thread over. The checkpoint is cleared after a terminal outcome and the
+KnowledgeDO security sweep removes aged or orphaned checkpoints. Its counts are
+visible through `/admin/knowledge/status` as `threadFetch`; message bodies are
+never included in that status response. The fetcher still has hard message and
+byte bounds. Those bounds are recorded as explicit permanent size-bound outcomes
+until chunked thread artifacts or a larger approved contract exists.
+
 `POST /admin/knowledge/backfill/<manifestId>/approve` accepts only `teamId` and
 the exact manifest digest in its JSON body. It also requires a compact EdDSA
 artifact in `x-opentag-knowledge-backfill-approval`. The Worker verifies only
@@ -1062,14 +1665,14 @@ through Miniflare bindings. Run `npm run validate:deploy-config` from `edge/`
 to reject any deploy script targeting a test/debug TOML and any tracked
 Wrangler TOML containing `ADMIN_SECRET` or a known/default admin credential.
 
-The remaining external gates are independent: R1 covers the exact Railway
-service/volume/domain/runtime plan; R2 covers backup restoration and key
-rotation rehearsal; C1/S1 cover Cloudflare bindings/secrets and Slack changes;
-P1 covers each canary/backfill; D1 covers exact cleanup targets. No live
-ingestion, canary, or backfill begins before backup restoration and
-cross-workspace authorization tests pass. Local bind, health, generated-key,
-complete data-path, inherited database-variable, and non-root volume behavior
-remain R1 runtime proofs rather than current operational facts.
+The remaining gates are independent: S1 covers the Supermemory FUSE/R2
+correctness, key bootstrap, and parity burn-in; G1 covers Graphify exact-build,
+artifact, CAS, and ACL behavior; C1 covers Cloudflare bindings/secrets and
+Queue resources; P1 covers each canary/backfill; D1 covers exact historical
+Railway cleanup targets. No live ingestion, canary, or backfill begins before
+FUSE durability and cross-workspace authorization tests pass. Railway is kept
+read-only during burn-in and is not the production dependency once S1 and the
+explicit cutover gate pass.
 
 ## Rollback and safety
 
@@ -1093,8 +1696,9 @@ remain R1 runtime proofs rather than current operational facts.
 - [ ] Bot `/health` returns expected bindings/product metadata.
 - [ ] Mention receives a streaming answer and status clears.
 - [ ] An explicitly bot-mentioned thread follow-up works.
-- [ ] An unmentioned thread question/action/problem report wakes without a tag;
-      passive chatter remains history-only and does not wake the bot.
+- [ ] An unmentioned channel or thread question/action/problem report wakes
+      without a tag; passive chatter remains history-only and does not wake the
+      bot.
 - [ ] A duplicate `app_mention`/threaded `message` delivery cannot create a
       second active turn or a later false busy warning.
 - [ ] `/agent` uses the same lifecycle and never double-posts its ack.
@@ -1117,7 +1721,283 @@ Slack B0–B4 remains behind R1/C1/S1/P1. K2 adds wiki/code/custom connectors, d
 
 Operator checklist (still inert without approvals):
 
-- [ ] `SUPERMEMORY_MUTATION_CONTRACT=verified` only after R1 Local update/delete smoke.
+- [ ] `SUPERMEMORY_MUTATION_CONTRACT=verified` only after S1 Container/R2 update/delete smoke.
 - [ ] Grant `search_*` / `search` tools via workspace access bundles (not default).
-- [ ] MCP callers use `ADMIN_SECRET` bearer; never accept caller-supplied `containerTag` / `customId`.
+- [ ] External/operator MCP callers use `ADMIN_SECRET` bearer; internal callers use the actor-token header with scope, replay, audit, and source authorization. Never accept caller-supplied `containerTag` / `customId`.
 - [ ] Project isolation `tag_fanout` / `tag_duplicate` only after Local project-tag contract proof.
+- [ ] Grant `code_graph_search`, `code_path`, and `code_impact` explicitly; never add them to the default bundle.
+- [ ] Graphify registry contains only tracked repositories and exact immutable active pointers.
+- [ ] No Graphify post-commit hook is enabled; hourly/manual rebuilds are the only rebuild triggers.
+
+## Current rollout blockers — 2026-08-04
+
+The private Supermemory and Graphify deployments exist, but the knowledge
+readiness gate is not closed. Provision R2_ACCESS_KEY_ID and
+R2_SECRET_ACCESS_KEY for the Supermemory Container through the write-only
+secret workflow; do not paste either value into chat or source. The query
+applications now pass the healthy-instance gate; their Durable Objects may
+still report inactive after normal idle eviction.
+
+The provider adapter stack is deployed but intentionally fail-closed. It
+supports only the controlled tenant-scoped Linear create_issue path and
+requires a custody mapping, controlled workspace subject, valid grant, and
+explicit mode enablement. No live provider effect has been claimed.
+
+Slack manifest reinstall/readback, a valid signed Buzz relay admission, live
+Queue/DLQ and isolate-recovery drills, and harness source/image provenance
+remain separate gates. Worker or service-binding health is not evidence that
+any of those external contracts succeeded. Railway remains read-only during
+burn-in.
+
+The local image gates are now separate from those operator gates: the
+linux/amd64 Supermemory image builds with the pinned tigrisfs v1.2.1 binary,
+and the harness image builds with the repository root as its Docker context.
+The harness source digest is
+`sha256:8b003407364eb9c96499e71294f7d421b5028f365d92bcea63fe6d7f1aaf6baa`,
+and the prior dirty-snapshot deployment gate has since been closed by a
+scoped clean release commit. No R2/FUSE durability claim is made until the
+live secret pair is provisioned.
+
+That harness provenance gate is now closed for the deployed snapshot: local
+commit `a9cf6aa` reports `workingTreeDirty=false`, and Cloudflare version 6 is
+100% on image
+`sha256:f853b7257f6183d11e7855c76ee31664e95813af679c23329ed77cdd92e038e0`
+with 7 healthy and 0 failed instances. The fresh explicit Slack control
+returned `4`; the fresh ordinary no-mention control remained silent, and a
+fresh `--nanocodex` request was quarantined before harness execution.
+
+### Operator action required — 2026-08-04
+
+The strict live knowledge checker currently has exactly one failure: the
+Supermemory Worker lacks `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
+Supermemory and Graphify query applications both pass with `healthy=1` and
+`failed=0`; an inactive Durable Object is normal idle eviction, not an
+unhealthy application. An account administrator must create the
+bucket-scoped R2 token and enter the two values through the write-only secret
+workflow. Do not send the values through chat.
+
+The other required operator fixtures are a Slack app reinstall/readback from a
+workspace administrator, a valid signed Buzz relay event bound to a controlled
+tenant, and a controlled Linear test workspace plus custody mapping. After
+those are present, the remaining canaries and recovery drills can run without
+Railway cutover or credential removal.
+
+### Latest Slack routing readback — 2026-08-03 22:10 PDT
+
+The current installed surface delivered an explicit question, an unmentioned
+top-level question, and an unmentioned threaded follow-up in `#general`; they
+returned `6`, `6`, and `5` respectively. A passive ordinary-conversation
+message remained silent, and the completed parents had no remaining working
+reaction. These are live routing and reaction-cleanup receipts, not proof of
+manifest export or workspace-wide visibility. The ChatGPT Slack connector's
+attribution footer invalidated the no-tag Stop attempt, and the raw bot-token
+transport was correctly ignored as bot-authored; in-flight Stop quiescence
+remains open.
+
+### 2026-08-04 continuation correction
+
+The current bot is version `54515284-a310-4d43-9f49-1295bafc0b92`. Its
+durable Slack egress scheduler now generation-fences queued writes and gives
+Stop control priority. The affected Slack/Stop/rate-limit suite passes 74
+tests. A signed synthetic long-turn/Stop drill reached
+`stop_command_received` and posted `:octagonal_sign: Stopped.`; retain the
+synthetic label because its parent timestamp was not created by Slack.
+
+The latest live preflight supersedes the earlier “exactly one failure” note:
+there are two current Supermemory failures. The Worker lacks
+`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, and the Supermemory query
+instance is `stopped` with `healthy=0; failed=0`. Graphify remains healthy at
+`healthy=1; failed=0`. An account administrator must create a bucket-scoped
+R2 Object Read & Write token for `opentag-supermemory-state`, then enter both
+values interactively:
+
+```bash
+cd /Users/will/Documents/opentag/edge
+npx wrangler secret put R2_ACCESS_KEY_ID --config workers/supermemory/wrangler.toml
+npx wrangler secret put R2_SECRET_ACCESS_KEY --config workers/supermemory/wrangler.toml
+```
+
+The values must not be pasted into chat, committed, or logged. After secret
+provisioning, rerun the live knowledge checker and restart/redeploy
+Supermemory if its query instance remains stopped.
+
+Human-authored Slack canaries `1785822892.400989` and `1785822949.953319`
+produced no bot reply after this deployment. The signed synthetic endpoint
+route did run, so Slack reinstall/readback remains an external gate. The
+installed token also emitted `users.profile.get missing_scope` during the
+synthetic canary; read back the reinstall before claiming ordinary-message,
+reaction, lifecycle, or revocation coverage.
+
+### 2026-08-03 23:17 PDT fresh live correction
+
+The current live preflight reports Supermemory missing both R2 access secret
+names and its query instance inactive with `healthy=0; failed=0`. Graphify is
+healthy with `healthy=1; failed=0`. Static source/artifact/deploy checks pass,
+and the provider adapter plus support Workers are deployed. Provider effects
+must remain disabled until custody supplies a controlled Linear workspace
+subject and provider credential.
+
+The current bot answered a real mention in thread
+`1785823907.868169` (`1785823916.194899`), but did not answer the unmentioned
+threaded follow-up `1785824162.624719` or the Stop attempts
+`1785823961.282869`, `1785824017.302689`, `1785824070.799199`, and
+`1785824111.475349`. The production diagnosis is therefore narrower than a
+general routing failure: `app_mention` is live, while installed `message.*`
+subscriptions/readback remain open. Reinstall the Slack app from
+`slack-app-manifest.yaml`, then verify event subscriptions, scopes, bot
+membership, and profile/reaction readback before rerunning no-tag Stop and
+passive-routing canaries.
+
+Buzz's current `/health` configuration evidence reports all four wake gates
+present (signer, relay, independent origin allowlist, and tenant directory),
+but no fresh signed canonical-event receipt was captured in this checkpoint.
+
+### 2026-08-03 23:27 PDT authoritative preflight
+
+The latest strict live check has exactly two failures: Supermemory lacks
+`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, and its query instance is
+`stopped` with `active=0; healthy=0; failed=0`. Graphify is healthy with
+`healthy=1; failed=0`; inactive Graphify Durable Object state is normal idle
+eviction. The deployed harness provenance is verified on the clean image and
+is no longer an open gate. Provider support Workers are deployed, but effects
+remain fail-closed pending custody and a controlled Linear test workspace.
+
+The current Wrangler OAuth identity cannot create the required account-level
+R2 S3 token. An account administrator must create the bucket-scoped token and
+enter it through the two interactive `wrangler secret put` commands above.
+Slack manifest reinstall/readback and a fresh signed Buzz admission are also
+required before their live canaries can run.
+
+### 2026-08-03 23:32 PDT Worker source redeploy
+
+The current Supermemory Worker source is deployed as version
+`d85b3a1a-2e59-4619-a96f-6eae3a2ffc86`; Graphify is deployed as version
+`c5daebda-056e-49dc-9f1f-add24b0001c6`. Both commands used
+`--containers-rollout=none`, so the source/config changed without rebuilding
+or replacing a Container image. Docker/FUSE and Supermemory runtime
+readiness remain blocked by the missing R2 secret pair.
+
+### 2026-08-03 23:37 PDT Container rollout readback
+
+With Docker Desktop's CLI path supplied, the current Supermemory image built
+successfully and produced no remote Container change because its image was
+already present. Graphify query and builder images built and the query image
+was applied; after startup Graphify passed the strict health gate. The
+code-graph Slack canary `1785825331.979619` received no reply, so the live
+facade/citation path remains unproven independently of Container health.
+
+### 2026-08-03 23:43 PDT Slack delivery diagnosis
+
+The current explicit code-graph mention `1785825654.491479` and plain
+`2 + 2` mention `1785825745.790249` produced no replies. A live tail of the
+deployed bot emitted no `turn_*` or `slack_message_routed` event for either
+message, so the immediate Slack blocker is installed Event API delivery or
+manifest state, not Graphify. Background `knowledge_http_503` retries are
+separate and trace to the absent Supermemory R2 credentials.
+
+### 2026-08-03 23:49 PDT provider readiness correction
+
+The isolated Linear project `OpenTag E2E Provider Smoke - 2026-08-02`
+(`1e98bfb6-27d1-46d8-879c-7975107e7005`) is confirmed read-only and empty.
+The provider adapter now probes credential-broker health before advertising
+effects; its controlled subject is configured and adapter version
+`c2a57312-9e93-4d9e-a90a-7ee0bae0b295` is deployed. Effecter health remains
+fail-closed (`providerEffectsEnabled=false; providerAdapterReady=false`)
+until custody supplies the mapped provider credential. Nine focused provider
+tests pass.
+
+### 2026-08-03 23:55 PDT gate ownership correction
+
+The provider, support-worker, and deploy-script focused tests pass (16 tests
+across 3 files), and `git diff --check` passes. The strict knowledge check
+still fails only because Supermemory lacks the two bucket credentials and its
+query instance therefore stops unhealthy; Graphify is healthy and its inactive
+state is normal idle eviction. The next Supermemory action is an account
+administrator creating a bucket-scoped R2 Object Read & Write credential for
+`opentag-supermemory-state`, followed by interactive `wrangler secret put`
+commands. Do not put either value in chat, source, logs, or config.
+
+No additional OpenTag implementation approval is needed for the remaining
+external gates. Slack requires workspace-admin manifest reinstall and
+readback; Buzz requires an authenticated signed relay event; provider effects
+require the approved Secrets Store mapping and controlled Linear credential.
+The harness provenance gate is closed.
+
+### 2026-08-03 23:58 PDT Buzz configuration readback
+
+The deployed bot reports all Buzz wake configuration gates present, and an
+empty unauthenticated `POST /buzz/wake` returns the expected HTTP 400 schema
+error. This confirms configuration and routing only; it does not replace the
+required signed relay event and tenant-scoped admission receipt.
+
+### 2026-08-04 00:01 PDT source-gate verification
+
+Typecheck passes and the full edge suite passes 148 files / 1,414 tests. A
+stale shared Slack rate-limit Durable Object test double was corrected to
+include the production `commit` method. No source-level test blocker remains;
+the remaining gates require external R2, Slack-admin, Buzz-signer, and
+credential-custody state.
+
+### 2026-08-04 00:04 PDT Slack model-quota readback
+
+Slack history shows the bot receiving an explicit code-graph mention and
+returning a provider error: `You have no credits remaining`. The agent runtime
+Worker is reachable and has an `OPENAI_API_KEY` binding, but provider quota is
+not represented by health. The no-mention follow-up remains unanswered, so
+manifest/event readback is still required separately. Pause further canaries
+until the model account has usable quota.
+
+### 2026-08-04 00:10 PDT bot error-boundary deployment
+
+The Slack adapter now replaces provider quota/credential details with a
+stable user-facing OpenTag error, preventing billing URLs from being exposed.
+The focused renderer test, typecheck, and full suite pass (148 files / 1,415
+tests). Bot Worker version `abe6b775-7b11-48d3-9b0a-1db193fd07ac` is deployed.
+No live canary was sent while model quota remains unavailable.
+
+### 2026-08-04 00:11 PDT bot deployment correction
+
+The bot was redeployed through `scripts/deploy-bot-safe.mjs` with the
+immutable `cloudflare-r2-v1` generation var as version
+`f06b9456-c817-4f08-af83-cdced1b2029a`. A cache-busted health readback reports
+`indexGenerationConfigured:true`; the intermediate deployment without that
+var is superseded. No canary was sent during the transient mismatch.
+
+### 2026-08-04 20:46 PDT DeepSeek provider and R2 credential repair
+
+The production triage provider is configured in
+`workers/agent-runtime/wrangler.toml` with:
+
+```text
+AGENT_PROVIDER=deepseek
+AGENT_MODEL=deepseek-v4-flash
+AGENT_BASE_URL=https://api.deepseek.com/
+```
+
+`DEEPSEEK_API_KEY` is a Worker Secret forwarded only to the agent Container.
+The old `OPENAI_API_KEY` remains present as an explicit rollback secret. The
+local provider boundary uses the existing OpenAI Responses adapter with the
+DeepSeek base URL, so existing MCP/function-tool and Responses streaming
+contracts remain in one path. The DeepSeek key was probed without logging its
+value; text and function-tool Responses calls returned HTTP 200.
+
+The agent image still needs a real Container rebuild and rollout. Wrangler's
+configuration dry-run passes with `--containers-rollout=none`, while a normal
+dry-run fails before build because Docker Desktop's containerd content store
+returns I/O errors. Do not deploy only the Worker proxy: that would leave the
+old image unable to read `DEEPSEEK_API_KEY` or select the DeepSeek adapter.
+
+The Supermemory repair remains a separate credential gate. Create an R2 API
+token with Object Read & Write permission scoped only to
+`opentag-supermemory-state`, copy the one-time Access Key ID and Secret Access
+Key, and enter them interactively:
+
+```bash
+cd /Users/will/Documents/opentag/edge
+npx wrangler secret put R2_ACCESS_KEY_ID --config workers/supermemory/wrangler.toml
+npx wrangler secret put R2_SECRET_ACCESS_KEY --config workers/supermemory/wrangler.toml
+```
+
+Never place those values in Git, chat, logs, or the bot binding. The source
+contract and bucket already exist; the account administrator's token creation
+is the missing external input.

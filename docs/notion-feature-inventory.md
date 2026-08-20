@@ -1,7 +1,7 @@
 # Notion-derived OpenTag feature inventory
 
 Status: **historical Notion audit reconciled with the merged connector/platform
-work, the 2026-08-01 live rollout, and the credential-broker branch**
+work, the 2026-08-01 and 2026-08-02 live rollouts, and the credential-broker branch**
 
 Updated: **2026-08-02**
 
@@ -11,8 +11,9 @@ implementation and deployment truth is in
 mapping from daily Centaur findings to OpenTag decisions.
 The credential-broker, queue-backed effecter, OAuth/marketplace, billing,
 identity-custody, deletion, provisioning, and trace/query/router work is now in
-the merged mainline. Its external boundaries remain fail-closed: no provider
-mapping, token, callback, custody resolution, or real effect is live.
+the merged mainline and the provider-independent boundaries are deployed
+fail-closed. No provider mapping, caller credential, token, callback, custody
+resolution, or real effect is live.
 
 The local knowledge milestone adds Cloudflare-only Supermemory and Graphify
 service boundaries, Slack outbound observation, bot-message indexing,
@@ -20,11 +21,9 @@ reaction/membership capture, and revocable ACL leases. Those Workers and their
 R2 buckets are not present in the live account yet; see
 [`docs/current-state.md`](./current-state.md) for the current gate.
 
-The queue-backed effecter implementation is maintained in the isolated
-`codex/weekly-platform-effecter` branch. Its provider boundary now requires a
-dedicated service binding and bearer secret per effect family, and remains
-fail-closed until an approved provider adapter and custody boundary are
-configured.
+The queue-backed effecter implementation is deployed and requires a dedicated
+service binding and bearer secret per effect family. It remains fail-closed
+until an approved provider adapter and custody boundary are configured.
 
 The OAuth/marketplace branch adds replay-safe state, durable trust/version
 gates, and an authenticated provider-adapter protocol, but does not claim a
@@ -89,7 +88,8 @@ blocked now have a precise evidence status:
 - router classification is **live-verified in shadow mode** with Tier 2 still
   dispatched;
 - Drive and Linear remain **fail-closed** because the deployed bot has no
-  `CONNECTOR_CREDENTIALS` broker/provider custody; and
+  broker authorization, custody mapping, provider adapter, or test-workspace
+  grant, even though the internal broker service binding is deployed; and
 - the Buzz receive route is **live fail-closed**, not authenticated-live.
 
 The original Notion findings and dates are not rewritten. See the
@@ -110,22 +110,30 @@ external effects remain gated:
 
 - [#29 platform effecter](https://github.com/wcordelo/opentag/pull/29) and
   [#30 credential broker](https://github.com/wcordelo/opentag/pull/30) establish
-  the secret-free handoff and custody boundary;
+  the secret-free handoff and custody boundary; both boundaries are deployed
+  without provider credentials;
 - [#31 OAuth/marketplace](https://github.com/wcordelo/opentag/pull/31),
   [#32 billing policy](https://github.com/wcordelo/opentag/pull/32),
   [#37 identity custody](https://github.com/wcordelo/opentag/pull/37),
   [#38 memory deletion](https://github.com/wcordelo/opentag/pull/38), and
   [#39 provisioning](https://github.com/wcordelo/opentag/pull/39) add the
-  provider-independent metadata and receipt boundaries; and
+  provider-independent metadata and receipt boundaries, now deployed from
+  merged main;
 - [#41 OAuth scope hardening](https://github.com/wcordelo/opentag/pull/41),
   [#42 billing adapter](https://github.com/wcordelo/opentag/pull/42), and
   [#43 trace/query/router safety](https://github.com/wcordelo/opentag/pull/43)
-  close follow-up validation gaps.
+  close follow-up validation gaps. The later foundation stack [#45](https://github.com/wcordelo/opentag/pull/45),
+  [#47](https://github.com/wcordelo/opentag/pull/47),
+  [#48](https://github.com/wcordelo/opentag/pull/48), and
+  [#49](https://github.com/wcordelo/opentag/pull/49), and dependent PRs
+  [#50](https://github.com/wcordelo/opentag/pull/50) through
+  [#53](https://github.com/wcordelo/opentag/pull/53) are consolidated in this
+  source/test branch. They are not a production deployment or cutover claim.
 
-Before claiming knowledge completeness, supply the least-scope R2/provider
-credentials, prove derived-index FUSE boot and queue/descriptor convergence,
-read back the live `all_delivered` policy, and run a human Slack canary. Do not
-enable Drive or Linear until broker custody, exact grants, OAuth/provider
+Before claiming knowledge completeness, validate the complete mainline together,
+redeploy only after approval, supply least-scope R2/provider credentials, prove
+derived-index FUSE boot and queue/descriptor convergence, read back the live
+`all_delivered` policy, and run a human Slack canary. Do not enable Drive or Linear until broker custody, exact grants, OAuth/provider
 configuration, ACL policy, and a test workspace are all present. Do not enable
 Tier 1 or Tier 3 routing until shadow volume, quality, feedback, latency, cost,
 and rollback evidence meet an explicit rollout decision.

@@ -1,15 +1,19 @@
 # Platform and routing foundation
 
-Status: **source-complete metadata foundation; synthetic-live; credential-broker
-boundary validated locally; external effecter and connector custody still gated**
+Status: **source-complete metadata foundation; synthetic-live; provider-independent
+effect boundaries deployed fail-closed; external providers and connector custody
+still gated**
 
-Updated: **2026-08-01**
+Updated: **2026-08-02**
 
 The OAuth state/marketplace gates and authenticated provider-adapter protocol
 are locally validated but remain fail-closed without approved provider custody.
 The effect ledger, router measurement ledger, marketplace trust gates, and
-replay-safe OAuth state store are validated in code; no hosted platform effecter,
-connector credential broker, or live provider OAuth exchange is deployed.
+replay-safe OAuth state store are validated in code. The provider-independent
+platform effecter, credential custody/broker, provisioning, identity custody,
+OAuth callback/effecter, billing, and memory-deletion Workers are deployed from
+merged main, but no provider adapter, internal caller credential, or live
+provider OAuth exchange is configured.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future

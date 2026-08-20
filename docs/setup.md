@@ -1,8 +1,8 @@
 # OpenTag — setup & configuration
 
-> **Start here:** [README.md](./README.md) · [PRODUCT.md](./PRODUCT.md) ·
-> [ARCHITECTURE.md](./ARCHITECTURE.md) · [docs/operations.md](./docs/operations.md).
-> Current deployment and live evidence: [docs/current-state.md](./docs/current-state.md).
+> **Start here:** [README.md](../README.md) · [PRODUCT.md](./PRODUCT.md) ·
+> [ARCHITECTURE.md](./ARCHITECTURE.md) · [operations.md](./operations.md).
+> Current deployment and live evidence: [docs/current-state.md](./current-state.md).
 > Slack ingress is the **Cloudflare bot Worker** (Events API). There is no Socket Mode bot.
 > Locked decisions: [DECISIONS.md](./DECISIONS.md).
 
@@ -68,14 +68,14 @@ npm ci && npm run dev            # uses vendored @copilotkit/channels — see ed
 ```
 
 Point Slack Request URLs at the Worker (`/slack/events`, `/slack/commands`,
-`/slack/interactions`) — see [`slack-app-manifest.yaml`](./slack-app-manifest.yaml).
+`/slack/interactions`) — see [`slack-app-manifest.yaml`](../slack-app-manifest.yaml).
 For local Slack inbound, tunnel the wrangler port (often `:8787`) or deploy
 `npm run deploy:bot`.
 
 ## 1. Create a Slack app
 
 1. [api.slack.com/apps](https://api.slack.com/apps?new_app=1) → **From a manifest** → paste
-   [`slack-app-manifest.yaml`](./slack-app-manifest.yaml).
+   [`slack-app-manifest.yaml`](../slack-app-manifest.yaml).
 2. **OAuth & Permissions** → Install → copy **Bot User OAuth Token** (`xoxb-…`) → `SLACK_BOT_TOKEN`.
 3. **Basic Information** → **Signing Secret** → `SLACK_SIGNING_SECRET`.
 4. Set Request URLs to your Worker (`socket_mode_enabled: false`).
@@ -132,7 +132,7 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `BUZZ_OPEN_TAG_AUTH_TAG_SECRET` | bot secret/var | Optional bounded Buzz authorization tag |
 | `PLATFORM_STATE` / `ROUTER_MEASUREMENTS` | Durable Object bindings | Tenant metadata/effect ledger and router shadow measurement ledger |
 
-See [`.env.example`](./.env.example) and [`edge/.dev.vars.example`](./edge/.dev.vars.example).
+See [`.env.example`](../.env.example) and [`edge/.dev.vars.example`](../edge/.dev.vars.example).
 
 ## 3. Linear create flow (what to expect)
 
@@ -160,8 +160,8 @@ configured deployment secret as proof of a tenant's provider grant.
 
 ## 4. Integrations (runtime)
 
-Linear and Notion MCP wiring lives in [`lib/triage-agent.ts`](./lib/triage-agent.ts) /
-[`runtime.ts`](./runtime.ts). In the Container, Notion starts as a sidecar when
+Linear and Notion MCP wiring lives in [`lib/triage-agent.ts`](../lib/triage-agent.ts) /
+[`runtime.ts`](../runtime.ts). In the Container, Notion starts as a sidecar when
 `NOTION_TOKEN` + `NOTION_MCP_AUTH_TOKEN` are set. Locally: `pnpm notion-mcp`.
 
 **Container pitfall:** `TriageContainer.envVars` must be a **class field**, not a
@@ -174,7 +174,7 @@ cd edge && npm run dev:research
 # or mock: RESEARCH_MOCK=1 pnpm e2e:research
 ```
 
-See [docs/research-actors.md](./docs/research-actors.md).
+See [docs/research-actors.md](./research-actors.md).
 
 ## Tests
 
@@ -191,7 +191,7 @@ egress, remote-git approval, coding postconditions, and research cancellation.
 
 ## Doc index
 
-See [docs/README.md](./docs/README.md).
+See [docs/README.md](./README.md).
 
 ## Claude Code and Claudex zero-trust egress
 

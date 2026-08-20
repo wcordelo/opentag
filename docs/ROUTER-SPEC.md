@@ -17,7 +17,7 @@ true.
 A live admin summary/list confirmed Tier 1 counterfactual records, conservative
 fallbacks, outcomes, and workspace-scoped storage. Tier 1 answer dispatch,
 model classification, billing, user-facing escalation, and Tier 3 compute are
-still dark. Read [docs/current-state.md](./docs/current-state.md) for live
+still dark. Read [docs/current-state.md](./current-state.md) for live
 versions, evidence, rollout gates, and the reason these remaining gates are
 intentional. Historical “not built” wording below describes the design point
 before the shadow implementation landed.

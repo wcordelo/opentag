@@ -38,7 +38,7 @@ not part of the target architecture.
 ## Current implementation reconciliation — 2026-08-02 20:16 PDT
 
 This vision remains authoritative for direction, not for deployed status. Read
-[docs/current-state.md](./docs/current-state.md) before interpreting any later
+[docs/current-state.md](./current-state.md) before interpreting any later
 section that says Layer 3, the router, knowledge, or Buzz is not built. The
 merged OpenTag baseline is `d075431`; the latest inspected live bot is version
 `764a18ea-bda9-4209-bdbc-0b9cc81a6cba`; the current reconciliation also
@@ -103,7 +103,7 @@ silent terminal surface, but not a KnowledgeDO or derived-index receipt.
 The locked tenancy model is one shared Worker fleet with strict per-team
 Durable Object isolation. Worker Secrets are the deployment/bootstrap
 configuration path, not a complete per-tenant OAuth/token store. The complete
-feature matrix and open-gap ledger are in [docs/current-state.md](./docs/current-state.md).
+feature matrix and open-gap ledger are in [docs/current-state.md](./current-state.md).
 
 
 This document says where OpenTag is going and why. It is not a sprint plan.
@@ -120,7 +120,7 @@ disagree about *current* state, they win; where they are silent about
 
 The detailed bullets in this historical vision section were written before the
 2026-08-01 rollout. For current implementation truth, use
-[docs/current-state.md](./docs/current-state.md); the bullets below retain the
+[docs/current-state.md](./current-state.md); the bullets below retain the
 directional baseline and are not deployment evidence.
 
 Calibrate everything below against these facts as of July 2026:

@@ -16,7 +16,7 @@ UX and reliability lessons that made Centaur feel dependable, then rebuilt the
 stateful pieces with Cloudflare-native primitives.
 
 The original decision analysis remains in
-[ARCHITECTURE-ANALYSIS.md](../ARCHITECTURE-ANALYSIS.md). This document records
+[ARCHITECTURE-ANALYSIS.md](./archive/ARCHITECTURE-ANALYSIS.md). This document records
 what actually landed and where it lives now.
 
 The current deployment and live feature matrix is maintained in
@@ -356,8 +356,8 @@ Claude's own success claim is held until OpenTag verifies:
 
 ## Source documents
 
-- [ARCHITECTURE.md](../ARCHITECTURE.md): current system
-- [ARCHITECTURE-ANALYSIS.md](../ARCHITECTURE-ANALYSIS.md): original A-vs-B decision
-- [SPEC.md](../SPEC.md): original phased design
-- [GOAL.md](../GOAL.md): implementation orchestration brief
-- [implementation-notes.md](../implementation-notes.md): phase history and review fixes
+- [ARCHITECTURE.md](./ARCHITECTURE.md): current system
+- [ARCHITECTURE-ANALYSIS.md](./archive/ARCHITECTURE-ANALYSIS.md): original A-vs-B decision
+- [SPEC.md](./archive/SPEC.md): original phased design
+- [GOAL.md](./archive/GOAL.md): implementation orchestration brief
+- [implementation-notes.md](./archive/implementation-notes.md): phase history and review fixes

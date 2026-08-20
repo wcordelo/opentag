@@ -5,8 +5,8 @@ Updated: **2026-08-05 14:52 PDT**
 
 This guide covers local validation, deployment units, configuration, health
 checks, logs, and failure diagnosis. Setup from scratch starts in
-[setup.md](../setup.md); system design is in
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+[setup.md](./setup.md); system design is in
+[ARCHITECTURE.md](./ARCHITECTURE.md).
 Local Graphify stdio usage is documented in
 [graphify-local-mcp.md](./graphify-local-mcp.md).
 

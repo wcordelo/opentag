@@ -2,9 +2,9 @@
 
 > **Historical implementation specification.** A1–A5 are implemented and later
 > reliability/security review strengthened several designs. Current truth is
-> [ARCHITECTURE.md](./ARCHITECTURE.md), locked choices are
-> [DECISIONS.md](./DECISIONS.md), and the realized Centaur comparison is
-> [docs/centaur-port.md](./docs/centaur-port.md).
+> [ARCHITECTURE.md](../ARCHITECTURE.md), locked choices are
+> [DECISIONS.md](../DECISIONS.md), and the realized Centaur comparison is
+> [docs/centaur-port.md](../centaur-port.md).
 
 **Date:** 2026-07-12  
 **Decision:** Port centaur's chatbot UX into opentag (Option A). Do not move centaur off K8s (Option B).  

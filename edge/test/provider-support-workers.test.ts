@@ -19,6 +19,7 @@ type Storage = {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T, options?: unknown): Promise<void>;
   delete(key: string): Promise<boolean>;
+  setAlarm(scheduledTime: number | Date): Promise<void>;
 };
 
 function storage(): Storage {
@@ -27,10 +28,11 @@ function storage(): Storage {
     async get<T>(key: string) { return values.get(key) as T | undefined; },
     async put<T>(key: string, value: T) { values.set(key, value); },
     async delete(key: string) { return values.delete(key); },
+    async setAlarm(_scheduledTime: number | Date) {},
   };
 }
 
-function namespace<T extends new (ctx: unknown, env: unknown) => { fetch(request: Request): Promise<Response> }>(Type: T) {
+function namespace<T extends new (...args: any[]) => { fetch(request: Request): Promise<Response> }>(Type: T) {
   const instances = new Map<string, InstanceType<T>>();
   return {
     idFromName(name: string) { return name; },

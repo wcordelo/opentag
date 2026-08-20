@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { DurableObject } from "cloudflare:workers";
-import type { DurableObjectNamespace, DurableObjectState } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 
 const SCHEMA_VERSION = 1 as const;
 const MAX_BODY_BYTES = 48 * 1024;
@@ -15,7 +15,10 @@ type ReservationRecord = Readonly<{
   key: string;
   receipt?: Receipt;
   createdAt: string;
+  expiresAt: string;
 }>;
+
+type DurableObjectContext = ConstructorParameters<typeof DurableObject>[0];
 
 type IdempotencyEnv = {
   Bindings: {
@@ -156,7 +159,7 @@ app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(() => Response.json({ error: "provider_idempotency_internal_error" }, { status: 503 }));
 
 export class ProviderIdempotencyDO extends DurableObject {
-  constructor(ctx: DurableObjectState, env: unknown) {
+  constructor(ctx: DurableObjectContext, env: Cloudflare.Env) {
     super(ctx, env);
   }
 
@@ -172,8 +175,12 @@ export class ProviderIdempotencyDO extends DurableObject {
         return Response.json({ error: "provider_idempotency_request_invalid" }, { status: 400 });
       }
       const requestKey = key(body.key);
-      const current = await this.ctx.storage.get<ReservationRecord>("record");
+      let current = await this.ctx.storage.get<ReservationRecord>("record");
       const now = Date.now();
+      if (current && Date.parse(current.expiresAt) <= now) {
+        await this.ctx.storage.delete("record");
+        current = undefined;
+      }
       if (operation === "reserve") {
         exactFields(body, ["schemaVersion", "operation", "key", "tenantId", "provider", "action", "idempotencyKey", "requestRef", "requestRevision", "requestDigest", "authorizationDigest"], "provider_idempotency_request_invalid");
         if (current?.state === "completed" || current?.state === "ambiguous") {
@@ -188,8 +195,10 @@ export class ProviderIdempotencyDO extends DurableObject {
           reservationId: crypto.randomUUID(),
           key: requestKey,
           createdAt: new Date(now).toISOString(),
+          expiresAt: new Date(now + 15 * 60_000).toISOString(),
         };
-        await this.ctx.storage.put("record", reservation, { expirationTtl: 15 * 60 });
+        await this.ctx.storage.put("record", reservation);
+        await this.ctx.storage.setAlarm(Date.parse(reservation.expiresAt));
         return statusResponse({ schemaVersion: SCHEMA_VERSION, status: "reserved", reservationId: reservation.reservationId });
       }
       exactFields(body, ["schemaVersion", "operation", "key", "reservationId", ...(operation === "release" ? [] : ["receipt"])], "provider_idempotency_request_invalid");
@@ -216,13 +225,26 @@ export class ProviderIdempotencyDO extends DurableObject {
         ...current,
         state: desiredState,
         receipt,
+        expiresAt: new Date(now + 30 * 24 * 60 * 60_000).toISOString(),
       };
-      await this.ctx.storage.put("record", updated, { expirationTtl: 30 * 24 * 60 * 60 });
+      await this.ctx.storage.put("record", updated);
+      await this.ctx.storage.setAlarm(Date.parse(updated.expiresAt));
       return statusResponse({ schemaVersion: SCHEMA_VERSION, status: "stored" });
     } catch (error) {
       if (error instanceof IdempotencyError) return Response.json({ error: error.code }, { status: error.status });
       return Response.json({ error: "provider_idempotency_state_failed" }, { status: 503 });
     }
+  }
+
+  async alarm(): Promise<void> {
+    const current = await this.ctx.storage.get<ReservationRecord>("record");
+    if (!current) return;
+    const expiresAt = Date.parse(current.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      await this.ctx.storage.delete("record");
+      return;
+    }
+    await this.ctx.storage.setAlarm(expiresAt);
   }
 }
 

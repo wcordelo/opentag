@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { DurableObject } from "cloudflare:workers";
-import type { DurableObjectNamespace, DurableObjectState } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
   parseCredentialReference,
   type ImmutableConnectorLabels,
@@ -27,6 +27,8 @@ type RequestResolution = Readonly<{
   credential: CredentialReference;
   approval: LinearWriteApproval;
 }>;
+
+type DurableObjectContext = ConstructorParameters<typeof DurableObject>[0];
 
 type ResolverEnv = {
   Bindings: {
@@ -286,7 +288,7 @@ app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError(() => Response.json({ error: "provider_request_resolver_internal_error" }, { status: 503 }));
 
 export class ProviderRequestDO extends DurableObject {
-  constructor(ctx: DurableObjectState, env: unknown) {
+  constructor(ctx: DurableObjectContext, env: Cloudflare.Env) {
     super(ctx, env);
   }
 
@@ -316,12 +318,21 @@ export class ProviderRequestDO extends DurableObject {
           return Response.json({ error: "provider_request_expired" }, { status: 409 });
         }
         await this.ctx.storage.put("tenantId", identifier(body.tenantId, "tenant_id"));
-        await this.ctx.storage.put("resolution", resolution, { expiration: Math.floor(expiresAt / 1_000) });
+        await this.ctx.storage.put("resolution", resolution);
+        await this.ctx.storage.setAlarm(expiresAt);
         return Response.json({ ok: true, duplicate: false });
       }
       exactFields(body, ["schemaVersion", "tenantId", "provider", "action", "requestRef", "requestRevision", "requestDigest", "authorizationDigest"], "provider_request_invalid");
       const resolution = await this.ctx.storage.get<RequestResolution>("resolution");
       if (!resolution) return Response.json({ error: "provider_request_not_found" }, { status: 404 });
+      const expiresAt = Math.min(
+        Date.parse(resolution.approval.expiresAt),
+        Date.parse(resolution.labels.expiresAt),
+        resolution.credential.expiresAt ? Date.parse(resolution.credential.expiresAt) : Number.POSITIVE_INFINITY,
+      );
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        return Response.json({ error: "provider_request_expired" }, { status: 409 });
+      }
       const tenantId = await this.ctx.storage.get<string>("tenantId");
       if (
         body.schemaVersion !== SCHEMA_VERSION ||
@@ -340,6 +351,11 @@ export class ProviderRequestDO extends DurableObject {
       if (error instanceof ResolverError) return Response.json({ error: error.code }, { status: error.status });
       return Response.json({ error: "provider_request_state_failed" }, { status: 503 });
     }
+  }
+
+  async alarm(): Promise<void> {
+    await this.ctx.storage.delete("tenantId");
+    await this.ctx.storage.delete("resolution");
   }
 }
 

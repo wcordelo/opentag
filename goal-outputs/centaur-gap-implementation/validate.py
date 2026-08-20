@@ -11,7 +11,7 @@ GOAL_DIR = Path(__file__).resolve().parent
 SPEC = ROOT / "docs/centaur-gap-implementation-spec.md"
 REPORT = GOAL_DIR / "implementation-report.md"
 EXPECTED_SPEC_SHA256 = (
-    "5ebb36d85bd675eb5741e405131a571303107b092c4166aa55a716a4214fbdfa"
+    "041a6bfbbc194f0230abd356611dc8d3e8db24033e733f6178f49b15072b61be"
 )
 
 
@@ -268,7 +268,7 @@ def check_tests_and_docs() -> None:
         "Rich-payload bot mentions",
     )
     require(
-        "DECISIONS.md",
+        "docs/DECISIONS.md",
         "informational views only",
         "Runtime precedence is resolved independently per field",
         "Trusted rich-payload triggering",

@@ -445,6 +445,7 @@ async function recordSlackQueryConvergence(
         !ledger.derivedIndexGeneration
       ) throw new Error("indexed_ledger_fence_missing");
       const citation = citations[0];
+      if (!citation) throw new Error("citation_missing");
       if (
         citation.contentRevision !== ledger.indexedRevision ||
         citation.channelId !== ledger.channelId ||

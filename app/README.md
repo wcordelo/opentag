@@ -10,5 +10,5 @@ pnpm runtime
 
 This directory is not Slack ingress and does not own lifecycle state.
 
-See [README.md](../README.md), [PRODUCT.md](../PRODUCT.md), and
-[ARCHITECTURE.md](../ARCHITECTURE.md).
+See [README.md](../README.md), [docs/PRODUCT.md](../docs/PRODUCT.md), and
+[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).

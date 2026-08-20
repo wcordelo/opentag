@@ -7,7 +7,7 @@ Updated: **2026-08-05 14:52 PDT**
 
 Read [PRODUCT.md](./PRODUCT.md), [ARCHITECTURE.md](./ARCHITECTURE.md),
 [DECISIONS.md](./DECISIONS.md), and
-[docs/current-state.md](./docs/current-state.md) first. The last document is
+[docs/current-state.md](./current-state.md) first. The last document is
 the evidence index: it distinguishes source-complete, live-verified,
 synthetic-live, fail-closed, and open-gate states.
 

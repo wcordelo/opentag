@@ -1739,7 +1739,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         runErrorPostFinal = true;
         try {
           await progressLive?.markTerminal({ ok: false });
-          const event = args.event as { message?: unknown };
+          const event = args.event;
           await baseSubscriber.onRunErrorEvent?.({
             ...args,
             event: {

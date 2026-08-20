@@ -1,7 +1,7 @@
 # Research evaluation notes
 
 Quick commands for exercising the research **task** plane. Product surface is
-the Claude Tag bot — see [`PRODUCT.md`](../PRODUCT.md).
+the Claude Tag bot — see [`PRODUCT.md`](./PRODUCT.md).
 
 Exact cancellation and late-delivery suppression are part of the evaluation
 contract; see [research-actors.md](./research-actors.md) and the operational

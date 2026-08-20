@@ -297,7 +297,7 @@ export class SupermemoryAdapter {
         metadata,
       });
       const responseRecord = response && typeof response === "object"
-        ? response as Record<string, unknown>
+        ? response as unknown as Record<string, unknown>
         : undefined;
       console.log(JSON.stringify({
         event: "knowledge_local_update_response",

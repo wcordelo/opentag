@@ -9,7 +9,7 @@ Source comparison: Centaur daily gap reviews through fork sync `14c6577`
 > selection to `claudecode` and excluded Codex at the time it was written. The
 > current implementation also supports `claudex`, which runs the same Claude
 > Code CLI through the private CLIProxyAPI/Codex backend. Current behavior and
-> deployment guidance live in [`ARCHITECTURE.md`](../ARCHITECTURE.md) and
+> deployment guidance live in [`ARCHITECTURE.md`](./ARCHITECTURE.md) and
 > [`operations.md`](./operations.md); the original scope statements below are
 > preserved as historical acceptance criteria.
 

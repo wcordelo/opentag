@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import type { VerifiedIngressEvidence } from "./platform/contract.js";
 
 export type DeferredIngressJob = {
   id: string;
@@ -12,6 +13,7 @@ export type DeferredIngressJob = {
   payload: unknown;
   teamId: string;
   notBefore?: number;
+  verifiedIngress?: VerifiedIngressEvidence;
 };
 
 type StoredJob = DeferredIngressJob & {
@@ -46,7 +48,8 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
         current.id !== job.id ||
         current.kind !== job.kind ||
         current.teamId !== job.teamId ||
-        JSON.stringify(current.payload) !== JSON.stringify(job.payload)
+        JSON.stringify(current.payload) !== JSON.stringify(job.payload) ||
+        JSON.stringify(current.verifiedIngress) !== JSON.stringify(job.verifiedIngress)
       ) throw new Error("deferred_ingress_identity_conflict");
       if (current.status === "pending" || current.status === "running") {
         const alarm = await this.ctx.storage.getAlarm();
@@ -103,6 +106,7 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
             kind: job.kind,
             payload: job.payload,
             teamId: job.teamId,
+            ...(job.verifiedIngress ? { verifiedIngress: job.verifiedIngress } : {}),
           }),
         },
       );

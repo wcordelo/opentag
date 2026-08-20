@@ -56,6 +56,7 @@ import {
   type InboundMessageTarget,
 } from "./inbound-target.js";
 import { bindRequestContext } from "../request-context.js";
+import type { VerifiedIngressEvidence } from "../platform/contract.js";
 import {
   buildFileContentParts,
   createR2AttachmentStager,
@@ -685,6 +686,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     body: unknown,
     meta?: {
       teamId?: string;
+      verifiedIngress?: VerifiedIngressEvidence;
       preAdmittedTurn?: PreAdmittedTurn;
       onTurnHandoff?: () => void;
     },
@@ -831,6 +833,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       ...(meta?.preAdmittedTurn
         ? { preAdmittedTurn: meta.preAdmittedTurn }
         : {}),
+      ...(meta?.verifiedIngress
+        ? { verifiedIngress: meta.verifiedIngress }
+        : {}),
       ...(normalized.ts
         ? {
             inbound: {
@@ -966,6 +971,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     /** Present when the slash command is invoked inside a thread. */
     thread_ts?: string;
   }, meta?: {
+    verifiedIngress?: VerifiedIngressEvidence;
     preAdmittedTurn?: PreAdmittedTurn;
     onTurnHandoff?: () => void;
   }): Promise<{ handled: boolean }> {
@@ -1053,6 +1059,9 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       requesterId: user.id,
       ...(meta?.preAdmittedTurn
         ? { preAdmittedTurn: meta.preAdmittedTurn }
+        : {}),
+      ...(meta?.verifiedIngress
+        ? { verifiedIngress: meta.verifiedIngress }
         : {}),
       inbound: {
         channel: normalized.channel,

@@ -10,6 +10,7 @@ import {
   type ExternalSubject,
   type InternalPrincipal,
   type PlatformRequestContext,
+  type TenantLocatorReader,
   type TenantLocator,
   type VerifiedIdentityLink,
   PlatformContractError,
@@ -17,6 +18,7 @@ import {
   validateExternalSubject,
   validatePlatformRequestContext,
 } from "./contract.js";
+import type { IdentityLinkReader } from "./identity-link.js";
 
 function externalSubjectForSlackActor(
   teamId: string,
@@ -37,7 +39,7 @@ function externalSubjectForSlackActor(
  * identity link. The adapter never equates Slack's legacy teamId with an
  * internal tenant or derives a principal from a Slack user ID.
  */
-export function adaptVerifiedSlackRequestContext(input: Readonly<{
+type VerifiedSlackRequestContextInput = Readonly<{
   request: RequestContext;
   channelId: string;
   threadId: string;
@@ -46,7 +48,9 @@ export function adaptVerifiedSlackRequestContext(input: Readonly<{
   principal: InternalPrincipal;
   identityLink: VerifiedIdentityLink;
   verifiedIngress: PlatformRequestContext["verifiedIngress"];
-}>): PlatformRequestContext {
+}>;
+
+export function adaptVerifiedSlackRequestContext(input: VerifiedSlackRequestContextInput): PlatformRequestContext {
   const actor = externalSubjectForSlackActor(input.request.teamId, input.request.actor);
   const inbound = input.request.inbound;
   if (
@@ -88,6 +92,47 @@ export function adaptVerifiedSlackRequestContext(input: Readonly<{
     tenantLocatorVersion: locator.version,
     verifiedIngress: input.verifiedIngress,
     preAdmittedTurn: input.request.preAdmittedTurn,
+  });
+}
+
+/**
+ * Resolve the locator from the server-owned registry before adapting Slack's
+ * legacy request shape. Callers cannot select an internal tenant ID.
+ */
+export async function adaptVerifiedSlackRequestContextFromRegistry(
+  input: Omit<VerifiedSlackRequestContextInput, "locator"> & { locatorReader: TenantLocatorReader },
+): Promise<PlatformRequestContext> {
+  const actor = externalSubjectForSlackActor(input.request.teamId, input.request.actor);
+  const resolution = await input.locatorReader.resolve(actor);
+  const locator = requireActiveTenantLocator(resolution, actor);
+  return adaptVerifiedSlackRequestContext({ ...input, locator });
+}
+
+/**
+ * Resolve both tenant and subject identity from server-owned readers before
+ * adapting Slack's legacy request shape. No caller-supplied principal or
+ * identity proof crosses this boundary.
+ */
+export async function adaptVerifiedSlackRequestContextFromPlatformState(
+  input: Omit<VerifiedSlackRequestContextInput, "locator" | "principal" | "identityLink"> & {
+    tenantLocatorReader: TenantLocatorReader;
+    identityLinkReader: IdentityLinkReader;
+  },
+): Promise<PlatformRequestContext> {
+  const actor = externalSubjectForSlackActor(input.request.teamId, input.request.actor);
+  const locator = requireActiveTenantLocator(
+    await input.tenantLocatorReader.resolve(actor),
+    actor,
+  );
+  const identity = await input.identityLinkReader.resolve(actor, locator.tenantId);
+  if (identity.status !== "resolved") {
+    throw new PlatformContractError(`platform_identity_link_${identity.status}`);
+  }
+  return adaptVerifiedSlackRequestContext({
+    ...input,
+    locator,
+    principal: identity.principal,
+    identityLink: identity.identityLink,
   });
 }
 

@@ -9,6 +9,11 @@
  */
 
 import type { AccessBundle } from "../config/access-bundle.js";
+import {
+  canonicalInternalPrincipalId,
+  canonicalInternalTenantId,
+  type Platform,
+} from "../platform/contract.js";
 
 export const CONNECTOR_AUTH_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_CONNECTOR_AUTH_LIFETIME_MS = 60_000;
@@ -47,11 +52,35 @@ export type CredentialReference = Readonly<{
   revokedAt?: string;
 }>;
 
+/**
+ * Server-owned platform state captured when a connector label is issued.
+ *
+ * These are public version fences only. They are deliberately not a provider
+ * token, OAuth code, key, or any other credential material. The credential
+ * broker re-reads the corresponding platform records before it will ask
+ * custody for a bearer.
+ */
+export type ConnectorAuthorizationPlatformBinding = Readonly<{
+  schemaVersion: typeof CONNECTOR_AUTH_SCHEMA_VERSION;
+  platform: Platform;
+  platformTenantId: string;
+  platformSubjectId: string;
+  tenantId: string;
+  principalId: string;
+  identityLinkVersion: number;
+  authorizationVersion: number;
+  tenantLocatorVersion: number;
+  oauthGrantVersion: number;
+  marketplaceVersion: string;
+}>;
+
 export type ConnectorRequestIdentity = Readonly<{
   workspaceId: string;
   projectId: string;
   channelId: string;
   requesterId: string;
+  /** Canonical principal id supplied only by the server-owned identity path. */
+  principalId?: string;
   actorKind: "human" | "service" | "automation";
   executionId: string;
   threadKey: string;
@@ -73,6 +102,7 @@ export type ImmutableConnectorLabels = Readonly<{
   accessBundleRevision: number;
   credentialRef?: string;
   credentialVersion?: number;
+  platformBinding?: ConnectorAuthorizationPlatformBinding;
   issuedAt: string;
   expiresAt: string;
   digest: string;
@@ -133,6 +163,64 @@ function record(value: unknown, field: string): Record<string, unknown> {
     throw new ConnectorAuthorizationError(`${field}_invalid`);
   }
   return value as Record<string, unknown>;
+}
+
+function positiveVersion(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new ConnectorAuthorizationError(`${field}_invalid`);
+  }
+  return value as number;
+}
+
+/** Parse the metadata-only server-owned authorization fence. */
+export function parseConnectorAuthorizationPlatformBinding(
+  value: unknown,
+): ConnectorAuthorizationPlatformBinding {
+  const input = record(value, "connector_platform_binding");
+  const allowed = new Set([
+    "schemaVersion",
+    "platform",
+    "platformTenantId",
+    "platformSubjectId",
+    "tenantId",
+    "principalId",
+    "identityLinkVersion",
+    "authorizationVersion",
+    "tenantLocatorVersion",
+    "oauthGrantVersion",
+    "marketplaceVersion",
+  ]);
+  if (Object.keys(input).some((key) => !allowed.has(key))) {
+    throw new ConnectorAuthorizationError("connector_platform_binding_field_invalid");
+  }
+  if (input.schemaVersion !== CONNECTOR_AUTH_SCHEMA_VERSION) {
+    throw new ConnectorAuthorizationError("connector_platform_binding_schema_invalid");
+  }
+  if (input.platform !== "slack" && input.platform !== "buzz" && input.platform !== "teams") {
+    throw new ConnectorAuthorizationError("connector_platform_binding_platform_invalid");
+  }
+  let tenantId: string;
+  let principalId: string;
+  try {
+    tenantId = canonicalInternalTenantId(input.tenantId);
+    principalId = canonicalInternalPrincipalId(input.principalId);
+  } catch {
+    throw new ConnectorAuthorizationError("connector_platform_binding_identity_invalid");
+  }
+  const marketplaceVersion = providerPart(input.marketplaceVersion, "marketplace_version");
+  return Object.freeze({
+    schemaVersion: CONNECTOR_AUTH_SCHEMA_VERSION,
+    platform: input.platform,
+    platformTenantId: safeId(input.platformTenantId, "platform_tenant_id"),
+    platformSubjectId: safeId(input.platformSubjectId, "platform_subject_id"),
+    tenantId,
+    principalId,
+    identityLinkVersion: positiveVersion(input.identityLinkVersion, "identity_link_version"),
+    authorizationVersion: positiveVersion(input.authorizationVersion, "authorization_version"),
+    tenantLocatorVersion: positiveVersion(input.tenantLocatorVersion, "tenant_locator_version"),
+    oauthGrantVersion: positiveVersion(input.oauthGrantVersion, "oauth_grant_version"),
+    marketplaceVersion,
+  });
 }
 
 export function credentialReferenceId(provider: string, name: string): string {
@@ -304,6 +392,21 @@ function labelPayload(labels: Omit<ImmutableConnectorLabels, "digest">): string 
     labels.accessBundleRevision,
     labels.credentialRef ?? null,
     labels.credentialVersion ?? null,
+    labels.platformBinding
+      ? [
+          labels.platformBinding.schemaVersion,
+          labels.platformBinding.platform,
+          labels.platformBinding.platformTenantId,
+          labels.platformBinding.platformSubjectId,
+          labels.platformBinding.tenantId,
+          labels.platformBinding.principalId,
+          labels.platformBinding.identityLinkVersion,
+          labels.platformBinding.authorizationVersion,
+          labels.platformBinding.tenantLocatorVersion,
+          labels.platformBinding.oauthGrantVersion,
+          labels.platformBinding.marketplaceVersion,
+        ]
+      : null,
     labels.issuedAt,
     labels.expiresAt,
   ]);
@@ -315,6 +418,7 @@ export async function issueConnectorAuthorization(input: {
   identity: ConnectorRequestIdentity;
   connectorId: string;
   action: string;
+  platformBinding?: ConnectorAuthorizationPlatformBinding;
   now?: number;
   lifetimeMs?: number;
 }): Promise<{ labels: ImmutableConnectorLabels; credential?: CredentialReference }> {
@@ -322,11 +426,20 @@ export async function issueConnectorAuthorization(input: {
   assertAccessBundleActive(input.bundle);
   const connectorId = providerPart(input.connectorId, "connector_id");
   const action = providerPart(input.action, "connector_action");
+  let principalId: string | undefined;
+  if (input.identity.principalId !== undefined) {
+    try {
+      principalId = canonicalInternalPrincipalId(input.identity.principalId);
+    } catch {
+      throw new ConnectorAuthorizationError("principal_id_invalid");
+    }
+  }
   const identity = Object.freeze({
     workspaceId: safeId(input.identity.workspaceId, "workspace_id"),
     projectId: safeId(input.identity.projectId, "project_id"),
     channelId: safeId(input.identity.channelId, "channel_id"),
     requesterId: safeId(input.identity.requesterId, "requester_id"),
+    ...(principalId ? { principalId } : {}),
     actorKind: input.identity.actorKind,
     executionId: safeId(input.identity.executionId, "execution_id"),
     threadKey: safeId(input.identity.threadKey, "thread_key"),
@@ -335,6 +448,15 @@ export async function issueConnectorAuthorization(input: {
     throw new ConnectorAuthorizationError("actor_kind_invalid");
   }
   const grant = matchingGrant(input.bundle, connectorId, action, identity);
+  const platformBinding = input.platformBinding === undefined
+    ? undefined
+    : parseConnectorAuthorizationPlatformBinding(input.platformBinding);
+  if (platformBinding && identity.principalId !== platformBinding.principalId) {
+    throw new ConnectorAuthorizationError("platform_principal_mismatch");
+  }
+  if (platformBinding && platformBinding.platformTenantId !== identity.workspaceId) {
+    throw new ConnectorAuthorizationError("platform_tenant_subject_mismatch");
+  }
   const expectedCredentialRef = grant.credentialRef;
   if (expectedCredentialRef && !input.credential) {
     throw new ConnectorAuthorizationError("credential_reference_required");
@@ -371,6 +493,7 @@ export async function issueConnectorAuthorization(input: {
     accessBundleId: safeId(input.bundle.id, "access_bundle_id"),
     accessBundleRevision: accessBundleRevisionOf(input.bundle),
     ...(input.credential ? { credentialRef: input.credential.ref, credentialVersion: input.credential.version } : {}),
+    ...(platformBinding ? { platformBinding } : {}),
     issuedAt,
     expiresAt,
   } satisfies Omit<ImmutableConnectorLabels, "digest">;

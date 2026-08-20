@@ -2,10 +2,15 @@ import { defineBotTool } from "@copilotkit/channels";
 import { z } from "zod";
 import type { Env } from "../env.js";
 import {
-  loadConnectorAuthorization,
   loadTurnAccess,
   verifyConnectorAuthorization,
 } from "../config/workspace-config-do.js";
+import { ConnectorAuthorizationSnapshotError } from "../connectors/authorization-snapshot.js";
+import {
+  isConnectorAuthorizationUnavailable,
+  loadPlatformConnectorAuthorization,
+} from "../connectors/platform-authorization.js";
+import { PlatformContractError } from "../platform/contract.js";
 import { DriveConnectorError, DRIVE_SEARCH_LIMITS, searchGoogleDrive } from "../memory/connectors/drive-connector.js";
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
@@ -47,18 +52,17 @@ export function createSearchDriveTool(dependencies: {
       const env = dependencies.env();
       try {
         const { bundle } = await loadTurnAccess(env.WORKSPACE_CONFIG, context.teamId, channelId);
-        const actorKind = context.actor.kind === "slack_user" ? "human" : "service";
-        const authorization = await loadConnectorAuthorization(env.WORKSPACE_CONFIG, {
-          workspaceId: context.teamId,
-          projectId,
+        const platformAuthorization = await loadPlatformConnectorAuthorization({
+          env,
+          context,
           channelId,
-          requesterId: context.requesterId,
-          actorKind,
+          projectId,
           executionId: exact.executionId,
           threadKey: exact.threadKey,
           connectorId: "google_drive",
           action: "search",
         });
+        const authorization = platformAuthorization.authorization;
         if (!authorization.credential) {
           return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;
         }
@@ -79,6 +83,15 @@ export function createSearchDriveTool(dependencies: {
       } catch (error) {
         if (error instanceof DriveConnectorError) {
           return { status: "knowledge_unavailable", citations: [], retryable: error.retryable } satisfies SearchDriveResult;
+        }
+        if (isConnectorAuthorizationUnavailable(error)) {
+          return { status: "knowledge_unavailable", citations: [], retryable: true } satisfies SearchDriveResult;
+        }
+        if (
+          error instanceof ConnectorAuthorizationSnapshotError
+          || error instanceof PlatformContractError
+        ) {
+          return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;
         }
         if (error instanceof Error && /unauthorized|authorization|revoked|grant|policy|scope/.test(error.message)) {
           return { status: "unauthorized", citations: [], reason: "policy_denied" } satisfies SearchDriveResult;

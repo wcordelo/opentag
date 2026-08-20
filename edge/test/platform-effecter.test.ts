@@ -61,6 +61,7 @@ function environment(options: {
   token?: string;
   providerAdapter?: unknown;
   providerToken?: string;
+  providerKind?: "provisioning" | "identity_custody" | "credential_custody" | "connector_oauth" | "connector_effect" | "marketplace" | "billing_meter" | "memory_deletion";
 } = {}): { bindings: Record<string, unknown>; paths: string[] } {
   const paths: string[] = [];
   const stub = {
@@ -88,8 +89,20 @@ function environment(options: {
         get: () => stub,
       },
       ...(options.token === undefined ? {} : { EFFECTOR_AUTH_TOKEN: options.token }),
-      ...(options.providerAdapter === undefined ? {} : { PLATFORM_EFFECT_ADAPTER: options.providerAdapter }),
-      ...(options.providerToken === undefined ? {} : { PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN: options.providerToken }),
+      ...(options.providerAdapter === undefined || !options.providerKind
+        ? {}
+        : {
+          [options.providerKind === "connector_effect"
+            ? "CONNECTOR_EFFECT_ADAPTER"
+            : `${options.providerKind.toUpperCase()}_EFFECT_ADAPTER`]: options.providerAdapter,
+        }),
+      ...(options.providerToken === undefined || !options.providerKind
+        ? {}
+        : {
+          [options.providerKind === "connector_effect"
+            ? "CONNECTOR_EFFECT_ADAPTER_AUTH_TOKEN"
+            : `${options.providerKind.toUpperCase()}_EFFECT_ADAPTER_AUTH_TOKEN`]: options.providerToken,
+        }),
     },
   };
 }
@@ -100,6 +113,7 @@ async function fetchWorker(
     token?: string;
     providerAdapter?: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
     providerToken?: string;
+    providerKind?: "provisioning" | "identity_custody" | "credential_custody" | "connector_oauth" | "connector_effect" | "marketplace" | "billing_meter" | "memory_deletion";
     body?: unknown;
     authorization?: string;
   } = {},
@@ -159,12 +173,45 @@ describe("platform effecter Worker", () => {
           : Response.json({}),
       },
       providerToken: "provider-secret",
+      providerKind: "credential_custody",
     });
     expect(enabled.body).toMatchObject({
       adapterConfigured: true,
-      adapterKinds: ["connector_effect"],
+      adapterKinds: ["credential_custody"],
+      adapterConfiguration: {
+        provisioning: "unconfigured",
+        identity_custody: "unconfigured",
+        credential_custody: "configured",
+        connector_oauth: "unconfigured",
+        marketplace: "unconfigured",
+        billing_meter: "unconfigured",
+        memory_deletion: "unconfigured",
+      },
       providerEffectsEnabled: true,
-      providerAdapterReady: true,
+    });
+  });
+
+  it("reports partial bindings without enabling an effect family", async () => {
+    const missingAuth = await fetchWorker("/health", {
+      token: "expected",
+      providerAdapter: { fetch: async () => Response.json({}) },
+      providerKind: "credential_custody",
+    });
+    expect(missingAuth.body).toMatchObject({
+      adapterConfigured: false,
+      adapterKinds: [],
+      adapterConfiguration: { credential_custody: "missing_auth" },
+    });
+
+    const missingBinding = await fetchWorker("/health", {
+      token: "expected",
+      providerToken: "provider-secret",
+      providerKind: "credential_custody",
+    });
+    expect(missingBinding.body).toMatchObject({
+      adapterConfigured: false,
+      adapterKinds: [],
+      adapterConfiguration: { credential_custody: "missing_binding" },
     });
   });
 
@@ -202,6 +249,7 @@ describe("platform effecter Worker", () => {
         },
       },
       providerToken: "provider-secret",
+      providerKind: "connector_effect",
       body: {
         scope: "tenant",
         tenantId: "tenant-1",
@@ -215,5 +263,32 @@ describe("platform effecter Worker", () => {
       adapterConfigured: true,
     });
     expect(result.paths).toEqual(["/effect/claim", "/effect/complete"]);
+  });
+
+  it("does not make one effect-family binding eligible for another kind", async () => {
+    const result = await fetchWorker("/run", {
+      token: "expected",
+      authorization: "Bearer expected",
+      providerAdapter: {
+        async fetch() {
+          throw new Error("credential adapter must not receive provisioning work");
+        },
+      },
+      providerToken: "provider-secret",
+      providerKind: "provisioning",
+      body: {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        intentId: intent.intentId,
+        workerId: "effecter-1",
+      },
+    });
+    expect(result.response.status).toBe(200);
+    expect(result.body).toMatchObject({
+      status: "failed",
+      adapterConfigured: false,
+      errorCode: "effect_adapter_unconfigured",
+    });
+    expect(result.paths).toEqual(["/effect/claim", "/effect/fail"]);
   });
 });

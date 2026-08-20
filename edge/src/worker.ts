@@ -144,8 +144,11 @@ import {
   PlatformFoundationError,
   validateConnectorMarketplaceEntry,
   validatePlatformEffectIntent,
+  type ConnectorMarketplaceEntry,
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
+import { TENANT_LOCATOR_SCHEMA_VERSION } from "./platform/tenant-locator.js";
+import { IDENTITY_LINK_SCHEMA_VERSION } from "./platform/identity-link.js";
 import {
   createLinearWriteApproval,
   normalizeLinearIssueDraft,
@@ -158,6 +161,7 @@ import {
   type PlatformEffectWakeup,
 } from "./platform/effect-dispatch.js";
 import type { MessageBatch } from "@cloudflare/workers-types";
+import type { VerifiedIngressEvidence } from "./platform/contract.js";
 
 export { ConversationStateDO } from "./store/index.js";
 export { WorkspaceConfigDO } from "./config/workspace-config-do.js";
@@ -198,9 +202,7 @@ type LateFileRepairJobPayload = {
   candidate: LateFileEvent;
 };
 
-type FileTurnJobPayload = {
-  callback: SlackEventCallbackPayload;
-};
+type FileTurnJobPayload = { callback: SlackEventCallbackPayload };
 
 type ReactionCleanupJobPayload = {
   teamId?: unknown;
@@ -227,6 +229,7 @@ async function processFileTurn(
   env: AppEnv["Bindings"],
   value: FileTurnJobPayload,
   teamId: string,
+  verifiedIngress?: VerifiedIngressEvidence,
 ): Promise<void> {
   const identity = preAdmissionIdentityForEvent(
     value.callback,
@@ -250,6 +253,7 @@ async function processFileTurn(
     const { adapter } = await getOrCreateBot(env);
     await adapter.handleEventsBody(value.callback, {
       teamId,
+      ...(verifiedIngress ? { verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
     });
@@ -327,6 +331,7 @@ async function processLateFileRepair(
     const { adapter } = await getOrCreateBot(env);
     await adapter.handleEventsBody(synthetic, {
       teamId: candidate.teamId,
+      ...(pending.verifiedIngress ? { verifiedIngress: pending.verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
     });
@@ -379,7 +384,7 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
       if (quickActionEventId(job.payload) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      const result = await handleQuickAction(c.env, job.payload, job.teamId);
+      const result = await handleQuickAction(c.env, job.payload, job.teamId, job.verifiedIngress);
       if (!result.handled) {
         return c.json({ error: "invalid_quick_action" }, 400);
       }
@@ -394,7 +399,7 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
       if (fileTurnJobId(c.env, payload.callback) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      await processFileTurn(c.env, payload, job.teamId);
+      await processFileTurn(c.env, payload, job.teamId, job.verifiedIngress);
     } else if (job.kind === "knowledge_event") {
       const payload = job.payload as SlackEventCallbackPayload;
       if (
@@ -940,6 +945,33 @@ app.post("/admin/router/dispatch/list", requireAdminAuth(), async (c) =>
 app.post("/admin/router/feedback/list", requireAdminAuth(), async (c) =>
   forwardRouterMeasurement(c, "/feedback/list"));
 
+app.post("/admin/platform/tenant-locator", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator",
+    await c.req.json(),
+  );
+});
+
+app.post("/admin/platform/tenant-locator/resolve", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator/resolve",
+    await c.req.json(),
+  );
+});
+
+app.post("/admin/platform/tenant-locator/revoke", requireAdminAuth(), async (c) => {
+  return forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator/revoke",
+    await c.req.json(),
+  );
+});
+
 app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
   const body = await c.req.json();
   let request: ReturnType<typeof validateProvisioningRequest>;
@@ -949,6 +981,21 @@ app.post("/admin/platform/provision", requireAdminAuth(), async (c) => {
     return c.json({ error: error instanceof Error ? error.message : "provisioning_request_invalid" }, 400);
   }
   const tenantId = await deriveInternalTenantId(request);
+  const locatorResponse = await forwardPlatformState(
+    c,
+    PLATFORM_MARKETPLACE_OBJECT_NAME,
+    "/tenant-locator",
+    {
+      schemaVersion: TENANT_LOCATOR_SCHEMA_VERSION,
+      platform: request.externalPlatform,
+      platformTenantId: request.externalTenantId,
+      tenantId,
+      version: 1,
+      status: "active",
+      updatedAt: request.requestedAt,
+    },
+  );
+  if (!locatorResponse.ok) return locatorResponse;
   return forwardPlatformState(c, platformTenantObjectName(tenantId), "/provision", body);
 });
 
@@ -1149,6 +1196,29 @@ app.post("/admin/platform/identity/revoke", requireAdminAuth(), async (c) => {
   return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity/revoke", body);
 });
 
+app.post("/admin/platform/identity-link", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link", body);
+});
+
+app.post("/admin/platform/identity-link/resolve", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (body.schemaVersion !== IDENTITY_LINK_SCHEMA_VERSION) {
+    return c.json({ error: "identity_link_schema_invalid" }, 400);
+  }
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  const { tenantId: _tenantId, ...lookup } = body;
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link/resolve", lookup);
+});
+
+app.post("/admin/platform/identity-link/revoke", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
+  const { tenantId: _tenantId, ...revocation } = body;
+  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/identity-link/revoke", revocation);
+});
+
 app.post("/admin/platform/credential", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
@@ -1179,10 +1249,10 @@ app.post("/admin/platform/marketplace/revoke", requireAdminAuth(), async (c) => 
   return forwardPlatformState(c, PLATFORM_MARKETPLACE_OBJECT_NAME, "/marketplace/revoke", await c.req.json());
 });
 
-async function ensureCuratedOAuthMarketplace(
+async function loadCuratedOAuthMarketplace(
   c: Context<AppEnv>,
   body: Record<string, unknown>,
-): Promise<Response | undefined> {
+): Promise<ConnectorMarketplaceEntry | Response> {
   if (typeof body.connectorId !== "string" || typeof body.marketplaceVersion !== "string") {
     return c.json({ error: "oauth_marketplace_identity_required" }, 400);
   }
@@ -1221,7 +1291,15 @@ async function ensureCuratedOAuthMarketplace(
       return c.json({ error: "oauth_scope_not_allowed" }, 409);
     }
   }
-  return undefined;
+  return marketplaceEntry;
+}
+
+async function ensureCuratedOAuthMarketplace(
+  c: Context<AppEnv>,
+  body: Record<string, unknown>,
+): Promise<Response | undefined> {
+  const result = await loadCuratedOAuthMarketplace(c, body);
+  return result instanceof Response ? result : undefined;
 }
 
 /**
@@ -1246,7 +1324,14 @@ app.post("/admin/platform/oauth/state/consume", requireAdminAuth(), async (c) =>
 app.post("/admin/platform/oauth", requireAdminAuth(), async (c) => {
   const body = await c.req.json() as Record<string, unknown>;
   if (typeof body.tenantId !== "string") return c.json({ error: "tenant_id_required" }, 400);
-  return forwardPlatformState(c, platformTenantObjectName(body.tenantId), "/oauth", body);
+  const marketplace = await loadCuratedOAuthMarketplace(c, body);
+  if (marketplace instanceof Response) return marketplace;
+  return forwardPlatformState(
+    c,
+    platformTenantObjectName(body.tenantId),
+    "/oauth",
+    { ...body, marketplaceSnapshot: marketplace },
+  );
 });
 
 app.post("/admin/platform/oauth/get", requireAdminAuth(), async (c) => {
@@ -2294,6 +2379,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
         id: jobId,
         kind: "file_turn",
         payload: { callback: payload } satisfies FileTurnJobPayload,
+        verifiedIngress: c.get("verifiedIngress"),
         teamId,
       });
     } catch (error) {
@@ -2342,6 +2428,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
       const { adapter } = await getOrCreateBot(c.env);
       await adapter.handleEventsBody(payload, {
         teamId,
+        verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
       });
@@ -2368,6 +2455,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
       threadTs: eventIdentity.threadTs ?? eventIdentity.inboundTs,
       eventId: eventIdentity.eventId,
       expiresAt: Date.now() + LATE_FILE_WINDOW_MS,
+      verifiedIngress: c.get("verifiedIngress"),
     };
     try {
       await store.list.append(
@@ -2443,6 +2531,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     try {
       const { adapter } = await getOrCreateBot(c.env);
       await adapter.handleCommandBody(body, {
+        verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
       });
@@ -2519,6 +2608,7 @@ app.post("/slack/interactions", slackVerify(), async (c) => {
       id: jobId,
       kind: "quick_action",
       payload,
+      verifiedIngress: c.get("verifiedIngress"),
       teamId,
     });
   } catch (err) {

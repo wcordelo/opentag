@@ -32,6 +32,15 @@ type DeferredIngressEnv = {
 const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_MS = 5 * 60_000;
 
+/** Deploy-cutover jobs may lack evidence; a retry with proof is the same delivery. */
+function verifiedIngressMatches(
+  stored: VerifiedIngressEvidence | undefined,
+  incoming: VerifiedIngressEvidence | undefined,
+): boolean {
+  if (stored === undefined || incoming === undefined) return true;
+  return JSON.stringify(stored) === JSON.stringify(incoming);
+}
+
 /**
  * Durable owner for work that Slack has already handed to us but which must
  * finish after the request acknowledgement. The full immutable job is stored
@@ -49,17 +58,23 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
         current.kind !== job.kind ||
         current.teamId !== job.teamId ||
         JSON.stringify(current.payload) !== JSON.stringify(job.payload) ||
-        JSON.stringify(current.verifiedIngress) !== JSON.stringify(job.verifiedIngress)
+        !verifiedIngressMatches(current.verifiedIngress, job.verifiedIngress)
       ) throw new Error("deferred_ingress_identity_conflict");
-      if (current.status === "pending" || current.status === "running") {
+      const stored = !current.verifiedIngress && job.verifiedIngress
+        ? { ...current, verifiedIngress: job.verifiedIngress }
+        : current;
+      if (stored !== current) {
+        await this.ctx.storage.put("job", stored);
+      }
+      if (stored.status === "pending" || stored.status === "running") {
         const alarm = await this.ctx.storage.getAlarm();
         if (alarm === null) {
           await this.ctx.storage.setAlarm(
-            Math.max(Date.now(), current.nextAttemptAt ?? Date.now()),
+            Math.max(Date.now(), stored.nextAttemptAt ?? Date.now()),
           );
         }
       }
-      return { accepted: false, status: current.status };
+      return { accepted: false, status: stored.status };
     }
     const nextAttemptAt = Math.max(Date.now(), job.notBefore ?? Date.now());
     const stored: StoredJob = {

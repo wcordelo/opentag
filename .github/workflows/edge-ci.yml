@@ -7,7 +7,7 @@ on:
     paths:
       - "edge/**"
       - "infra/supermemory/**"
-      - "KNOWLEDGE-BASE-SPEC.md"
+      - "docs/KNOWLEDGE-BASE-SPEC.md"
       - "docs/supermemory-cloudflare-migration.md"
       - "docs/graphify-local-mcp.md"
       - "docs/operations.md"
@@ -17,7 +17,7 @@ on:
     paths:
       - "edge/**"
       - "infra/supermemory/**"
-      - "KNOWLEDGE-BASE-SPEC.md"
+      - "docs/KNOWLEDGE-BASE-SPEC.md"
       - "docs/supermemory-cloudflare-migration.md"
       - "docs/graphify-local-mcp.md"
       - "docs/operations.md"

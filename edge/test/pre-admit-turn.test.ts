@@ -143,7 +143,7 @@ describe("Slack turn pre-admission identity", () => {
         type: "message",
         channel: "C1",
         user: "U1",
-        text: "what is the deploy status?",
+        text: "what is happening in the channel?",
         ts: "13.1",
         thread_ts: "13.0",
       },
@@ -179,6 +179,54 @@ describe("Slack turn pre-admission identity", () => {
       conversationKey: "C1::14.0",
       eventId: "Ev-explicit-mention",
     });
+  });
+
+  it("routes top-level channel questions while observing top-level conversational noise", () => {
+    const config = parseTrustedTriggerConfig("UBOT", undefined);
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-channel-question",
+      event: {
+        type: "message",
+        channel_type: "channel",
+        channel: "C1",
+        user: "U1",
+        text: "what is the deploy status?",
+        ts: "16.1",
+      },
+    }, config)).toMatchObject({
+      conversationKey: "C1::16.1",
+      threadTs: "16.1",
+      eventId: "Ev-channel-question",
+    });
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-channel-search",
+      event: {
+        type: "message",
+        channel_type: "channel",
+        channel: "C1",
+        user: "U1",
+        text: "Search Slack for the exact marker OPENTAG_SUPERMEMORY_LIVE_1945",
+        ts: "16.15",
+      },
+    }, config)).toMatchObject({
+      conversationKey: "C1::16.15",
+      threadTs: "16.15",
+      eventId: "Ev-channel-search",
+    });
+    expect(preAdmissionIdentityForEvent({
+      team_id: "T1",
+      event_id: "Ev-channel-noise",
+      event: {
+        type: "message",
+        channel_type: "channel",
+        channel: "C1",
+        user: "U1",
+        text: "yo",
+        ts: "16.2",
+      },
+    }, config)).toBeUndefined();
   });
 
   it("extracts every lifecycle command and uses trigger_id as immutable ingress ts", () => {

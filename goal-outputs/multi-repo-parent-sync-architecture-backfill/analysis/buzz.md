@@ -1,6 +1,6 @@
 > **Historical snapshot.** This artifact was authored before the final merged OpenTag rollout. Read [the current reconciliation](../CURRENT-STATE-RECONCILIATION.md) and [the current OpenTag status](../../../docs/current-state.md) before treating any implementation or deployment statement as current.
 >
-> The Buzz report's OpenTag comparison predates the merged tenancy/platform work. Current status: server-owned tenant plumbing and `/buzz/wake` receive contracts are source-complete and deployed, while a live empty probe correctly returned HTTP 503 `buzz_receive_not_configured`; authenticated NIP-OA relay admission remains unproven.
+> The Buzz report's OpenTag comparison predates the merged tenancy/platform work. Current status: server-owned tenant plumbing and `/buzz/wake` receive contracts are source-complete and deployed, while a live empty probe reaches schema validation with HTTP 400 `buzz_wake_unexpected_fields`; authenticated NIP-OA relay admission remains unproven.
 
 # Buzz parent-to-fork backfill and architecture deep dive
 
@@ -279,6 +279,6 @@ No branch, PR, deployment, Notion mutation, or OpenTag source edit was authorize
 
 ## Current-state addendum — 2026-08-01
 
-The Buzz report's OpenTag comparison predates the merged tenancy/platform work. Current status: server-owned tenant plumbing and `/buzz/wake` receive contracts are source-complete and deployed, while a live empty probe correctly returned HTTP 503 `buzz_receive_not_configured`; authenticated NIP-OA relay admission remains unproven.
+The Buzz report's OpenTag comparison predates the merged tenancy/platform work. Current status: server-owned tenant plumbing and `/buzz/wake` receive contracts are source-complete and deployed, while a live empty probe reaches schema validation with HTTP 400 `buzz_wake_unexpected_fields`; authenticated NIP-OA relay admission remains unproven.
 
 The original evidence, classifications, and validation limits above are intentionally preserved. The canonical feature/gap ledger is [CURRENT-STATE-RECONCILIATION.md](../CURRENT-STATE-RECONCILIATION.md).

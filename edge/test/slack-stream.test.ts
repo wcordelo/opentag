@@ -94,13 +94,17 @@ describe("CloudflareSlackAdapter.stream", () => {
     "terminalizes the actual final AG-UI Slack request for $mode runs",
     async ({ mode, expected }) => {
       const original = globalThis.fetch;
-      const requests: Array<{ method: string; text: string }> = [];
+      const requests: Array<{ method: string; text: string; clientMessageId?: string }> = [];
       const order: string[] = [];
       globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
         const method = String(url).split("/").pop()!;
         order.push(`slack:${method}`);
         const body = new URLSearchParams(String(init?.body ?? ""));
-        requests.push({ method, text: body.get("text") ?? "" });
+        requests.push({
+          method,
+          text: body.get("text") ?? "",
+          clientMessageId: body.get("client_msg_id") ?? undefined,
+        });
         return method === "chat.postMessage"
           ? Response.json({ ok: true, ts: "10.1" })
           : Response.json({ ok: true });
@@ -172,6 +176,11 @@ describe("CloudflareSlackAdapter.stream", () => {
           { final: true, output: true },
         ]);
         expect(requests.at(-1)?.text).toContain(expected);
+        if (mode === "tool-only") {
+          expect(requests.at(-1)?.clientMessageId).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+          );
+        }
         const terminal = order.indexOf("session:done:exec-final");
         expect(terminal).toBeGreaterThanOrEqual(0);
         expect(terminal).toBeLessThan(order.length - 1);
@@ -181,6 +190,34 @@ describe("CloudflareSlackAdapter.stream", () => {
       }
     },
   );
+
+  it("does not expose provider quota details or billing links in Slack errors", async () => {
+    const { calls, restore } = mockFetch();
+    try {
+      const adapter = new CloudflareSlackAdapter({
+        unsafeAllowUnfencedTestOnly: true,
+        botToken: "xoxb-test",
+      });
+      const subscriber = adapter.createRunRenderer({ channel: "C1" } as never).subscriber as unknown as {
+        onRunErrorEvent(args: unknown): Promise<void>;
+      };
+
+      await subscriber.onRunErrorEvent({
+        event: {
+          message: "stream disconnected before completion: You have no credits remaining. Add credits at https://platform.openai.com/settings/organization/billing/",
+        },
+      });
+
+      const post = calls.find((call) => call.method === "chat.postMessage");
+      expect(post?.body.text).toBe(
+        ":warning: Agent error: The model provider is unavailable right now. Check the configured model credentials or quota.",
+      );
+      expect(post?.body.text).not.toContain("openai.com");
+      expect(post?.body.text).not.toContain("credits");
+    } finally {
+      restore();
+    }
+  });
 
   it("does not render, terminalize, or clear after an output mirror append failure", async () => {
     const original = globalThis.fetch;
@@ -293,10 +330,11 @@ describe("CloudflareSlackAdapter.stream", () => {
     }
   });
 
-  it("posts one Working progress message for AG-UI tools instead of Channels tool status", async () => {
+  it("posts tool progress without the legacy AG-UI status text", async () => {
     const original = globalThis.fetch;
     const posts: Array<{ text?: string; client_msg_id?: string }> = [];
     const updates: Array<{ text?: string }> = [];
+    const assistantStatuses: string[] = [];
     let ts = 20;
     const activeTurn = {
       beginRender: async () => ({ status: "claimed" as const, token: `r-${++ts}` }),
@@ -315,6 +353,10 @@ describe("CloudflareSlackAdapter.stream", () => {
       }
       if (method === "chat.update") {
         updates.push({ text });
+        return Response.json({ ok: true });
+      }
+      if (String(url).includes("assistant.threads.setStatus")) {
+        assistantStatuses.push(params.get("status") ?? "");
         return Response.json({ ok: true });
       }
       return Response.json({ ok: true });
@@ -343,7 +385,7 @@ describe("CloudflareSlackAdapter.stream", () => {
       await subscriber.onToolCallStartEvent({
         event: { toolCallId: "t1", toolCallName: "search_slack" },
       });
-      expect(posts.some((p) => p.text?.includes("OpenTag AG-UI"))).toBe(true);
+      expect(posts.some((p) => p.text?.includes("OpenTag AG-UI"))).toBe(false);
       expect(posts.some((p) => /:white_check_mark:\s*search_slack/i.test(p.text ?? ""))).toBe(
         false,
       );
@@ -363,8 +405,9 @@ describe("CloudflareSlackAdapter.stream", () => {
         .map((m) => m.text ?? "")
         .join("\n");
       expect(progressText).toContain("Searching Slack");
-      expect(progressText).toContain("*Working…*");
+      expect(progressText).not.toContain("*Working…*");
       expect(progressText).not.toMatch(/:white_check_mark:/);
+      expect(assistantStatuses).toEqual([]);
     } finally {
       globalThis.fetch = original;
     }

@@ -10,8 +10,10 @@ const STOP_COMMAND_PATTERN = new RegExp(
   'i'
 )
 
+const SLACK_INTEGRATION_FOOTER_RE = /\s+\*Sent using\*\s+<@[UW][A-Z0-9]+(?:\|[^>]+)?>\s*$/i
+
 export function isSlackStopCommand(message: { text: string }): boolean {
-  const text = message.text.trim()
+  const text = message.text.replace(SLACK_INTEGRATION_FOOTER_RE, '').trim()
   if (!text) return false
   // The Chat SDK normalizes Slack mention tokens before handlers run:
   // <@U123|name> becomes @name and the bot's own <@U123> becomes @U123, so

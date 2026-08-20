@@ -192,6 +192,7 @@ describe("M1 allowlist chokepoint in processBuzzWakeReceive", () => {
   });
 
   it("origin canary: flip live fetch base → reject (grant held fixed)", async () => {
+    let fetches = 0;
     const deps: BuzzWakeReceiveDeps = {
       directory: directory(),
       wakeDedupe: memoryDedupe(),
@@ -202,6 +203,7 @@ describe("M1 allowlist chokepoint in processBuzzWakeReceive", () => {
       }),
       fetcher: {
         async fetchAndVerify() {
+          fetches += 1;
           return verifiedEvent();
         },
       },
@@ -216,6 +218,7 @@ describe("M1 allowlist chokepoint in processBuzzWakeReceive", () => {
       status: "error",
       error: "buzz_relay_origin_not_allowed",
     });
+    expect(fetches).toBe(0);
   });
 
   it("loss-side re-entry (wake duplicate, authoritative unseen) re-hits allowlist deny", async () => {
@@ -277,7 +280,7 @@ describe("M1 allowlist chokepoint in processBuzzWakeReceive", () => {
     await expect(processBuzzWakeReceive(wake(), denyDeps)).rejects.toThrow(
       new BuzzContractError("buzz_relay_origin_not_allowed"),
     );
-    expect(fetches).toBe(2);
+    expect(fetches).toBe(1);
     expect(admits).toHaveLength(0);
   });
 

@@ -44,6 +44,8 @@ export type PermissionSnapshotV1 = Readonly<{
       scope: "workspace" | "project" | "channel";
       projectId?: string;
       channelId?: string;
+      repoId?: string;
+      spaceId?: string;
       credentialRef?: string;
     }>>;
   }>;

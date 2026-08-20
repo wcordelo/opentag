@@ -68,6 +68,18 @@ export function legacySlackObligationThreadKeyFromKey(
   return legacyKey !== threadKey ? legacyKey : undefined;
 }
 
+export function tenantIdFromSlackObligationThreadKey(
+  threadKey: string,
+): string | undefined {
+  const match = /^tenant:([^:]+):slack:/.exec(threadKey);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Inverse of {@link slackObligationThreadKey} for abort routing when registry state is stale. */
 export function conversationKeyFromThreadKey(threadKey: string): string {
   const match = /^(?:tenant:[^:]+:)?slack:([^:]+):(.+)$/.exec(threadKey);

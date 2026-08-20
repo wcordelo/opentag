@@ -140,6 +140,7 @@ export function tryBuildBuzzWakeReceiveDeps(
   // Worker can 503 without attempting a fetch that would look like auth 403.
   const authTagJson = loadBuzzOpenTagAuthTag(
     env[BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME],
+    signer.publicKeyHex,
   );
 
   const allowlist = buildBuzzInstallationAllowlist({

@@ -1,7 +1,7 @@
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
   createKnowledgeJob,
-  slackSourceKey,
+  knowledgeSourceKey,
   type KnowledgeJob,
 } from "./knowledge-contract.js";
 import { parseKnowledgeJob } from "./knowledge-jobs.js";
@@ -14,18 +14,23 @@ import {
   type KnowledgeReconcileCoordinator,
   type KnowledgeReconcileCoordinatorClaim,
 } from "./knowledge-ledger.js";
+import { normalizeDerivedIndexGeneration } from "./derived-index-generation.js";
 import type { WorkspaceConfigDO } from "../config/workspace-config-do.js";
+import type { Env } from "../env.js";
 import {
   isTrackedKnowledgeSourceEnabled,
+  type KnowledgeSourceType,
   type TrackedKnowledgeSource,
 } from "../config/knowledge-config.js";
 import { routeKnowledgeQueueName } from "./knowledge-queue-routing.js";
+import { reconcileSlackKnowledgeAclForTeam } from "./knowledge-acl-reconciler.js";
 import { operatorStub, tenantStub } from "../tenancy.js";
 
 export const KNOWLEDGE_OPERATOR_DO_KEY = "knowledge-operator-control-v1";
 
 export type ReconcileSource = {
   teamId: string;
+  sourceType?: KnowledgeSourceType;
   projectId: string;
   channelId: string;
   threadTs: string;
@@ -33,6 +38,7 @@ export type ReconcileSource = {
   enabled: boolean;
   desiredRevision?: string;
   indexedRevision?: string;
+  derivedIndexGeneration?: string;
   localDocumentId?: string;
   status: string;
   incompleteReason?: string;
@@ -52,10 +58,13 @@ export function planKnowledgeReconciliation(
   source: ReconcileSource,
   requestedAt: string,
   nowMs = Date.now(),
+  options?: { targetIndexGeneration?: string },
 ): ReconcileAction {
-  const sourceKey = slackSourceKey(source.teamId, source.channelId, source.threadTs);
+  const sourceType = source.sourceType ?? "slack";
+  const sourceKey = knowledgeSourceKey(sourceType, source.teamId, source.channelId, source.threadTs);
   const canonicalJob = createKnowledgeJob({
     teamId: source.teamId,
+    sourceType,
     projectId: source.projectId,
     channelId: source.channelId,
     threadTs: source.threadTs,
@@ -99,7 +108,13 @@ export function planKnowledgeReconciliation(
       reason: source.incompleteReason ?? "incomplete_thread",
     };
   }
-  if (source.indexedRevision && source.indexedRevision === source.desiredRevision) {
+  const generationMismatch = options?.targetIndexGeneration !== undefined &&
+    source.derivedIndexGeneration !== options.targetIndexGeneration;
+  if (
+    source.indexedRevision &&
+    source.indexedRevision === source.desiredRevision &&
+    !generationMismatch
+  ) {
     return { action: "noop", sourceKey, reason: "converged" };
   }
   if (source.status === "pending" || source.status === "queued") {
@@ -115,6 +130,8 @@ export function planKnowledgeReconciliation(
 type KnowledgeOperationsEnv = {
   WORKSPACE_CONFIG: DurableObjectNamespace<WorkspaceConfigDO>;
   KNOWLEDGE: DurableObjectNamespace<KnowledgeDO>;
+  /** Target derived-index generation; old-generation rows must be replayed. */
+  SUPERMEMORY_INDEX_GENERATION?: string;
 };
 
 async function doRequest<T>(
@@ -143,17 +160,23 @@ async function doRequest<T>(
 
 async function loadAuthoritativeSource(
   env: KnowledgeOperationsEnv,
-  row: Pick<KnowledgeLedgerRow, "teamId" | "projectId" | "channelId">,
+  row: Pick<KnowledgeLedgerRow, "teamId" | "sourceType" | "projectId" | "channelId">,
 ): Promise<TrackedKnowledgeSource | undefined> {
   const source = await doRequest<TrackedKnowledgeSource>(
     env.WORKSPACE_CONFIG,
     row.teamId,
     "/getTrackedKnowledgeSource",
-    { teamId: row.teamId, projectId: row.projectId, channelId: row.channelId },
+    {
+      teamId: row.teamId,
+      sourceType: row.sourceType ?? "slack",
+      projectId: row.projectId,
+      channelId: row.channelId,
+    },
   );
   if (
     !isTrackedKnowledgeSourceEnabled(source) ||
     source.teamId !== row.teamId ||
+    (source.sourceType ?? "slack") !== (row.sourceType ?? "slack") ||
     source.projectId !== row.projectId ||
     source.channelId !== row.channelId
   ) {
@@ -189,7 +212,8 @@ function isEnqueueKnowledgeResult(value: unknown): value is EnqueueKnowledgeResu
 }
 
 function sameLedgerIdentity(ledger: KnowledgeLedgerRow, job: KnowledgeJob): boolean {
-  return ledger.sourceKey === job.sourceKey &&
+  return (ledger.sourceType ?? "slack") === job.sourceType &&
+    ledger.sourceKey === job.sourceKey &&
     ledger.teamId === job.teamId &&
     ledger.projectId === job.projectId &&
     ledger.channelId === job.channelId &&
@@ -316,6 +340,9 @@ export async function runKnowledgeReconciliationPage(
   if (!input.teamId || input.teamId.length > 256 || /[*?]/.test(input.teamId)) {
     throw new Error("one exact teamId is required for reconciliation");
   }
+  const targetIndexGeneration = normalizeDerivedIndexGeneration(
+    env.SUPERMEMORY_INDEX_GENERATION,
+  );
   const runId = input.runId ?? crypto.randomUUID();
   await doRequest(
     env.KNOWLEDGE,
@@ -364,7 +391,7 @@ export async function runKnowledgeReconciliationPage(
       ...row,
       configVersion: source.configVersion,
       enabled: source.enabled,
-    }, requestedAt);
+    }, requestedAt, Date.now(), { targetIndexGeneration });
     if (action.action === "noop" || action.action === "blocked") {
       skipped += 1;
       continue;
@@ -373,6 +400,7 @@ export async function runKnowledgeReconciliationPage(
       ? action.job
       : createKnowledgeJob({
         teamId: row.teamId,
+        sourceType: row.sourceType,
         projectId: row.projectId,
         channelId: row.channelId,
         threadTs: row.threadTs,
@@ -427,6 +455,9 @@ type ScheduledKnowledgeOperationsEnv = KnowledgeOperationsEnv & {
   KNOWLEDGE_DLQ_NAME?: string;
   KNOWLEDGE_RECONCILIATION_SCHEDULE_ENABLED?: string;
   KNOWLEDGE_RECONCILIATION_TEAM_IDS?: string;
+  SLACK_BOT_TOKEN?: Env["SLACK_BOT_TOKEN"];
+  SLACK_RATE_LIMIT?: Env["SLACK_RATE_LIMIT"];
+  ENVIRONMENT?: Env["ENVIRONMENT"];
 };
 
 export function parseKnowledgeReconciliationTeamScope(value: string | undefined): string[] {
@@ -541,6 +572,7 @@ export async function runScheduledKnowledgeReconciliation(
   let coordinator: KnowledgeReconcileCoordinator = claim.coordinator;
   let pagesProcessed = 0;
   let teamsCompleted = 0;
+  const aclTeamsAttempted = new Set<string>();
   reconciliationMetric("knowledge_reconcile_run_started", {
     cycleId: coordinator.cycleId,
     runId: coordinator.activeRunId,
@@ -556,6 +588,23 @@ export async function runScheduledKnowledgeReconciliation(
     ) {
       const teamId = coordinator.teamIds[coordinator.teamIndex];
       if (!teamId) throw new Error("knowledge_reconciliation_team_cursor_invalid");
+      if (env.SLACK_BOT_TOKEN && !aclTeamsAttempted.has(teamId)) {
+        aclTeamsAttempted.add(teamId);
+        try {
+          const acl = await reconcileSlackKnowledgeAclForTeam(env, teamId);
+          reconciliationMetric("knowledge_slack_acl_reconcile_completed", {
+            cycleId: coordinator.cycleId,
+            teamId,
+            ...acl,
+          });
+        } catch (error) {
+          reconciliationMetric("knowledge_slack_acl_reconcile_failed", {
+            cycleId: coordinator.cycleId,
+            teamId,
+            errorCode: error instanceof Error ? error.message.slice(0, 256) : "unknown",
+          });
+        }
+      }
       const page = await runKnowledgeReconciliationPage(env, {
         teamId,
         runId: coordinator.activeRunId,
@@ -681,6 +730,7 @@ export type KnowledgeDlqRecord = {
   recordId?: string;
   messageId: string;
   sourceKey: string;
+  sourceType?: KnowledgeJob["sourceType"];
   attempts: number;
   lastErrorCode?: string;
   status?: "pending" | "replaying" | "replayed" | "disposed";
@@ -751,6 +801,7 @@ export async function handleKnowledgeDlq(
           queueName: batch.queue,
           body: message.body,
           sourceKey: job?.sourceKey,
+          sourceType: job?.sourceType,
           teamId: job?.teamId,
           attempts: Math.max(1, message.attempts),
           lastErrorCode,
@@ -774,6 +825,39 @@ export async function inspectDurableKnowledgeDlq(
     "/dlq/list",
     { cursor: input.cursor ?? 0, limit: input.limit ?? 25 },
   );
+}
+
+export async function inspectDurableKnowledgeFailures(
+  env: Pick<KnowledgeOperationsEnv, "KNOWLEDGE">,
+  input: {
+    teamId: string;
+    cursor?: string;
+    limit?: number;
+    status?: "permanent_failure" | "retryable_failure";
+  },
+): Promise<unknown> {
+  if (!input.teamId || /[*?]/.test(input.teamId)) throw new Error("one exact teamId is required");
+  return doRequest(env.KNOWLEDGE, input.teamId, "/failures", input);
+}
+
+export async function recoverDurableKnowledgeFailure(
+  env: Pick<KnowledgeOperationsEnv, "KNOWLEDGE">,
+  input: {
+    teamId: string;
+    sourceKey: string;
+    expectedConfigVersion: number;
+    expectedRequestedAt: string;
+    operatorId: string;
+    rootCauseCorrectionRef: string;
+  },
+): Promise<unknown> {
+  if (!input.teamId || /[*?]/.test(input.teamId)) throw new Error("one exact teamId is required");
+  if (!input.sourceKey || /[*?]/.test(input.sourceKey)) throw new Error("one exact sourceKey is required");
+  if (!input.operatorId || input.operatorId.length > 256) throw new Error("operatorId is required");
+  if (!input.rootCauseCorrectionRef || input.rootCauseCorrectionRef.length > 512) {
+    throw new Error("a bounded root-cause correction reference is required");
+  }
+  return doRequest(env.KNOWLEDGE, input.teamId, "/recover", input);
 }
 
 /**
@@ -804,6 +888,7 @@ export async function replayDurableKnowledgeDlqRecord(
     recordId: string;
     body: unknown;
     sourceKey?: string;
+    sourceType?: KnowledgeJob["sourceType"];
     teamId?: string;
     replayRequestedAt?: string;
   }>(
@@ -819,6 +904,7 @@ export async function replayDurableKnowledgeDlqRecord(
     const job = parseKnowledgeJob(record.body);
     if (
       record.sourceKey !== input.expectedSourceKey ||
+      (record.sourceType ?? job.sourceType) !== job.sourceType ||
       job.sourceKey !== input.expectedSourceKey ||
       record.teamId !== job.teamId ||
       !record.replayRequestedAt
@@ -831,6 +917,7 @@ export async function replayDurableKnowledgeDlqRecord(
     }
     const replayJob = createKnowledgeJob({
       teamId: job.teamId,
+      sourceType: job.sourceType,
       projectId: job.projectId,
       channelId: job.channelId,
       threadTs: job.threadTs,

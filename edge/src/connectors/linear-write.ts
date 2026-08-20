@@ -8,6 +8,7 @@
  * connector revalidates the immutable labels after Linear responds so a
  * revocation or access-bundle change cannot be hidden by a successful write.
  */
+import type { Fetcher } from "@cloudflare/workers-types";
 import {
   verifyConnectorAuthorizationCurrent,
   type CredentialReference,
@@ -69,6 +70,50 @@ export class LinearConnectorError extends Error {
     super(code);
     this.name = "LinearConnectorError";
   }
+}
+
+export async function registerLinearProviderRequest(input: {
+  resolver?: Fetcher;
+  resolverAuthToken?: string;
+  tenantId: string;
+  labels: ImmutableConnectorLabels;
+  credential: CredentialReference;
+  approval: LinearWriteApproval;
+}): Promise<void> {
+  if (!input.resolver || !input.resolverAuthToken?.trim()) {
+    throw new LinearConnectorError("provider_request_resolver_unconfigured", true);
+  }
+  const requestRef = linearWriteApprovalKey(input.approval.approvalId);
+  let response: Response;
+  try {
+    response = await input.resolver.fetch("https://provider-request/register", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${input.resolverAuthToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        tenantId: input.tenantId,
+        provider: "linear",
+        action: "create_issue",
+        requestRef,
+        requestRevision: 1,
+        requestDigest: input.approval.draftDigest,
+        authorizationDigest: input.labels.digest,
+        labels: input.labels,
+        credential: input.credential,
+        approval: input.approval,
+      }),
+    });
+  } catch {
+    throw new LinearConnectorError("provider_request_resolver_unavailable", true);
+  }
+  if (response.ok || response.status === 409) return;
+  throw new LinearConnectorError(
+    response.status >= 500 ? "provider_request_resolver_unavailable" : "provider_request_registration_rejected",
+    response.status >= 500,
+  );
 }
 
 function boundedText(
@@ -272,6 +317,10 @@ type GraphqlResponse<T> = {
   errors?: readonly unknown[];
 };
 
+function linearAuthorizationHeader(token: string): string {
+  return token.startsWith("lin_") ? token : `Bearer ${token}`;
+}
+
 type LinearReference = { id?: unknown; name?: unknown; key?: unknown; email?: unknown };
 
 function stringValue(value: unknown, field: string, max = 512): string {
@@ -317,7 +366,7 @@ async function graphql<T>(input: {
   const response = await input.fetchImpl("https://api.linear.app/graphql", {
     method: "POST",
     headers: {
-      authorization: `Bearer ${input.token}`,
+      authorization: linearAuthorizationHeader(input.token),
       accept: "application/json",
       "content-type": "application/json",
     },

@@ -8,6 +8,7 @@ import { bindTurnExecutionContext } from "../src/slack/turn-execution-context.js
 import {
   createSearchSlackTool,
   searchSlackKnowledge,
+  searchSlackKnowledgeForActor,
   type SearchSlackAuthorization,
 } from "../src/tools/search-slack.js";
 
@@ -66,6 +67,7 @@ function authorization(overrides: {
     }),
     conversationKey: `${channelId}::1.0`,
     executionId: "ot1e_search",
+    actorId: actor.kind === "slack_user" ? actor.userId : "",
   };
 }
 
@@ -73,11 +75,18 @@ function env(options: {
   sourceResponses?: unknown[][];
   accessResponses?: Array<ReturnType<typeof access>>;
   ledger?: Record<string, unknown> | null;
+  aclStateResponses?: Array<unknown | null>;
 } = {}): Env {
   const sourceResponses = options.sourceResponses ?? [[source()], [source()]];
   const accessResponses = options.accessResponses ?? [access(), access()];
   let sourceLookup = 0;
   let accessLookup = 0;
+  let aclStateLookup = 0;
+  const aclStateResponses = options.aclStateResponses ?? [
+    { status: "fresh", revision: 0, memberIds: ["U1"] },
+    { status: "fresh", revision: 0, memberIds: ["U1"] },
+    { status: "fresh", revision: 0, memberIds: ["U1"] },
+  ];
   return {
     WORKSPACE_CONFIG: {
       idFromName: vi.fn(),
@@ -101,7 +110,36 @@ function env(options: {
     },
     KNOWLEDGE: {
       idFromName: vi.fn(),
-      get: () => ({ fetch: vi.fn(async () => Response.json({ ledger: options.ledger ?? null })) }),
+      get: () => ({ fetch: vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(request)).pathname;
+        if (path === "/acl/authorize" || path === "/acl/check") {
+          const state = aclStateResponses[Math.min(aclStateLookup++, aclStateResponses.length - 1)] ?? null;
+          const actorId = typeof init?.body === "string"
+            ? (JSON.parse(init.body) as { actorId?: string }).actorId
+            : undefined;
+          const refreshedAt = state && typeof state === "object" && "refreshedAt" in state
+            ? (state as { refreshedAt?: unknown }).refreshedAt
+            : Date.now();
+          const allowed = Boolean(
+            state && typeof state === "object" &&
+            (state as { status?: unknown }).status === "fresh" &&
+            Array.isArray((state as { memberIds?: unknown }).memberIds) &&
+            (state as { memberIds: unknown[] }).memberIds.includes(actorId) &&
+            typeof refreshedAt === "number" &&
+            Date.now() - refreshedAt <= 5 * 60_000,
+          );
+          return Response.json(
+            path === "/acl/authorize"
+              ? (allowed
+                ? { authorized: true, leaseId: "lease-1", revision: (state as { revision?: number }).revision ?? 0 }
+                : { authorized: false })
+              : { authorized: allowed },
+            { status: allowed ? 200 : 403 },
+          );
+        }
+        if (path === "/acl/release") return Response.json({ released: true });
+        return Response.json({ ledger: options.ledger ?? null });
+      }) }),
     },
   } as unknown as Env;
 }
@@ -147,6 +185,73 @@ describe("search_slack", () => {
       aclPolicyRef: "bundle:readers", query: "fixture", limit: 4,
     }));
     expect(result).toEqual({ status: "ok", citations: [citation] });
+  });
+
+  it("applies the ledger-current fence to actor retrieval", async () => {
+    const searchSlack = vi.fn(async () => [citation]);
+    const result = await searchSlackKnowledgeForActor({
+      env: env({
+        ledger: {
+          status: "indexed", projectId: "P1", channelId: "C1", configVersion: 3,
+          indexedRevision: "sha256:one",
+        },
+      }),
+      teamId: "T1",
+      channelId: "C1",
+      projectId: "P1",
+      actorId: "U1",
+      aclPolicyRef: "bundle:readers",
+      query: "fixture",
+      adapter: { searchSlack },
+    });
+    expect(result).toEqual({ status: "ok", citations: [citation] });
+    expect(searchSlack).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: "T1", projectId: "P1", channelId: "C1", aclPolicyRef: "bundle:readers",
+    }));
+  });
+
+  it("suppresses actor results when membership changes during retrieval", async () => {
+    const searchSlack = vi.fn(async () => [citation]);
+    const result = await searchSlackKnowledgeForActor({
+      env: env({
+        aclStateResponses: [
+          { status: "fresh", revision: 1, memberIds: ["U1"] },
+          { status: "stale", revision: 2, memberIds: [] },
+        ],
+        ledger: {
+          status: "indexed", projectId: "P1", channelId: "C1", configVersion: 3,
+          indexedRevision: "sha256:one",
+        },
+      }),
+      teamId: "T1",
+      channelId: "C1",
+      projectId: "P1",
+      actorId: "U1",
+      aclPolicyRef: "bundle:readers",
+      query: "fixture",
+      adapter: { searchSlack },
+    });
+    expect(result).toEqual({ status: "unauthorized", citations: [], reason: "policy_denied" });
+  });
+
+  it("fails closed when a membership event leaves the ACL snapshot stale", async () => {
+    const searchSlack = vi.fn();
+    expect(await searchSlackKnowledge({
+      env: env({ aclStateResponses: [{ status: "stale", revision: 2 }] }),
+      teamId: "T1", channelId: "C1", authorization: authorization(),
+      query: "fixture", adapter: { searchSlack },
+    })).toEqual({ status: "knowledge_unavailable", citations: [], retryable: true });
+    expect(searchSlack).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a fresh membership snapshot excludes the requester", async () => {
+    const searchSlack = vi.fn();
+    expect(await searchSlackKnowledge({
+      env: env({ aclStateResponses: [{ status: "fresh", revision: 2, memberIds: ["U2"] }] }),
+      teamId: "T1", channelId: "C1", authorization: authorization(),
+      query: "fixture", adapter: { searchSlack },
+    })).toEqual({ status: "knowledge_unavailable", citations: [], retryable: true });
+    expect(searchSlack).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -30,11 +30,13 @@ export const slackFormattingContext: ContextEntry = {
 export const slackConversationModelContext: ContextEntry = {
   description: "Slack conversation model",
   value: [
-    "Each admitted channel conversation is a thread rooted by a bot @-mention,",
-    "or a DM. Channel thread replies must explicitly @-mention the bot to",
-    "start a new turn; unmentioned human replies remain in Slack history and",
-    "will be available as context when a later mention is admitted.",
-    "Top-level channel messages also require an explicit bot @-mention.",
+    "Each admitted channel conversation is a Slack thread or a DM.",
+    "Explicit bot @-mentions and DMs always wake the bot. In channel messages",
+    "and thread replies, the router decides whether to respond: questions,",
+    "action requests, problem reports, and files may wake the bot without a",
+    "tag, while ordinary conversation remains history-only.",
+    "A channel reply does not need an explicit bot @-mention when the router",
+    "classifies it as response-worthy.",
   ].join("\n"),
 };
 

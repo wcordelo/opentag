@@ -1,3 +1,7 @@
+# LEGACY MIGRATION REFERENCE ONLY.
+# The OpenTag bot, Supermemory, and Graphify production path is Cloudflare-only.
+# Do not provision or deploy this file. It remains solely for historical
+# research-track notes until that separate track is retired or documented.
 [build]
 builder = "nixpacks"
 

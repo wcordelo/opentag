@@ -18,6 +18,18 @@ No Worker or Container was deployed. No Railway, Cloudflare, Slack, Queue,
 secret, source-row, canary, backfill, git-reference, or other external mutation
 was performed.
 
+> **Historical validator note (2026-08-02).** The validator PASS rows in this
+> report describe the former Railway/B0–B4 snapshot. They are retained as
+> historical evidence and are not current-tree acceptance after the
+> Cloudflare-only architecture change. Use the current knowledge contract
+> audit and rollout preflight for present status.
+
+> **Historical review note (2026-08-02).** This report records the second
+> correction cycle before the current durable knowledge-ingress and outbound
+> observation owners were added. Its review conclusions remain historical;
+> current behavior and live gates are tracked in
+> [`docs/current-state.md`](../../docs/current-state.md).
+
 ## Audit verdict
 
 | Rereview finding | Final source disposition | Runtime caller | Focused proof |

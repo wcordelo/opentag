@@ -16,6 +16,21 @@ describe("Slack response routing", () => {
       userText: "please check the deploy status",
       hasFiles: false,
     })).toMatchObject({ decision: "respond", reason: "action_request" });
+    expect(classifySlackResponseRoute({
+      source: "channel_message",
+      userText: "what is happening in the channel?",
+      hasFiles: false,
+    })).toMatchObject({ decision: "respond", reason: "question" });
+    expect(classifySlackResponseRoute({
+      source: "channel_message",
+      userText: "search Slack for the exact canary marker",
+      hasFiles: false,
+    })).toMatchObject({ decision: "respond", reason: "action_request" });
+    expect(classifySlackResponseRoute({
+      source: "channel_message",
+      userText: "OPENTAG_MILESTONE_CANARY_20260803 — please reply exactly OPENTAG_MILESTONE_CANARY_OK",
+      hasFiles: false,
+    })).toMatchObject({ decision: "respond", reason: "action_request" });
   });
 
   it("responds to operational problem reports but observes phatic noise", () => {
@@ -29,6 +44,11 @@ describe("Slack response routing", () => {
       userText: "yo",
       hasFiles: false,
     })).toMatchObject({ decision: "observe", reason: "observe_conversation" });
+    expect(classifySlackResponseRoute({
+      source: "channel_message",
+      userText: "yo",
+      hasFiles: false,
+    })).toMatchObject({ decision: "observe", reason: "observe_conversation" });
   });
 
   it("does not wake for conversational statements that contain broad trigger words", () => {
@@ -36,6 +56,7 @@ describe("Slack response routing", () => {
       "I can't make standup today",
       "let me check with her real quick",
       "please don't touch that",
+      "please don't reply to that",
       "```\nthrow new Error('timeout')\n```",
     ]) {
       expect(classifySlackResponseRoute({

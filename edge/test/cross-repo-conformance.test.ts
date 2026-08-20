@@ -43,6 +43,8 @@ describe("cross-repository conformance matrix", () => {
       KNOWLEDGE: {} as never,
       KNOWLEDGE_ACTOR_TOKEN_SECRET: "configured",
       SUPERMEMORY_URL: "https://knowledge.example",
+      SUPERMEMORY_API_KEY: "sm_fixture",
+      SUPERMEMORY_MIGRATION_MODE: "true",
     });
     expect(evidence.knowledge).toMatchObject({ namespaceConfigured: true, actorTokenConfigured: true, searchEndpointConfigured: true });
     expect(JSON.stringify(evidence)).not.toContain("configured");

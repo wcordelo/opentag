@@ -7,7 +7,7 @@ import {
   convertInputToTanStackAI,
 } from "@copilotkit/runtime/v2";
 import { chat } from "@tanstack/ai";
-import { openaiText } from "@tanstack/ai-openai";
+import { createOpenaiChat, openaiText } from "@tanstack/ai-openai";
 import { webSearchTool } from "@tanstack/ai-openai/tools";
 import { createMCPClient } from "@tanstack/ai-mcp";
 
@@ -19,7 +19,10 @@ export interface TriageAgentEnv {
   NOTION_MCP_URL?: string;
   /** Exact `provider/tool` read allowlist. Empty means no server-side MCP tools. */
   MCP_READ_TOOL_ALLOWLIST?: string;
+  AGENT_PROVIDER?: string;
+  AGENT_BASE_URL?: string;
   AGENT_MODEL?: string;
+  DEEPSEEK_API_KEY?: string;
   /** Resolve secret *refs* from AG-UI context (name → value). */
   getSecret?: (name: string) => string | undefined;
   /** Runtime-owned exact execution cancellation/quiescence registry. */
@@ -40,6 +43,68 @@ interface LabeledTransport {
 }
 
 const MCP_CONNECT_TIMEOUT_MS = 8000;
+const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/";
+
+export interface TriageAgentProviderConfig {
+  provider: "openai" | "deepseek";
+  model: string;
+  baseURL?: string;
+}
+
+function modelWithoutProviderPrefix(
+  value: string | undefined,
+  provider: string,
+): string | undefined {
+  const model = value?.trim();
+  if (!model) return undefined;
+  const prefix = `${provider}/`;
+  return model.startsWith(prefix) ? model.slice(prefix.length) : model;
+}
+
+export function resolveTriageAgentProvider(
+  env: Pick<
+    TriageAgentEnv,
+    "AGENT_PROVIDER" | "AGENT_BASE_URL" | "AGENT_MODEL" | "DEEPSEEK_API_KEY"
+  >,
+): TriageAgentProviderConfig {
+  const requested = env.AGENT_PROVIDER?.trim().toLowerCase();
+  const provider = requested || (env.DEEPSEEK_API_KEY ? "deepseek" : "openai");
+  if (provider !== "openai" && provider !== "deepseek") {
+    throw new Error(`unsupported AGENT_PROVIDER: ${provider}`);
+  }
+  const model =
+    modelWithoutProviderPrefix(env.AGENT_MODEL, provider) ??
+    (provider === "deepseek" ? "deepseek-v4-flash" : "gpt-5.5");
+  if (provider === "deepseek" && model.startsWith("gpt-")) {
+    throw new Error(`AGENT_MODEL ${model} is incompatible with DeepSeek`);
+  }
+  if (provider === "openai" && model.startsWith("deepseek-")) {
+    throw new Error(`AGENT_MODEL ${model} is incompatible with OpenAI`);
+  }
+  return provider === "deepseek"
+    ? {
+        provider,
+        model,
+        baseURL: env.AGENT_BASE_URL?.trim() || DEFAULT_DEEPSEEK_BASE_URL,
+      }
+    : { provider, model };
+}
+
+function createTriageAgentAdapter(
+  env: TriageAgentEnv,
+  config: TriageAgentProviderConfig,
+) {
+  if (config.provider === "deepseek") {
+    const apiKey = env.DEEPSEEK_API_KEY?.trim();
+    if (!apiKey) throw new Error("DEEPSEEK_API_KEY not configured");
+    return createOpenaiChat(
+      config.model as Parameters<typeof createOpenaiChat>[0],
+      apiKey,
+      { baseURL: config.baseURL },
+    );
+  }
+  return openaiText(config.model as Parameters<typeof openaiText>[0]);
+}
 
 function mcpTransportsFromEnv(env: TriageAgentEnv): LabeledTransport[] {
   const transports: LabeledTransport[] = [];
@@ -264,7 +329,8 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
   // Linear MCP read tools want team NAME or ID (not a bare key).
   // Workspace default: Berendo (issue prefix BER-…).
   const LINEAR_TEAM_KEY = (env.LINEAR_TEAM_KEY?.trim() || "Berendo");
-  const model = (env.AGENT_MODEL ?? "openai/gpt-5.5").replace(/^openai\//, "");
+  const providerConfig = resolveTriageAgentProvider(env);
+  const providerName = providerConfig.provider === "deepseek" ? "DeepSeek" : "OpenAI";
   return [
   "You are an on-call triage assistant living in a Slack workspace. You help",
   "an engineering team turn incident chatter into tracked work: you pull and",
@@ -272,7 +338,7 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
   "Notion postmortems. You also answer factual / current-events questions",
   "using web_search when needed.",
   "",
-  `Runtime model: you are running OpenAI model "${model}". If asked what model`,
+  `Runtime model: you are running ${providerName} model "${providerConfig.model}". If asked what model`,
   "you are, answer with that exact id — do not claim you cannot tell.",
   "",
   "Time & 'today':",
@@ -414,10 +480,7 @@ export function buildSystemPrompt(env: TriageAgentEnv): string {
 
 /** Create the triage BuiltInAgent bound to the given env. */
 export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
-  const model = (env.AGENT_MODEL ?? "openai/gpt-5.5").replace(
-    /^openai\//,
-    "",
-  ) as Parameters<typeof openaiText>[0];
+  const providerConfig = resolveTriageAgentProvider(env);
   const systemPrompt = buildSystemPrompt(env);
 
   return new BuiltInAgent({
@@ -481,7 +544,7 @@ export function createTriageAgent(env: TriageAgentEnv): BuiltInAgent {
           : "";
 
       const result = chat({
-        adapter: openaiText(model),
+        adapter: createTriageAgentAdapter(env, providerConfig),
         messages,
         systemPrompts: [systemPrompt + availabilityNote, ...systemPrompts],
         tools: [

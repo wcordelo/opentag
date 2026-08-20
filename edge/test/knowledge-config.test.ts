@@ -49,14 +49,14 @@ describe("knowledge configuration foundation", () => {
     }
   });
 
-  it("defaults sourceType to absent/slack and accepts optional non-slack sourceType", () => {
-    expect(parseKnowledgeSourceScope(scope)).toEqual(scope);
-    expect(parseKnowledgeSourceScope(scope).sourceType).toBeUndefined();
+  it("canonicalizes sourceType to slack and accepts non-slack sourceType", () => {
+    expect(parseKnowledgeSourceScope(scope)).toEqual({ ...scope, sourceType: "slack" });
+    expect(parseKnowledgeSourceScope(scope).sourceType).toBe("slack");
     expect(parsePutTrackedKnowledgeSource({
       ...scope,
       enabled: false,
       readerPolicyRef: "",
-    }).sourceType).toBeUndefined();
+    }).sourceType).toBe("slack");
     expect(parsePutTrackedKnowledgeSource({
       ...scope,
       sourceType: "wiki",
@@ -120,6 +120,31 @@ describe("knowledge configuration foundation", () => {
       requestedAt: "not-a-timestamp",
       reason: "event",
     })).toThrow("canonical ISO timestamp");
+    expect(createKnowledgeJob({
+      ...scope,
+      threadTs: "171234.000100",
+      observedMessageTs: "171234.000200",
+      configVersion: 1,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    })).toMatchObject({ observedMessageTs: "171234.000200" });
+    expect(() => createKnowledgeJob({
+      ...scope,
+      threadTs: "171234.000100",
+      observedMessageTs: "not-a-slack-ts",
+      configVersion: 1,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    })).toThrow("exact Slack timestamp");
+    expect(() => createKnowledgeJob({
+      ...scope,
+      sourceType: "wiki",
+      threadTs: "doc-1",
+      observedMessageTs: "171234.000200",
+      configVersion: 1,
+      requestedAt: "2026-07-19T00:00:00.000Z",
+      reason: "event",
+    })).toThrow("exact Slack timestamp");
   });
 
   it("allows only flat metadata and treats done as the sole successful terminal status", () => {

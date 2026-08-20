@@ -10,12 +10,13 @@ resolves the tenant/platform Durable Object, claims one intent, invokes an
 explicitly registered adapter, and reports a bounded external receipt or a
 safe retry/terminal failure through the lease owner.
 
-The baseline Worker intentionally registers no provider adapters. A request
-therefore ends as `effect_adapter_unconfigured`; it never claims success,
-stores a provider token, runs an OAuth callback, charges billing, or deletes
-memory. Adapter implementations must be added only after the custody, tenancy,
-provider, and compliance decisions in the platform architecture document are
-approved.
+The default Worker remains fail-closed for every effect except the explicitly
+reviewed `connector_effect` path. The current deployment registers the
+private Linear provider adapter only for `connector_effect`; provisioning,
+identity, credential-custody, OAuth, marketplace, billing, memory, and unknown
+effect kinds still end as `effect_adapter_unconfigured`. The bot's
+`PLATFORM_PROVIDER_EFFECTS_MODE` remains `disabled` until the controlled
+workspace and custody mapping are ready.
 
 Every successful adapter invocation must return an opaque external receipt
 reference. The runner will not mark an effect completed from an empty or
@@ -27,10 +28,10 @@ is in flight. If the state owner cannot record a failure or completion, the
 request returns a retryable 503 rather than fabricating a receipt; the provider
 adapter must therefore use the intent idempotency key for reconciliation.
 
-An approved provider Worker can be connected through the optional
+An approved provider Worker is connected through the
 `PLATFORM_EFFECT_ADAPTER` service binding and
-`PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, every
-effect kind is sent to `POST /execute` on that binding using this versioned,
+`PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, only
+`connector_effect` is sent to `POST /execute` on that binding using this versioned,
 metadata-only envelope:
 
 ```json
@@ -50,6 +51,19 @@ metadata-only envelope:
 }
 ```
 
+For `kind = "connector_effect"`, the metadata is restricted to
+`connectorId`, `action`, `credentialRef`, `credentialVersion`,
+`authorizationDigest`, `requestRef`, `requestRevision`, and `requestDigest`.
+The deployed adapter currently supports only `linear/create_issue`; Google
+Drive remains unsupported and fail-closed.
+`requestRef` is an opaque durable reference such as a Linear approval record;
+it is not a query, prompt, document body, or credential. A provider adapter
+must resolve that reference inside its tenant boundary, revalidate the grant
+and custody metadata, use the intent idempotency key, and return an opaque
+external receipt. The adapter is deployed, but it does not enable provider
+effects by itself: custody credentials, a controlled Linear workspace subject,
+a grant, and `PLATFORM_PROVIDER_EFFECTS_MODE=linear` are still required.
+
 The provider must return either
 `{"schemaVersion":1,"status":"completed","externalReceiptRef":"..."}`
 or a strict failure envelope with `errorCode`, `retryable`, and optional
@@ -68,5 +82,8 @@ The Durable Object binding uses `script_name = "opentag-bot"`, so this Worker
 does not create a second platform-state database. Deploying it also requires
 the `EFFECTOR_AUTH_TOKEN` secret and a deliberate decision to make a provider
 adapter available; this baseline is safe to validate locally but is not a
-claim that any external effect is live. The optional provider service binding
-is intentionally absent from the default `wrangler.toml`.
+claim that any external effect is live. The provider service binding is
+present in the deployment configuration. The adapter, request resolver, and
+idempotency Durable Object service are private Workers; the custody mapping
+remains intentionally unconfigured until the controlled test credential is
+provisioned.

@@ -78,10 +78,10 @@ operating model.
 | Identity/key custody boundary | `edge/src/platform/identity-custody-contract.ts`, `edge/workers/identity-custody/` | Authenticated public-key/opaque-receipt adapter seam | Implemented locally; provider key custody and identity executor remain gated |
 | Last-mile credential broker | `edge/workers/credential-broker/`, `edge/src/connectors/credential-broker.ts` | Revalidates tenant/provider/scope metadata before an external custody binding | Implemented locally; custody adapter and provider tokens remain unconfigured |
 | Source-scoped memory deletion receipts | `edge/src/platform/layer3-contract.ts`, `platform-state-do.ts`, `memory-deletion-contract.ts`, `workers/memory-deletion/` | Durable epoch-bound proof ledger plus a fail-closed source-scoped provider boundary before deletion is marked complete | Adapter boundary implemented and tested; provider choice, custody, binding, and live source deletion remain gated |
-| External platform effect handoff | `edge/src/platform/platform-state-do.ts` effect intents and leases | Durable provider boundary for provisioning, custody, OAuth, billing, and memory | Deployed and synthetic-live; no external effect worker or provider credentials are live |
 | Replay-safe OAuth state and marketplace trust gates | `edge/src/platform/oauth-state-do.ts`, `layer3-contract.ts`, `platform-state-do.ts` | Cloudflare-native one-use state/nonce hashes plus curated connector/version/scope enforcement | Implemented locally; callback ownership, redirect origins, provider exchange, and custody remain gated |
+| External platform effect handoff | `edge/src/platform/platform-state-do.ts` effect intents and leases | Durable provider boundary for provisioning, custody, OAuth, billing, and memory | Deployed and synthetic-live; fail-closed effect/custody shells answer health checks, but no provider adapter, credential resolution, or real external effect is live |
 | Router measurement ledger | `edge/src/router/measurement-do.ts`, `edge/src/router/measurement.ts` | Workspace-scoped shadow dispatch/outcome/feedback records before tier dispatch | Deployed and live-queried; Tier 1/Tier 3 remain dark |
-| Guarded Linear issue creation | `edge/src/connectors/linear-write.ts`, `edge/src/tools/linear-write.ts`, durable HITL | Replaces read-only MCP mutation temptation with an explicit effect path | Source-complete and fail-closed; broker/OAuth grant and live test workspace still required |
+| Guarded Linear issue creation | `edge/src/connectors/linear-write.ts`, `edge/src/tools/linear-write.ts`, durable HITL | Replaces read-only MCP mutation temptation with an explicit effect path | Source-complete and fail-closed; the isolated test fixture exists, but broker/OAuth grant, provider adapter, and live effect receipt remain required |
 | Drive search after connector foundations | `search-drive.ts`, `drive-connector.ts`, citation contract | Added only after label, bundle, revocation, and broker foundations | Source-complete and fail-closed; credential broker and Google custody deployment still required |
 | Harness restart transcript re-feed | `agent-turn.ts`, harness client | Adapted | Last 24k characters passed to harness |
 | Quick cards | `quick-card.ts`, research Slack delivery | Generalized from Quick-site cards | Artifact actions plus final-research Retry/Dig deeper/Export |
@@ -349,9 +349,10 @@ Claude's own success claim is held until OpenTag verifies:
 - The current outbound policy is deliberately GitHub-specific. Other git hosts
   need their own parser, allowlist, branch proof, and API authorization logic.
 - **Container smoke (sharp under UID 1001, v2 overlay turns):** the harness
-  image is deployed and the Claudex/nanocodex Slack paths are live-verified.
-  A fresh local Docker/BuildKit reproduction is still separate evidence; the
-  deployment digest is recorded in `docs/current-state.md`.
+  Worker and Claudex/nanocodex Slack paths are live-verified. A fresh local
+  Docker/BuildKit reproduction is separate evidence, and the current live
+  Worker does not yet provide independently verified immutable image-to-source
+  provenance. The deployment digest remains an open release gate.
 
 ## Source documents
 

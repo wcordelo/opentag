@@ -27,6 +27,27 @@ const intent = validatePlatformEffectIntent({
   requestedAt: "2026-08-01T22:00:00.000Z",
 });
 
+const connectorIntent = validatePlatformEffectIntent({
+  schemaVersion: 1,
+  intentId: "effect:connector:linear:create-issue:synthetic",
+  idempotencyKey: "connector-linear-create-issue-synthetic",
+  scope: "tenant",
+  tenantId: "tenant-provider-synthetic",
+  kind: "connector_effect",
+  targetRef: "connector:linear:create_issue",
+  metadata: {
+    action: "create_issue",
+    authorizationDigest: `sha256:${"a".repeat(64)}`,
+    connectorId: "linear",
+    credentialRef: "credential:linear:workspace",
+    credentialVersion: 1,
+    requestDigest: `sha256:${"b".repeat(64)}`,
+    requestRef: "provider-request:synthetic-linear-create-issue-01",
+    requestRevision: 1,
+  },
+  requestedAt: "2026-08-01T22:00:00.000Z",
+});
+
 function receipt(status: PlatformEffectReceipt["status"]): PlatformEffectReceipt {
   return {
     schemaVersion: 1,
@@ -149,6 +170,22 @@ describe("platform effect runner", () => {
           operation: "explicit_revoke",
           principalId: "principal-1",
           version: 1,
+        },
+      },
+      {
+        scope: "tenant",
+        tenantId: "tenant-1",
+        kind: "connector_effect",
+        targetRef: "connector:linear:create_issue",
+        metadata: {
+          action: "create_issue",
+          authorizationDigest: `sha256:${"a".repeat(64)}`,
+          connectorId: "linear",
+          credentialRef: "credential:linear:workspace",
+          credentialVersion: 1,
+          requestDigest: `sha256:${"b".repeat(64)}`,
+          requestRef: "linear-write-approval:12345678-1234-4234-8234-123456789012",
+          requestRevision: 1,
         },
       },
       {
@@ -292,6 +329,178 @@ describe("platform effect runner", () => {
       externalReceiptRef: "kms-receipt-1",
     }]);
     expect(calls.fail).toHaveLength(0);
+  });
+
+  it("recovers a tenant provider effect through custody and provider idempotency", async () => {
+    const providerToken = "synthetic-provider-secret";
+    const custody = new Map([
+      [`${connectorIntent.metadata.credentialRef}@${connectorIntent.metadata.credentialVersion}`, providerToken],
+    ]);
+    const providerReceipts = new Map<string, string>();
+    const adapterInputs: unknown[] = [];
+    const providerCalls: Array<{ idempotencyKey: string; authorization: string }> = [];
+    const failures: unknown[] = [];
+    const completions: unknown[] = [];
+    let status: "pending" | "leased" | "failed" | "completed" = "pending";
+    let attempts = 0;
+    let leaseToken = "";
+    let leaseExpiresAt = "2026-08-01T22:05:00.000Z";
+
+    const makeReceipt = (
+      nextStatus: "leased" | "failed" | "completed",
+      errorCode?: string,
+      externalReceiptRef?: string,
+    ): PlatformEffectReceipt => ({
+      schemaVersion: 1,
+      intentId: connectorIntent.intentId,
+      idempotencyKey: connectorIntent.idempotencyKey,
+      scope: connectorIntent.scope,
+      tenantId: connectorIntent.tenantId,
+      kind: connectorIntent.kind,
+      targetRef: connectorIntent.targetRef,
+      status: nextStatus,
+      attempts,
+      retryable: nextStatus === "failed",
+      availableAt: connectorIntent.requestedAt,
+      ...(nextStatus === "leased" ? { leaseExpiresAt } : {}),
+      ...(errorCode ? { lastErrorCode: errorCode } : {}),
+      ...(externalReceiptRef ? { externalReceiptRef } : {}),
+      requestedAt: connectorIntent.requestedAt,
+      updatedAt: connectorIntent.requestedAt,
+    });
+
+    const state: PlatformEffectStateClient = {
+      async claim(input) {
+        if (status === "completed") {
+          throw new PlatformEffectRunnerError("effect_not_claimable", 409);
+        }
+        if (status === "leased") {
+          throw new PlatformEffectRunnerError("effect_lease_active", 409);
+        }
+        attempts += 1;
+        status = "leased";
+        leaseToken = `lease-${attempts}`;
+        leaseExpiresAt = `2026-08-01T22:0${5 + attempts}:00.000Z`;
+        return {
+          intent: connectorIntent,
+          receipt: makeReceipt("leased"),
+          leaseToken,
+          leaseOwner: input.workerId,
+          leaseExpiresAt,
+        };
+      },
+      async complete(input) {
+        expect(status).toBe("leased");
+        expect(input.leaseToken).toBe(leaseToken);
+        status = "completed";
+        completions.push(input);
+        return {
+          ok: true,
+          duplicate: false,
+          receipt: makeReceipt("completed", undefined, input.externalReceiptRef),
+        };
+      },
+      async renew(input) {
+        expect(status).toBe("leased");
+        expect(input.leaseToken).toBe(leaseToken);
+        return {
+          ok: true,
+          leaseExpiresAt,
+          receipt: makeReceipt("leased"),
+        };
+      },
+      async fail(input) {
+        expect(status).toBe("leased");
+        expect(input.leaseToken).toBe(leaseToken);
+        status = "failed";
+        failures.push(input);
+        return {
+          ok: true,
+          receipt: makeReceipt("failed", input.errorCode),
+        };
+      },
+    };
+
+    const adapter = async (received: typeof connectorIntent): Promise<PlatformEffectAdapterResult> => {
+      adapterInputs.push(received);
+      expect(received.metadata).toEqual(connectorIntent.metadata);
+      const key = `${received.metadata.credentialRef}@${received.metadata.credentialVersion}`;
+      const token = custody.get(key);
+      expect(token).toBe(providerToken);
+      const externalReceiptRef = providerReceipts.get(received.idempotencyKey)
+        ?? `linear:synthetic:${received.idempotencyKey}`;
+      providerReceipts.set(received.idempotencyKey, externalReceiptRef);
+      providerCalls.push({
+        idempotencyKey: received.idempotencyKey,
+        authorization: `Bearer ${token}`,
+      });
+      if (providerCalls.length === 1) {
+        throw new PlatformEffectAdapterError("provider_response_ambiguous", true, 0);
+      }
+      return { externalReceiptRef };
+    };
+
+    const request = {
+      scope: "tenant" as const,
+      tenantId: connectorIntent.tenantId,
+      intentId: connectorIntent.intentId,
+      workerId: "effecter-synthetic",
+      leaseSeconds: 30,
+    };
+    const first = await runPlatformEffect({
+      request,
+      state,
+      adapters: { connector_effect: adapter },
+    });
+    expect(first).toMatchObject({
+      status: "failed",
+      adapterConfigured: true,
+      errorCode: "provider_response_ambiguous",
+    });
+
+    const second = await runPlatformEffect({
+      request,
+      state,
+      adapters: { connector_effect: adapter },
+    });
+    expect(second).toMatchObject({
+      status: "completed",
+      adapterConfigured: true,
+      receipt: {
+        externalReceiptRef: `linear:synthetic:${connectorIntent.idempotencyKey}`,
+        attempts: 2,
+      },
+    });
+    expect(providerCalls).toEqual([
+      {
+        idempotencyKey: connectorIntent.idempotencyKey,
+        authorization: `Bearer ${providerToken}`,
+      },
+      {
+        idempotencyKey: connectorIntent.idempotencyKey,
+        authorization: `Bearer ${providerToken}`,
+      },
+    ]);
+    expect(providerReceipts.size).toBe(1);
+    expect(adapterInputs).toHaveLength(2);
+    expect(JSON.stringify(adapterInputs)).not.toContain(providerToken);
+    expect(JSON.stringify(failures)).not.toContain(providerToken);
+    expect(JSON.stringify(completions)).not.toContain(providerToken);
+    expect(completions).toEqual([
+      {
+        intentId: connectorIntent.intentId,
+        leaseToken: "lease-2",
+        externalReceiptRef: `linear:synthetic:${connectorIntent.idempotencyKey}`,
+      },
+    ]);
+    await expect(runPlatformEffect({
+      request,
+      state,
+      adapters: { connector_effect: adapter },
+    })).rejects.toMatchObject({
+      code: "effect_not_claimable",
+      status: 409,
+    });
   });
 
   it("renews the lease while a provider adapter is still running", async () => {

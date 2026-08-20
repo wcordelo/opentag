@@ -45,6 +45,7 @@ export async function signKnowledgeSourceGrant(
     actorId: string;
     action: KnowledgeSourceAdminRequest["action"];
     teamId: string;
+    sourceType: KnowledgeSourceAdminRequest["sourceType"];
     projectId: string;
     channelId: string;
     expectedConfigVersion: number | null;
@@ -68,6 +69,7 @@ export async function signKnowledgeSourceGrant(
     actorId: overrides.actorId ?? "operator:test-user",
     action: overrides.action ?? request.action,
     teamId: overrides.teamId ?? request.teamId,
+    sourceType: overrides.sourceType ?? request.sourceType ?? "slack",
     projectId: overrides.projectId ?? request.projectId,
     channelId: overrides.channelId ?? request.channelId,
     expectedConfigVersion: overrides.expectedConfigVersion === undefined

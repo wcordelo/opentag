@@ -2,24 +2,103 @@
 
 Status: **long-term vision, authoritative for direction**
 Owner: Will Lopez-Cordero
-Updated: 2026-08-01
+Updated: 2026-08-02 20:59 PDT
 
-## Current implementation reconciliation — 2026-08-01
+## Current evidence reconciliation — 2026-08-02 20:59 PDT
+
+The vision remains directional; deployed truth is in docs/current-state.md.
+The latest read-only gate reports 83 tenant knowledge rows (55 indexed, 2
+pending, 26 permanent failures) and zero authenticated citations for the
+fresh unmentioned marker despite a queue `indexed` outcome. The installed
+Slack token still lacks reaction/profile/manifest readback scopes, and only
+four visible public channels are confirmed. The strict derived-index check
+still reports active query instances with no assigned or healthy aggregate
+receipt. Buzz remains at the HTTP 400 schema boundary without a signed
+admission receipt; provider effects, complete-history coverage, recovery
+drills, and clean harness provenance remain gated. The target architecture is
+the upgraded Worker-owned R2 binding design; the historical tigrisfs proposal
+is not part of it.
+
+## Current evidence reconciliation — 2026-08-02 20:41 PDT
+
+The vision remains directional; deployed truth is in docs/current-state.md.
+The latest live search canary proves a bounded explicit retrieval path and
+passive silence, not universal Slack indexing. Tenant knowledge state is
+80 rows with 53 indexed, 2 pending, and 25 permanent failures, while the
+operator Queue/DLQ surface has 100 pending records. Installed Slack
+permissions and visibility remain narrower than the source manifest: only
+four visible public channels are confirmed, and reactions/profile/manifest
+readback is missing-scope. The Cloudflare derived-index Containers report
+running instances but no assigned or healthy aggregate receipt. Buzz signed
+admission, real provider effects, complete-history backfill, recovery drills,
+and clean harness provenance remain gated. The current local source is the
+upgraded Worker-owned R2 binding design; the historical tigrisfs proposal is
+not part of the target architecture.
+
+## Current implementation reconciliation — 2026-08-02 20:16 PDT
 
 This vision remains authoritative for direction, not for deployed status. Read
 [docs/current-state.md](./current-state.md) before interpreting any later
 section that says Layer 3, the router, knowledge, or Buzz is not built. The
-merged OpenTag baseline is `ff8d649`; the current reconciliation deployment
-also includes the narrow identity-read fix in `9d4538c`.
+merged OpenTag baseline is `d075431`; the latest inspected live bot is version
+`764a18ea-bda9-4209-bdbc-0b9cc81a6cba`; the current reconciliation also
+includes the narrow identity-read fix in `9d4538c`.
 
 Current facts: Layer 1 and Layer 2 are deployed; native typed Nanocodex and
 Claudex are live-verified through Slack; Layer 3 metadata contracts and the
 secret-free effect ledger are synthetic-live; the router is implemented in
-shadow mode; Slack knowledge retrieval is live-verified with eventual-indexing
-caveats; the Slack ingress response-worthiness gate is live-verified; and Buzz
-wake admission is present but currently fail-closed. Drive,
-Linear, external MCP, OAuth, billing, deletion, authenticated Buzz admission,
-Tier 1/Tier 3 routing, and provider reconciliation remain gated.
+shadow mode; and the Slack ingress response-worthiness/reaction lifecycle is
+live-verified. Authenticated knowledge readiness is now HTTP 200, and a fresh
+Slack search plus provider tail receipt verified the bounded Supermemory
+write/poll/search path after the local model-cache overlay. This is not yet a
+complete indexing claim: the latest tenant readback has 32 indexed, 19 leased,
+2 pending, and 24 permanent rows; 30 old local-add failures were reopened but
+have not all converged, and no complete-history inventory/backfill receipt
+exists. Buzz receive now reports a relay HTTP 526 from the deployed Worker
+even after canonical origin reprovisioning, while direct local relay checks
+reach the endpoint with expected authorization failures. Valid signed
+admission remains open. Graphify artifact/query parity, restart durability,
+provider effects, Drive, Linear, external MCP, OAuth, billing, deletion, Tier
+1/Tier 3 routing, and clean harness provenance remain gated.
+
+The current local validation pass is green across typecheck, 1,370 unit tests,
+67 bot Worker tests, 5 Graphify Worker tests, policy/deploy/artifact checks,
+static/live rollout preflights, and Graphify pin verification. Docker/FUSE
+restart evidence and live source-to-image attestation remain intentionally
+unproven.
+
+The current local knowledge contract also carries the exact observed Slack
+message timestamp through scheduling and derived-index dispatch. A stale but
+otherwise complete thread is retried until the observed message is present,
+which prevents an acknowledgement from being mistaken for complete indexing.
+This hardening is local-only and does not change the deployed evidence.
+
+The latest live search canary also separates provider health from routing:
+the deployed version answered the explicit mention and retrieved the fresh
+marker, but did not wake for the equivalent unmentioned action request. The
+current source contains retrieval classifier rule `t1.12` and passing local
+route/pre-admission tests; deployment and live rerun remain gated.
+
+The 2026-08-02 18:20 PDT live reconciliation adds two important
+constraints to the vision: the live `all_delivered` policy covers eligible
+events delivered to the installed Slack app, not every workspace message; and
+the installed token is missing the source-declared `reactions:read` and
+`users.profile:read` scopes. The current bot is in four visible public
+channels, while private-channel/MPIM coverage, complete-history backfill,
+row-level recovery of failed ledger items, signed Buzz admission, external
+effects, and clean harness provenance remain open. The authoritative details are in
+[docs/current-state.md](./docs/current-state.md).
+
+The local knowledge bundle now also includes a durable Slack installation
+lifecycle fence: uninstall or bot-token revocation, public/private channel
+archive/deletion/unsharing/close, and bot-leave events advance
+installation/channel generations, disable indexed sources and active ingestion
+leases, and invalidate ACL state; user-only OAuth revocation is not treated as
+bot installation loss, and reinstall activation is explicit. This is not yet a
+live claim because the installed manifest, lifecycle canary, and derived-index
+tombstone/reconciliation readback remain outstanding. A current human canary
+proves event delivery, no-mention routing, working-reaction cleanup, and the
+silent terminal surface, but not a KnowledgeDO or derived-index receipt.
 
 The locked tenancy model is one shared Worker fleet with strict per-team
 Durable Object isolation. Worker Secrets are the deployment/bootstrap
@@ -241,15 +320,14 @@ in their Slack." Four responsibilities:
    ceremony, which is precisely what makes per-tenant provisioning a code path
    rather than an ops runbook. (Section 5 describes the flow.)
 
-2. **Key custody.** The platform generates and holds each workspace's agent
-   identity and credentials. No raw private keys or API secrets are handed to
-   users to paste and lose. Buzz — Block's Nostr-based community platform,
-   which custodies community keypairs server-side — is the reference pattern:
-   users get capabilities, the platform holds keys. This extends the harness's
-   sentinel-credential model up a level: workspace admins grant and revoke
-   capabilities; the platform owns the secret material, scoped per tenant,
-   rotatable without user action. Self-hosters keep the escape hatch of
-   supplying their own keys.
+2. **Key custody.** Worker Secrets are the deployment/bootstrap configuration
+   mechanism, configured through one-click Wrangler or the Cloudflare CLI; they
+   are not a per-tenant OAuth/token database. Tenant Durable Objects retain only
+   opaque references, versions, grants, and revocations. A tenant-scoped broker
+   and effecter must resolve those references with rotation, revocation, and
+   audit before the platform holds external credentials for a workspace. Buzz
+   remains the reference pattern for server-side key custody, and self-hosters
+   keep the escape hatch of supplying their own keys.
 
 3. **Connector marketplace.** OpenTag speaks MCP. The platform turns "our
    agent should reach Linear / Notion / our internal API" into a browse-and
@@ -279,11 +357,9 @@ layer.
 ### Layer 4 — Knowledge (in progress; the moat)
 
 **What:** A per-workspace knowledge index that turns company activity into
-retrievable, cited memory. The design is specified in
-`KNOWLEDGE-BASE-SPEC.md`: a Supermemory Local retrieval service (currently
-planned as a single pinned service on Railway with one persistent volume) fed
-exclusively through a Cloudflare Queue pipeline — Slack event → `KnowledgeDO`
-ledger → Queue → consumer → index — with exact per-workspace tag isolation
+retrievable, cited memory. The durable pipeline remains Slack event →
+`KnowledgeDO` ledger → Queue → consumer → index, with exact per-workspace tag
+isolation
 (`workspace:{teamId}`), full-thread pagination-aware ingestion, revision
 tracking, tombstones for deletions, and a bounded `search_slack` tool that
 returns citations, never raw index output, and degrades safely when the index
@@ -296,11 +372,19 @@ enrichment of raw activity into summarized, linkable knowledge), unified
 cross-source search with rank fusion, "who knows about X" routing, and an MCP
 endpoint that exposes the whole index to external agents.
 
-**Status:** B0-side contracts, KnowledgeDO/ledger machinery, actor-bound
-authorization, bounded query templates, and the Slack retrieval path are
-source-complete. A live Slack retrieval passed, while reconciliation,
-production source activation, backup/restore, and broad ingestion remain behind
-the explicit B-series gates. Fresh indexing is eventually consistent.
+**Status:** B0-side contracts, KnowledgeDO/ledger machinery, source-typed
+queue/ledger identity, actor-bound authorization, bounded query templates,
+Slack retrieval, bot-message attribution, outbound observation,
+reaction/membership scheduling, and bounded ACL leases are source-complete
+locally. Non-Slack jobs are deliberately fail-closed until each connector has
+an authoritative fetch, mutation/delete, credential, retry/DLQ, and canary
+contract. The Cloudflare-only Supermemory and Graphify workers are
+source-complete locally, while the prior Railway design remains a historical
+migration/parity reference. Normal Slack routing and bot write/read are live;
+the latest human retrieval returned `Knowledge unavailable.`, while workspace-wide
+admission, reconciliation, production derived-index activation, backup/restore,
+and broad ingestion remain behind explicit gates. Fresh indexing is eventually
+consistent.
 
 **Why it's the long-term moat:** Layers 1–3 are excellent engineering, but
 engineering gets copied. The knowledge layer produces something that cannot be
@@ -474,12 +558,12 @@ it is the load-bearing wall under Layers 3 and 4's economics:
   addressable, and recoverable produced the reliability contract that is now
   the product's core trust claim.
 
-The honest caveat: the knowledge index itself is currently specced to run on
-Railway, because Supermemory Local needs a persistent single-node volume that
-Workers don't offer. That is a deliberate, contained exception — one sidecar
-service, rebuildable from the DO ledger, never in the Slack turn path — and
-collapsing it back into Cloudflare when the primitives allow is an open
-question (§10), not an abandoned principle.
+The honest caveat: the knowledge index is now designed as private Cloudflare
+Supermemory and Graphify Worker/Container services backed by dedicated R2
+storage. That closes the production architecture exception, but the resources,
+FUSE durability, migration parity, and cutover evidence are not live yet.
+Historical Railway artifacts remain a read-only migration reference, not the
+current production target.
 
 ## 8. Competitive positioning
 
@@ -604,32 +688,30 @@ this vision, not a footnote.
 
 ## 10. Open questions
 
-Genuinely undecided. Each needs an owner and a decision date; none should be
-resolved silently by implementation drift.
+The unresolved items below need an owner and decision date. The two entries
+marked resolved remain for traceability because earlier sections and historical
+reports referenced them as open questions.
 
-1. **Hosted multi-tenancy shape.** One shared production Worker fleet with
-   per-`teamId` DO isolation, or Workers-for-Platforms style per-tenant
-   dispatch (stronger blast-radius isolation, more moving parts)? Affects key
-   custody, billing metering, and noisy-neighbor policy. Must be decided
-   before the platform MVP.
-2. **Knowledge index residency.** The Railway/Supermemory single-node design
-   is specced and gated, but it is a per-fleet service in a per-tenant world.
-   Does the hosted platform run one index per workspace (cost), a shared
-   index with tag isolation (trust — tags are currently the *only* boundary),
-   or wait/build for a Cloudflare-native or per-DO retrieval primitive?
-   Related: is application-layer encryption of corpus content required before
-   hosting third-party data at all (the spec explicitly flags this as
-   unverified)?
+1. **Resolved — hosted multi-tenancy shape.** OpenTag uses one shared Worker
+   fleet with strict per-team Durable Object isolation. No caller may choose an
+   arbitrary object name. The remaining open work is noisy-neighbor budgets,
+   tenant-resolution observability, and adversarial isolation testing.
+2. **Knowledge index residency.** The Cloudflare-only Supermemory and Graphify
+   Workers are the selected architecture, with KnowledgeDO and Queue/DLQ as the
+   authoritative ledger. The Workers and dedicated R2 buckets are not yet
+   staged in the account. The remaining questions are shared versus per-tenant
+   derived-index economics, application-layer encryption, backup/restore, and
+   whether the historical Railway path is retained only for migration.
 3. **Business model boundary.** What exactly is open source versus hosted-only?
    (Likely: all four layers' code open, custody + marketplace curation +
    operations are the paid product — but this is not decided.) Also
    unresolved: model-cost pass-through vs. bundled pricing, and whether
    customers bring their own Anthropic/OpenAI keys on the hosted tier.
-4. **Key custody implementation.** Buzz is the pattern reference, but the
-   concrete design — where secret material lives (Workers Secrets? per-tenant
-   DO-wrapped envelopes? external KMS?), rotation policy, and what an
-   auditable custody log looks like — is unwritten. Prerequisite for hosting
-   anyone else's credentials.
+4. **Resolved — bootstrap key custody.** Worker Secrets are the deployment and
+   bootstrap mechanism, configured by one-click Wrangler or the Cloudflare
+   CLI. They are not per-tenant OAuth/token custody. Tenant DOs hold opaque
+   references, versions, grants, and revocations; the remaining implementation
+   gap is a tenant-scoped broker/effecter with rotation, revocation, and audit.
 5. **Slack Marketplace listing.** Distribution through Slack's app directory
    would supercharge one-click adoption but imposes Slack's review regime,
    scope constraints, and data-handling attestations. Pursue at MVP or after
@@ -672,8 +754,16 @@ resolved silently by implementation drift.
 14. **Tier 3 cost model.** Minutes-to-hours of container compute per request
     is a different cost class from anything OpenTag has priced. Metered
     pass-through, bundled premium-tier allowance, per-job quotes with
-    approval, or admin-set budgets? Interacts with §10.3 (business model)
-    and must be decided before Tier 3 is enabled for hosted workspaces.
+   approval, or admin-set budgets? Interacts with §10.3 (business model)
+   and must be decided before Tier 3 is enabled for hosted workspaces.
+15. **Workspace-wide knowledge admission.** What exactly does “every Slack
+    message” include: public/private channels, DMs, MPIMs, bot messages, files,
+    edits, deletions, and membership changes? The server-owned policy must set
+    default project, reader ACL, retention, privacy exclusions, and backfill
+    behavior before OpenTag can claim workspace-wide indexing. Installation
+    lifecycle fencing is implemented locally, but the live manifest/readback,
+    lifecycle canary, content-governance classifier, and physical purge receipts
+    remain unresolved.
 
 ---
 
@@ -725,11 +815,10 @@ Project and ecosystem terms this document uses, defined once for newcomers.
   handle raw keys. That custody pattern, not the product, is the reference.
 - **Supermemory Local** — a self-hostable retrieval/memory server (pinned
   release, single process) that provides the embedding, indexing, and hybrid
-  search under Layer 4. It needs a persistent local volume, which Workers
-  don't offer — hence Railway.
-- **Railway** — a container-hosting PaaS; chosen pragmatically as the one
-  non-Cloudflare service, solely to run Supermemory Local on a persistent
-  volume. See §7's caveat and §10.2.
+  search under Layer 4. OpenTag's current target wraps it in a private
+  Cloudflare Worker/Container with an R2-backed persistent state mount.
+- **Railway** — the historical Supermemory hosting path retained for migration
+  parity and rollback evidence; it is not the current production target.
 - **Conductor** — Melty Labs' Mac app that orchestrates parallel Claude Code
   / Codex agents in isolated git worktrees, with per-agent branches,
   transcripts, and review flow (recently multiplayer). Relevant as the

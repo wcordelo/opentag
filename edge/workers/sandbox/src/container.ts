@@ -1,5 +1,6 @@
 import { Container, type OutboundHandler, type OutboundHandlerContext } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
+import type { WorkerVersionMetadata } from "@cloudflare/workers-types";
 import {
   EGRESS_SENTINEL,
   authorizeGithubWrite,
@@ -15,6 +16,7 @@ import {
 
 export interface Env {
   HARNESS_CONTAINER: DurableObjectNamespace<HarnessContainer>;
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
   CLAUDEX_PROXY?: Fetcher;
   ANTHROPIC_API_KEY?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;

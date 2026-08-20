@@ -14,7 +14,7 @@ import {
 } from "./obligation-thread-key.js";
 import { stableSlackClientMessageId } from "./client-message-id.js";
 import { hasExplicitBotMention } from "./ingress-normalize.js";
-import { classifySlackThreadReplyRoute } from "./response-routing.js";
+import { classifySlackResponseRoute } from "./response-routing.js";
 import {
   classifyTrustedRichTrigger,
   type TrustedTriggerConfig,
@@ -84,12 +84,21 @@ export function preAdmissionIdentityForEvent(
     actors: new Set(),
     valid: true,
   });
-  const isDmMessage = type === "message" && event?.channel_type === "im";
+  const isDmMessage =
+    type === "message" &&
+    (event?.channel_type === "im" ||
+      event?.channel_type === "mpim" ||
+      (typeof event?.channel === "string" && event.channel.startsWith("D")));
   const isThreadReply =
     type === "message" &&
     event?.channel_type !== "im" &&
+    event?.channel_type !== "mpim" &&
     typeof event?.thread_ts === "string" &&
     event.thread_ts.trim().length > 0;
+  const isChannelMessage =
+    type === "message" &&
+    !isDmMessage &&
+    !isThreadReply;
   const hasBotMention =
     typeof event?.text === "string" &&
     hasExplicitBotMention(event.text, trustedConfig?.botUserId);
@@ -98,11 +107,13 @@ export function preAdmissionIdentityForEvent(
     type !== "app_mention" &&
     !isDmMessage &&
     !isThreadReply &&
+    !isChannelMessage &&
     !trusted
   ) return undefined;
-  if (isThreadReply && !trusted && hasBotMention && !isFileShare) return undefined;
-  if (isThreadReply && !trusted && !hasBotMention && !isFileShare) {
-    const route = classifySlackThreadReplyRoute({
+  if ((isThreadReply || isChannelMessage) && !trusted && hasBotMention && !isFileShare) return undefined;
+  if ((isThreadReply || isChannelMessage) && !trusted && !hasBotMention && !isFileShare) {
+    const route = classifySlackResponseRoute({
+      source: isThreadReply ? "thread_reply" : "channel_message",
       userText: typeof event?.text === "string" ? stripMentions(event.text) : "",
       hasFiles: Array.isArray(event?.files) && event.files.length > 0,
     });

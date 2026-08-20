@@ -21,6 +21,17 @@ describe("supermemory@4.24.12 SDK contract", () => {
         if (path === "/v3/documents" && init?.method === "POST") {
           return Response.json({ id: "local-doc-1", status: "queued" });
         }
+        if (path === "/v3/documents/list" && init?.method === "POST") {
+          return Response.json({
+            memories: [{
+              id: "local-doc-1",
+              customId: "slack:T1:C1:1_0",
+              metadata: { workspaceId: "T1", sourceKey: "slack:T1:C1:1_0" },
+              status: "indexing",
+            }],
+            pagination: { page: 1, limit: 10, total: 1, totalPages: 1 },
+          });
+        }
         if (path === "/v3/documents/local-doc-1" && init?.method === "GET") {
           return Response.json({ id: "local-doc-1", status: "done", customId: "slack:T1:C1:1_0", metadata: {} });
         }
@@ -41,6 +52,16 @@ describe("supermemory@4.24.12 SDK contract", () => {
     await client.add({ content: "fixture", containerTag: tag, customId, metadata: { projectId: "P1" } });
     await client.documents.add({ content: "fixture document surface", containerTag: tag, customId, metadata: { projectId: "P1" } });
     await client.documents.get("local-doc-1");
+    await client.documents.list({
+      containerTags: [tag],
+      filters: { AND: [
+        { key: "workspaceId", value: "T1" },
+        { key: "sourceKey", value: customId },
+      ] },
+      includeContent: false,
+      limit: 10,
+      page: 1,
+    });
     await client.documents.update("local-doc-1", {
       content: "revised fixture",
       containerTag: tag,
@@ -69,6 +90,16 @@ describe("supermemory@4.24.12 SDK contract", () => {
         body: expect.objectContaining({ containerTag: "workspace:T1", customId: "slack:T1:C1:1_0" }),
       }),
       expect.objectContaining({ url: "https://local.example/v3/documents/local-doc-1", method: "GET" }),
+      expect.objectContaining({
+        url: "https://local.example/v3/documents/list",
+        method: "POST",
+        body: expect.objectContaining({
+          containerTags: ["workspace:T1"],
+          includeContent: false,
+          limit: 10,
+          page: 1,
+        }),
+      }),
       expect.objectContaining({
         url: "https://local.example/v3/documents/local-doc-1",
         method: "PATCH",

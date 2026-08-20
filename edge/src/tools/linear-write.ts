@@ -6,6 +6,7 @@ import {
   createLinearIssue,
   linearWriteApprovalKey,
   normalizeLinearIssueDraft,
+  registerLinearProviderRequest,
   type LinearWriteApproval,
   type LinearIssueCreateResult,
 } from "../connectors/linear-write.js";
@@ -20,6 +21,9 @@ import { getTurnExecutionContext } from "../slack/turn-execution-context.js";
 import { createDurableObjectStore } from "../store/index.js";
 import type { BotTool } from "@copilotkit/channels";
 import type { ActiveTurnEffectResource } from "../store/active-turn-types.js";
+import { deriveInternalTenantId } from "../platform/tenant-id.js";
+import { platformTenantObjectName } from "../platform/tenant-routing.js";
+import { validatePlatformEffectIntent } from "../platform/layer3-contract.js";
 
 export const SAVE_LINEAR_ISSUE_TOOL_NAME = "save_linear_issue" as const;
 export const LINEAR_CONNECTOR_SCOPE_PROJECT = "workspace";
@@ -136,6 +140,118 @@ export function createSaveLinearIssueTool(dependencies: {
       }
       if (!authorization.credential) {
         return { status: "unauthorized", reason: "linear_credential_reference_required" };
+      }
+
+      if (env.PLATFORM_PROVIDER_EFFECTS_MODE === "linear") {
+        const tenantId = await deriveInternalTenantId({
+          externalPlatform: "slack",
+          externalTenantId: context.teamId,
+        });
+        try {
+          await registerLinearProviderRequest({
+            resolver: env.PROVIDER_REQUEST_RESOLVER,
+            resolverAuthToken: env.PROVIDER_REQUEST_RESOLVER_AUTH_TOKEN,
+            tenantId,
+            labels: authorization.labels,
+            credential: authorization.credential,
+            approval,
+          });
+        } catch (error) {
+          return {
+            status: "unavailable",
+            retryable: error instanceof Error && "retryable" in error
+              ? Boolean((error as { retryable?: unknown }).retryable)
+              : true,
+            reason: error instanceof Error ? error.message : "provider_request_registration_failed",
+          };
+        }
+
+        if (!env.PLATFORM_STATE || !env.PLATFORM_EFFECTER || !env.EFFECTOR_AUTH_TOKEN?.trim()) {
+          return {
+            status: "unavailable",
+            retryable: true,
+            reason: "platform_provider_effecter_unconfigured",
+          };
+        }
+        const intent = validatePlatformEffectIntent({
+          schemaVersion: 1,
+          intentId: `effect:linear:create-issue:${approval.approvalId}`,
+          idempotencyKey: `linear-create-issue:${approval.approvalId}`,
+          scope: "tenant",
+          tenantId,
+          kind: "connector_effect",
+          targetRef: "connector:linear:create_issue",
+          metadata: {
+            action: "create_issue",
+            authorizationDigest: authorization.labels.digest,
+            connectorId: "linear",
+            credentialRef: authorization.credential.ref,
+            credentialVersion: authorization.credential.version,
+            requestDigest: approval.draftDigest,
+            requestRef: `linear-write-approval:${approval.approvalId}`,
+            requestRevision: 1,
+          },
+          requestedAt: new Date().toISOString(),
+        });
+        const state = env.PLATFORM_STATE.get(
+          env.PLATFORM_STATE.idFromName(platformTenantObjectName(tenantId)),
+        ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+        const enqueue = await state.fetch("https://platform-state/effect/enqueue", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(intent),
+        });
+        if (!enqueue.ok) {
+          return {
+            status: "unavailable",
+            retryable: enqueue.status >= 500,
+            reason: "platform_provider_effect_enqueue_failed",
+          };
+        }
+        const run = await env.PLATFORM_EFFECTER.fetch("https://platform-effecter/run", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${env.EFFECTOR_AUTH_TOKEN}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            scope: "tenant",
+            tenantId,
+            intentId: intent.intentId,
+            workerId: `opentag-bot:linear:${approval.approvalId}`,
+            leaseSeconds: 300,
+          }),
+        });
+        const runBody = await run.json().catch(() => ({})) as Record<string, unknown>;
+        if (!run.ok || runBody.status !== "completed") {
+          const receipt = runBody.receipt && typeof runBody.receipt === "object"
+            ? runBody.receipt as Record<string, unknown>
+            : undefined;
+          return {
+            status: "unavailable",
+            retryable: receipt?.retryable === true,
+            reason: typeof runBody.errorCode === "string"
+              ? runBody.errorCode
+              : typeof runBody.error === "string"
+                ? runBody.error
+                : "platform_provider_effect_failed",
+          };
+        }
+        const receipt = runBody.receipt && typeof runBody.receipt === "object"
+          ? runBody.receipt as Record<string, unknown>
+          : undefined;
+        const externalReceiptRef = typeof receipt?.externalReceiptRef === "string"
+          ? receipt.externalReceiptRef
+          : undefined;
+        if (!externalReceiptRef?.startsWith("linear-issue:")) {
+          return { status: "unavailable", retryable: false, reason: "provider_receipt_invalid" };
+        }
+        return {
+          status: "created",
+          id: externalReceiptRef.slice("linear-issue:".length),
+          identifier: externalReceiptRef.slice("linear-issue:".length),
+          title: approval.draft.title,
+        };
       }
 
       const created = await dependencies.runEffect(

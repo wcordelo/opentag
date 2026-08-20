@@ -1,7 +1,7 @@
 /**
  * MCP retrieval primitives for the knowledge base (K2 Phase 5).
  * LLM-light: raw evidence rows only. Clients orchestrate planner/synthesis.
- * No ingestion path — search only, bearer-gated by ADMIN_SECRET.
+ * No ingestion path — search only, operator bearer or actor-token gated.
  */
 
 import type { Env } from "../env.js";
@@ -14,11 +14,25 @@ import type { KnowledgeMcpAuditEvent } from "../memory/knowledge-do.js";
 import { tenantStub } from "../tenancy.js";
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
 import { KNOWLEDGE_LIMITS, rejectCallerControlledAddressing } from "../memory/knowledge-contract.js";
-import { createSupermemoryClient } from "../memory/supermemory-client.js";
+import { createSupermemoryClientFromEnv } from "../memory/supermemory-client.js";
+import { createGraphifyClient } from "../memory/graphify-client.js";
+import { GraphifyAdapter } from "../memory/graphify-adapter.js";
+import { connectorGrantsOf } from "../connectors/authorization.js";
+import type { AccessBundle, WorkspaceChannelConfig } from "../config/access-bundle.js";
+import { readerPolicyRefForBundle } from "../config/knowledge-config.js";
+import {
+  currentKnowledgeReadGrantAllows,
+  currentKnowledgeToolAllows,
+  loadCurrentKnowledgeReadAccess,
+} from "../memory/knowledge-read-authorization.js";
 import { WikiSearchAdapter } from "../memory/connectors/wiki-connector.js";
 import { CodeSearchAdapter } from "../memory/connectors/code-connector.js";
 import { CustomDbSearchAdapter } from "../memory/connectors/custom-db-connector.js";
 import { SupermemoryAdapter } from "../memory/supermemory-adapter.js";
+import {
+  isSlackKnowledgeMember,
+  searchSlackKnowledgeForActor,
+} from "../tools/search-slack.js";
 import { unifiedKnowledgeSearch } from "../memory/retrieval/unified-search.js";
 import {
   parseRawKnowledgeQuery,
@@ -32,6 +46,9 @@ export type KnowledgeMcpToolName =
   | "search_wiki"
   | "search_code"
   | "search_custom"
+  | "code_graph_search"
+  | "code_path"
+  | "code_impact"
   | "query_template";
 
 export const KNOWLEDGE_MCP_TOOLS: readonly KnowledgeMcpToolName[] = [
@@ -40,6 +57,9 @@ export const KNOWLEDGE_MCP_TOOLS: readonly KnowledgeMcpToolName[] = [
   "search_wiki",
   "search_code",
   "search_custom",
+  "code_graph_search",
+  "code_path",
+  "code_impact",
   "query_template",
 ] as const;
 
@@ -53,6 +73,12 @@ export type KnowledgeMcpRequest = {
   spaceId?: string;
   repoId?: string;
   connectorId?: string;
+  source?: string;
+  target?: string;
+  symbol?: string;
+  depth?: number;
+  maxHops?: number;
+  relations?: string[];
   aclPolicyRef: string;
   rawQuery?: RawKnowledgeQuery;
 };
@@ -124,14 +150,182 @@ async function currentActorAclMatches(
       enabled?: unknown;
       readerPolicyRef?: unknown;
     };
-    return source.teamId === claims.teamId &&
+    const sourceMatches = source.teamId === claims.teamId &&
       source.projectId === claims.projectId &&
       source.channelId === input.channelId &&
       source.enabled === true &&
       source.readerPolicyRef === claims.aclPolicyRef;
+    return sourceMatches && await isSlackKnowledgeMember(
+      env,
+      claims.teamId,
+      input.channelId,
+      claims.actor.id,
+    );
   } catch {
     return false;
   }
+}
+
+async function currentGraphRepositoryGrantMatches(
+  env: Env,
+  input: KnowledgeMcpRequest,
+  authorization: Extract<McpAuthorization, { kind: "actor" }>,
+): Promise<boolean> {
+  // Graph tools require both a signed actor repo scope and the current access
+  // bundle grant. Requiring a channel makes the bundle lookup exact; a repo
+  // token without a live channel policy must not reach Graphify.
+  if (!input.channelId || !input.repoId) return false;
+  try {
+    const configResponse = await tenantStub(env.WORKSPACE_CONFIG, input.teamId).fetch("https://do/getConfig", {
+      method: "POST",
+      body: JSON.stringify({ teamId: input.teamId, channelId: input.channelId }),
+    });
+    if (!configResponse.ok) return false;
+    const config = await configResponse.json() as WorkspaceChannelConfig;
+    const bundleResponse = await tenantStub(env.WORKSPACE_CONFIG, input.teamId).fetch("https://do/getBundle", {
+      method: "POST",
+      body: JSON.stringify({ id: config.accessBundleId }),
+    });
+    if (!bundleResponse.ok) return false;
+    const bundle = await bundleResponse.json() as AccessBundle;
+    if (config.teamId !== input.teamId || config.channelId !== input.channelId ||
+      bundle.status === "revoked" || !bundle.tools.includes(input.tool) ||
+      !authorization.claims.scopes.repoIds.includes(input.repoId)) {
+      return false;
+    }
+    return connectorGrantsOf(bundle).some((grant) =>
+      grant.connectorId === "code_graph" &&
+      grant.actions.includes(input.tool) &&
+      grant.repoId === input.repoId &&
+      (!grant.projectId || grant.projectId === input.projectId) &&
+      (!grant.channelId || grant.channelId === input.channelId) &&
+      (grant.scope === "workspace" ||
+        (grant.scope === "project" && Boolean(input.projectId)) ||
+        (grant.scope === "channel" && Boolean(input.channelId))),
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function currentActorKnowledgeReadAllows(
+  env: Env,
+  claims: KnowledgeActorTokenClaims,
+  input: KnowledgeMcpRequest,
+): Promise<boolean> {
+  if (!input.channelId || !input.projectId) return false;
+  const access = await loadCurrentKnowledgeReadAccess(env, input.teamId, input.channelId);
+  if (!access) return false;
+  try {
+    if (readerPolicyRefForBundle(access.bundle.id) !== input.aclPolicyRef) return false;
+  } catch {
+    return false;
+  }
+  if (input.tool === "query_template") return false;
+  if (input.tool === "search_slack" && !(await currentActorAclMatches(env, claims, input))) return false;
+  if (!currentKnowledgeToolAllows(access, {
+    teamId: input.teamId,
+    channelId: input.channelId,
+    action: input.tool,
+  })) return false;
+
+  const grant = (request: Parameters<typeof currentKnowledgeReadGrantAllows>[1]): boolean =>
+    currentKnowledgeReadGrantAllows(access, request);
+
+  if (input.tool === "search_slack") {
+    return true;
+  }
+  if (input.tool === "search_wiki") {
+    return Boolean(input.spaceId) && grant({
+      teamId: input.teamId,
+      channelId: input.channelId,
+      projectId: input.projectId,
+      connectorId: "wiki",
+      action: "search_wiki",
+      spaceId: input.spaceId,
+      aclPolicyRef: input.aclPolicyRef,
+    });
+  }
+  if (input.tool === "search_code") {
+    return Boolean(input.repoId) && grant({
+      teamId: input.teamId,
+      channelId: input.channelId,
+      projectId: input.projectId,
+      connectorId: "code",
+      action: "search_code",
+      repoId: input.repoId,
+      aclPolicyRef: input.aclPolicyRef,
+    });
+  }
+  if (input.tool === "search_custom") {
+    const connectorId = input.connectorId;
+    if (!connectorId) return false;
+    return grant({
+      teamId: input.teamId,
+      channelId: input.channelId,
+      projectId: input.projectId,
+      connectorId,
+      action: "search_custom",
+      aclPolicyRef: input.aclPolicyRef,
+    });
+  }
+  if (input.tool === "code_graph_search" || input.tool === "code_path" || input.tool === "code_impact") {
+    return Boolean(input.repoId) && currentGraphRepositoryGrantMatches(env, input, {
+      kind: "actor",
+      actorId: claims.actor.id,
+      jti: claims.jti,
+      claims,
+    });
+  }
+  if (input.tool === "search") {
+    let sourceCount = 0;
+    if (input.channelId) {
+      if (!(await currentActorAclMatches(env, claims, input))) return false;
+      if (!currentKnowledgeToolAllows(access, {
+        teamId: input.teamId,
+        channelId: input.channelId,
+        action: "search_slack",
+      })) return false;
+      sourceCount += 1;
+    }
+    if (input.spaceId) {
+      if (!(await grant({
+        teamId: input.teamId,
+        channelId: input.channelId,
+        projectId: input.projectId,
+        connectorId: "wiki",
+        action: "search_wiki",
+        spaceId: input.spaceId,
+        aclPolicyRef: input.aclPolicyRef,
+      }))) return false;
+      sourceCount += 1;
+    }
+    if (input.repoId) {
+      if (!(await grant({
+        teamId: input.teamId,
+        channelId: input.channelId,
+        projectId: input.projectId,
+        connectorId: "code",
+        action: "search_code",
+        repoId: input.repoId,
+        aclPolicyRef: input.aclPolicyRef,
+      }))) return false;
+      sourceCount += 1;
+    }
+    if (input.connectorId) {
+      if (!(await grant({
+        teamId: input.teamId,
+        channelId: input.channelId,
+        projectId: input.projectId,
+        connectorId: input.connectorId,
+        action: "search_custom",
+        aclPolicyRef: input.aclPolicyRef,
+      }))) return false;
+      sourceCount += 1;
+    }
+    return sourceCount > 0;
+  }
+  return false;
 }
 
 async function consumeActorToken(
@@ -177,7 +371,7 @@ async function authorizeMcp(
   ) {
     return null;
   }
-  if (!(await currentActorAclMatches(env, claims, input))) return null;
+  if (!(await currentActorKnowledgeReadAllows(env, claims, input))) return null;
   return { kind: "actor", actorId: claims.actor.id, jti: claims.jti, claims };
 }
 
@@ -193,6 +387,103 @@ async function recordMcpAudit(env: Env, event: KnowledgeMcpAuditEvent): Promise<
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+type SlackConvergenceSearch = {
+  citations: KnowledgeCitationBase[];
+  providerResultCount: number;
+  queryDigest: string;
+};
+
+async function recordSlackQueryConvergence(
+  env: Env,
+  input: KnowledgeMcpRequest,
+  result: SlackConvergenceSearch,
+): Promise<void> {
+  if (!env.KNOWLEDGE || input.tool !== "search_slack" || !input.channelId) return;
+  const citationsBySource = new Map<string, KnowledgeCitationBase[]>();
+  for (const citation of result.citations) {
+    const existing = citationsBySource.get(citation.sourceKey) ?? [];
+    existing.push(citation);
+    citationsBySource.set(citation.sourceKey, existing);
+  }
+  if (citationsBySource.size === 0) return;
+
+  const stub = tenantStub(env.KNOWLEDGE, input.teamId);
+  for (const [sourceKey, citations] of citationsBySource) {
+    try {
+      const stateResponse = await stub.fetch("https://do/state", {
+        method: "POST",
+        body: JSON.stringify({ sourceKey }),
+      });
+      if (!stateResponse.ok) throw new Error("state_lookup_failed");
+      const state = await stateResponse.json() as {
+        ledger?: {
+          sourceType?: string;
+          teamId?: string;
+          projectId?: string;
+          channelId?: string;
+          threadTs?: string;
+          status?: string;
+          indexedRevision?: string;
+          localDocumentId?: string;
+          derivedIndexGeneration?: string;
+        } | null;
+      };
+      const ledger = state.ledger;
+      if (
+        !ledger ||
+        ledger.sourceType !== "slack" ||
+        ledger.teamId !== input.teamId ||
+        ledger.projectId !== input.projectId ||
+        ledger.channelId !== input.channelId ||
+        ledger.status !== "indexed" ||
+        !ledger.threadTs ||
+        !ledger.indexedRevision ||
+        !ledger.localDocumentId ||
+        !ledger.derivedIndexGeneration
+      ) throw new Error("indexed_ledger_fence_missing");
+      const citation = citations[0];
+      if (!citation) throw new Error("citation_missing");
+      if (
+        citation.contentRevision !== ledger.indexedRevision ||
+        citation.channelId !== ledger.channelId ||
+        citation.threadTs !== ledger.threadTs
+      ) throw new Error("citation_ledger_fence_mismatch");
+
+      const receiptResponse = await stub.fetch("https://do/query-convergence", {
+        method: "POST",
+        body: JSON.stringify({
+          sourceKey,
+          contentRevision: ledger.indexedRevision,
+          indexGeneration: ledger.derivedIndexGeneration,
+          localDocumentId: ledger.localDocumentId,
+          queryDigest: result.queryDigest,
+          status: "queryable",
+          providerResultCount: result.providerResultCount,
+          matchingCitationCount: citations.length,
+        }),
+      });
+      if (!receiptResponse.ok) throw new Error("receipt_write_failed");
+      const receipt = await receiptResponse.json() as { recorded?: unknown };
+      if (receipt.recorded !== true) throw new Error("receipt_not_recorded");
+      console.log(JSON.stringify({
+        event: "knowledge_query_convergence_recorded",
+        teamId: input.teamId,
+        sourceKey,
+        status: "queryable",
+        providerResultCount: result.providerResultCount,
+        matchingCitationCount: citations.length,
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "knowledge_query_convergence_record_failed",
+        teamId: input.teamId,
+        sourceKey,
+        errorCode: error instanceof Error ? error.message : "unknown",
+      }));
+    }
   }
 }
 
@@ -317,28 +608,98 @@ export async function handleKnowledgeMcp(
     }
   }
 
-  if (!input.query || !input.projectId) {
-    return finish(Response.json({ status: "error", code: "invalid_request", message: "projectId and query are required" }, { status: 400 }), "error", "invalid_request");
+  if (!input.projectId) {
+    return finish(Response.json({ status: "error", code: "invalid_request", message: "projectId is required" }, { status: 400 }), "error", "invalid_request");
   }
   const projectId = input.projectId;
+  const limit = Math.min(
+    KNOWLEDGE_LIMITS.maxSearchLimit,
+    Math.max(1, input.limit ?? 5),
+  );
+
+  if (input.tool === "code_graph_search" || input.tool === "code_path" || input.tool === "code_impact") {
+    if (!input.repoId) {
+      return finish(Response.json({ status: "error", code: "invalid_request", message: "repoId required" }, { status: 400 }), "error", "invalid_request");
+    }
+    if (authorization.kind === "actor" && !(await currentGraphRepositoryGrantMatches(env, input, authorization))) {
+      return finish(Response.json({
+        status: "error",
+        code: "code_graph_acl_denied",
+        message: "the current access bundle does not grant this repository graph action",
+      }, { status: 403 }), "error", "code_graph_acl_denied");
+    }
+    const graphify = createGraphifyClient(env);
+    if (!graphify) {
+      return finish(Response.json({
+        status: "error",
+        code: "knowledge_unavailable",
+        message: "Graphify is not configured",
+      }, { status: 503 }), "error", "knowledge_unavailable");
+    }
+    try {
+      const adapter = new GraphifyAdapter(graphify);
+      let citations: KnowledgeCitationBase[];
+      if (input.tool === "code_graph_search") {
+        if (!input.query) {
+          return finish(Response.json({ status: "error", code: "invalid_request", message: "query required" }, { status: 400 }), "error", "invalid_request");
+        }
+        citations = await adapter.search({
+          teamId: input.teamId,
+          repoId: input.repoId,
+          projectId,
+          aclPolicyRef: input.aclPolicyRef,
+          query: input.query,
+          limit,
+        });
+      } else if (input.tool === "code_path") {
+        if (!input.source || !input.target) {
+          return finish(Response.json({ status: "error", code: "invalid_request", message: "source and target required" }, { status: 400 }), "error", "invalid_request");
+        }
+        citations = await adapter.path({
+          teamId: input.teamId,
+          repoId: input.repoId,
+          projectId,
+          aclPolicyRef: input.aclPolicyRef,
+          source: input.source,
+          target: input.target,
+          maxHops: input.maxHops ?? 6,
+        });
+      } else {
+        if (!input.symbol) {
+          return finish(Response.json({ status: "error", code: "invalid_request", message: "symbol required" }, { status: 400 }), "error", "invalid_request");
+        }
+        citations = await adapter.impact({
+          teamId: input.teamId,
+          repoId: input.repoId,
+          projectId,
+          aclPolicyRef: input.aclPolicyRef,
+          symbol: input.symbol,
+          depth: input.depth ?? 3,
+          ...(input.relations ? { relations: input.relations } : {}),
+        });
+      }
+      if (authorization.kind === "actor" && !(await currentActorKnowledgeReadAllows(env, authorization.claims, input))) {
+        return finish(Response.json({ status: "error", code: "knowledge_acl_changed", message: "knowledge access changed during retrieval" }, { status: 403 }), "error", "knowledge_acl_changed");
+      }
+      return finish(Response.json({ status: "ok", citations } satisfies KnowledgeMcpResponse), "ok");
+    } catch {
+      return finish(Response.json({ status: "error", code: "knowledge_unavailable", message: "Graphify search failed" }, { status: 503 }), "error", "knowledge_unavailable");
+    }
+  }
+
+  if (!input.query) {
+    return finish(Response.json({ status: "error", code: "invalid_request", message: "query is required" }, { status: 400 }), "error", "invalid_request");
+  }
   const queryText = input.query;
-  if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
+  const client = createSupermemoryClientFromEnv(env);
+  if (!client) {
     return finish(Response.json({
       status: "error",
       code: "knowledge_unavailable",
       message: "Supermemory is not configured",
     }, { status: 503 }), "error", "knowledge_unavailable");
   }
-  const limit = Math.min(
-    KNOWLEDGE_LIMITS.maxSearchLimit,
-    Math.max(1, input.limit ?? 5),
-  );
-
   try {
-    const client = createSupermemoryClient({
-      baseURL: env.SUPERMEMORY_URL,
-      apiKey: env.SUPERMEMORY_API_KEY,
-    });
     let citations: KnowledgeCitationBase[] = [];
 
     switch (input.tool) {
@@ -346,14 +707,38 @@ export async function handleKnowledgeMcp(
         if (!input.channelId) {
           return finish(Response.json({ status: "error", code: "invalid_request", message: "channelId required" }, { status: 400 }), "error", "invalid_request");
         }
-        citations = await new SupermemoryAdapter(client).searchSlack({
-          teamId: input.teamId,
-          projectId,
-          channelId: input.channelId,
-          aclPolicyRef: input.aclPolicyRef,
-          query: queryText,
-          limit,
-        });
+        if (authorization.kind === "actor") {
+          const result = await searchSlackKnowledgeForActor({
+            env,
+            teamId: input.teamId,
+            channelId: input.channelId,
+            projectId,
+            actorId: authorization.claims.actor.id,
+            aclPolicyRef: input.aclPolicyRef,
+            query: queryText,
+            limit,
+          });
+          if (result.status !== "ok") {
+            const code = result.status === "unauthorized" ? "knowledge_acl_denied" : "knowledge_unavailable";
+            return finish(Response.json({
+              status: "error",
+              code,
+              message: code === "knowledge_acl_denied" ? "current Slack knowledge access denied" : "Slack knowledge is unavailable",
+            }, { status: result.status === "unauthorized" ? 403 : 503 }), "error", code);
+          }
+          citations = result.citations;
+        } else {
+          const search = await new SupermemoryAdapter(client).searchSlackForConvergence({
+            teamId: input.teamId,
+            projectId,
+            channelId: input.channelId,
+            aclPolicyRef: input.aclPolicyRef,
+            query: queryText,
+            limit,
+          });
+          citations = search.citations;
+          await recordSlackQueryConvergence(env, input, search);
+        }
         break;
       }
       case "search_wiki": {
@@ -401,18 +786,35 @@ export async function handleKnowledgeMcp(
       case "search": {
         const lists = [];
         if (input.channelId) {
-          const slack = new SupermemoryAdapter(client);
-          lists.push(async (q: string, lim: number) => {
-            const rows = await slack.searchSlack({
-              teamId: input.teamId,
-              projectId,
-              channelId: input.channelId!,
-              aclPolicyRef: input.aclPolicyRef,
-              query: q,
-              limit: lim,
+          if (authorization.kind === "actor") {
+            lists.push(async (q: string, lim: number) => {
+              const result = await searchSlackKnowledgeForActor({
+                env,
+                teamId: input.teamId,
+                channelId: input.channelId!,
+                projectId,
+                actorId: authorization.claims.actor.id,
+                aclPolicyRef: input.aclPolicyRef,
+                query: q,
+                limit: lim,
+              });
+              if (result.status !== "ok") throw new Error(result.status);
+              return result.citations.map((c) => ({ id: c.sourceKey, citation: c, score: c.score }));
             });
-            return rows.map((c) => ({ id: c.sourceKey, citation: c, score: c.score }));
-          });
+          } else {
+            const slack = new SupermemoryAdapter(client);
+            lists.push(async (q: string, lim: number) => {
+              const rows = await slack.searchSlack({
+                teamId: input.teamId,
+                projectId,
+                channelId: input.channelId!,
+                aclPolicyRef: input.aclPolicyRef,
+                query: q,
+                limit: lim,
+              });
+              return rows.map((c) => ({ id: c.sourceKey, citation: c, score: c.score }));
+            });
+          }
         }
         if (input.spaceId) {
           const wiki = new WikiSearchAdapter(client);
@@ -473,6 +875,9 @@ export async function handleKnowledgeMcp(
       }
     }
 
+    if (authorization.kind === "actor" && !(await currentActorKnowledgeReadAllows(env, authorization.claims, input))) {
+      return finish(Response.json({ status: "error", code: "knowledge_acl_changed", message: "knowledge access changed during retrieval" }, { status: 403 }), "error", "knowledge_acl_changed");
+    }
     const response: KnowledgeMcpResponse = { status: "ok", citations };
     return finish(Response.json(response), "ok");
     } catch (error) {
@@ -537,7 +942,9 @@ function parseMcpRequest(body: unknown): { ok: true; value: KnowledgeMcpRequest 
       return { ok: false, message: error instanceof Error ? error.message : "raw query is invalid" };
     }
   }
-  for (const field of ["projectId", "query"] as const) {
+  const graphTool = raw.tool === "code_graph_search" || raw.tool === "code_path" || raw.tool === "code_impact";
+  const requiredFields = graphTool ? (["projectId"] as const) : (["projectId", "query"] as const);
+  for (const field of requiredFields) {
     if (
       typeof raw[field] !== "string" ||
       !(raw[field] as string).trim() ||
@@ -560,19 +967,51 @@ function parseMcpRequest(body: unknown): { ok: true; value: KnowledgeMcpRequest 
       return { ok: false, message: `${field} is invalid` };
     }
   }
+  for (const field of ["source", "target", "symbol"] as const) {
+    if (raw[field] !== undefined && (
+      typeof raw[field] !== "string" ||
+      !(raw[field] as string).trim() ||
+      (raw[field] as string).length > 512 ||
+      /[\u0000-\u001f\u007f]/.test(raw[field] as string)
+    )) {
+      return { ok: false, message: `${field} is invalid` };
+    }
+  }
+  for (const field of ["depth", "maxHops"] as const) {
+    if (raw[field] !== undefined && (
+      !Number.isSafeInteger(raw[field]) ||
+      (raw[field] as number) < 1 ||
+      (raw[field] as number) > 16
+    )) {
+      return { ok: false, message: `${field} is invalid` };
+    }
+  }
+  if (raw.relations !== undefined && (
+    !Array.isArray(raw.relations) ||
+    raw.relations.length > 8 ||
+    raw.relations.some((relation) => typeof relation !== "string" || !relation.trim() || relation.length > 64)
+  )) {
+    return { ok: false, message: "relations is invalid" };
+  }
   return {
     ok: true,
     value: {
       tool: raw.tool as KnowledgeMcpToolName,
       teamId: raw.teamId as string,
       projectId: raw.projectId as string,
-      query: raw.query as string,
+      ...(typeof raw.query === "string" ? { query: raw.query } : {}),
       aclPolicyRef: raw.aclPolicyRef as string,
       ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
       ...(typeof raw.channelId === "string" ? { channelId: raw.channelId } : {}),
       ...(typeof raw.spaceId === "string" ? { spaceId: raw.spaceId } : {}),
       ...(typeof raw.repoId === "string" ? { repoId: raw.repoId } : {}),
       ...(typeof raw.connectorId === "string" ? { connectorId: raw.connectorId } : {}),
+      ...(typeof raw.source === "string" ? { source: raw.source } : {}),
+      ...(typeof raw.target === "string" ? { target: raw.target } : {}),
+      ...(typeof raw.symbol === "string" ? { symbol: raw.symbol } : {}),
+      ...(typeof raw.depth === "number" ? { depth: raw.depth } : {}),
+      ...(typeof raw.maxHops === "number" ? { maxHops: raw.maxHops } : {}),
+      ...(Array.isArray(raw.relations) ? { relations: raw.relations as string[] } : {}),
     },
   };
 }

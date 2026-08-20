@@ -7,6 +7,13 @@ not the required fresh independent re-review. No deployment, secret operation,
 source enablement, Queue/DLQ binding, Railway or Slack mutation, git-history
 mutation, canary, or backfill execution occurred.
 
+> **Historical review note (2026-08-02).** This integration report predates
+> the current durable knowledge-event and outbound-observation ownership
+> changes. Its `waitUntil` descriptions and line references are retained as
+> historical evidence; current behavior is recorded in
+> [`docs/current-state.md`](../../docs/current-state.md) and the
+> [knowledge contract audit](../knowledge-contract-validation/KNOWLEDGE-CONTRACT-GAP-AUDIT.md).
+
 ## Integration verdict
 
 All seven original BLOCKING findings now have connected source corrections and

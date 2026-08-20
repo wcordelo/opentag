@@ -27,6 +27,26 @@ export const BUZZ_RECEIVE_EVENT_UNVERIFIED = "buzz_receive_event_unverified";
 
 export const BUZZ_QUERY_DEFAULT_TIMEOUT_MS = 10_000;
 
+type BuzzFetchFailurePhase =
+  | "signer"
+  | "network"
+  | "relay_auth"
+  | "relay_http"
+  | "response_json"
+  | "response_shape"
+  | "event_verification";
+
+function recordBuzzFetchFailure(
+  phase: BuzzFetchFailurePhase,
+  status?: number,
+): void {
+  console.warn(JSON.stringify({
+    event: "buzz_receive_fetch_failed",
+    phase,
+    ...(status === undefined ? {} : { status }),
+  }));
+}
+
 export type BuzzQueryFetcherOptions = Readonly<{
   relayHttpBaseUrl: string;
   signer: BuzzOpenTagSigner;
@@ -91,7 +111,7 @@ export function createBuzzNip98QueryFetcher(
           createdAt: options.nowSeconds?.(),
         });
       } catch {
-        // Never echo signer/crypto detail.
+        recordBuzzFetchFailure("signer");
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
 
@@ -115,15 +135,18 @@ export function createBuzzNip98QueryFetcher(
           signal: controller.signal,
         });
       } catch {
+        recordBuzzFetchFailure("network");
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       } finally {
         clearTimeout(timer);
       }
 
       if (isAuthRejectedStatus(response.status)) {
+        recordBuzzFetchFailure("relay_auth", response.status);
         throwOpaque(BUZZ_RECEIVE_AUTH_REJECTED);
       }
       if (!response.ok) {
+        recordBuzzFetchFailure("relay_http", response.status);
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
 
@@ -131,20 +154,23 @@ export function createBuzzNip98QueryFetcher(
       try {
         payload = await response.json();
       } catch {
+        recordBuzzFetchFailure("response_json", response.status);
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
 
       if (!Array.isArray(payload)) {
+        recordBuzzFetchFailure("response_shape", response.status);
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
       if (payload.length === 0) {
-        // Empty can be propagation lag — transient, redelivery may recover.
+        recordBuzzFetchFailure("response_shape", response.status);
         throwOpaque(BUZZ_RECEIVE_FETCH_FAILED);
       }
 
       const event = payload[0];
       const verified = await verifyNostrEvent(event);
       if (!verified) {
+        recordBuzzFetchFailure("event_verification", response.status);
         throwOpaque(BUZZ_RECEIVE_EVENT_UNVERIFIED);
       }
       return event;

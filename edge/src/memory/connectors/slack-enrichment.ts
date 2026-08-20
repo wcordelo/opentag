@@ -20,6 +20,7 @@ export type SlackEnrichmentResult = {
   artifact?: SlackDistillArtifact;
   /** Extra burst documents to index alongside the thread. */
   burstDocuments: Array<{ embedText: string; authorId: string }>;
+  reactionCount: number;
   distillStatus: "ok" | "skipped";
   distillReason?: string;
 };
@@ -36,6 +37,10 @@ export async function enrichSlackThreadForIndex(input: {
   documentFrequencies?: Map<string, number>;
   corpusSize?: number;
 }): Promise<SlackEnrichmentResult> {
+  const reactionCount = input.messages.reduce((total, message) => {
+    const count = message.reactions ?? 0;
+    return total + (Number.isSafeInteger(count) && count > 0 ? count : 0);
+  }, 0);
   let threadEmbedText = input.transcript;
   let artifact: SlackDistillArtifact | undefined;
   let distillStatus: "ok" | "skipped" = "skipped";
@@ -68,6 +73,9 @@ export async function enrichSlackThreadForIndex(input: {
     threadTopic: input.threadTopic,
     corpusIdf: idf,
   });
+  if (reactionCount > 0) {
+    threadEmbedText = `${threadEmbedText}\nengagement reactions:${reactionCount}`;
+  }
 
   return {
     threadEmbedText,
@@ -76,6 +84,7 @@ export async function enrichSlackThreadForIndex(input: {
       embedText: b.embedText,
       authorId: b.burst.authorId,
     })),
+    reactionCount,
     distillStatus,
     ...(distillReason ? { distillReason } : {}),
   };

@@ -2,6 +2,13 @@
 
 Date: 2026-07-16. Scope: the 23 findings in `goal-outputs/opentag-2-gap-audit/gap-audit.md`, evaluated against the current shared worktree after the final corrective and validation pass. This report describes source and local-test state only. It does not treat an available primitive as a resolution unless the production call site uses it and a regression test exercises the relevant boundary.
 
+> **Current-state reconciliation (2026-08-02).** The earlier M2 row below
+> describes the then-current `Thinking…` assistant status. A later product
+> decision removed the initial status publication entirely; current lifecycle
+> behavior retains only idempotent empty-status cleanup for stale statuses.
+> Use [`docs/current-state.md`](../../docs/current-state.md) for the current
+> UI and rollout authority.
+
 ## Resolution summary
 
 All 23 original findings have a source-level resolution or, for M1, an explicit and tested implementation choice that satisfies the audit's allowed “chosen equivalent” disposition. The final census is 4 Critical, 8 High, 8 Medium, and 3 Low findings, with no omitted ID. Corrective attempt 4 closed the last C2, H3, M3, and L2 review gaps: recoverable answer pages are decoration-free and byte-for-byte stable across normal AG-UI and alarm recovery; staging failures at either size tier abort for exact-byte retry; delayed-file correlation retains multiple immutable pending mentions and refuses ambiguity; SessionEvent replay rejection starts neither runtime and releases no final lifecycle ownership; and canonical docs now require SessionEvent input/output/tool data to exist before Slack delivery.

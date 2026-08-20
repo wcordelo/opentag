@@ -39,6 +39,11 @@ import { createBotStoreAdapter } from "./create-bot-store.js";
 import { verifySessionViewToken } from "./slack/session-link.js";
 import { probeDurabilityHealth } from "./health.js";
 import { buildRuntimeCapabilityEvidence } from "./runtime-evidence.js";
+import {
+  evaluateRuntimeReadiness,
+  parseRuntimeReadinessProfile,
+} from "./runtime-readiness.js";
+import { probeRuntimeDependencies } from "./runtime-probes.js";
 import { handleKnowledgeMcp } from "./mcp/knowledge-mcp.js";
 import {
   hydrateLateFileRefs,
@@ -52,10 +57,20 @@ import {
   type PendingFilelessMention,
 } from "./slack/late-file-repair.js";
 import { createSlackWebClient, sharedSlackRateScheduler } from "./slack/web-api.js";
+import { validateSlackManifestReadback } from "./slack/installation-contract.js";
 import { slackObligationThreadKey } from "./slack/obligation-thread-key.js";
 import { assertTenantId, tenantStub } from "./tenancy.js";
 import type { DeferredIngressJob } from "./deferred-ingress-do.js";
-import { loadTurnAccess, resolveAllowedTools } from "./config/workspace-config-do.js";
+import {
+  knowledgeEventIngressId,
+  knowledgeObservationIngressId,
+  reactionCleanupIngressId,
+} from "./memory/knowledge-ingress-identity.js";
+import {
+  loadConnectorAuthorization,
+  loadTurnAccess,
+  resolveAllowedTools,
+} from "./config/workspace-config-do.js";
 import { ALL_EDGE_TOOL_NAMES } from "./tools/index.js";
 import { buildPermissionSnapshot } from "./permissions/snapshot.js";
 import {
@@ -66,14 +81,27 @@ import {
 import {
   handleKnowledgeQueue,
   scheduleKnowledgeFromSlackEvent,
+  scheduleKnowledgeFromSlackMessage,
 } from "./memory/knowledge-jobs.js";
+import type { SlackMessageObservation } from "./slack/web-api.js";
 import {
   handleKnowledgeDlq,
   inspectDurableKnowledgeDlq,
+  inspectDurableKnowledgeFailures,
+  recoverDurableKnowledgeFailure,
   replayDurableKnowledgeDlqRecord,
   runKnowledgeReconciliationPage,
   runScheduledKnowledgeReconciliation,
 } from "./memory/knowledge-reconcile.js";
+import {
+  reconcileSlackKnowledgeAclForTeam,
+  refreshSlackKnowledgeAcl,
+} from "./memory/knowledge-acl-reconciler.js";
+import {
+  currentKnowledgeToolAllows,
+  loadCurrentKnowledgeReadAccess,
+} from "./memory/knowledge-read-authorization.js";
+import { isSlackKnowledgeMember } from "./tools/search-slack.js";
 import {
   approveKnowledgeBackfillManifest,
   discoverAndStoreKnowledgeBackfill,
@@ -115,8 +143,14 @@ import {
   assertConnectorMarketplaceEntryActivatable,
   PlatformFoundationError,
   validateConnectorMarketplaceEntry,
+  validatePlatformEffectIntent,
   validateProvisioningRequest,
 } from "./platform/layer3-contract.js";
+import {
+  createLinearWriteApproval,
+  normalizeLinearIssueDraft,
+  registerLinearProviderRequest,
+} from "./connectors/linear-write.js";
 import {
   enqueuePlatformEffectWakeup,
   handlePlatformEffectQueue,
@@ -166,6 +200,13 @@ type LateFileRepairJobPayload = {
 
 type FileTurnJobPayload = {
   callback: SlackEventCallbackPayload;
+};
+
+type ReactionCleanupJobPayload = {
+  teamId?: unknown;
+  channelId?: unknown;
+  timestamp?: unknown;
+  name?: unknown;
 };
 
 function fileTurnJobId(
@@ -296,6 +337,41 @@ async function processLateFileRepair(
   }
 }
 
+async function processReactionCleanup(
+  env: AppEnv["Bindings"],
+  job: DeferredIngressJob,
+  payload: ReactionCleanupJobPayload,
+): Promise<void> {
+  if (
+    payload.teamId !== job.teamId ||
+    typeof payload.channelId !== "string" ||
+    typeof payload.timestamp !== "string" ||
+    typeof payload.name !== "string" ||
+    !payload.channelId ||
+    !/^\d+\.\d+$/.test(payload.timestamp) ||
+    !payload.name ||
+    reactionCleanupIngressId(
+      job.teamId,
+      payload.channelId,
+      payload.timestamp,
+      payload.name,
+    ) !== job.id
+  ) {
+    throw new Error("deferred_ingress_identity_mismatch");
+  }
+  if (!env.SLACK_BOT_TOKEN) throw new Error("slack_bot_token_unavailable");
+  const result = await createSlackWebClient(env.SLACK_BOT_TOKEN, {
+    scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+  }).removeReaction({
+    channel: payload.channelId,
+    timestamp: payload.timestamp,
+    name: payload.name,
+  });
+  if (!result.ok && result.error !== "no_reaction") {
+    throw new Error("reaction_cleanup_failed:" + (result.error ?? "unknown"));
+  }
+}
+
 app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
   const job = await c.req.json<DeferredIngressJob>();
   try {
@@ -319,6 +395,53 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
       await processFileTurn(c.env, payload, job.teamId);
+    } else if (job.kind === "knowledge_event") {
+      const payload = job.payload as SlackEventCallbackPayload;
+      if (
+        typeof payload.team_id !== "string" ||
+        typeof payload.event_id !== "string" ||
+        knowledgeEventIngressId(payload.team_id, payload.event_id) !== job.id
+      ) {
+        return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
+      }
+      await scheduleKnowledgeFromSlackEvent(c.env, payload);
+    } else if (job.kind === "knowledge_observation") {
+      const payload = job.payload as {
+        teamId?: unknown;
+        observation?: unknown;
+      };
+      const observation = payload.observation as SlackMessageObservation | undefined;
+      if (
+        payload.teamId !== job.teamId ||
+        !observation ||
+        (observation.operation !== "posted" && observation.operation !== "updated") ||
+        typeof observation.channel !== "string" ||
+        typeof observation.ts !== "string" ||
+        knowledgeObservationIngressId(
+          job.teamId,
+          observation.operation,
+          observation.channel,
+          observation.ts,
+          typeof observation.observationId === "string"
+            ? observation.observationId
+            : undefined,
+        ) !== job.id
+      ) {
+        return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
+      }
+      await scheduleKnowledgeFromSlackMessage(c.env, {
+        teamId: job.teamId,
+        channelId: observation.channel,
+        ts: observation.ts,
+        ...(observation.threadTs ? { threadTs: observation.threadTs } : {}),
+        operation: observation.operation,
+      });
+    } else if (job.kind === "reaction_cleanup") {
+      await processReactionCleanup(
+        c.env,
+        job,
+        job.payload as ReactionCleanupJobPayload,
+      );
     } else {
       return c.json({ error: "unsupported_deferred_ingress_kind" }, 400);
     }
@@ -368,6 +491,37 @@ app.get("/health", async (c) => {
     trustedRichMention,
     botEngine: await resolveBotEngineKind(),
   }, ok ? 200 : 503);
+});
+
+app.get("/ready", requireAdminAuth(), async (c) => {
+  const defaultProfile = ["development", "test"].includes(c.env.ENVIRONMENT?.trim() ?? "")
+    ? "core"
+    : "full";
+  const profile = parseRuntimeReadinessProfile(c.req.query("profile"), defaultProfile);
+  if (!profile) {
+    return c.json({
+      ok: false,
+      error: "invalid_readiness_profile",
+      profiles: ["core", "knowledge", "full"],
+    }, 400, { "cache-control": "no-store" });
+  }
+  const durability = await probeDurabilityHealth(c.env);
+  const runtime = buildRuntimeCapabilityEvidence(c.env);
+  const probes = await probeRuntimeDependencies(c.env, profile);
+  const readiness = evaluateRuntimeReadiness({
+    profile,
+    production: c.env.ENVIRONMENT?.trim() === "production",
+    durabilityOk: durability.ok,
+    runtime,
+    probes,
+  });
+  return c.json({
+    ...readiness,
+    product: "claude-tag-cf",
+    durability: durability.checks,
+    probes,
+    runtime,
+  }, readiness.ok ? 200 : 503, { "cache-control": "no-store" });
 });
 
 /**
@@ -814,6 +968,126 @@ app.post("/admin/platform/effect/enqueue", requireAdminAuth(), async (c) => {
   return forwardPlatformEffect(c, "/effect/enqueue", await c.req.json());
 });
 
+app.post("/admin/platform/provider-canary", requireAdminAuth(), async (c) => {
+  const body = await c.req.json() as Record<string, unknown>;
+  if (
+    body.teamId !== "T0BBBEDLEGY" ||
+    body.channelId !== "C0BA1MKPRE3" ||
+    body.linearTeam !== "BER" ||
+    typeof body.requesterId !== "string"
+  ) {
+    return c.json({ error: "controlled_provider_canary_target_required" }, 400);
+  }
+  let draft;
+  try {
+    draft = normalizeLinearIssueDraft({
+      title: body.title,
+      description: body.description,
+      team: body.linearTeam,
+    });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "provider_canary_draft_invalid" }, 400);
+  }
+  const executionId = `provider-canary:${crypto.randomUUID()}`;
+  const threadKey = `provider-canary:${crypto.randomUUID()}`;
+  const approvalId = `OPENTAGCANARY${crypto.randomUUID().replaceAll("-", "")}`;
+  try {
+    const authorization = await loadConnectorAuthorization(c.env.WORKSPACE_CONFIG, {
+      workspaceId: body.teamId,
+      projectId: "workspace",
+      channelId: body.channelId,
+      requesterId: body.requesterId,
+      actorKind: "human",
+      executionId,
+      threadKey,
+      connectorId: "linear",
+      action: "create_issue",
+      lifetimeMs: 60_000,
+    });
+    if (!authorization.credential) {
+      return c.json({ error: "linear_credential_reference_required" }, 409);
+    }
+    const approval = await createLinearWriteApproval({
+      approvalId,
+      teamId: body.teamId,
+      channelId: body.channelId,
+      requesterId: body.requesterId,
+      executionId,
+      threadKey,
+      draft,
+      now: Date.now(),
+    });
+    const tenantId = await deriveInternalTenantId({
+      externalPlatform: "slack",
+      externalTenantId: body.teamId,
+    });
+    await registerLinearProviderRequest({
+      resolver: c.env.PROVIDER_REQUEST_RESOLVER,
+      resolverAuthToken: c.env.PROVIDER_REQUEST_RESOLVER_AUTH_TOKEN,
+      tenantId,
+      labels: authorization.labels,
+      credential: authorization.credential,
+      approval,
+    });
+    if (!c.env.PLATFORM_STATE || !c.env.PLATFORM_EFFECTER || !c.env.EFFECTOR_AUTH_TOKEN?.trim()) {
+      return c.json({ error: "platform_provider_effecter_unconfigured" }, 503);
+    }
+    const intent = validatePlatformEffectIntent({
+      schemaVersion: 1,
+      intentId: `effect:linear:create-issue:${approvalId}`,
+      idempotencyKey: `linear-create-issue:${approvalId}`,
+      scope: "tenant",
+      tenantId,
+      kind: "connector_effect",
+      targetRef: "connector:linear:create_issue",
+      metadata: {
+        action: "create_issue",
+        authorizationDigest: authorization.labels.digest,
+        connectorId: "linear",
+        credentialRef: authorization.credential.ref,
+        credentialVersion: authorization.credential.version,
+        requestDigest: approval.draftDigest,
+        requestRef: `linear-write-approval:${approvalId}`,
+        requestRevision: 1,
+      },
+      requestedAt: new Date().toISOString(),
+    });
+    const state = c.env.PLATFORM_STATE.get(
+      c.env.PLATFORM_STATE.idFromName(platformTenantObjectName(tenantId)),
+    ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    const enqueue = await state.fetch("https://platform-state/effect/enqueue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(intent),
+    });
+    if (!enqueue.ok) return c.json({ error: "platform_provider_effect_enqueue_failed" }, 503);
+    const run = await c.env.PLATFORM_EFFECTER.fetch("https://platform-effecter/run", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${c.env.EFFECTOR_AUTH_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        scope: "tenant",
+        tenantId,
+        intentId: intent.intentId,
+        workerId: `opentag-admin-provider-canary:${approvalId}`,
+        leaseSeconds: 300,
+      }),
+    });
+    const runBody = await run.json().catch(() => ({})) as Record<string, unknown>;
+    return c.json({
+      status: run.ok ? runBody.status : "unavailable",
+      ...(typeof runBody.errorCode === "string" ? { errorCode: runBody.errorCode } : {}),
+      ...(runBody.receipt && typeof runBody.receipt === "object" ? { receipt: runBody.receipt } : {}),
+    }, run.ok ? 200 : 503);
+  } catch (error) {
+    return c.json({
+      error: error instanceof Error ? error.message : "provider_canary_failed",
+    }, 503);
+  }
+});
+
 app.post("/admin/platform/effect/wake", requireAdminAuth(), async (c) => {
   const body = await c.req.json();
   const objectName = platformEffectObjectName(body);
@@ -1197,6 +1471,344 @@ app.post(
   knowledgeSourceActionHandler("disable"),
 );
 
+app.post("/admin/knowledge/admission-policy", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as Record<string, unknown>;
+    if (typeof body.teamId !== "string" || body.teamId.length === 0) {
+      return c.json({ error: "teamId is required" }, 400, { "cache-control": "no-store" });
+    }
+    const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
+    const response = await stub.fetch("https://do/putKnowledgeAdmissionPolicy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    return c.json(payload, response.status as 200 | 400 | 403 | 409 | 500, {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge admission policy update failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/admission-policy/get", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown };
+    if (typeof body.teamId !== "string" || body.teamId.length === 0) {
+      return c.json({ error: "teamId is required" }, 400, { "cache-control": "no-store" });
+    }
+    const stub = tenantStub(c.env.WORKSPACE_CONFIG, body.teamId);
+    const response = await stub.fetch("https://do/getKnowledgeAdmissionPolicy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    return c.json(payload, response.status as 200 | 400 | 403 | 409 | 500, {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge admission policy lookup failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/status", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    const response = await tenantStub(c.env.KNOWLEDGE, teamId).fetch("https://do/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ teamId }),
+    });
+    const payload = await response.json();
+    return c.json(payload, response.ok ? 200 : adminForwardStatus(response.status), {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge status lookup failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/acl/reconcile", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown; channelId?: unknown };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    if (!c.env.SLACK_BOT_TOKEN) {
+      return c.json({ error: "slack_acl_refresh_token_missing" }, 503, { "cache-control": "no-store" });
+    }
+    if (body.channelId !== undefined && (typeof body.channelId !== "string" || body.channelId.length === 0)) {
+      return c.json({ error: "channelId must be a non-empty string" }, 400, { "cache-control": "no-store" });
+    }
+    const result = typeof body.channelId === "string"
+      ? await refreshSlackKnowledgeAcl(c.env, { teamId, channelId: body.channelId })
+      : await reconcileSlackKnowledgeAclForTeam(c.env, teamId);
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge ACL reconciliation failed" },
+      503,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/actor-access/check", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: unknown;
+      projectId?: unknown;
+      channelId?: unknown;
+      actorId?: unknown;
+      aclPolicyRef?: unknown;
+    };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    const projectId = typeof body.projectId === "string" && body.projectId.length > 0
+      ? body.projectId
+      : "";
+    const channelId = typeof body.channelId === "string" && body.channelId.length > 0
+      ? body.channelId
+      : "";
+    const actorId = typeof body.actorId === "string" && body.actorId.length > 0
+      ? body.actorId
+      : "";
+    const aclPolicyRef = typeof body.aclPolicyRef === "string" ? body.aclPolicyRef : "";
+    if (!projectId || !channelId || !actorId || !aclPolicyRef) {
+      return c.json({ error: "teamId, projectId, channelId, actorId, and aclPolicyRef are required" }, 400, {
+        "cache-control": "no-store",
+      });
+    }
+    const sourceResponse = await tenantStub(c.env.WORKSPACE_CONFIG, teamId).fetch("https://do/getTrackedKnowledgeSource", {
+      method: "POST",
+      body: JSON.stringify({ teamId, projectId, channelId }),
+    });
+    const source = sourceResponse.ok
+      ? await sourceResponse.json() as {
+        teamId?: unknown;
+        projectId?: unknown;
+        channelId?: unknown;
+        enabled?: unknown;
+        readerPolicyRef?: unknown;
+        configVersion?: unknown;
+      }
+      : null;
+    const access = await loadCurrentKnowledgeReadAccess(c.env, teamId, channelId);
+    const member = await isSlackKnowledgeMember(c.env, teamId, channelId, actorId);
+    return c.json({
+      ok: true,
+      source: source && {
+        teamId: source.teamId,
+        projectId: source.projectId,
+        channelId: source.channelId,
+        enabled: source.enabled,
+        readerPolicyRef: source.readerPolicyRef,
+        configVersion: source.configVersion,
+      },
+      access: access && {
+        configTeamId: access.config.teamId,
+        configChannelId: access.config.channelId,
+        bundleId: access.bundle.id,
+        bundleRevision: access.bundle.revision,
+        bundleStatus: access.bundle.status,
+        tools: access.bundle.tools,
+      },
+      checks: {
+        sourceRequestMatched: Boolean(
+          source &&
+          source.teamId === teamId &&
+          source.projectId === projectId &&
+          source.channelId === channelId,
+        ),
+        sourceEnabled: source?.enabled === true,
+        sourcePolicyMatched: source?.readerPolicyRef === aclPolicyRef,
+        bundlePolicyMatched: access?.bundle.id === aclPolicyRef.slice("bundle:".length),
+        searchSlackAllowed: currentKnowledgeToolAllows(access, {
+          teamId,
+          channelId,
+          action: "search_slack",
+        }),
+        slackMember: member,
+      },
+    }, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge actor access check failed" },
+      503,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/knowledge/backfill/inventory", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: unknown;
+      manifestId?: unknown;
+    };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    if (
+      typeof body.manifestId !== "string" ||
+      body.manifestId.length === 0 ||
+      body.manifestId.length > 128
+    ) {
+      throw new Error("manifestId is required");
+    }
+    const response = await tenantStub(c.env.KNOWLEDGE, teamId).fetch(
+      "https://do/backfill/inventory/get",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ manifestId: body.manifestId }),
+      },
+    );
+    const payload = await response.json();
+    return c.json(payload, response.ok ? 200 : adminForwardStatus(response.status), {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge inventory lookup failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/slack/installation/activate", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown; activationId?: unknown };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    if (
+      typeof body.activationId !== "string" ||
+      body.activationId.length < 1 ||
+      body.activationId.length > 512
+    ) {
+      return c.json({ error: "slack_installation_activation_id_invalid" }, 400, {
+        "cache-control": "no-store",
+      });
+    }
+    const response = await tenantStub(c.env.WORKSPACE_CONFIG, teamId).fetch(
+      "https://do/activateSlackInstallation",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ teamId, activationId: body.activationId }),
+      },
+    );
+    const payload = await response.json();
+    return c.json(payload, response.status as 200 | 400 | 409 | 500, {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Slack installation activation failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/slack/installation/manifest", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: unknown;
+      readback?: unknown;
+    };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    const readback = validateSlackManifestReadback(body.readback);
+    if (readback.teamId !== teamId) {
+      throw new Error("slack_manifest_team_mismatch");
+    }
+    const installationResponse = await tenantStub(c.env.WORKSPACE_CONFIG, teamId).fetch(
+      "https://do/getSlackInstallationState",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      },
+    );
+    const installationPayload = await installationResponse.json() as {
+      installation?: { generation?: unknown; status?: unknown };
+    };
+    if (!installationResponse.ok) {
+      return c.json(
+        installationPayload,
+        adminForwardStatus(installationResponse.status),
+        { "cache-control": "no-store" },
+      );
+    }
+    const generation = installationPayload.installation?.generation;
+    if (
+      installationPayload.installation?.status !== "active" ||
+      !Number.isSafeInteger(generation) ||
+      (generation as number) < 1
+    ) {
+      return c.json({ error: "slack_installation_not_active" }, 409, {
+        "cache-control": "no-store",
+      });
+    }
+    const response = await tenantStub(c.env.WORKSPACE_CONFIG, teamId).fetch(
+      "https://do/recordSlackInstallationManifest",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...readback,
+          installationGeneration: generation,
+        }),
+      },
+    );
+    const payload = await response.json();
+    return c.json(payload, response.ok ? 200 : adminForwardStatus(response.status), {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Slack installation manifest recording failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
+app.post("/admin/slack/installation/manifest/get", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as { teamId?: unknown };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    const response = await tenantStub(c.env.WORKSPACE_CONFIG, teamId).fetch(
+      "https://do/getSlackInstallationState",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      },
+    );
+    const payload = await response.json();
+    return c.json(payload, response.ok ? 200 : adminForwardStatus(response.status), {
+      "cache-control": "no-store",
+    });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "Slack installation manifest lookup failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
 app.post("/admin/knowledge/reconcile", requireAdminAuth(), async (c) => {
   try {
     const body = await c.req.json() as {
@@ -1250,6 +1862,44 @@ app.get("/admin/knowledge/dlq", requireAdminAuth(), async (c) => {
   }
 });
 
+app.post("/admin/knowledge/failures", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: unknown;
+      cursor?: unknown;
+      limit?: unknown;
+      status?: unknown;
+    };
+    const teamId = assertTenantId(typeof body.teamId === "string" ? body.teamId : "");
+    if (body.cursor !== undefined && typeof body.cursor !== "string") {
+      return c.json({ error: "failure_cursor_invalid" }, 400, { "cache-control": "no-store" });
+    }
+    if (body.limit !== undefined && typeof body.limit !== "number") {
+      return c.json({ error: "failure_limit_invalid" }, 400, { "cache-control": "no-store" });
+    }
+    if (
+      body.status !== undefined &&
+      body.status !== "permanent_failure" &&
+      body.status !== "retryable_failure"
+    ) {
+      return c.json({ error: "failure_status_invalid" }, 400, { "cache-control": "no-store" });
+    }
+    const result = await inspectDurableKnowledgeFailures(c.env, {
+      teamId,
+      cursor: body.cursor as string | undefined,
+      limit: body.limit as number | undefined,
+      status: body.status as "permanent_failure" | "retryable_failure" | undefined,
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge failure inspection failed" },
+      400,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
 app.post("/admin/knowledge/dlq/:recordId/replay", requireAdminAuth(), async (c) => {
   try {
     const body = await c.req.json() as {
@@ -1271,6 +1921,34 @@ app.post("/admin/knowledge/dlq/:recordId/replay", requireAdminAuth(), async (c) 
   }
 });
 
+app.post("/admin/knowledge/recover", requireAdminAuth(), async (c) => {
+  try {
+    const body = await c.req.json() as {
+      teamId?: string;
+      sourceKey?: string;
+      expectedConfigVersion?: number;
+      expectedRequestedAt?: string;
+      operatorId?: string;
+      rootCauseCorrectionRef?: string;
+    };
+    const result = await recoverDurableKnowledgeFailure(c.env, {
+      teamId: body.teamId ?? "",
+      sourceKey: body.sourceKey ?? "",
+      expectedConfigVersion: body.expectedConfigVersion ?? -1,
+      expectedRequestedAt: body.expectedRequestedAt ?? "",
+      operatorId: body.operatorId ?? "",
+      rootCauseCorrectionRef: body.rootCauseCorrectionRef ?? "",
+    });
+    return c.json(result, 200, { "cache-control": "no-store" });
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : "knowledge recovery failed" },
+      409,
+      { "cache-control": "no-store" },
+    );
+  }
+});
+
 app.post("/admin/knowledge/backfill/discover", requireAdminAuth(), async (c) => {
   try {
     const body = await c.req.json() as {
@@ -1278,6 +1956,7 @@ app.post("/admin/knowledge/backfill/discover", requireAdminAuth(), async (c) => 
       teamId?: string;
       projectId?: string;
       channelIds?: string[];
+      discoverAll?: boolean;
       from?: string;
       to?: string;
       maximumCount?: number;
@@ -1291,6 +1970,7 @@ app.post("/admin/knowledge/backfill/discover", requireAdminAuth(), async (c) => 
       "teamId",
       "projectId",
       "channelIds",
+      "discoverAll",
       "from",
       "to",
       "maximumCount",
@@ -1311,6 +1991,7 @@ app.post("/admin/knowledge/backfill/discover", requireAdminAuth(), async (c) => 
       teamId: body.teamId ?? "",
       projectId: body.projectId ?? "",
       channelIds: body.channelIds ?? [],
+      discoverAll: body.discoverAll,
       from: body.from ?? "",
       to: body.to ?? "",
       maximumCount: body.maximumCount ?? 0,
@@ -1399,7 +2080,7 @@ app.post("/admin/knowledge/backfill/:manifestId/execute", requireAdminAuth(), as
 
 /**
  * MCP-style knowledge retrieval primitives (K2 Phase 5).
- * Bearer ADMIN_SECRET; LLM-light raw citations; no ingestion.
+ * Operator ADMIN_SECRET or internal actor token; LLM-light raw citations; no ingestion.
  */
 app.post("/mcp/knowledge", async (c) => handleKnowledgeMcp(c.req.raw, c.env));
 
@@ -1469,6 +2150,41 @@ app.post("/slack/events", slackVerify(), async (c) => {
     files?: LateFileEvent["files"];
   } | undefined;
   const store = createDurableObjectStore(c.env.BOT_STATE);
+
+  const knowledgeEventId =
+    payload.type === "event_callback" &&
+    typeof payload.team_id === "string" &&
+    payload.team_id.trim() &&
+    typeof payload.event_id === "string" &&
+    payload.event_id.trim()
+      ? knowledgeEventIngressId(payload.team_id, payload.event_id)
+      : undefined;
+  if (payload.type === "event_callback" && !knowledgeEventId) {
+    return c.json({ error: "knowledge_event_identity_unavailable" }, 503);
+  }
+  if (knowledgeEventId) {
+    if (!c.env.DEFERRED_INGRESS) {
+      if (c.env.ENVIRONMENT === "production") {
+        return c.json({ error: "knowledge_event_persistence_unavailable" }, 503);
+      }
+      console.error("[slack/events:knowledge] local durable ingress binding absent");
+    } else {
+      try {
+        const ownership = await deferredIngressStub(c.env, knowledgeEventId).prepare({
+          id: knowledgeEventId,
+          kind: "knowledge_event",
+          payload,
+          teamId,
+        });
+        if (ownership.status === "exhausted") {
+          return c.json({ error: "knowledge_event_ingress_exhausted" }, 503);
+        }
+      } catch (error) {
+        console.error("[slack/events:knowledge] durable ownership failed", error);
+        return c.json({ error: "knowledge_event_persistence_failed" }, 503);
+      }
+    }
+  }
 
   // Slack may deliver an app_mention before its uploaded file metadata. Match
   // the later file_share to the exact user/channel mention, wait for that
@@ -1552,21 +2268,6 @@ app.post("/slack/events", slackVerify(), async (c) => {
     return c.json({ ok: true });
   }
 
-  // Automatic ingestion scheduling is independent of the turn path. HMAC has
-  // already been verified by slackVerify(); only exact enabled config rows can
-  // create descriptors, and Queue/Supermemory work remains outside this ack.
-  // Exact Stop remains a control-plane continuation and is not captured.
-  if (exec?.waitUntil) {
-    exec.waitUntil(
-      scheduleKnowledgeFromSlackEvent(c.env, payload).catch((error) => {
-        console.error(
-          "[slack/events:knowledge] descriptor scheduling failed",
-          error instanceof Error ? error.message : "unknown",
-        );
-      }),
-    );
-  }
-
   const trustedDecision = trustedRichTriggerDecision(
     payload.event,
     trustedConfig,
@@ -1620,6 +2321,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
         const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
         await postTurnRejectedFeedback(c.env, stateStore, {
           reason: "concurrent",
+          teamId: identity.teamId,
           channelId: identity.channelId,
           threadTs: identity.threadTs,
           threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
@@ -1727,6 +2429,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
         const stateStore = createBotStoreAdapter(c.env.BOT_STATE);
         await postTurnRejectedFeedback(c.env, stateStore, {
           reason: "concurrent",
+          teamId: identity.teamId,
           channelId: identity.channelId,
           threadTs: identity.threadTs,
           threadKey: slackObligationThreadKey(identity.teamId, identity.channelId, identity.threadTs),
@@ -1762,10 +2465,7 @@ app.post("/slack/commands", slackVerify(), async (c) => {
     });
   }
 
-  return c.json({
-    response_type: "ephemeral",
-    text: "Working on it…",
-  });
+  return new Response(null, { status: 200 });
 });
 
 app.post("/slack/interactions", slackVerify(), async (c) => {

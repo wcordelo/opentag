@@ -68,7 +68,7 @@ describe("extractStopCommandEvent", () => {
     expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
   });
 
-  it("ignores an unmentioned channel-thread Stop before cancellation routing", () => {
+  it("matches an unmentioned channel-thread Stop as a control message", () => {
     const event: SlackStopEvent = {
       type: "message",
       channel: "C1",
@@ -77,7 +77,19 @@ describe("extractStopCommandEvent", () => {
       ts: "1.1",
       thread_ts: "1.0",
     };
-    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBeUndefined();
+    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
+  });
+
+  it("ignores the structured Slack integration attribution footer", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel: "C1",
+      user: "U1",
+      text: "stop\n*Sent using* <@U0BGP9J4XNJ|ChatGPT>",
+      ts: "1.15",
+      thread_ts: "1.0",
+    };
+    expect(extractStopCommandEvent(eventCallback(event), "UBOT")).toBe(event);
   });
 
   it("keeps unthreaded DM Stop behavior without a mention", () => {
@@ -87,6 +99,18 @@ describe("extractStopCommandEvent", () => {
       user: "U1",
       text: "please stop",
       ts: "1.2",
+    };
+    expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
+  });
+
+  it("keeps unthreaded group-DM Stop behavior without a mention", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel_type: "mpim",
+      channel: "G1",
+      user: "U1",
+      text: "please stop",
+      ts: "1.3",
     };
     expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
   });
@@ -597,6 +621,18 @@ describe("handleStopCommand", () => {
       text: "stop",
       ts: "1.0",
     }))).toBeUndefined();
+  });
+
+  it("accepts a user-authored message carrying app metadata", () => {
+    const event: SlackStopEvent = {
+      type: "message",
+      channel: "D1",
+      user: "U1",
+      app_id: "A123",
+      text: "stop",
+      ts: "1.1",
+    };
+    expect(extractStopCommandEvent(eventCallback(event))).toBe(event);
   });
 
   it("does nothing (no throw) when channel or thread timestamp is missing", async () => {

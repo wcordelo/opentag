@@ -105,6 +105,26 @@ describe("Buzz untrusted wake envelope", () => {
     );
   });
 
+  it("keeps the same event isolated when directory resolution selects another tenant", async () => {
+    const dedupe = memoryDedupe();
+    const otherTenant = canonicalInternalTenantId("22222222-2222-4222-8222-222222222222");
+    const first = await claimBuzzWake(
+      wake(),
+      directory(new Map([[CHANNEL, TENANT]])),
+      dedupe,
+    );
+    const isolated = await claimBuzzWake(
+      wake(),
+      directory(new Map([[CHANNEL, otherTenant]])),
+      dedupe,
+    );
+    expect(first.status).toBe("first");
+    expect(isolated.status).toBe("first");
+    expect(isolated.tenantId).toBe(otherTenant);
+    expect(isolated.dedupeKey).not.toBe(first.dedupeKey);
+    expect(dedupe.keys.size).toBe(2);
+  });
+
   it("claims first delivery via resolved tenant and rejects redelivery", async () => {
     const dedupe = memoryDedupe();
     const first = await claimBuzzWake(wake(), directory(), dedupe);

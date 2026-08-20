@@ -6,6 +6,9 @@ import type { DurableObjectNamespace, Queue } from "@cloudflare/workers-types";
 import type { SqlExecutor } from "../store/sql.js";
 import {
   KnowledgeLedger,
+  type KnowledgeQueryConvergenceStatus,
+  type KnowledgeQueryabilityReceiptIdentity,
+  type KnowledgeQueryabilityReceiptInput,
   type KnowledgeOutcome,
 } from "./knowledge-ledger.js";
 import { parseKnowledgeJob } from "./knowledge-jobs.js";
@@ -18,6 +21,10 @@ import {
   type KnowledgeBackfillPageDisposition,
   type KnowledgeBackfillScope,
 } from "./knowledge-backfill.js";
+import {
+  slackConversationInventoryDigest,
+  type SlackConversationInventoryReceipt,
+} from "../slack/conversation-inventory.js";
 import type {
   VerifiedKnowledgeBackfillApproval,
 } from "./knowledge-backfill-authorization.js";
@@ -83,11 +90,93 @@ const DDL = [
   created_at INTEGER NOT NULL
 )`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_mcp_audit_created ON knowledge_mcp_audit(created_at)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_slack_acl_events (
+  event_id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '',
+  observed_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_slack_acl_events_observed ON knowledge_slack_acl_events(observed_at)`,
+  `CREATE TABLE IF NOT EXISTS knowledge_slack_acl_state (
+  team_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('stale', 'fresh')),
+  revision INTEGER NOT NULL DEFAULT 0,
+  invalidated_at INTEGER,
+  refreshed_at INTEGER,
+  last_event_id TEXT,
+  last_user_id TEXT,
+  membership_digest TEXT,
+  member_ids_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (team_id, channel_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS knowledge_slack_acl_read_leases (
+  lease_id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_slack_acl_read_leases_scope
+   ON knowledge_slack_acl_read_leases(team_id, channel_id, expires_at)`,
 ];
+
+const MAX_SLACK_ACL_MEMBER_IDS = 100_000;
+export const DEFAULT_SLACK_ACL_MAX_AGE_MS = 5 * 60_000;
+const SLACK_ACL_READ_LEASE_MS = 30_000;
+
+function slackAclMaxAgeMs(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_SLACK_ACL_MAX_AGE_MS;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 10_000 || parsed > 24 * 60 * 60_000) {
+    throw new Error("invalid Slack ACL maximum age");
+  }
+  return parsed;
+}
+
+function parseSlackAclMemberIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_SLACK_ACL_MEMBER_IDS) {
+    throw new Error("invalid Slack ACL member set");
+  }
+  const members = new Set<string>();
+  for (const memberId of value) {
+    if (
+      typeof memberId !== "string" ||
+      memberId.length < 1 ||
+      memberId.length > 256 ||
+      !/^[A-Za-z0-9_-]+$/.test(memberId)
+    ) {
+      throw new Error("invalid Slack ACL member set");
+    }
+    members.add(memberId);
+  }
+  return [...members].sort();
+}
+
+async function slackAclMembershipDigest(memberIds: readonly string[]): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(memberIds));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return `sha256:${[...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function storedSlackAclMemberIds(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  try {
+    return parseSlackAclMemberIds(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
 
 type KnowledgeDOEnv = {
   /** Optional until the approved C1 Queue/DLQ binding gate. */
   KNOWLEDGE_QUEUE?: Queue<KnowledgeJob>;
+  KNOWLEDGE_SLACK_ACL_MAX_AGE_MS?: string;
 };
 
 export type KnowledgeActorTokenConsumeRequest = {
@@ -141,16 +230,28 @@ function mapRow(row: {
 
 export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
   private readonly ledger: KnowledgeLedger;
+  private readonly maxSlackAclAgeMs: number;
   private tenantBinding: Promise<string | undefined> = Promise.resolve(undefined);
 
   constructor(ctx: DurableObjectState, env: KnowledgeDOEnv) {
     super(ctx, env);
+    this.maxSlackAclAgeMs = slackAclMaxAgeMs(env.KNOWLEDGE_SLACK_ACL_MAX_AGE_MS);
     const sql = this.ctx.storage.sql as unknown as SqlExecutor;
     this.ledger = new KnowledgeLedger(sql, (fn) => this.ctx.storage.transactionSync(fn));
     // Additive migration and crash recovery complete before any RPC observes
     // the legacy knowledge table or the descriptor ledger.
     void this.ctx.blockConcurrencyWhile(async () => {
       for (const statement of DDL) sql.exec(statement);
+      const aclColumns = new Set(
+        sql.exec<{ name: string }>(
+          "PRAGMA table_info(knowledge_slack_acl_state)",
+        ).toArray().map((row) => row.name),
+      );
+      if (!aclColumns.has("member_ids_json")) {
+        sql.exec(
+          "ALTER TABLE knowledge_slack_acl_state ADD COLUMN member_ids_json TEXT NOT NULL DEFAULT '[]'",
+        );
+      }
       this.ledger.migrate();
       this.ledger.recoverSending(Date.now());
       await this.armPendingOutbox();
@@ -185,6 +286,14 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
     this.sql().exec(
       "DELETE FROM knowledge_mcp_audit WHERE created_at < ?",
       securitySweepBefore - MCP_AUDIT_RETENTION_MS,
+    );
+    this.sql().exec(
+      "DELETE FROM knowledge_slack_acl_events WHERE observed_at < ?",
+      securitySweepBefore - MCP_AUDIT_RETENTION_MS,
+    );
+    this.ledger.pruneThreadFetchCheckpoints(
+      securitySweepBefore,
+      MCP_AUDIT_RETENTION_MS,
     );
     for (let processed = 0; processed < OUTBOX_BATCH_LIMIT; processed += 1) {
       const now = Date.now();
@@ -415,6 +524,362 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
       }
     }
 
+    if (url.pathname === "/acl/invalidate" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          eventId?: unknown;
+          eventType?: unknown;
+          userId?: unknown;
+          observedAt?: unknown;
+        };
+        const teamId = body.teamId;
+        const channelId = body.channelId;
+        const eventId = body.eventId;
+        const eventType = body.eventType;
+        const userId = body.userId;
+        const observedAtValue = body.observedAt;
+        if (
+          typeof teamId !== "string" || !teamId || teamId.length > 256 ||
+          typeof channelId !== "string" || !channelId || channelId.length > 256 ||
+          typeof eventId !== "string" || !eventId || eventId.length > 512 ||
+          ![
+            "member_joined_channel",
+            "member_left_channel",
+            "channel_archive",
+            "channel_unarchive",
+            "channel_left",
+            "installation_revoked",
+          ].includes(eventType as string) ||
+          (userId !== undefined && (typeof userId !== "string" || userId.length > 256)) ||
+          (observedAtValue !== undefined && (typeof observedAtValue !== "string" || !Number.isFinite(Date.parse(observedAtValue))))
+        ) throw new Error("invalid Slack ACL invalidation");
+        const scopedTeamId = teamId;
+        const scopedChannelId = channelId;
+        const scopedEventId = eventId;
+        const eventKey = `${scopedTeamId}:${scopedEventId}`;
+        const scopedEventType = eventType as string;
+        const observedAt = typeof observedAtValue === "string" ? Date.parse(observedAtValue) : Date.now();
+        const result = this.ctx.storage.transactionSync(() => {
+          const existing = sql.exec(
+            "SELECT event_id FROM knowledge_slack_acl_events WHERE event_id = ? OR event_id = ?",
+            scopedEventId,
+            eventKey,
+          ).toArray();
+          if (existing.length > 0) return { invalidated: false, duplicate: true, revision: undefined };
+          sql.exec(
+            `INSERT INTO knowledge_slack_acl_events (
+              event_id, team_id, channel_id, event_type, user_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+            eventKey,
+            scopedTeamId,
+            scopedChannelId,
+            scopedEventType,
+            userId ?? "",
+            observedAt,
+          );
+          const current = sql.exec<{ revision: number }>(
+            "SELECT revision FROM knowledge_slack_acl_state WHERE team_id = ? AND channel_id = ?",
+            teamId,
+            channelId,
+          ).toArray()[0];
+          const revision = (current?.revision ?? 0) + 1;
+          sql.exec(
+            `INSERT INTO knowledge_slack_acl_state (
+              team_id, channel_id, status, revision, invalidated_at, refreshed_at,
+              last_event_id, last_user_id, membership_digest
+            ) VALUES (?, ?, 'stale', ?, ?, NULL, ?, ?, NULL)
+            ON CONFLICT(team_id, channel_id) DO UPDATE SET
+              status = 'stale', revision = excluded.revision,
+              invalidated_at = excluded.invalidated_at, refreshed_at = NULL,
+              last_event_id = excluded.last_event_id,
+              last_user_id = excluded.last_user_id,
+              membership_digest = NULL,
+              member_ids_json = '[]'`,
+            teamId,
+            channelId,
+            revision,
+            observedAt,
+            eventId,
+            userId ?? "",
+          );
+          sql.exec(
+            "DELETE FROM knowledge_slack_acl_read_leases WHERE team_id = ? AND channel_id = ?",
+            teamId,
+            channelId,
+          );
+          return { invalidated: true, duplicate: false, revision };
+        });
+        return Response.json(result);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL invalidation" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/acl/refresh" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          memberIds?: unknown;
+          expectedRevision?: unknown;
+          refreshedAt?: unknown;
+        };
+        const teamId = body.teamId;
+        const channelId = body.channelId;
+        const expectedRevision = body.expectedRevision;
+        const refreshedAtValue = body.refreshedAt;
+        if (
+          typeof teamId !== "string" || !teamId || teamId.length > 256 ||
+          typeof channelId !== "string" || !channelId || channelId.length > 256 ||
+          typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+          (refreshedAtValue !== undefined && (typeof refreshedAtValue !== "string" || !Number.isFinite(Date.parse(refreshedAtValue))))
+        ) throw new Error("invalid Slack ACL refresh");
+        const memberIds = parseSlackAclMemberIds(body.memberIds);
+        const membershipDigest = await slackAclMembershipDigest(memberIds);
+        const memberIdsJson = JSON.stringify(memberIds);
+        const refreshedAt = typeof refreshedAtValue === "string" ? Date.parse(refreshedAtValue) : Date.now();
+        if (refreshedAt > Date.now() + 60_000) throw new Error("invalid Slack ACL refresh time");
+        const result = this.ctx.storage.transactionSync(() => {
+          const current = sql.exec<{ revision: number }>(
+            "SELECT revision FROM knowledge_slack_acl_state WHERE team_id = ? AND channel_id = ?",
+            teamId,
+            channelId,
+          ).toArray()[0];
+          const currentRevision = current?.revision ?? 0;
+          if (currentRevision !== expectedRevision) {
+            return { refreshed: false, revision: currentRevision, conflict: true };
+          }
+          sql.exec(
+            `INSERT INTO knowledge_slack_acl_state (
+              team_id, channel_id, status, revision, invalidated_at, refreshed_at,
+              last_event_id, last_user_id, membership_digest, member_ids_json
+            ) VALUES (?, ?, 'fresh', ?, NULL, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(team_id, channel_id) DO UPDATE SET
+              status = 'fresh', invalidated_at = NULL, refreshed_at = excluded.refreshed_at,
+              last_event_id = NULL, last_user_id = NULL,
+              membership_digest = excluded.membership_digest,
+              member_ids_json = excluded.member_ids_json`,
+            teamId,
+            channelId,
+            currentRevision,
+            refreshedAt,
+            membershipDigest,
+            memberIdsJson,
+          );
+          sql.exec(
+            "DELETE FROM knowledge_slack_acl_read_leases WHERE team_id = ? AND channel_id = ?",
+            teamId,
+            channelId,
+          );
+          return { refreshed: true, revision: currentRevision, membershipDigest };
+        });
+        return Response.json(result, result.conflict ? { status: 409 } : undefined);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL refresh" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/acl/state" && request.method === "POST") {
+      try {
+        const body = await request.json() as { teamId?: unknown; channelId?: unknown };
+        if (
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.channelId !== "string" || !body.channelId || body.channelId.length > 256
+        ) throw new Error("invalid Slack ACL state scope");
+        const row = sql.exec(
+          `SELECT team_id, channel_id, status, revision, invalidated_at, refreshed_at,
+                  last_event_id, last_user_id, membership_digest, member_ids_json
+           FROM knowledge_slack_acl_state WHERE team_id = ? AND channel_id = ?`,
+          body.teamId,
+          body.channelId,
+        ).toArray()[0];
+        if (!row) return Response.json(null);
+        const memberIdsJson = (row as { member_ids_json?: unknown }).member_ids_json;
+        return Response.json({
+          ...row,
+          memberIds: storedSlackAclMemberIds(memberIdsJson),
+          refreshedAt: typeof (row as { refreshed_at?: unknown }).refreshed_at === "number"
+            ? (row as { refreshed_at: number }).refreshed_at
+            : null,
+        });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL state scope" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/acl/authorize" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          actorId?: unknown;
+        };
+        if (
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.channelId !== "string" || !body.channelId || body.channelId.length > 256 ||
+          typeof body.actorId !== "string" || !body.actorId || body.actorId.length > 256 ||
+          !/^[A-Za-z0-9_-]+$/.test(body.actorId)
+        ) throw new Error("invalid Slack ACL authorization scope");
+        const teamId = body.teamId;
+        const channelId = body.channelId;
+        const actorId = body.actorId;
+        const now = Date.now();
+        const leaseId = crypto.randomUUID();
+        const result = this.ctx.storage.transactionSync(() => {
+          sql.exec("DELETE FROM knowledge_slack_acl_read_leases WHERE expires_at <= ?", now);
+          const row = sql.exec<{
+            status: string;
+            revision: number;
+            refreshed_at: number | null;
+            member_ids_json: string | null;
+          }>(
+            `SELECT status, revision, refreshed_at, member_ids_json
+             FROM knowledge_slack_acl_state WHERE team_id = ? AND channel_id = ?`,
+            teamId,
+            channelId,
+          ).toArray()[0];
+          const refreshedAt = row?.refreshed_at;
+          const fresh = row?.status === "fresh" &&
+            typeof refreshedAt === "number" &&
+            Number.isFinite(refreshedAt) &&
+            refreshedAt <= now + 60_000 &&
+            now - refreshedAt <= this.maxSlackAclAgeMs;
+          const memberIds = storedSlackAclMemberIds(row?.member_ids_json);
+          if (!row || !fresh || !memberIds.includes(actorId)) {
+            return { authorized: false, reason: "membership_denied" as const };
+          }
+          const expiresAt = now + SLACK_ACL_READ_LEASE_MS;
+          sql.exec(
+            `INSERT INTO knowledge_slack_acl_read_leases
+             (lease_id, team_id, channel_id, actor_id, revision, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            leaseId,
+            teamId,
+            channelId,
+            actorId,
+            row.revision,
+            expiresAt,
+          );
+          return { authorized: true, leaseId, revision: row.revision, expiresAt };
+        });
+        return Response.json(result, result.authorized ? undefined : { status: 403 });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL authorization scope" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/acl/check" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          actorId?: unknown;
+          leaseId?: unknown;
+        };
+        if (
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.channelId !== "string" || !body.channelId || body.channelId.length > 256 ||
+          typeof body.actorId !== "string" || !body.actorId || body.actorId.length > 256 ||
+          typeof body.leaseId !== "string" || !body.leaseId || body.leaseId.length > 256
+        ) throw new Error("invalid Slack ACL lease scope");
+        const teamId = body.teamId;
+        const channelId = body.channelId;
+        const actorId = body.actorId;
+        const leaseId = body.leaseId;
+        const now = Date.now();
+        const result = this.ctx.storage.transactionSync(() => {
+          const lease = sql.exec<{
+            actor_id: string;
+            revision: number;
+            expires_at: number;
+          }>(
+            `SELECT actor_id, revision, expires_at FROM knowledge_slack_acl_read_leases
+             WHERE lease_id = ? AND team_id = ? AND channel_id = ?`,
+            leaseId,
+            teamId,
+            channelId,
+          ).toArray()[0];
+          const row = sql.exec<{
+            status: string;
+            revision: number;
+            refreshed_at: number | null;
+            member_ids_json: string | null;
+          }>(
+            `SELECT status, revision, refreshed_at, member_ids_json
+             FROM knowledge_slack_acl_state WHERE team_id = ? AND channel_id = ?`,
+            teamId,
+            channelId,
+          ).toArray()[0];
+          const refreshedAt = row?.refreshed_at;
+          const fresh = row?.status === "fresh" &&
+            typeof refreshedAt === "number" &&
+            Number.isFinite(refreshedAt) &&
+            refreshedAt <= now + 60_000 &&
+            now - refreshedAt <= this.maxSlackAclAgeMs;
+          const authorized = Boolean(
+            lease &&
+            lease.actor_id === actorId &&
+            lease.expires_at > now &&
+            row &&
+            fresh &&
+            row.revision === lease.revision &&
+            storedSlackAclMemberIds(row.member_ids_json).includes(actorId),
+          );
+          return { authorized };
+        });
+        return Response.json(result, result.authorized ? undefined : { status: 403 });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL lease scope" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/acl/release" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          leaseId?: unknown;
+        };
+        if (
+          typeof body.teamId !== "string" || !body.teamId || body.teamId.length > 256 ||
+          typeof body.channelId !== "string" || !body.channelId || body.channelId.length > 256 ||
+          typeof body.leaseId !== "string" || !body.leaseId || body.leaseId.length > 256
+        ) throw new Error("invalid Slack ACL release scope");
+        const teamId = body.teamId;
+        const channelId = body.channelId;
+        const leaseId = body.leaseId;
+        sql.exec(
+          "DELETE FROM knowledge_slack_acl_read_leases WHERE lease_id = ? AND team_id = ? AND channel_id = ?",
+          leaseId,
+          teamId,
+          channelId,
+        );
+        return Response.json({ released: true });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack ACL release scope" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/lease" && request.method === "POST") {
       try {
         const body = await request.json() as {
@@ -461,6 +926,100 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
       return Response.json({ recorded });
     }
 
+    if (url.pathname === "/query-convergence" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          sourceKey?: unknown;
+          contentRevision?: unknown;
+          indexGeneration?: unknown;
+          localDocumentId?: unknown;
+          queryDigest?: unknown;
+          status?: unknown;
+          providerResultCount?: unknown;
+          matchingCitationCount?: unknown;
+          errorCode?: unknown;
+        };
+        if (
+          typeof body.sourceKey !== "string" ||
+          typeof body.contentRevision !== "string" ||
+          typeof body.indexGeneration !== "string" ||
+          typeof body.localDocumentId !== "string" ||
+          typeof body.queryDigest !== "string" ||
+          (body.status !== "queryable" && body.status !== "not_found" && body.status !== "failed") ||
+          typeof body.providerResultCount !== "number" ||
+          typeof body.matchingCitationCount !== "number" ||
+          (body.errorCode !== undefined && typeof body.errorCode !== "string")
+        ) throw new Error("invalid query convergence receipt");
+        const recorded = this.ledger.recordQueryConvergence({
+          sourceKey: body.sourceKey,
+          contentRevision: body.contentRevision,
+          indexGeneration: body.indexGeneration,
+          localDocumentId: body.localDocumentId,
+          queryDigest: body.queryDigest,
+          status: body.status as KnowledgeQueryConvergenceStatus,
+          providerResultCount: body.providerResultCount,
+          matchingCitationCount: body.matchingCitationCount,
+          ...(typeof body.errorCode === "string" ? { errorCode: body.errorCode } : {}),
+        }, Date.now());
+        return Response.json({ recorded });
+      } catch (error) {
+        return Response.json({
+          error: error instanceof Error ? error.message : "invalid query convergence receipt",
+        }, { status: 400 });
+      }
+    }
+
+    if (url.pathname === "/queryability/receipt" && request.method === "POST") {
+      try {
+        const body = await request.json() as Record<string, unknown>;
+        const input = {
+          sourceKey: body.sourceKey,
+          sourceType: body.sourceType,
+          teamId: body.teamId,
+          projectId: body.projectId,
+          channelId: body.channelId,
+          threadTs: body.threadTs,
+          contentRevision: body.contentRevision,
+          indexRevision: body.indexRevision,
+          localDocumentId: body.localDocumentId,
+          derivedIndexGeneration: body.derivedIndexGeneration,
+          status: body.status,
+          providerResultCount: body.providerResultCount,
+          acceptedCitationCount: body.acceptedCitationCount,
+        } as KnowledgeQueryabilityReceiptInput;
+        return Response.json(this.ledger.recordQueryabilityReceipt(input, Date.now()));
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid knowledge queryability receipt" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/queryability/receipt/read" && request.method === "POST") {
+      try {
+        const body = await request.json() as Record<string, unknown>;
+        const identity = {
+          sourceKey: body.sourceKey,
+          sourceType: body.sourceType,
+          teamId: body.teamId,
+          projectId: body.projectId,
+          channelId: body.channelId,
+          threadTs: body.threadTs,
+          contentRevision: body.contentRevision,
+          indexRevision: body.indexRevision,
+          localDocumentId: body.localDocumentId,
+          derivedIndexGeneration: body.derivedIndexGeneration,
+        } as KnowledgeQueryabilityReceiptIdentity;
+        return Response.json({ receipt: this.ledger.readQueryabilityReceipt(identity) ?? null });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid knowledge queryability receipt lookup" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/prepareRevision" && request.method === "POST") {
       try {
         const body = await request.json() as {
@@ -468,6 +1027,7 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
           leaseToken?: string;
           desiredRevision?: string;
           mutationsVerified?: boolean;
+          indexGeneration?: string;
         };
         if (!body.sourceKey || !body.leaseToken || !body.desiredRevision) throw new Error("invalid revision preparation");
         return Response.json(this.ledger.prepareRevision(
@@ -475,10 +1035,49 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
           body.leaseToken,
           body.desiredRevision,
           Date.now(),
-          { mutationsVerified: body.mutationsVerified === true },
+          {
+            mutationsVerified: body.mutationsVerified === true,
+            indexGeneration: body.indexGeneration,
+          },
         ));
       } catch (error) {
         return Response.json({ error: error instanceof Error ? error.message : "invalid revision preparation" }, { status: 400 });
+      }
+    }
+
+    if (url.pathname === "/resolveAmbiguousAdd" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          sourceKey?: unknown;
+          leaseToken?: unknown;
+          desiredRevision?: unknown;
+          resolution?: unknown;
+          localDocumentId?: unknown;
+          workflowStatus?: unknown;
+          pollDeadlineAt?: unknown;
+          nextPollAt?: unknown;
+        };
+        if (
+          typeof body.sourceKey !== "string" ||
+          typeof body.leaseToken !== "string" ||
+          typeof body.desiredRevision !== "string" ||
+          (body.resolution !== "not_found" && body.resolution !== "found")
+        ) throw new Error("invalid ambiguous add resolution");
+        return Response.json(this.ledger.resolveAmbiguousAdd({
+          sourceKey: body.sourceKey,
+          leaseToken: body.leaseToken,
+          desiredRevision: body.desiredRevision,
+          resolution: body.resolution,
+          ...(typeof body.localDocumentId === "string" ? { localDocumentId: body.localDocumentId } : {}),
+          ...(typeof body.workflowStatus === "string" ? { workflowStatus: body.workflowStatus } : {}),
+          ...(typeof body.pollDeadlineAt === "number" ? { pollDeadlineAt: body.pollDeadlineAt } : {}),
+          ...(typeof body.nextPollAt === "number" ? { nextPollAt: body.nextPollAt } : {}),
+        }, Date.now()));
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid ambiguous add resolution" },
+          { status: 409 },
+        );
       }
     }
 
@@ -492,6 +1091,7 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
           workflowStatus?: string;
           pollDeadlineAt?: number;
           nextPollAt?: number;
+          indexGeneration?: string;
         };
         if (!body.sourceKey || !body.leaseToken || !body.localDocumentId || !body.desiredRevision || !body.workflowStatus ||
           !Number.isFinite(body.pollDeadlineAt) || !Number.isFinite(body.nextPollAt)) {
@@ -505,6 +1105,7 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
           workflowStatus: body.workflowStatus,
           pollDeadlineAt: body.pollDeadlineAt!,
           nextPollAt: body.nextPollAt!,
+          indexGeneration: body.indexGeneration,
         }, Date.now()) });
       } catch (error) {
         return Response.json({ error: error instanceof Error ? error.message : "invalid Local acceptance" }, { status: 400 });
@@ -691,6 +1292,7 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
           queueName: string;
           body: unknown;
           sourceKey?: string;
+          sourceType?: KnowledgeJob["sourceType"];
           teamId?: string;
           attempts: number;
           lastErrorCode?: string;
@@ -817,6 +1419,44 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
             body.manifestId,
             body.includeCandidates === true,
           ) ?? null
+          : null,
+      });
+    }
+
+    if (url.pathname === "/backfill/inventory/put" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          manifestId?: string;
+          inventoryDigest?: string;
+          inventory?: SlackConversationInventoryReceipt;
+          createdAt?: string;
+        };
+        const inventory = body.inventory;
+        const digest = inventory
+          ? await slackConversationInventoryDigest(inventory)
+          : "";
+        if (!inventory || digest !== body.inventoryDigest) {
+          throw new Error("backfill conversation inventory digest mismatch");
+        }
+        return Response.json(this.ledger.putBackfillConversationInventory({
+          manifestId: body.manifestId ?? "",
+          inventoryDigest: digest,
+          inventory,
+          createdAt: body.createdAt ?? "",
+        }));
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid backfill conversation inventory" },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (url.pathname === "/backfill/inventory/get" && request.method === "POST") {
+      const body = await request.json() as { manifestId?: string };
+      return Response.json({
+        inventory: body.manifestId
+          ? this.ledger.getBackfillConversationInventory(body.manifestId) ?? null
           : null,
       });
     }
@@ -1086,13 +1726,196 @@ export class KnowledgeDO extends DurableObject<KnowledgeDOEnv> {
       }
     }
 
+    if (url.pathname === "/thread-fetch/progress/get" && request.method === "POST") {
+      try {
+        const body = await request.json() as { job?: unknown };
+        const job = parseKnowledgeJob(body.job);
+        return Response.json({ checkpoint: this.ledger.getThreadFetchCheckpoint(job) ?? null });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid thread fetch checkpoint lookup" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/thread-fetch/progress/save" && request.method === "POST") {
+      try {
+        const body = await request.json() as { job?: unknown; checkpoint?: unknown };
+        const job = parseKnowledgeJob(body.job);
+        this.ledger.saveThreadFetchCheckpoint(
+          job,
+          body.checkpoint as Parameters<KnowledgeLedger["saveThreadFetchCheckpoint"]>[1],
+          Date.now(),
+        );
+        return Response.json({ saved: true });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid thread fetch checkpoint" },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (url.pathname === "/thread-fetch/progress/clear" && request.method === "POST") {
+      try {
+        const body = await request.json() as { job?: unknown };
+        const job = parseKnowledgeJob(body.job);
+        this.ledger.clearThreadFetchCheckpoint(job);
+        return Response.json({ cleared: true });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid thread fetch checkpoint clear" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/message-thread/put" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          projectId?: unknown;
+          channelId?: unknown;
+          threadTs?: unknown;
+          sourceKey?: unknown;
+          messageTs?: unknown;
+        };
+        if (
+          typeof body.teamId !== "string" ||
+          typeof body.projectId !== "string" ||
+          typeof body.channelId !== "string" ||
+          typeof body.threadTs !== "string" ||
+          typeof body.sourceKey !== "string" ||
+          !Array.isArray(body.messageTs) ||
+          !body.messageTs.every((value) => typeof value === "string")
+        ) throw new Error("invalid Slack message thread mapping");
+        return Response.json(this.ledger.putSlackMessageThreads({
+          teamId: body.teamId,
+          projectId: body.projectId,
+          channelId: body.channelId,
+          threadTs: body.threadTs,
+          sourceKey: body.sourceKey,
+          messageTs: body.messageTs,
+        }, Date.now()));
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack message thread mapping" },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (url.pathname === "/message-thread/resolve" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          teamId?: unknown;
+          channelId?: unknown;
+          messageTs?: unknown;
+        };
+        if (
+          typeof body.teamId !== "string" ||
+          typeof body.channelId !== "string" ||
+          typeof body.messageTs !== "string"
+        ) throw new Error("invalid Slack message thread lookup");
+        const mapping = this.ledger.getSlackMessageThread({
+          teamId: body.teamId,
+          channelId: body.channelId,
+          messageTs: body.messageTs,
+        });
+        return Response.json(mapping
+          ? { found: true, threadTs: mapping.threadTs }
+          : { found: false });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack message thread lookup" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/state" && request.method === "POST") {
       const body = await request.json() as { sourceKey?: string };
       if (!body.sourceKey) return Response.json({ error: "sourceKey is required" }, { status: 400 });
       return Response.json({
         ledger: this.ledger.get(body.sourceKey) ?? null,
         outbox: this.ledger.getOutbox(body.sourceKey) ?? null,
+        queryConvergence: this.ledger.getQueryConvergence(body.sourceKey) ?? null,
       });
+    }
+
+    if (url.pathname === "/recover" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          sourceKey?: unknown;
+          teamId?: unknown;
+          expectedConfigVersion?: unknown;
+          expectedRequestedAt?: unknown;
+          operatorId?: unknown;
+          rootCauseCorrectionRef?: unknown;
+        };
+        if (
+          typeof body.sourceKey !== "string" ||
+          typeof body.teamId !== "string" ||
+          typeof body.expectedConfigVersion !== "number" ||
+          typeof body.expectedRequestedAt !== "string" ||
+          typeof body.operatorId !== "string" ||
+          typeof body.rootCauseCorrectionRef !== "string"
+        ) throw new Error("invalid knowledge recovery request");
+        const result = this.ledger.recoverPermanentFailure({
+          sourceKey: body.sourceKey,
+          teamId: body.teamId,
+          expectedConfigVersion: body.expectedConfigVersion,
+          expectedRequestedAt: body.expectedRequestedAt,
+          operatorId: body.operatorId,
+          rootCauseCorrectionRef: body.rootCauseCorrectionRef,
+        }, Date.now());
+        if (result.action === "reopened") await this.armPendingOutbox();
+        return Response.json(result);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid knowledge recovery request" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/status" && request.method === "POST") {
+      await this.armPendingOutbox();
+      return Response.json(this.ledger.statusSnapshot(Date.now()));
+    }
+
+    if (url.pathname === "/failures" && request.method === "POST") {
+      try {
+        const body = await request.json() as {
+          cursor?: unknown;
+          limit?: unknown;
+          status?: unknown;
+        };
+        if (body.cursor !== undefined && typeof body.cursor !== "string") {
+          throw new Error("failure cursor is invalid");
+        }
+        if (body.limit !== undefined && typeof body.limit !== "number") {
+          throw new Error("failure page limit is invalid");
+        }
+        if (
+          body.status !== undefined &&
+          body.status !== "permanent_failure" &&
+          body.status !== "retryable_failure"
+        ) {
+          throw new Error("failure status is invalid");
+        }
+        return Response.json(this.ledger.listFailures({
+          cursor: body.cursor as string | undefined,
+          limit: body.limit as number | undefined,
+          status: body.status as "permanent_failure" | "retryable_failure" | undefined,
+        }));
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid failure list request" },
+          { status: 400 },
+        );
+      }
     }
 
     if (url.pathname === "/raw-query" && request.method === "POST") {

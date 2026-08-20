@@ -18,6 +18,12 @@ export interface HarnessContainerNamespace {
   getByName(name: string): HarnessContainerStub;
 }
 
+export interface HarnessWorkerVersionMetadata {
+  id: string;
+  tag: string;
+  timestamp: string;
+}
+
 // One 8 MiB inline file expands to ~10.7 MiB in base64. The contract separately
 // enforces five attachments and an 8 MiB decoded aggregate.
 export const MAX_TURN_BODY_BYTES = 12 * 1024 * 1024;
@@ -229,11 +235,38 @@ export async function routeHarnessRequest(
     allowedOrgs: new Set(),
   },
   attachmentBucket?: R2Bucket,
+  versionMetadata?: HarnessWorkerVersionMetadata,
 ): Promise<Response> {
   const url = new URL(request.url);
 
   if (url.pathname === "/health" && request.method === "GET") {
-    return Response.json({ ok: true, worker: "opentag-harness" });
+    return Response.json({
+      ok: true,
+      worker: "opentag-harness",
+      workerVersion: versionMetadata ?? null,
+    });
+  }
+  if (url.pathname === "/health/container" && request.method === "GET") {
+    if (!isAuthorized(request, authToken)) return jsonError("unauthorized", 401);
+    try {
+      const container = containers.getByName("health");
+      await container.startAndWaitForPorts();
+      const response = await container.fetch(new Request("http://harness/health"));
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        return jsonError("container_health_invalid", 503);
+      }
+      return Response.json({
+        ok: response.ok,
+        worker: "opentag-harness",
+        workerVersion: versionMetadata ?? null,
+        container: body,
+      }, { status: response.status });
+    } catch {
+      return jsonError("container_unavailable", 503);
+    }
   }
   if (url.pathname !== "/turn" && url.pathname !== "/interrupt") return jsonError("not_found", 404);
   if (request.method !== "POST") return jsonError("method_not_allowed", 405);

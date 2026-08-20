@@ -1,57 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
   applyProgressEvent,
-  formatContextLine,
   humanizeToolProgressTitle,
   rebuildProgressFromEvents,
   renderProgressMarkdown,
 } from "../src/slack/harness-progress.js";
 
 describe("harness progress renderer", () => {
-  it("formats evidence-labeled context lines", () => {
-    expect(
-      formatContextLine({
-        harnessType: "claudecode",
-        model: "claude-opus-5",
-        modelEvidence: "provider_reported",
-      }),
-    ).toBe("_Claude Code · claude-opus-5 · provider confirmed_");
-    expect(
-      formatContextLine({
-        harnessType: "claudecode",
-        modelEvidence: "unknown",
-      }),
-    ).toBe("_Claude Code · model unconfirmed_");
-    expect(
-      formatContextLine({
-        harnessType: "claudecode",
-        model: "claude-opus-5",
-        modelEvidence: "container_argument",
-      }),
-    ).toBe("_Claude Code · claude-opus-5 · container argument_");
-    expect(
-      formatContextLine({
-        harnessType: "agui",
-        modelEvidence: "unknown",
-      }),
-    ).toBe("_OpenTag AG-UI · model unconfirmed_");
-    expect(
-      formatContextLine({
-        harnessType: "agui",
-        model: "gpt-5.5",
-        modelEvidence: "requested",
-      }),
-    ).toBe("_OpenTag AG-UI · gpt-5.5 · requested_");
-    expect(
-      formatContextLine({
-        harnessType: "nanocodex",
-        model: "gpt-5.6-sol",
-        modelEvidence: "provider_reported",
-      }),
-    ).toBe("_Nanocodex · gpt-5.6-sol · provider confirmed_");
+  it("does not render model or AG-UI context lines", () => {
+    const md = renderProgressMarkdown([
+      {
+        progressId: "t1",
+        sequence: 1,
+        category: "tool",
+        state: "started",
+        title: "Searching Slack",
+      },
+    ], { heading: "" });
+    expect(md).not.toContain("OpenTag AG-UI");
+    expect(md).not.toContain("model unconfirmed");
   });
 
-  it("humanizes AG-UI tool titles and supports Working heading", () => {
+  it("humanizes tool titles and supports an explicit heading", () => {
     expect(humanizeToolProgressTitle("search_slack")).toBe("Searching Slack");
     expect(humanizeToolProgressTitle("show_permissions")).toBe(
       "Checking permissions",
@@ -69,11 +39,11 @@ describe("harness progress renderer", () => {
           title: "Searching Slack",
         },
       ],
-      { heading: "*Working…*" },
+      { heading: "*Coding progress*" },
     );
-    expect(md).toContain("*Working…*");
+    expect(md).toContain("*Coding progress*");
     expect(md).toContain("Searching Slack");
-    expect(md).not.toContain("Coding progress");
+    expect(md).not.toContain("Working");
   });
 
   it("preserves tool titles when completion events only say Tool", () => {

@@ -18,6 +18,7 @@ import {
 export type { KnowledgeSourceType };
 
 export const KNOWLEDGE_CONFIG_SCHEMA_VERSION = 1 as const;
+export const KNOWLEDGE_ADMISSION_POLICY_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_RUNTIME = Object.freeze({
   dataDir: "/var/lib/supermemory",
   openAiModel: "gpt-5.1",
@@ -54,6 +55,23 @@ export type TrackedKnowledgeSource = KnowledgeSourceScope & {
 
 export type PutTrackedKnowledgeSource = KnowledgeSourceScope & {
   enabled: boolean;
+  readerPolicyRef: string;
+  retentionDays?: number | null;
+};
+
+export type WorkspaceKnowledgeAdmissionPolicy = {
+  schemaVersion: typeof KNOWLEDGE_ADMISSION_POLICY_SCHEMA_VERSION;
+  mode: "explicit" | "all_delivered";
+  defaultProjectId: string;
+  readerPolicyRef: string;
+  retentionDays: number | null;
+  configVersion: number;
+  updatedAt: string;
+};
+
+export type PutWorkspaceKnowledgeAdmissionPolicy = {
+  mode: WorkspaceKnowledgeAdmissionPolicy["mode"];
+  defaultProjectId: string;
   readerPolicyRef: string;
   retentionDays?: number | null;
 };
@@ -132,9 +150,7 @@ export function parseKnowledgeSourceScope(value: unknown): KnowledgeSourceScope 
     projectId: identifier(input.projectId, "projectId"),
     channelId: identifier(input.channelId, "channelId"),
   };
-  if (input.sourceType !== undefined) {
-    scope.sourceType = parseKnowledgeSourceType(input.sourceType);
-  }
+  scope.sourceType = parseKnowledgeSourceType(input.sourceType ?? "slack");
   return scope;
 }
 
@@ -154,6 +170,27 @@ export function parsePutTrackedKnowledgeSource(value: unknown): PutTrackedKnowle
     throw new Error("enabled knowledge sources require readerPolicyRef");
   }
   return { ...source, retentionDays: source.retentionDays ?? null };
+}
+
+export function parsePutWorkspaceKnowledgeAdmissionPolicy(
+  value: unknown,
+): PutWorkspaceKnowledgeAdmissionPolicy {
+  const input = record(value, "workspace knowledge admission policy");
+  if (input.mode !== "explicit" && input.mode !== "all_delivered") {
+    throw new Error("workspace knowledge admission mode must be explicit or all_delivered");
+  }
+  const mode = input.mode;
+  const defaultProjectId = identifier(input.defaultProjectId, "defaultProjectId");
+  const readerPolicyRef = policyRef(input.readerPolicyRef);
+  if (mode === "all_delivered" && readerPolicyRef.length === 0) {
+    throw new Error("all_delivered knowledge admission requires readerPolicyRef");
+  }
+  return {
+    mode,
+    defaultProjectId,
+    readerPolicyRef,
+    retentionDays: retentionDays(input.retentionDays),
+  };
 }
 
 export function disabledTrackedKnowledgeSource(

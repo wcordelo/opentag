@@ -2,6 +2,13 @@
 
 **Scope.** File-only audit on 2026-07-19. No application source, canonical document, deployment configuration, secret, Queue, Slack, Railway, or Cloudflare resource was changed. The pre-existing dirty worktree is preserved.
 
+> **Current-state reconciliation (2026-08-02).** This historical audit records
+> the earlier `waitUntil` scheduling design. The current source has moved the
+> knowledge-event durability fence before acknowledgement into
+> `DeferredIngressDO`; outbound observation and recovery also have durable
+> ingress owners. Keep the findings and review history intact, but use
+> [`docs/current-state.md`](../../docs/current-state.md) for current behavior.
+
 ## Confirmed current topology
 
 `edge/src/worker.ts` is the sole bot module: it exports the five current DO classes and a Hono application as its default export (`ConversationStateDO` through `SlackRateLimitDO` at lines 65–70; `export default app` at line 849). Production `edge/wrangler.bot.toml` names that module `opentag-bot` (lines 1–8); Slack Events, commands, and interactions therefore already terminate at the right Worker. The signed Events route begins at `worker.ts:477`, Commands at `:713`, and Interactions at `:789`. `slackVerify()` reads and HMAC-verifies the raw body before it parses/sets request variables and calls the route (`edge/src/slack-verify.ts:44–79`).

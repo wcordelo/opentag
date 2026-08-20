@@ -36,6 +36,7 @@ export type VerifiedKnowledgeSourceGrant = {
   actorId: string;
   action: KnowledgeSourceAction;
   teamId: string;
+  sourceType?: KnowledgeSourceScope["sourceType"];
   projectId: string;
   channelId: string;
   expectedConfigVersion: number | null;
@@ -194,6 +195,7 @@ export function parseKnowledgeSourceAdminRequest(
     input,
     [
       "teamId",
+      "sourceType",
       "projectId",
       "channelId",
       "expectedConfigVersion",
@@ -246,6 +248,7 @@ export async function knowledgeSourceAdminRequestDigest(
     request.teamId,
     request.projectId,
     request.channelId,
+    request.sourceType ?? "slack",
     request.expectedConfigVersion,
     request.readerPolicyRef,
     request.retentionDays,
@@ -343,6 +346,7 @@ export async function verifyKnowledgeSourceGrant(
       "actorId",
       "action",
       "teamId",
+      "sourceType",
       "projectId",
       "channelId",
       "expectedConfigVersion",
@@ -392,6 +396,7 @@ export async function verifyKnowledgeSourceGrant(
     scope.teamId !== request.teamId ||
     scope.projectId !== request.projectId ||
     scope.channelId !== request.channelId ||
+    (scope.sourceType ?? "slack") !== (request.sourceType ?? "slack") ||
     grantVersion !== request.expectedConfigVersion
   ) {
     throw new KnowledgeSourceAuthorizationError(

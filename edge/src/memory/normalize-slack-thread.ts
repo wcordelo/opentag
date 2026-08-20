@@ -16,11 +16,13 @@ export type SlackThreadNormalizationContext = {
 export type CanonicalSlackMessage = {
   ts: string;
   authorId: string;
+  authorKind: "human" | "bot" | "system";
   kind: "message" | "deleted_marker" | "omitted_marker";
   text: string;
   blocksText?: string[];
   attachmentsText?: string[];
   files?: Array<{ name?: string; title?: string; mimetype?: string; filetype?: string; size?: number }>;
+  reactions?: number;
 };
 
 export type NormalizedSlackThread = {
@@ -45,7 +47,7 @@ export type SlackThreadNormalizationOutcome =
   | SkippedThread;
 
 const encoder = new TextEncoder();
-const ALLOWED_SUBTYPES = new Set(["", "file_share", "thread_broadcast"]);
+const ALLOWED_SUBTYPES = new Set(["", "bot_message", "file_share", "thread_broadcast"]);
 
 export function normalizeStableWhitespace(value: string): string {
   return value
@@ -100,33 +102,50 @@ function canonicalFiles(value: unknown): CanonicalSlackMessage["files"] {
   return files.length > 0 ? files : undefined;
 }
 
+function canonicalReactionCount(value: unknown): number | undefined {
+  if (!Array.isArray(value)) return undefined;
+  let total = 0;
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const count = (item as Record<string, unknown>).count;
+    if (typeof count === "number" && Number.isSafeInteger(count) && count > 0) {
+      total += count;
+    }
+  }
+  return total > 0 && Number.isSafeInteger(total) ? total : undefined;
+}
+
 function canonicalMessage(message: SlackThreadMessage): CanonicalSlackMessage {
   const ts = typeof message.ts === "string" ? message.ts : "";
   const subtype = typeof message.subtype === "string" ? message.subtype : "";
   if (subtype === "message_deleted" || message.hidden === true) {
-    return { ts, authorId: "", kind: "deleted_marker", text: "[deleted message]" };
-  }
-  if (message.bot_id || subtype === "bot_message") {
-    return { ts, authorId: "", kind: "omitted_marker", text: "[bot/system message omitted]" };
+    return { ts, authorId: "", authorKind: "system", kind: "deleted_marker", text: "[deleted message]" };
   }
   if (!ALLOWED_SUBTYPES.has(subtype)) {
     return {
       ts,
       authorId: typeof message.user === "string" ? message.user : "",
+      authorKind: "system",
       kind: "omitted_marker",
       text: `[unsupported message omitted:${normalizeStableWhitespace(subtype) || "unknown"}]`,
     };
   }
+  const isBot = Boolean(message.bot_id) || subtype === "bot_message";
   const blocksText = [...new Set(collectText(message.blocks))].sort();
   const attachmentsText = [...new Set(collectText(message.attachments))].sort();
+  const reactions = canonicalReactionCount(message.reactions);
   return {
     ts,
-    authorId: typeof message.user === "string" ? message.user : "",
+    authorId: isBot
+      ? (typeof message.bot_id === "string" ? message.bot_id : "")
+      : (typeof message.user === "string" ? message.user : ""),
+    authorKind: isBot ? "bot" : "human",
     kind: "message",
     text: normalizeStableWhitespace(typeof message.text === "string" ? message.text : ""),
     ...(blocksText.length > 0 ? { blocksText } : {}),
     ...(attachmentsText.length > 0 ? { attachmentsText } : {}),
     ...(canonicalFiles(message.files) ? { files: canonicalFiles(message.files) } : {}),
+    ...(reactions !== undefined ? { reactions } : {}),
   };
 }
 
@@ -192,10 +211,18 @@ export async function normalizeSlackThread(
   };
   const serialized = JSON.stringify(canonical);
   const content = canonical.messages.map((message) => {
-    const additions = [message.text, ...(message.blocksText ?? []), ...(message.attachmentsText ?? [])]
+    const additions = [
+      message.text,
+      ...(message.blocksText ?? []),
+      ...(message.attachmentsText ?? []),
+      ...(message.reactions !== undefined ? [`engagement reactions:${message.reactions}`] : []),
+    ]
       .filter(Boolean)
       .join("\n");
-    return `[${message.ts || "unknown"}] ${message.authorId || "system"}: ${additions}`;
+    const author = message.authorKind === "bot"
+      ? `bot:${message.authorId || "unknown"}`
+      : message.authorId || message.authorKind;
+    return `[${message.ts || "unknown"}] ${author}: ${additions}`;
   }).join("\n");
   return {
     status: "complete",

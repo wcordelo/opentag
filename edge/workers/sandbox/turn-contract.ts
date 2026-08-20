@@ -150,13 +150,13 @@ function boundedConnectorGrants(value: unknown): boolean {
   return value.every((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const grant = item as Record<string, unknown>;
-    if (!hasOnlyKeys(grant, ["connectorId", "actions", "scope", "projectId", "channelId", "credentialRef"])) return false;
+    if (!hasOnlyKeys(grant, ["connectorId", "actions", "scope", "projectId", "channelId", "repoId", "credentialRef"])) return false;
     if (
       typeof grant.connectorId !== "string" || grant.connectorId.length === 0 || grant.connectorId.length > 256 ||
       !boundedUniqueSortedStrings(grant.actions) ||
       !["workspace", "project", "channel"].includes(String(grant.scope))
     ) return false;
-    for (const field of ["projectId", "channelId", "credentialRef"]) {
+    for (const field of ["projectId", "channelId", "repoId", "credentialRef"]) {
       if (grant[field] !== undefined && (typeof grant[field] !== "string" || (grant[field] as string).length > 512)) return false;
     }
     if (grant.scope === "project" && typeof grant.projectId !== "string") return false;

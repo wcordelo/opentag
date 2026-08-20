@@ -1,0 +1,25 @@
+name = "opentag-platform-provider-adapter"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[vars]
+ENVIRONMENT = "production"
+LINEAR_API_URL = "https://api.linear.app/graphql"
+LINEAR_CONTROLLED_WORKSPACE_SUBJECT = "workspace:controlled-linear-test"
+
+[[services]]
+binding = "PROVIDER_REQUEST_RESOLVER"
+service = "opentag-platform-provider-request-resolver"
+
+[[services]]
+binding = "CREDENTIAL_BROKER"
+service = "opentag-credential-broker"
+
+[[services]]
+binding = "PROVIDER_IDEMPOTENCY_STORE"
+service = "opentag-platform-provider-idempotency"
+
+# Secrets are internal service bearers or an opaque controlled-workspace
+# subject. Provider credentials remain behind credential custody.

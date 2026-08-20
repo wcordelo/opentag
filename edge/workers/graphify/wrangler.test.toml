@@ -1,0 +1,12 @@
+name = "opentag-graphify-registry-test"
+main = "test/registry-worker.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "GraphifyRegistryDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GraphifyRegistryDO"]

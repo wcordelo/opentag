@@ -2,9 +2,16 @@ import { DurableObject } from "cloudflare:workers";
 
 export type DeferredIngressJob = {
   id: string;
-  kind: "quick_action" | "late_file" | "file_turn";
+  kind:
+    | "quick_action"
+    | "late_file"
+    | "file_turn"
+    | "knowledge_event"
+    | "knowledge_observation"
+    | "reaction_cleanup";
   payload: unknown;
   teamId: string;
+  notBefore?: number;
 };
 
 type StoredJob = DeferredIngressJob & {
@@ -38,6 +45,7 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
       if (
         current.id !== job.id ||
         current.kind !== job.kind ||
+        current.teamId !== job.teamId ||
         JSON.stringify(current.payload) !== JSON.stringify(job.payload)
       ) throw new Error("deferred_ingress_identity_conflict");
       if (current.status === "pending" || current.status === "running") {
@@ -50,14 +58,15 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
       }
       return { accepted: false, status: current.status };
     }
+    const nextAttemptAt = Math.max(Date.now(), job.notBefore ?? Date.now());
     const stored: StoredJob = {
       ...job,
       status: "pending",
       attempt: 0,
-      nextAttemptAt: Date.now(),
+      nextAttemptAt,
     };
     await this.ctx.storage.put("job", stored);
-    await this.ctx.storage.setAlarm(Date.now());
+    await this.ctx.storage.setAlarm(nextAttemptAt);
     return { accepted: true, status: "pending" };
   }
 
@@ -68,6 +77,10 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
   async alarm(): Promise<void> {
     const job = await this.ctx.storage.get<StoredJob>("job");
     if (!job || job.status === "completed" || job.status === "exhausted") return;
+    if (job.nextAttemptAt && job.nextAttemptAt > Date.now()) {
+      await this.ctx.storage.setAlarm(job.nextAttemptAt);
+      return;
+    }
     if (!this.env.BOT_SELF) {
       await this.retry(job, "bot_self_binding_unavailable");
       return;
@@ -108,6 +121,27 @@ export class DeferredIngressDO extends DurableObject<DeferredIngressEnv> {
         error instanceof Error ? error.message : String(error),
       );
     }
+  }
+
+  async complete(jobId: string): Promise<{
+    completed: boolean;
+    status: StoredJob["status"] | "missing";
+  }> {
+    const current = await this.ctx.storage.get<StoredJob>("job");
+    if (!current || current.id !== jobId) {
+      return { completed: false, status: "missing" };
+    }
+    if (current.status === "completed" || current.status === "exhausted") {
+      return { completed: current.status === "completed", status: current.status };
+    }
+    await this.ctx.storage.put("job", {
+      ...current,
+      status: "completed",
+      lastError: undefined,
+      nextAttemptAt: undefined,
+    } satisfies StoredJob);
+    await this.ctx.storage.deleteAlarm();
+    return { completed: true, status: "completed" };
   }
 
   private async retry(job: StoredJob, lastError: string): Promise<void> {

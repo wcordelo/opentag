@@ -32,7 +32,9 @@ import {
 import {
   disabledTrackedKnowledgeSource,
   parseKnowledgeSourceScope,
+  parsePutWorkspaceKnowledgeAdmissionPolicy,
   parsePutTrackedKnowledgeSource,
+  type WorkspaceKnowledgeAdmissionPolicy,
   type TrackedKnowledgeSource,
 } from "./knowledge-config.js";
 import {
@@ -46,6 +48,17 @@ import {
   bodyMatchesTenant,
   tenantStub,
 } from "../tenancy.js";
+import { migrateTrackedKnowledgeSourceTables } from "./knowledge-source-migration.js";
+import {
+  slackLifecycleChannelStatus,
+  slackLifecycleEventDisablesChannel,
+  slackLifecycleEventDisablesInstallation,
+  type SlackLifecycleEventType,
+} from "../slack/installation-lifecycle.js";
+import {
+  slackManifestCoverageReceipt,
+  type SlackManifestCoverageReceipt,
+} from "../slack/installation-contract.js";
 
 export {
   DEFAULT_BUNDLE,
@@ -98,6 +111,8 @@ const DDL = [
   // fallback and permissive synthesized defaults for turn configuration.
   `CREATE TABLE IF NOT EXISTS tracked_knowledge_sources (
   team_id TEXT NOT NULL,
+  source_type TEXT NOT NULL DEFAULT 'slack'
+    CHECK (source_type IN ('slack', 'wiki', 'code', 'custom_db', 'drive')),
   project_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
@@ -105,17 +120,76 @@ const DDL = [
   reader_policy_ref TEXT NOT NULL DEFAULT '',
   retention_days INTEGER,
   config_version INTEGER NOT NULL DEFAULT 0,
+  admission_mode TEXT NOT NULL DEFAULT 'explicit'
+    CHECK (admission_mode IN ('explicit', 'workspace_default')),
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (team_id, project_id, channel_id)
+  PRIMARY KEY (team_id, source_type, project_id, channel_id)
 )`,
   // sourceKey/customId and the B1 ledger are thread-scoped, not
   // project-qualified. Fail closed instead of allowing two enabled project
   // rows to race for the same (workspace, channel, thread) source.
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_tracked_knowledge_one_enabled_project
-   ON tracked_knowledge_sources(team_id, channel_id) WHERE enabled = 1`,
+   ON tracked_knowledge_sources(team_id, source_type, channel_id) WHERE enabled = 1`,
+  `CREATE TABLE IF NOT EXISTS slack_installation_lifecycle_events (
+  event_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  channel_id TEXT,
+  observed_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, event_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_slack_installation_lifecycle_events_team
+   ON slack_installation_lifecycle_events(team_id, observed_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS slack_installation_state (
+  team_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+  generation INTEGER NOT NULL,
+  last_event_id TEXT,
+  last_event_type TEXT,
+  revoked_at INTEGER,
+  updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS slack_installation_manifests (
+  team_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  bot_user_id TEXT NOT NULL,
+  bot_scopes_json TEXT NOT NULL,
+  bot_events_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
+  missing_scopes_json TEXT NOT NULL,
+  missing_events_json TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, generation)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_slack_installation_manifests_latest
+   ON slack_installation_manifests(team_id, generation DESC, updated_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS slack_channel_lifecycle (
+  team_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'left')),
+  generation INTEGER NOT NULL,
+  last_event_id TEXT,
+  last_event_type TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, channel_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS workspace_knowledge_admission_policies (
+  team_id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL CHECK (mode IN ('explicit', 'all_delivered')),
+  default_project_id TEXT NOT NULL,
+  reader_policy_ref TEXT NOT NULL,
+  retention_days INTEGER,
+  config_version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+)`,
   `CREATE TABLE IF NOT EXISTS tracked_knowledge_effect_leases (
   effect_token TEXT PRIMARY KEY,
   team_id TEXT NOT NULL,
+  source_type TEXT NOT NULL DEFAULT 'slack'
+    CHECK (source_type IN ('slack', 'wiki', 'code', 'custom_db', 'drive')),
   project_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   config_version INTEGER NOT NULL,
@@ -124,7 +198,7 @@ const DDL = [
   created_at TEXT NOT NULL
 )`,
   `CREATE INDEX IF NOT EXISTS idx_tracked_knowledge_effect_scope
-   ON tracked_knowledge_effect_leases(team_id, project_id, channel_id, expires_at)`,
+   ON tracked_knowledge_effect_leases(team_id, source_type, project_id, channel_id, expires_at)`,
   `CREATE TABLE IF NOT EXISTS tracked_knowledge_source_authorizations (
   grant_id TEXT PRIMARY KEY,
   artifact_digest TEXT NOT NULL,
@@ -135,6 +209,8 @@ const DDL = [
   actor_id TEXT NOT NULL,
   action TEXT NOT NULL,
   team_id TEXT NOT NULL,
+  source_type TEXT NOT NULL DEFAULT 'slack'
+    CHECK (source_type IN ('slack', 'wiki', 'code', 'custom_db', 'drive')),
   project_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   issued_at TEXT NOT NULL,
@@ -147,7 +223,7 @@ const DDL = [
 )`,
   `CREATE INDEX IF NOT EXISTS idx_tracked_knowledge_authorization_scope
    ON tracked_knowledge_source_authorizations(
-     team_id, project_id, channel_id, consumed_at DESC
+     team_id, source_type, project_id, channel_id, consumed_at DESC
    )`,
 ];
 
@@ -316,6 +392,7 @@ function publicConfigFromRow(
 
 type TrackedKnowledgeSourceRow = {
   team_id: string;
+  source_type: string;
   project_id: string;
   channel_id: string;
   enabled: number;
@@ -323,6 +400,7 @@ type TrackedKnowledgeSourceRow = {
   reader_policy_ref: string;
   retention_days: number | null;
   config_version: number;
+  admission_mode: "explicit" | "workspace_default";
   updated_at: string;
 };
 
@@ -334,6 +412,7 @@ type TrackedKnowledgeAuthorizationRow = {
   actor_kind: string;
   actor_id: string;
   action: string;
+  source_type: string;
   issued_at: string;
   expires_at: string;
   expected_config_version: number | null;
@@ -343,14 +422,140 @@ type TrackedKnowledgeAuthorizationRow = {
   consumed_at: string;
 };
 
+type WorkspaceKnowledgeAdmissionPolicyRow = {
+  team_id: string;
+  mode: "explicit" | "all_delivered";
+  default_project_id: string;
+  reader_policy_ref: string;
+  retention_days: number | null;
+  config_version: number;
+  updated_at: string;
+};
+
+type SlackInstallationStateRow = {
+  team_id: string;
+  status: "active" | "revoked";
+  generation: number;
+  last_event_id: string | null;
+  last_event_type: string | null;
+  revoked_at: number | null;
+  updated_at: number;
+};
+
+type SlackInstallationManifestRow = {
+  team_id: string;
+  generation: number;
+  schema_version: number;
+  bot_user_id: string;
+  bot_scopes_json: string;
+  bot_events_json: string;
+  status: "complete" | "incomplete";
+  missing_scopes_json: string;
+  missing_events_json: string;
+  manifest_digest: string;
+  observed_at: string;
+  updated_at: number;
+};
+
+type SlackChannelLifecycleRow = {
+  team_id: string;
+  channel_id: string;
+  status: "active" | "archived" | "left";
+  generation: number;
+  last_event_id: string | null;
+  last_event_type: string | null;
+  updated_at: number;
+};
+
+const SLACK_LIFECYCLE_TYPES = new Set<SlackLifecycleEventType>([
+  "app_uninstalled",
+  "tokens_revoked",
+  "channel_archive",
+  "channel_unarchive",
+  "channel_deleted",
+  "channel_left",
+  "channel_unshared",
+  "group_archive",
+  "group_unarchive",
+  "group_deleted",
+  "group_close",
+  "group_open",
+  "group_left",
+  "member_left_channel",
+]);
+
+function slackLifecycleType(value: unknown): SlackLifecycleEventType {
+  if (typeof value !== "string" || !SLACK_LIFECYCLE_TYPES.has(value as SlackLifecycleEventType)) {
+    throw new Error("slack_lifecycle_event_type_invalid");
+  }
+  return value as SlackLifecycleEventType;
+}
+
+function slackInstallationStateFromRow(row: SlackInstallationStateRow | undefined) {
+  return row
+    ? {
+        teamId: row.team_id,
+        status: row.status,
+        generation: row.generation,
+        lastEventId: row.last_event_id,
+        lastEventType: row.last_event_type,
+        revokedAt: row.revoked_at,
+        updatedAt: row.updated_at,
+      }
+    : {
+        status: "active" as const,
+        generation: 0,
+        lastEventId: null,
+        lastEventType: null,
+        revokedAt: null,
+        updatedAt: 0,
+  };
+}
+
+function slackInstallationManifestFromRow(
+  row: SlackInstallationManifestRow | undefined,
+  currentGeneration: number,
+): (SlackManifestCoverageReceipt & { generation: number; current: boolean }) | undefined {
+  if (!row) return undefined;
+  return {
+    schemaVersion: row.schema_version as SlackManifestCoverageReceipt["schemaVersion"],
+    teamId: row.team_id,
+    botUserId: row.bot_user_id,
+    botScopes: JSON.parse(row.bot_scopes_json) as string[],
+    botEvents: JSON.parse(row.bot_events_json) as string[],
+    observedAt: row.observed_at,
+    status: row.status,
+    missingScopes: JSON.parse(row.missing_scopes_json) as string[],
+    missingEvents: JSON.parse(row.missing_events_json) as string[],
+    manifestDigest: row.manifest_digest,
+    generation: row.generation,
+    current: row.generation === currentGeneration,
+  };
+}
+
 function trackedKnowledgeSourceFromRow(row: TrackedKnowledgeSourceRow): TrackedKnowledgeSource {
   return {
     schemaVersion: 1,
     teamId: row.team_id,
+    sourceType: row.source_type as TrackedKnowledgeSource["sourceType"],
     projectId: row.project_id,
     channelId: row.channel_id,
     enabled: row.enabled === 1,
     everEnabled: row.ever_enabled === 1,
+    readerPolicyRef: row.reader_policy_ref,
+    retentionDays: row.retention_days,
+    configVersion: row.config_version,
+    updatedAt: row.updated_at,
+  };
+}
+
+function workspaceKnowledgeAdmissionPolicyFromRow(
+  row: WorkspaceKnowledgeAdmissionPolicyRow,
+): WorkspaceKnowledgeAdmissionPolicy {
+  return {
+    schemaVersion: 1,
+    mode: row.mode,
+    defaultProjectId: row.default_project_id,
     readerPolicyRef: row.reader_policy_ref,
     retentionDays: row.retention_days,
     configVersion: row.config_version,
@@ -369,6 +574,7 @@ function trackedKnowledgeAuthorizationFromRow(row: TrackedKnowledgeAuthorization
       id: row.actor_id,
     },
     action: row.action,
+    sourceType: row.source_type,
     issuedAt: row.issued_at,
     expiresAt: row.expires_at,
     expectedConfigVersion: row.expected_config_version,
@@ -397,6 +603,7 @@ export class WorkspaceConfigDO extends DurableObject {
     if (this.migrated) return;
     const sql = this.sql();
     for (const stmt of DDL) sql.exec(stmt);
+    migrateTrackedKnowledgeSourceTables(sql);
     const columns = new Set(
       sql
         .exec<{ name: string }>("PRAGMA table_info(channel_config)")
@@ -511,17 +718,53 @@ export class WorkspaceConfigDO extends DurableObject {
       );
       sql.exec("UPDATE tracked_knowledge_sources SET ever_enabled = 1 WHERE enabled = 1");
     }
+    addColumnIfMissing(
+      sql,
+      trackedColumns,
+      "admission_mode",
+      "ALTER TABLE tracked_knowledge_sources ADD COLUMN admission_mode TEXT NOT NULL DEFAULT 'explicit' CHECK (admission_mode IN ('explicit', 'workspace_default'))",
+    );
     const effectColumns = new Set(
       sql
         .exec<{ name: string }>("PRAGMA table_info(tracked_knowledge_effect_leases)")
         .toArray()
         .map((row) => row.name),
     );
+    addColumnIfMissing(
+      sql,
+      effectColumns,
+      "source_type",
+      "ALTER TABLE tracked_knowledge_effect_leases ADD COLUMN source_type TEXT NOT NULL DEFAULT 'slack' CHECK (source_type IN ('slack', 'wiki', 'code', 'custom_db', 'drive'))",
+    );
     if (!effectColumns.has("lease_ms")) {
       sql.exec(
         "ALTER TABLE tracked_knowledge_effect_leases ADD COLUMN lease_ms INTEGER NOT NULL DEFAULT 80000",
       );
     }
+    const authorizationColumns = new Set(
+      sql
+        .exec<{ name: string }>("PRAGMA table_info(tracked_knowledge_source_authorizations)")
+        .toArray()
+        .map((row) => row.name),
+    );
+    addColumnIfMissing(
+      sql,
+      authorizationColumns,
+      "source_type",
+      "ALTER TABLE tracked_knowledge_source_authorizations ADD COLUMN source_type TEXT NOT NULL DEFAULT 'slack' CHECK (source_type IN ('slack', 'wiki', 'code', 'custom_db', 'drive'))",
+    );
+    sql.exec("DROP INDEX IF EXISTS idx_tracked_knowledge_effect_scope");
+    sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_tracked_knowledge_effect_scope
+       ON tracked_knowledge_effect_leases(team_id, source_type, project_id, channel_id, expires_at)`,
+    );
+    sql.exec("DROP INDEX IF EXISTS idx_tracked_knowledge_authorization_scope");
+    sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_tracked_knowledge_authorization_scope
+       ON tracked_knowledge_source_authorizations(
+         team_id, source_type, project_id, channel_id, consumed_at DESC
+       )`,
+    );
     const existing = sql
       .exec<{ id: string }>(
         "SELECT id FROM access_bundles WHERE id = ?",
@@ -1024,8 +1267,9 @@ export class WorkspaceConfigDO extends DurableObject {
       const row = sql
         .exec<TrackedKnowledgeSourceRow>(
           `SELECT * FROM tracked_knowledge_sources
-           WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+           WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
           scope.teamId,
+          scope.sourceType ?? "slack",
           scope.projectId,
           scope.channelId,
         )
@@ -1034,7 +1278,7 @@ export class WorkspaceConfigDO extends DurableObject {
     }
 
     if (url.pathname === "/listTrackedKnowledgeSources" && request.method === "POST") {
-      let scope: { teamId: string; channelId: string };
+      let scope: { teamId: string; channelId: string; sourceType?: string };
       try {
         const input = await request.json() as { teamId?: unknown; channelId?: unknown };
         const parsed = parseKnowledgeSourceScope({
@@ -1042,7 +1286,11 @@ export class WorkspaceConfigDO extends DurableObject {
           projectId: "exact-channel-lookup",
           channelId: input.channelId,
         });
-        scope = { teamId: parsed.teamId, channelId: parsed.channelId };
+        scope = {
+          teamId: parsed.teamId,
+          channelId: parsed.channelId,
+          sourceType: parsed.sourceType,
+        };
       } catch (error) {
         return Response.json(
           { error: error instanceof Error ? error.message : "invalid tracked knowledge source lookup" },
@@ -1054,18 +1302,740 @@ export class WorkspaceConfigDO extends DurableObject {
       // row and never infer a project or inherit the ordinary config fallback.
       const rows = sql.exec<TrackedKnowledgeSourceRow>(
         `SELECT * FROM tracked_knowledge_sources
-         WHERE team_id = ? AND channel_id = ? AND enabled = 1
+         WHERE team_id = ? AND source_type = ? AND channel_id = ? AND enabled = 1
          ORDER BY project_id ASC`,
         scope.teamId,
+        scope.sourceType ?? "slack",
         scope.channelId,
       ).toArray();
       return Response.json(rows.map(trackedKnowledgeSourceFromRow));
+    }
+
+    if (url.pathname === "/getKnowledgeAdmissionPolicy" && request.method === "POST") {
+      let teamId: string;
+      try {
+        const input = await request.json() as { teamId?: unknown };
+        teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "admission-policy",
+          channelId: "admission-policy",
+        }).teamId;
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid knowledge admission policy lookup" },
+          { status: 400 },
+        );
+      }
+      const row = sql
+        .exec<WorkspaceKnowledgeAdmissionPolicyRow>(
+          `SELECT * FROM workspace_knowledge_admission_policies WHERE team_id = ?`,
+          teamId,
+        )
+        .toArray()[0];
+      return Response.json(row ? workspaceKnowledgeAdmissionPolicyFromRow(row) : null);
+    }
+
+    if (url.pathname === "/putKnowledgeAdmissionPolicy" && request.method === "POST") {
+      try {
+        const input = await request.json() as {
+          teamId?: unknown;
+          expectedConfigVersion?: unknown;
+          mode?: unknown;
+          defaultProjectId?: unknown;
+          readerPolicyRef?: unknown;
+          retentionDays?: unknown;
+        };
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "admission-policy",
+          channelId: "admission-policy",
+        }).teamId;
+        const policy = parsePutWorkspaceKnowledgeAdmissionPolicy(input);
+        const expectedConfigVersion = input.expectedConfigVersion === undefined || input.expectedConfigVersion === null
+          ? null
+          : input.expectedConfigVersion;
+        if (
+          expectedConfigVersion !== null &&
+          (!Number.isSafeInteger(expectedConfigVersion) || (expectedConfigVersion as number) < 0)
+        ) {
+          throw new Error("expectedConfigVersion must be a non-negative integer or null");
+        }
+        const now = new Date().toISOString();
+        const nowMs = Date.now();
+        const result = this.ctx.storage.transactionSync(() => {
+          const existing = sql
+            .exec<WorkspaceKnowledgeAdmissionPolicyRow>(
+              `SELECT * FROM workspace_knowledge_admission_policies WHERE team_id = ?`,
+              teamId,
+            )
+            .toArray()[0];
+          sql.exec("DELETE FROM tracked_knowledge_effect_leases WHERE expires_at <= ?", nowMs);
+          const revokingWorkspaceDefaults = existing?.mode === "all_delivered" && policy.mode === "explicit";
+          if (revokingWorkspaceDefaults) {
+            const activeEffect = sql.exec<{ effect_token: string }>(
+              `SELECT leases.effect_token
+               FROM tracked_knowledge_effect_leases AS leases
+               JOIN tracked_knowledge_sources AS sources
+                 ON sources.team_id = leases.team_id
+                AND sources.source_type = leases.source_type
+                AND sources.project_id = leases.project_id
+                AND sources.channel_id = leases.channel_id
+               WHERE sources.team_id = ?
+                 AND sources.source_type = 'slack'
+                 AND sources.enabled = 1
+                 AND sources.admission_mode = 'workspace_default'
+                 AND leases.expires_at > ?
+               LIMIT 1`,
+              teamId,
+              nowMs,
+            ).toArray()[0];
+            if (activeEffect) {
+              return {
+                ok: false as const,
+                status: 409 as const,
+                error: "knowledge_admission_policy_active_ingestion_effect",
+                policy: existing ? workspaceKnowledgeAdmissionPolicyFromRow(existing) : null,
+              };
+            }
+          }
+          const currentVersion = existing?.config_version ?? 0;
+          if (
+            expectedConfigVersion !== null &&
+            expectedConfigVersion !== currentVersion
+          ) {
+            return {
+              ok: false as const,
+              status: 409 as const,
+              error: "knowledge_admission_policy_version_conflict",
+              policy: existing ? workspaceKnowledgeAdmissionPolicyFromRow(existing) : null,
+            };
+          }
+          if (revokingWorkspaceDefaults) {
+            sql.exec(
+              `UPDATE tracked_knowledge_sources
+               SET enabled = 0,
+                   admission_mode = 'explicit',
+                   config_version = config_version + 1,
+                   updated_at = ?
+               WHERE team_id = ?
+                 AND source_type = 'slack'
+                 AND enabled = 1
+                 AND admission_mode = 'workspace_default'`,
+              now,
+              teamId,
+            );
+          }
+          const nextVersion = currentVersion + 1;
+          sql.exec(
+            `INSERT INTO workspace_knowledge_admission_policies (
+               team_id, mode, default_project_id, reader_policy_ref,
+               retention_days, config_version, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(team_id) DO UPDATE SET
+               mode = excluded.mode,
+               default_project_id = excluded.default_project_id,
+               reader_policy_ref = excluded.reader_policy_ref,
+               retention_days = excluded.retention_days,
+               config_version = excluded.config_version,
+               updated_at = excluded.updated_at`,
+            teamId,
+            policy.mode,
+            policy.defaultProjectId,
+            policy.readerPolicyRef,
+            policy.retentionDays ?? null,
+            nextVersion,
+            now,
+          );
+          const row = sql
+            .exec<WorkspaceKnowledgeAdmissionPolicyRow>(
+              `SELECT * FROM workspace_knowledge_admission_policies WHERE team_id = ?`,
+              teamId,
+            )
+            .toArray()[0];
+          if (!row) throw new Error("knowledge admission policy write was not persisted");
+          return {
+            ok: true as const,
+            status: 200 as const,
+            policy: workspaceKnowledgeAdmissionPolicyFromRow(row),
+          };
+        });
+        return result.ok
+          ? Response.json(result.policy)
+          : Response.json(result, { status: result.status });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid knowledge admission policy" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/resolveSlackKnowledgeSource" && request.method === "POST") {
+      try {
+        const input = await request.json() as { teamId?: unknown; channelId?: unknown };
+        const scope = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-source-resolution",
+          channelId: input.channelId,
+        });
+        const now = new Date().toISOString();
+        const result = this.ctx.storage.transactionSync(() => {
+          const installation = sql.exec<SlackInstallationStateRow>(
+            "SELECT * FROM slack_installation_state WHERE team_id = ?",
+            scope.teamId,
+          ).toArray()[0];
+          if (installation?.status === "revoked") {
+            return { source: null, reason: "installation_revoked" };
+          }
+          const channelLifecycle = sql.exec<SlackChannelLifecycleRow>(
+            `SELECT * FROM slack_channel_lifecycle
+             WHERE team_id = ? AND channel_id = ?`,
+            scope.teamId,
+            scope.channelId,
+          ).toArray()[0];
+          if (channelLifecycle && channelLifecycle.status !== "active") {
+            return { source: null, reason: `channel_${channelLifecycle.status}` };
+          }
+          const rows = sql
+            .exec<TrackedKnowledgeSourceRow>(
+              `SELECT * FROM tracked_knowledge_sources
+               WHERE team_id = ? AND channel_id = ?
+               ORDER BY enabled DESC, config_version DESC, project_id ASC`,
+              scope.teamId,
+              scope.channelId,
+            )
+            .toArray();
+          const slackRows = rows.filter((row) => row.source_type === "slack");
+          if (slackRows.filter((row) => row.enabled === 1).length > 1) {
+            throw new Error("tracked_source_project_conflict");
+          }
+          const existing = slackRows[0];
+          if (existing) {
+            return {
+              source: existing.enabled === 1
+                ? trackedKnowledgeSourceFromRow(existing)
+                : null,
+              reason: existing.enabled === 1 ? "explicit_enabled" : "source_disabled",
+            };
+          }
+          const policy = sql
+            .exec<WorkspaceKnowledgeAdmissionPolicyRow>(
+              `SELECT * FROM workspace_knowledge_admission_policies WHERE team_id = ?`,
+              scope.teamId,
+            )
+            .toArray()[0];
+          if (!policy || policy.mode !== "all_delivered") {
+            return { source: null, reason: "workspace_admission_disabled" };
+          }
+          sql.exec(
+            `INSERT INTO tracked_knowledge_sources (
+             team_id, source_type, project_id, channel_id, enabled, ever_enabled,
+               reader_policy_ref, retention_days, config_version, admission_mode, updated_at
+             ) VALUES (?, 'slack', ?, ?, 1, 1, ?, ?, 1, 'workspace_default', ?)`,
+            scope.teamId,
+            policy.default_project_id,
+            scope.channelId,
+            policy.reader_policy_ref,
+            policy.retention_days,
+            now,
+          );
+          const created = sql
+            .exec<TrackedKnowledgeSourceRow>(
+              `SELECT * FROM tracked_knowledge_sources
+               WHERE team_id = ? AND source_type = 'slack' AND project_id = ? AND channel_id = ?`,
+              scope.teamId,
+              policy.default_project_id,
+              scope.channelId,
+            )
+            .toArray()[0];
+          if (!created) throw new Error("workspace default knowledge source was not persisted");
+          return {
+            source: trackedKnowledgeSourceFromRow(created),
+            reason: "workspace_default_created",
+          };
+        });
+        return Response.json(result);
+      } catch (error) {
+        const status = error instanceof Error && error.message === "tracked_source_project_conflict"
+          ? 409
+          : 400;
+        return Response.json(
+          { error: error instanceof Error ? error.message : "knowledge source resolution failed" },
+          { status },
+        );
+      }
+    }
+
+    if (url.pathname === "/listEnabledTrackedKnowledgeSources" && request.method === "POST") {
+      let teamId: string;
+      try {
+        const input = await request.json() as { teamId?: unknown };
+        teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "list-enabled",
+          channelId: "list-enabled",
+        }).teamId;
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid tracked knowledge source listing" },
+          { status: 400 },
+        );
+      }
+      const rows = sql.exec<TrackedKnowledgeSourceRow>(
+        `SELECT * FROM tracked_knowledge_sources
+         WHERE team_id = ? AND enabled = 1
+         ORDER BY channel_id ASC, project_id ASC`,
+        teamId,
+      ).toArray();
+      return Response.json(rows.map(trackedKnowledgeSourceFromRow));
+    }
+
+    if (url.pathname === "/recordSlackInstallationManifest" && request.method === "POST") {
+      try {
+        const input = await request.json() as Record<string, unknown>;
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-installation-manifest",
+          channelId: "slack-installation-manifest",
+        }).teamId;
+        if (
+          !Number.isSafeInteger(input.installationGeneration) ||
+          (input.installationGeneration as number) < 1
+        ) throw new Error("slack_installation_generation_invalid");
+        const installationGeneration = input.installationGeneration as number;
+        const receipt = await slackManifestCoverageReceipt({
+          schemaVersion: input.schemaVersion,
+          teamId,
+          botUserId: input.botUserId,
+          botScopes: input.botScopes,
+          botEvents: input.botEvents,
+          observedAt: input.observedAt,
+        });
+        if (receipt.teamId !== teamId) {
+          throw new Error("slack_manifest_team_mismatch");
+        }
+        const result = this.ctx.storage.transactionSync(() => {
+          const installation = sql.exec<SlackInstallationStateRow>(
+            "SELECT * FROM slack_installation_state WHERE team_id = ?",
+            receipt.teamId,
+          ).toArray()[0];
+          if (!installation || installation.status !== "active") {
+            throw new Error("slack_installation_not_active");
+          }
+          if (installation.generation !== installationGeneration) {
+            throw new Error("slack_installation_generation_conflict");
+          }
+          const existing = sql.exec<SlackInstallationManifestRow>(
+            `SELECT * FROM slack_installation_manifests
+             WHERE team_id = ? AND generation = ?`,
+            receipt.teamId,
+            installationGeneration,
+          ).toArray()[0];
+          if (existing && !Number.isFinite(Date.parse(existing.observed_at))) {
+            throw new Error("slack_installation_manifest_corrupt");
+          }
+          if (existing && Date.parse(receipt.observedAt) < Date.parse(existing.observed_at)) {
+            throw new Error("slack_installation_manifest_stale");
+          }
+          const duplicate = existing?.manifest_digest === receipt.manifestDigest &&
+            existing.observed_at === receipt.observedAt;
+          if (!duplicate) {
+            sql.exec(
+              `INSERT INTO slack_installation_manifests (
+                team_id, generation, schema_version, bot_user_id,
+                bot_scopes_json, bot_events_json, status,
+                missing_scopes_json, missing_events_json, manifest_digest,
+                observed_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(team_id, generation) DO UPDATE SET
+                schema_version = excluded.schema_version,
+                bot_user_id = excluded.bot_user_id,
+                bot_scopes_json = excluded.bot_scopes_json,
+                bot_events_json = excluded.bot_events_json,
+                status = excluded.status,
+                missing_scopes_json = excluded.missing_scopes_json,
+                missing_events_json = excluded.missing_events_json,
+                manifest_digest = excluded.manifest_digest,
+                observed_at = excluded.observed_at,
+                updated_at = excluded.updated_at`,
+              receipt.teamId,
+              installationGeneration,
+              receipt.schemaVersion,
+              receipt.botUserId,
+              JSON.stringify(receipt.botScopes),
+              JSON.stringify(receipt.botEvents),
+              receipt.status,
+              JSON.stringify(receipt.missingScopes),
+              JSON.stringify(receipt.missingEvents),
+              receipt.manifestDigest,
+              receipt.observedAt,
+              Date.now(),
+            );
+          }
+          const stored = sql.exec<SlackInstallationManifestRow>(
+            `SELECT * FROM slack_installation_manifests
+             WHERE team_id = ? AND generation = ?`,
+            receipt.teamId,
+            installationGeneration,
+          ).toArray()[0];
+          if (!stored) throw new Error("slack_installation_manifest_not_persisted");
+          return {
+            recorded: !duplicate,
+            duplicate,
+            manifest: slackInstallationManifestFromRow(stored, installationGeneration),
+          };
+        });
+        return Response.json(result);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "invalid Slack installation manifest";
+        const status = [
+          "slack_installation_not_active",
+          "slack_installation_generation_conflict",
+          "slack_installation_manifest_stale",
+        ].includes(code)
+          ? 409
+          : code === "slack_installation_manifest_corrupt"
+            ? 500
+            : 400;
+        return Response.json(
+          { error: code },
+          { status },
+        );
+      }
+    }
+
+    if (url.pathname === "/getSlackInstallationManifest" && request.method === "POST") {
+      try {
+        const input = await request.json() as { teamId?: unknown };
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-installation-manifest",
+          channelId: "slack-installation-manifest",
+        }).teamId;
+        const installation = sql.exec<SlackInstallationStateRow>(
+          "SELECT * FROM slack_installation_state WHERE team_id = ?",
+          teamId,
+        ).toArray()[0];
+        const generation = installation?.generation ?? 0;
+        const manifest = sql.exec<SlackInstallationManifestRow>(
+          `SELECT * FROM slack_installation_manifests
+           WHERE team_id = ?
+           ORDER BY generation DESC, updated_at DESC
+           LIMIT 1`,
+          teamId,
+        ).toArray()[0];
+        return Response.json({
+          installation: slackInstallationStateFromRow(installation),
+          manifest: slackInstallationManifestFromRow(manifest, generation) ?? null,
+          fresh: Boolean(
+            installation &&
+            installation.status === "active" &&
+            manifest &&
+            manifest.generation === generation,
+          ),
+        });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack installation manifest lookup" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/getSlackInstallationState" && request.method === "POST") {
+      try {
+        const input = await request.json() as { teamId?: unknown; channelId?: unknown };
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-installation-state",
+          channelId: "slack-installation-state",
+        }).teamId;
+        const installation = sql.exec<SlackInstallationStateRow>(
+          "SELECT * FROM slack_installation_state WHERE team_id = ?",
+          teamId,
+        ).toArray()[0];
+        const generation = installation?.generation ?? 0;
+        const manifest = sql.exec<SlackInstallationManifestRow>(
+          `SELECT * FROM slack_installation_manifests
+           WHERE team_id = ?
+           ORDER BY generation DESC, updated_at DESC
+           LIMIT 1`,
+          teamId,
+        ).toArray()[0];
+        let channel: SlackChannelLifecycleRow | undefined;
+        if (input.channelId !== undefined) {
+          const channelId = parseKnowledgeSourceScope({
+            teamId,
+            projectId: "slack-channel-lifecycle",
+            channelId: input.channelId,
+          }).channelId;
+          channel = sql.exec<SlackChannelLifecycleRow>(
+            `SELECT * FROM slack_channel_lifecycle
+             WHERE team_id = ? AND channel_id = ?`,
+            teamId,
+            channelId,
+          ).toArray()[0];
+        }
+        return Response.json({
+          installation: slackInstallationStateFromRow(installation),
+          manifest: slackInstallationManifestFromRow(manifest, generation) ?? null,
+          ...(channel
+            ? {
+                channel: {
+                  teamId: channel.team_id,
+                  channelId: channel.channel_id,
+                  status: channel.status,
+                  generation: channel.generation,
+                  lastEventId: channel.last_event_id,
+                  lastEventType: channel.last_event_type,
+                  updatedAt: channel.updated_at,
+                },
+              }
+            : {}),
+        });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack installation state lookup" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/activateSlackInstallation" && request.method === "POST") {
+      try {
+        const input = await request.json() as { teamId?: unknown; activationId?: unknown };
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-installation-activation",
+          channelId: "slack-installation-activation",
+        }).teamId;
+        if (
+          typeof input.activationId !== "string" ||
+          input.activationId.length < 1 ||
+          input.activationId.length > 512
+        ) throw new Error("slack_installation_activation_id_invalid");
+        const activationId = input.activationId;
+        const nowMs = Date.now();
+        const result = this.ctx.storage.transactionSync(() => {
+          const current = sql.exec<SlackInstallationStateRow>(
+            "SELECT * FROM slack_installation_state WHERE team_id = ?",
+            teamId,
+          ).toArray()[0];
+          if (
+            current?.last_event_type === "installation_activated" &&
+            current.last_event_id === activationId
+          ) return slackInstallationStateFromRow(current);
+          const generation = (current?.generation ?? 0) + 1;
+          sql.exec(
+            `INSERT INTO slack_installation_state (
+              team_id, status, generation, last_event_id, last_event_type,
+              revoked_at, updated_at
+            ) VALUES (?, 'active', ?, ?, 'installation_activated', NULL, ?)
+            ON CONFLICT(team_id) DO UPDATE SET
+              status = 'active', generation = excluded.generation,
+              last_event_id = excluded.last_event_id,
+              last_event_type = excluded.last_event_type,
+              revoked_at = NULL, updated_at = excluded.updated_at`,
+            teamId,
+            generation,
+            activationId,
+            nowMs,
+          );
+          const state = sql.exec<SlackInstallationStateRow>(
+            "SELECT * FROM slack_installation_state WHERE team_id = ?",
+            teamId,
+          ).toArray()[0];
+          if (!state) throw new Error("slack_installation_activation_not_persisted");
+          return slackInstallationStateFromRow(state);
+        });
+        return Response.json({ activated: true, installation: result });
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack installation activation" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/applySlackLifecycle" && request.method === "POST") {
+      try {
+        const input = await request.json() as {
+          teamId?: unknown;
+          eventId?: unknown;
+          eventType?: unknown;
+          channelId?: unknown;
+          observedAt?: unknown;
+        };
+        const teamId = parseKnowledgeSourceScope({
+          teamId: input.teamId,
+          projectId: "slack-lifecycle",
+          channelId: "slack-lifecycle",
+        }).teamId;
+        if (
+          typeof input.eventId !== "string" ||
+          input.eventId.length < 1 ||
+          input.eventId.length > 512
+        ) throw new Error("slack_lifecycle_event_id_invalid");
+        const eventId = input.eventId;
+        const eventType = slackLifecycleType(input.eventType);
+        const global = slackLifecycleEventDisablesInstallation(eventType);
+        const channelId = input.channelId === undefined
+          ? undefined
+          : parseKnowledgeSourceScope({
+              teamId,
+              projectId: "slack-lifecycle-channel",
+              channelId: input.channelId,
+            }).channelId;
+        if (global === Boolean(channelId)) {
+          throw new Error(global
+            ? "slack_lifecycle_global_event_has_channel"
+            : "slack_lifecycle_channel_required");
+        }
+        if (input.observedAt !== undefined && (
+          typeof input.observedAt !== "string" ||
+          !Number.isFinite(Date.parse(input.observedAt))
+        )) throw new Error("slack_lifecycle_observed_at_invalid");
+        const observedAt = typeof input.observedAt === "string"
+          ? Date.parse(input.observedAt)
+          : Date.now();
+        const nowMs = Date.now();
+        const result = this.ctx.storage.transactionSync(() => {
+          const existingEvent = sql.exec(
+            `SELECT event_id FROM slack_installation_lifecycle_events
+             WHERE team_id = ? AND event_id = ?`,
+            teamId,
+            eventId,
+          ).toArray()[0];
+          if (existingEvent) {
+            return {
+              applied: false as const,
+              duplicate: true as const,
+              affectedChannels: [] as string[],
+            };
+          }
+          sql.exec(
+            `INSERT INTO slack_installation_lifecycle_events (
+              event_id, team_id, event_type, channel_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?)`,
+            eventId,
+            teamId,
+            eventType,
+            channelId ?? null,
+            observedAt,
+          );
+          if (global) {
+            const sourceChannels = sql.exec<{ channel_id: string }>(
+              `SELECT DISTINCT channel_id FROM tracked_knowledge_sources
+               WHERE team_id = ? AND source_type = 'slack'`,
+              teamId,
+            ).toArray().map((row) => row.channel_id);
+            const lifecycleChannels = sql.exec<{ channel_id: string }>(
+              `SELECT channel_id FROM slack_channel_lifecycle WHERE team_id = ?`,
+              teamId,
+            ).toArray().map((row) => row.channel_id);
+            const affectedChannels = [...new Set([...sourceChannels, ...lifecycleChannels])].sort();
+            sql.exec(
+              `UPDATE tracked_knowledge_sources
+               SET enabled = 0, reader_policy_ref = '',
+                   config_version = config_version + 1, updated_at = ?
+               WHERE team_id = ? AND source_type = 'slack' AND enabled = 1`,
+              new Date(nowMs).toISOString(),
+              teamId,
+            );
+            sql.exec(
+              `DELETE FROM tracked_knowledge_effect_leases
+               WHERE team_id = ? AND source_type = 'slack'`,
+              teamId,
+            );
+            const current = sql.exec<SlackInstallationStateRow>(
+              "SELECT * FROM slack_installation_state WHERE team_id = ?",
+              teamId,
+            ).toArray()[0];
+            const generation = (current?.generation ?? 0) + 1;
+            sql.exec(
+              `INSERT INTO slack_installation_state (
+                team_id, status, generation, last_event_id, last_event_type,
+                revoked_at, updated_at
+              ) VALUES (?, 'revoked', ?, ?, ?, ?, ?)
+              ON CONFLICT(team_id) DO UPDATE SET
+                status = 'revoked', generation = excluded.generation,
+                last_event_id = excluded.last_event_id,
+                last_event_type = excluded.last_event_type,
+                revoked_at = excluded.revoked_at, updated_at = excluded.updated_at`,
+              teamId,
+              generation,
+              eventId,
+              eventType,
+              observedAt,
+              nowMs,
+            );
+            return { applied: true as const, duplicate: false as const, affectedChannels };
+          }
+          const lifecycleStatus = slackLifecycleChannelStatus(eventType);
+          if (!channelId) throw new Error("slack_lifecycle_channel_required");
+          const scopedChannelId = channelId;
+          const current = sql.exec<SlackChannelLifecycleRow>(
+            `SELECT * FROM slack_channel_lifecycle
+             WHERE team_id = ? AND channel_id = ?`,
+            teamId,
+            scopedChannelId,
+          ).toArray()[0];
+          const generation = (current?.generation ?? 0) + 1;
+          sql.exec(
+            `INSERT INTO slack_channel_lifecycle (
+              team_id, channel_id, status, generation, last_event_id,
+              last_event_type, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(team_id, channel_id) DO UPDATE SET
+              status = excluded.status, generation = excluded.generation,
+              last_event_id = excluded.last_event_id,
+              last_event_type = excluded.last_event_type,
+              updated_at = excluded.updated_at`,
+            teamId,
+            scopedChannelId,
+            lifecycleStatus,
+            generation,
+            eventId,
+            eventType,
+            nowMs,
+          );
+          if (slackLifecycleEventDisablesChannel(eventType)) {
+            sql.exec(
+              `UPDATE tracked_knowledge_sources
+               SET enabled = 0, reader_policy_ref = '',
+                   config_version = config_version + 1, updated_at = ?
+               WHERE team_id = ? AND source_type = 'slack' AND channel_id = ? AND enabled = 1`,
+              new Date(nowMs).toISOString(),
+              teamId,
+              scopedChannelId,
+            );
+            sql.exec(
+              `DELETE FROM tracked_knowledge_effect_leases
+               WHERE team_id = ? AND source_type = 'slack' AND channel_id = ?`,
+              teamId,
+              scopedChannelId,
+            );
+          }
+          return {
+            applied: true as const,
+            duplicate: false as const,
+            affectedChannels: [scopedChannelId],
+          };
+        });
+        return Response.json(result);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "invalid Slack lifecycle event" },
+          { status: 400 },
+        );
+      }
     }
 
     if (url.pathname === "/beginKnowledgeIngestionEffect" && request.method === "POST") {
       try {
         const input = await request.json() as {
           teamId?: unknown;
+          sourceType?: unknown;
           projectId?: unknown;
           channelId?: unknown;
           configVersion?: unknown;
@@ -1089,8 +2059,9 @@ export class WorkspaceConfigDO extends DurableObject {
           sql.exec("DELETE FROM tracked_knowledge_effect_leases WHERE expires_at <= ?", nowMs);
           const row = sql.exec<TrackedKnowledgeSourceRow>(
             `SELECT * FROM tracked_knowledge_sources
-             WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+             WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
             scope.teamId,
+            scope.sourceType ?? "slack",
             scope.projectId,
             scope.channelId,
           ).toArray()[0];
@@ -1101,11 +2072,12 @@ export class WorkspaceConfigDO extends DurableObject {
           const expiresAt = nowMs + (leaseMs as number);
           sql.exec(
             `INSERT INTO tracked_knowledge_effect_leases (
-               effect_token, team_id, project_id, channel_id, config_version,
+               effect_token, team_id, source_type, project_id, channel_id, config_version,
                lease_ms, expires_at, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             input.effectToken as string,
             scope.teamId,
+            scope.sourceType ?? "slack",
             scope.projectId,
             scope.channelId,
             input.configVersion as number,
@@ -1133,6 +2105,7 @@ export class WorkspaceConfigDO extends DurableObject {
       try {
         const input = await request.json() as {
           teamId?: unknown;
+          sourceType?: unknown;
           projectId?: unknown;
           channelId?: unknown;
           configVersion?: unknown;
@@ -1155,16 +2128,18 @@ export class WorkspaceConfigDO extends DurableObject {
             expires_at: number;
           }>(
             `SELECT config_version, lease_ms, expires_at FROM tracked_knowledge_effect_leases
-             WHERE effect_token = ? AND team_id = ? AND project_id = ? AND channel_id = ?`,
+             WHERE effect_token = ? AND team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
             effectToken,
             scope.teamId,
+            scope.sourceType ?? "slack",
             scope.projectId,
             scope.channelId,
           ).toArray()[0];
           const row = sql.exec<TrackedKnowledgeSourceRow>(
             `SELECT * FROM tracked_knowledge_sources
-             WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+             WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
             scope.teamId,
+            scope.sourceType ?? "slack",
             scope.projectId,
             scope.channelId,
           ).toArray()[0];
@@ -1226,6 +2201,7 @@ export class WorkspaceConfigDO extends DurableObject {
         const action = rawAction as KnowledgeSourceAction;
         const rawRequest = {
           teamId: body.request?.teamId,
+          sourceType: body.request?.sourceType,
           projectId: body.request?.projectId,
           channelId: body.request?.channelId,
           expectedConfigVersion: body.request?.expectedConfigVersion,
@@ -1243,6 +2219,7 @@ export class WorkspaceConfigDO extends DurableObject {
           grant.version !== 1 ||
           grant.action !== action ||
           grant.teamId !== sourceRequest.teamId ||
+          (grant.sourceType ?? "slack") !== (sourceRequest.sourceType ?? "slack") ||
           grant.projectId !== sourceRequest.projectId ||
           grant.channelId !== sourceRequest.channelId ||
           grant.expectedConfigVersion !== sourceRequest.expectedConfigVersion ||
@@ -1286,8 +2263,9 @@ export class WorkspaceConfigDO extends DurableObject {
           sql.exec("DELETE FROM tracked_knowledge_effect_leases WHERE expires_at <= ?", nowMs);
           const before = sql.exec<TrackedKnowledgeSourceRow>(
             `SELECT * FROM tracked_knowledge_sources
-             WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+             WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
             sourceRequest.teamId,
+            sourceRequest.sourceType ?? "slack",
             sourceRequest.projectId,
             sourceRequest.channelId,
           ).toArray()[0];
@@ -1317,9 +2295,10 @@ export class WorkspaceConfigDO extends DurableObject {
           ) {
             const activeEffect = sql.exec<{ effect_token: string }>(
               `SELECT effect_token FROM tracked_knowledge_effect_leases
-               WHERE team_id = ? AND project_id = ? AND channel_id = ? AND expires_at > ?
+               WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ? AND expires_at > ?
                LIMIT 1`,
               sourceRequest.teamId,
+              sourceRequest.sourceType ?? "slack",
               sourceRequest.projectId,
               sourceRequest.channelId,
               nowMs,
@@ -1339,10 +2318,11 @@ export class WorkspaceConfigDO extends DurableObject {
             } else {
               sql.exec(
                 `INSERT INTO tracked_knowledge_sources (
-                   team_id, project_id, channel_id, enabled, ever_enabled,
-                   reader_policy_ref, retention_days, config_version, updated_at
-                 ) VALUES (?, ?, ?, 0, 0, ?, ?, 1, ?)`,
+                   team_id, source_type, project_id, channel_id, enabled, ever_enabled,
+                   reader_policy_ref, retention_days, config_version, admission_mode, updated_at
+                 ) VALUES (?, ?, ?, ?, 0, 0, ?, ?, 1, 'explicit', ?)`,
                 sourceRequest.teamId,
+                sourceRequest.sourceType ?? "slack",
                 sourceRequest.projectId,
                 sourceRequest.channelId,
                 sourceRequest.readerPolicyRef ?? "",
@@ -1359,12 +2339,14 @@ export class WorkspaceConfigDO extends DurableObject {
               sql.exec(
                 `UPDATE tracked_knowledge_sources
                  SET reader_policy_ref = ?, retention_days = ?,
+                     admission_mode = 'explicit',
                      config_version = config_version + 1, updated_at = ?
-                 WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+                 WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
                 sourceRequest.readerPolicyRef ?? "",
                 sourceRequest.retentionDays,
                 consumedAt,
                 sourceRequest.teamId,
+                sourceRequest.sourceType ?? "slack",
                 sourceRequest.projectId,
                 sourceRequest.channelId,
               );
@@ -1381,9 +2363,10 @@ export class WorkspaceConfigDO extends DurableObject {
             } else {
               const conflict = sql.exec<{ project_id: string }>(
                 `SELECT project_id FROM tracked_knowledge_sources
-                 WHERE team_id = ? AND channel_id = ? AND enabled = 1 AND project_id <> ?
+                 WHERE team_id = ? AND source_type = ? AND channel_id = ? AND enabled = 1 AND project_id <> ?
                  LIMIT 1`,
                 sourceRequest.teamId,
+                sourceRequest.sourceType ?? "slack",
                 sourceRequest.channelId,
                 sourceRequest.projectId,
               ).toArray()[0];
@@ -1395,11 +2378,13 @@ export class WorkspaceConfigDO extends DurableObject {
                 sql.exec(
                   `UPDATE tracked_knowledge_sources
                    SET enabled = 1, ever_enabled = 1,
+                       admission_mode = 'explicit',
                        config_version = config_version + 1, updated_at = ?
-                   WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
-                  consumedAt,
-                  sourceRequest.teamId,
-                  sourceRequest.projectId,
+                   WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
+                   consumedAt,
+                   sourceRequest.teamId,
+                   sourceRequest.sourceType ?? "slack",
+                   sourceRequest.projectId,
                   sourceRequest.channelId,
                 );
               }
@@ -1412,10 +2397,12 @@ export class WorkspaceConfigDO extends DurableObject {
             } else {
               sql.exec(
                 `UPDATE tracked_knowledge_sources
-                 SET enabled = 0, config_version = config_version + 1, updated_at = ?
-                 WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+                 SET enabled = 0, admission_mode = 'explicit',
+                     config_version = config_version + 1, updated_at = ?
+                 WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
                 consumedAt,
                 sourceRequest.teamId,
+                sourceRequest.sourceType ?? "slack",
                 sourceRequest.projectId,
                 sourceRequest.channelId,
               );
@@ -1424,8 +2411,9 @@ export class WorkspaceConfigDO extends DurableObject {
 
           const after = sql.exec<TrackedKnowledgeSourceRow>(
             `SELECT * FROM tracked_knowledge_sources
-             WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+             WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
             sourceRequest.teamId,
+            sourceRequest.sourceType ?? "slack",
             sourceRequest.projectId,
             sourceRequest.channelId,
           ).toArray()[0];
@@ -1433,10 +2421,10 @@ export class WorkspaceConfigDO extends DurableObject {
           sql.exec(
             `INSERT INTO tracked_knowledge_source_authorizations (
                grant_id, artifact_digest, request_digest, issuer, key_id,
-               actor_kind, actor_id, action, team_id, project_id, channel_id,
+               actor_kind, actor_id, action, team_id, source_type, project_id, channel_id,
                issued_at, expires_at, expected_config_version,
                config_version_before, config_version_after, outcome, consumed_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             verifiedGrant.grantId,
             verifiedGrant.artifactDigest,
             verifiedGrant.requestDigest,
@@ -1446,6 +2434,7 @@ export class WorkspaceConfigDO extends DurableObject {
             verifiedGrant.actorId,
             action,
             sourceRequest.teamId,
+            sourceRequest.sourceType ?? "slack",
             sourceRequest.projectId,
             sourceRequest.channelId,
             verifiedGrant.issuedAt,
@@ -1469,9 +2458,10 @@ export class WorkspaceConfigDO extends DurableObject {
           const authorizations = action === "list_exact"
             ? sql.exec<TrackedKnowledgeAuthorizationRow>(
               `SELECT * FROM tracked_knowledge_source_authorizations
-               WHERE team_id = ? AND project_id = ? AND channel_id = ?
+               WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?
                ORDER BY consumed_at DESC LIMIT 50`,
               sourceRequest.teamId,
+              sourceRequest.sourceType ?? "slack",
               sourceRequest.projectId,
               sourceRequest.channelId,
             ).toArray().map(trackedKnowledgeAuthorizationFromRow)
@@ -1510,11 +2500,33 @@ export class WorkspaceConfigDO extends DurableObject {
           { status: 400 },
         );
       }
+      if (source.enabled && (source.sourceType ?? "slack") === "slack") {
+        const installation = sql.exec<SlackInstallationStateRow>(
+          "SELECT * FROM slack_installation_state WHERE team_id = ?",
+          source.teamId,
+        ).toArray()[0];
+        if (installation?.status === "revoked") {
+          return Response.json({ error: "slack_installation_is_revoked" }, { status: 409 });
+        }
+        const channelLifecycle = sql.exec<SlackChannelLifecycleRow>(
+          `SELECT * FROM slack_channel_lifecycle
+           WHERE team_id = ? AND channel_id = ?`,
+          source.teamId,
+          source.channelId,
+        ).toArray()[0];
+        if (channelLifecycle && channelLifecycle.status !== "active") {
+          return Response.json(
+            { error: `slack_channel_is_${channelLifecycle.status}` },
+            { status: 409 },
+          );
+        }
+      }
       const updatedAt = new Date().toISOString();
       const existingExact = sql.exec<TrackedKnowledgeSourceRow>(
         `SELECT * FROM tracked_knowledge_sources
-         WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+         WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
         source.teamId,
+        source.sourceType ?? "slack",
         source.projectId,
         source.channelId,
       ).toArray()[0];
@@ -1522,9 +2534,10 @@ export class WorkspaceConfigDO extends DurableObject {
       sql.exec("DELETE FROM tracked_knowledge_effect_leases WHERE expires_at <= ?", nowMs);
       const activeEffect = sql.exec<{ effect_token: string }>(
         `SELECT effect_token FROM tracked_knowledge_effect_leases
-         WHERE team_id = ? AND project_id = ? AND channel_id = ? AND expires_at > ?
+         WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ? AND expires_at > ?
          LIMIT 1`,
         source.teamId,
+        source.sourceType ?? "slack",
         source.projectId,
         source.channelId,
         nowMs,
@@ -1547,9 +2560,10 @@ export class WorkspaceConfigDO extends DurableObject {
       if (source.enabled) {
         const conflict = sql.exec<{ project_id: string }>(
           `SELECT project_id FROM tracked_knowledge_sources
-           WHERE team_id = ? AND channel_id = ? AND enabled = 1 AND project_id <> ?
+           WHERE team_id = ? AND source_type = ? AND channel_id = ? AND enabled = 1 AND project_id <> ?
            LIMIT 1`,
           source.teamId,
+          source.sourceType ?? "slack",
           source.channelId,
           source.projectId,
         ).toArray()[0];
@@ -1567,10 +2581,10 @@ export class WorkspaceConfigDO extends DurableObject {
       try {
         sql.exec(
           `INSERT INTO tracked_knowledge_sources (
-             team_id, project_id, channel_id, enabled, ever_enabled, reader_policy_ref,
-             retention_days, config_version, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-           ON CONFLICT(team_id, project_id, channel_id) DO UPDATE SET
+             team_id, source_type, project_id, channel_id, enabled, ever_enabled, reader_policy_ref,
+             retention_days, config_version, admission_mode, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'explicit', ?)
+           ON CONFLICT(team_id, source_type, project_id, channel_id) DO UPDATE SET
              enabled = excluded.enabled,
              ever_enabled = CASE
                WHEN tracked_knowledge_sources.ever_enabled = 1 OR excluded.enabled = 1 THEN 1
@@ -1578,9 +2592,11 @@ export class WorkspaceConfigDO extends DurableObject {
              END,
              reader_policy_ref = excluded.reader_policy_ref,
              retention_days = excluded.retention_days,
+             admission_mode = 'explicit',
              config_version = tracked_knowledge_sources.config_version + 1,
              updated_at = excluded.updated_at`,
           source.teamId,
+          source.sourceType ?? "slack",
           source.projectId,
           source.channelId,
           source.enabled ? 1 : 0,
@@ -1600,9 +2616,10 @@ export class WorkspaceConfigDO extends DurableObject {
       }
       const row = sql
         .exec<TrackedKnowledgeSourceRow>(
-          `SELECT * FROM tracked_knowledge_sources
-           WHERE team_id = ? AND project_id = ? AND channel_id = ?`,
+        `SELECT * FROM tracked_knowledge_sources
+           WHERE team_id = ? AND source_type = ? AND project_id = ? AND channel_id = ?`,
           source.teamId,
+          source.sourceType ?? "slack",
           source.projectId,
           source.channelId,
         )
@@ -2026,7 +3043,7 @@ export async function loadConnectorAuthorization(
     lifetimeMs?: number;
   },
 ): Promise<{ labels: ImmutableConnectorLabels; credential?: CredentialReference }> {
-  const stub = ns.get(ns.idFromName(input.workspaceId));
+  const stub = tenantStub(ns, input.workspaceId);
   const response = await stub.fetch("https://do/issueConnectorAuthorization", {
     method: "POST",
     body: JSON.stringify(input),
@@ -2045,7 +3062,7 @@ export async function verifyConnectorAuthorization(
   ns: DurableObjectNamespace<WorkspaceConfigDO>,
   labels: ImmutableConnectorLabels,
 ): Promise<void> {
-  const stub = ns.get(ns.idFromName(labels.workspaceId));
+  const stub = tenantStub(ns, labels.workspaceId);
   const response = await stub.fetch("https://do/verifyConnectorAuthorization", {
     method: "POST",
     body: JSON.stringify({ labels }),

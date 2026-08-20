@@ -12,6 +12,9 @@ export interface Env {
   AGENT_AUTH_HEADER?: string;
 
   OPENAI_API_KEY?: string;
+  DEEPSEEK_API_KEY?: string;
+  AGENT_PROVIDER?: string;
+  AGENT_BASE_URL?: string;
   AGENT_MODEL?: string;
   LINEAR_API_KEY?: string;
   LINEAR_MCP_URL?: string;

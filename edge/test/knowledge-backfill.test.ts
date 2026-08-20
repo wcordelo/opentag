@@ -268,7 +268,7 @@ describe("knowledge backfill", () => {
     let secondAttempt = false;
     const enqueueChannels: string[] = [];
     const descriptorKey = (job: KnowledgeBackfillManifest["jobs"][number]) =>
-      `${job.sourceKey}|${job.configVersion}|${job.requestedAt}|${job.reason}`;
+      `${job.sourceType}|${job.sourceKey}|${job.configVersion}|${job.requestedAt}|${job.reason}`;
     const knowledgeFetch = vi.fn(async (
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -361,16 +361,19 @@ describe("knowledge backfill", () => {
         channelId: string;
       };
       return Response.json({
-        schemaVersion: 1,
-        teamId: "T1",
-        projectId: "P1",
-        channelId: body.channelId,
-        enabled: true,
-        everEnabled: true,
-        readerPolicyRef: "bundle:readers",
-        retentionDays: null,
-        configVersion: 3,
-        updatedAt: "2026-07-02T00:00:00.000Z",
+        source: {
+          schemaVersion: 1,
+          teamId: "T1",
+          projectId: "P1",
+          channelId: body.channelId,
+          enabled: true,
+          everEnabled: true,
+          readerPolicyRef: "bundle:readers",
+          retentionDays: null,
+          configVersion: 3,
+          updatedAt: "2026-07-02T00:00:00.000Z",
+        },
+        reason: "explicit_enabled",
       });
     });
     const namespace = (fetcher: typeof knowledgeFetch) => ({

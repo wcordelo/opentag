@@ -44,7 +44,13 @@ describe("canonical Slack thread normalization", () => {
         blocks: [{ text: { text: "Details here", type: "mrkdwn" }, type: "section" }],
         reply_count: 99,
       },
-      { ts: "2.000001", client_msg_id: "client-2", user: "U2", text: "Café\nfollow up" },
+      {
+        ts: "2.000001",
+        client_msg_id: "client-2",
+        user: "U2",
+        text: "Café\nfollow up",
+        reactions: [{ name: "eyes", count: 4 }],
+      },
     ]), context);
     expect(first.status).toBe("complete");
     expect(second.status).toBe("complete");
@@ -73,6 +79,23 @@ describe("canonical Slack thread normalization", () => {
     expect(differentPolicy.revision).not.toBe(original.revision);
   });
 
+  it("retains aggregate reaction counts and changes the revision when engagement changes", async () => {
+    const reacted = await normalizeSlackThread(
+      complete([{ ts: "1.000001", user: "U1", text: "important", reactions: [{ name: "eyes", count: 2 }] }]),
+      context,
+    );
+    const unreacted = await normalizeSlackThread(
+      complete([{ ts: "1.000001", user: "U1", text: "important" }]),
+      context,
+    );
+    if (reacted.status !== "complete" || unreacted.status !== "complete") {
+      throw new Error("expected complete");
+    }
+    expect(reacted.canonical.messages[0]?.reactions).toBe(2);
+    expect(reacted.content).toContain("engagement reactions:2");
+    expect(reacted.revision).not.toBe(unreacted.revision);
+  });
+
   it("passes incomplete outcomes through without content or a revision", async () => {
     const incomplete = {
       status: "incomplete" as const,
@@ -85,15 +108,21 @@ describe("canonical Slack thread normalization", () => {
     expect(await normalizeSlackThread(incomplete, context)).toEqual(incomplete);
   });
 
-  it("uses deterministic markers for deleted, bot, and unsupported messages", async () => {
+  it("indexes bot messages while marking deleted and unsupported messages", async () => {
     const normalized = await normalizeSlackThread(complete([
       { ts: "1.0", subtype: "message_deleted" },
-      { ts: "2.0", bot_id: "B1", text: "noisy status" },
+      { ts: "2.0", subtype: "bot_message", bot_id: "B1", text: "noisy status" },
       { ts: "3.0", user: "U1", subtype: "channel_join", text: "joined" },
     ]), context);
     if (normalized.status !== "complete") throw new Error("expected complete");
     expect(normalized.canonical.messages.map((message) => message.kind))
-      .toEqual(["deleted_marker", "omitted_marker", "omitted_marker"]);
+      .toEqual(["deleted_marker", "message", "omitted_marker"]);
+    expect(normalized.canonical.messages[1]).toMatchObject({
+      authorId: "B1",
+      authorKind: "bot",
+      text: "noisy status",
+    });
+    expect(normalized.content).toContain("bot:B1: noisy status");
   });
 
   it("excludes internal action values while retaining documented display text", async () => {

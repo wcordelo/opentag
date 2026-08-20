@@ -57,6 +57,31 @@ describe("knowledge reconciliation and DLQ operations", () => {
     }, "2026-07-19T01:00:00.000Z")).toMatchObject({ action: "retry_fetch", reason: "cursor_missing" });
   });
 
+  it("requeues a converged revision when its derived index generation is stale", () => {
+    expect(planKnowledgeReconciliation({
+      ...source,
+      status: "indexed",
+      desiredRevision: "sha256:same",
+      indexedRevision: "sha256:same",
+      derivedIndexGeneration: "railway-v1",
+    }, "2026-07-19T01:00:00.000Z", Date.now(), {
+      targetIndexGeneration: "cloudflare-r2-v1",
+    })).toMatchObject({
+      action: "enqueue",
+      job: expect.objectContaining({ reason: "reconcile" }),
+    });
+
+    expect(planKnowledgeReconciliation({
+      ...source,
+      status: "indexed",
+      desiredRevision: "sha256:same",
+      indexedRevision: "sha256:same",
+      derivedIndexGeneration: "cloudflare-r2-v1",
+    }, "2026-07-19T01:00:00.000Z", Date.now(), {
+      targetIndexGeneration: "cloudflare-r2-v1",
+    })).toMatchObject({ action: "noop", reason: "converged" });
+  });
+
   it("does not steal a live lease and requeues an expired lease", () => {
     expect(planKnowledgeReconciliation({
       ...source,
@@ -99,7 +124,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
     expect(() => planKnowledgeDlqReplay(records, "slack:T1:C1:*")).toThrow("exact sourceKey");
   });
 
-  it("continues a durable page with the current source config version", async () => {
+  it("continues a durable page with the current source config version and replays old generations", async () => {
     const descriptors: unknown[] = [];
     const knowledgeFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -122,7 +147,10 @@ describe("knowledge reconciliation and DLQ operations", () => {
             sourceKey: "slack:T1:C1:1_0",
             requestedAt: "2026-07-19T01:00:00.000Z",
             reason: "event",
-            status: "retryable_failure",
+            status: "indexed",
+            desiredRevision: "sha256:same",
+            indexedRevision: "sha256:same",
+            derivedIndexGeneration: "railway-v1",
             queueAttempts: 3,
             pollCount: 0,
             createdAt: "2026-07-19T01:00:00.000Z",
@@ -167,6 +195,7 @@ describe("knowledge reconciliation and DLQ operations", () => {
     const result = await runKnowledgeReconciliationPage({
       KNOWLEDGE: namespace(knowledgeFetch),
       WORKSPACE_CONFIG: namespace(workspaceFetch),
+      SUPERMEMORY_INDEX_GENERATION: "cloudflare-r2-v1",
     } as never, { teamId: "T1", runId: "run-1", limit: 1 });
     expect(result).toMatchObject({ scannedCount: 1, enqueuedCount: 1 });
     expect(descriptors).toEqual([

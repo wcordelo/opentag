@@ -1,6 +1,6 @@
 > **Historical snapshot.** This artifact was authored before the final merged OpenTag rollout. Read [the current reconciliation](../CURRENT-STATE-RECONCILIATION.md) and [the current OpenTag status](../../../docs/current-state.md) before treating any implementation or deployment statement as current.
 >
-> Current reconciliation: OpenTag has deployed server-owned tenancy and fail-closed Buzz wake plumbing. The live endpoint returned `buzz_receive_not_configured`; no authenticated relay/signature proof is claimed.
+> Current reconciliation: OpenTag has deployed server-owned tenancy and Buzz wake configuration. An empty live request reaches schema validation with `buzz_wake_unexpected_fields`; no authenticated relay/signature proof is claimed.
 
 # Buzz parent-to-fork backfill and architecture deep dive
 
@@ -279,6 +279,6 @@ No branch, PR, deployment, Notion mutation, or OpenTag source edit was authorize
 
 ## Current-state addendum — 2026-08-01
 
-Current reconciliation: OpenTag has deployed server-owned tenancy and fail-closed Buzz wake plumbing. The live endpoint returned `buzz_receive_not_configured`; no authenticated relay/signature proof is claimed.
+Current reconciliation: OpenTag has deployed server-owned tenancy and Buzz wake configuration. An empty live request reaches schema validation with `buzz_wake_unexpected_fields`; no authenticated relay/signature proof is claimed.
 
 The original evidence, classifications, and validation limits above are intentionally preserved. The canonical feature/gap ledger is [CURRENT-STATE-RECONCILIATION.md](../CURRENT-STATE-RECONCILIATION.md).

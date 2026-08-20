@@ -556,6 +556,7 @@ export type PlatformEffectKind =
   | "identity_custody"
   | "credential_custody"
   | "connector_oauth"
+  | "connector_effect"
   | "marketplace"
   | "billing_meter"
   | "memory_deletion";
@@ -646,6 +647,7 @@ const PLATFORM_EFFECT_KINDS: readonly PlatformEffectKind[] = [
   "identity_custody",
   "credential_custody",
   "connector_oauth",
+  "connector_effect",
   "marketplace",
   "billing_meter",
   "memory_deletion",

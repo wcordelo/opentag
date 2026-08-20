@@ -91,12 +91,17 @@ describe("OrchestratorDO final research delivery", () => {
 
   it("shares sequential per-channel reservations between bot and research scripts", async () => {
     const reservations: string[] = [];
+    const commits: string[] = [];
     const namespace = {
       idFromName: (name: string) => ({ name }),
       get: (id: { name: string }) => ({
         reserve: async () => {
           reservations.push(id.name);
-          return { delayMs: 0 };
+          return { delayMs: 0, generation: 0 };
+        },
+        commit: async () => {
+          commits.push(id.name);
+          return { accepted: true };
         },
       }),
     };
@@ -118,6 +123,7 @@ describe("OrchestratorDO final research delivery", () => {
       },
     );
     expect(reservations).toEqual(["C-shared", "C-shared"]);
+    expect(commits).toEqual(["C-shared"]);
     vi.unstubAllGlobals();
   });
 });

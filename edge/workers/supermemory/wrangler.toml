@@ -1,0 +1,32 @@
+name = "opentag-supermemory"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[containers]]
+class_name = "SupermemoryContainer"
+image = "../../../infra/supermemory/Dockerfile"
+image_build_context = "../../../infra/supermemory"
+max_instances = 1
+instance_type = "standard-1"
+
+[[durable_objects.bindings]]
+name = "SUPERMEMORY"
+class_name = "SupermemoryContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SupermemoryContainer"]
+
+[[r2_buckets]]
+binding = "STATE_BUCKET"
+bucket_name = "opentag-supermemory-state"
+
+[vars]
+R2_ACCOUNT_ID = "7d57561aa414d450e25ee9c743beac13"
+R2_BUCKET_NAME = "opentag-supermemory-state"
+OPENAI_BASE_URL = "https://api.deepseek.com/"
+OPENAI_MODEL = "deepseek-v4-flash"
+OPENAI_FAST_MODEL = "deepseek-v4-flash"
+OPENAI_TEXT_MODEL = "deepseek-v4-flash"

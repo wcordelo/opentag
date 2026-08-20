@@ -14,15 +14,20 @@ import { interruptHarnessTurn } from "../harness/client.js";
 import type { Env } from "../env.js";
 import { buildSlackMessagePages } from "../slack/stream-render.js";
 import {
+  createSlackKnowledgeObserver,
+  type SlackKnowledgeMessageObserver,
+} from "../slack/knowledge-observer.js";
+import type { SlackMessageObservation } from "../slack/web-api.js";
+import {
   stableSlackDiagnosticPageClientMessageId,
   stableSlackPageClientMessageId,
 } from "../slack/client-message-id.js";
+import { tenantIdFromSlackObligationThreadKey } from "../slack/obligation-thread-key.js";
 import {
   SessionHandoffEngine,
   type SessionHandoffRow,
 } from "./session-handoff-engine.js";
 import {
-  formatContextLine,
   rebuildProgressFromEvents,
   renderProgressMarkdown,
 } from "../slack/harness-progress.js";
@@ -94,6 +99,7 @@ interface QueueOpts {
  * env-agnostic.
  */
 interface ConversationStateDoEnv {
+  ENVIRONMENT?: string;
   SLACK_BOT_TOKEN?: string;
   SESSION_EVENTS?: DurableObjectNamespace<SessionEventDO>;
   HARNESS?: Fetcher;
@@ -105,6 +111,9 @@ interface ConversationStateDoEnv {
   RESEARCH_TASKS?: Fetcher;
   INTERNAL_SECRET?: string;
   DELIVERY_METRICS?: AnalyticsEngineDataset;
+  WORKSPACE_CONFIG?: Env["WORKSPACE_CONFIG"];
+  KNOWLEDGE?: Env["KNOWLEDGE"];
+  DEFERRED_INGRESS?: Env["DEFERRED_INGRESS"];
 }
 
 export type DeliveryOutcome =
@@ -125,6 +134,33 @@ function emitDeliveryOutcome(
     doubles: [1],
     indexes: [fields.threadKey],
   });
+}
+
+async function observeRecoveredSlackMessage(
+  env: ConversationStateDoEnv,
+  threadKey: string,
+  observation: SlackMessageObservation,
+): Promise<boolean> {
+  const observer: SlackKnowledgeMessageObserver | undefined =
+    createSlackKnowledgeObserver(env);
+  if (!observer) {
+    if (env.ENVIRONMENT === "production") {
+      throw new Error("knowledge_observer_required");
+    }
+    return false;
+  }
+  const teamId = tenantIdFromSlackObligationThreadKey(threadKey);
+  if (!teamId) throw new Error("recovered_knowledge_team_unavailable");
+  await observer(teamId, observation);
+  return true;
+}
+
+function recoveredSlackObservationConfigured(env: ConversationStateDoEnv): boolean {
+  return Boolean(createSlackKnowledgeObserver(env));
+}
+
+function recoveredSlackObservationRequired(env: ConversationStateDoEnv): boolean {
+  return env.ENVIRONMENT === "production";
 }
 
 /**
@@ -498,16 +534,14 @@ export function reconstructRecoveryContent(
   const scoped = events.filter((e) => e.executionId === executionId);
   const answer = reconstructMarkdown(scoped, executionId);
   const rebuilt = rebuildProgressFromEvents(scoped);
-  const contextLine = rebuilt.context ? formatContextLine(rebuilt.context) : "";
+  const contextLine = "";
   const progressMarkdown =
     rebuilt.items.size > 0
       ? renderProgressMarkdown(rebuilt.items.values(), {
           done: hasSuccessfulTerminal(events, executionId),
         })
       : "";
-  const prefix = contextLine ? `${contextLine}\n\n` : "";
-  // Do not trim: obligation replay must preserve canonical answer bytes.
-  const body = `${prefix}${answer}`;
+  const body = answer;
   return { answer, contextLine, progressMarkdown, body };
 }
 
@@ -1161,6 +1195,10 @@ export class ConversationStateDO extends DurableObject {
           ) continue;
         }
         if (!env.SLACK_BOT_TOKEN) continue;
+        if (
+          recoveredSlackObservationRequired(env) &&
+          !recoveredSlackObservationConfigured(env)
+        ) continue;
         // Alarm-resumed Stop must clear the same root-thread assistant status
         // before it can truthfully acknowledge quiescence. Empty status is
         // idempotent, so an ambiguous response is safely retried next alarm.
@@ -1204,10 +1242,11 @@ export class ConversationStateDO extends DurableObject {
           continue;
         }
 
+        const clientMessageId = await stableStopClientMessageId(stopEventId);
         const form = new URLSearchParams({
           channel: record.channelId,
           text: "🛑 Stopped.",
-          client_msg_id: await stableStopClientMessageId(stopEventId),
+          client_msg_id: clientMessageId,
         });
         if (record.threadTs) form.set("thread_ts", record.threadTs);
         const response = await fetch("https://slack.com/api/chat.postMessage", {
@@ -1218,7 +1257,7 @@ export class ConversationStateDO extends DurableObject {
           },
           body: form.toString(),
         });
-        const json = await response.json() as { ok?: boolean; error?: string };
+        const json = await response.json() as { ok?: boolean; error?: string; ts?: string };
         if (!response.ok || (json.ok !== true && !isSlackDuplicateMessage(json.error))) {
           if (json.ok === false) {
             this.activeTurns.failCancelAck(
@@ -1227,6 +1266,30 @@ export class ConversationStateDO extends DurableObject {
               stopEventId,
             );
           }
+          continue;
+        }
+        const observationTs = json.ts ?? (
+          recoveredSlackObservationConfigured(env)
+            ? await this.findSlackMessageByClientIdValues(
+                record.channelId,
+                record.threadTs,
+                env,
+                clientMessageId,
+              )
+            : record.threadTs
+        );
+        if (observationTs) {
+          await observeRecoveredSlackMessage(env, record.threadKey, {
+            operation: "posted",
+            channel: record.channelId,
+            ts: observationTs,
+            ...(record.threadTs ? { threadTs: record.threadTs } : {}),
+            text: "🛑 Stopped.",
+          });
+        } else if (
+          recoveredSlackObservationRequired(env) ||
+          recoveredSlackObservationConfigured(env)
+        ) {
           continue;
         }
         this.activeTurns.confirmCancellationAndClear(
@@ -1418,7 +1481,7 @@ export class ConversationStateDO extends DurableObject {
     }
     const successfulTerminal = hasSuccessfulTerminal(events, ob.executionId);
     const recovered = reconstructRecoveryContent(events, ob.executionId);
-    if (recovered.answer || recovered.contextLine) {
+    if (recovered.answer) {
       const content = recovered.body;
       await this.postFallback(
         ob,
@@ -1462,6 +1525,15 @@ export class ConversationStateDO extends DurableObject {
         "slack_bot_token_unavailable",
       );
     }
+    if (
+      recoveredSlackObservationRequired(env) &&
+      !recoveredSlackObservationConfigured(env)
+    ) {
+      throw new ObligationDeferredError(
+        OBLIGATION_AMBIGUOUS_DEFER_MS,
+        "knowledge_observer_unavailable",
+      );
+    }
 
     const render = this.activeTurns.beginRender(ob.threadKey, ob.executionId);
     if (render.status === "cancelled" || render.status === "committed") return;
@@ -1497,6 +1569,8 @@ export class ConversationStateDO extends DurableObject {
         (ob.liveMessageState === "posted" ? ob.liveMessageTs : undefined),
       );
       let targetTs = reconciledLiveTs ?? ob.liveMessageTs;
+      let committedTs = targetTs;
+      let clientMessageId: string | undefined;
       const body = new URLSearchParams({
         channel: ob.channel,
         text: page.text,
@@ -1505,7 +1579,7 @@ export class ConversationStateDO extends DurableObject {
       if (updateExisting) {
         body.set("ts", targetTs!);
       } else {
-        const clientMessageId =
+        clientMessageId =
           page.index === 0 && ob.liveMessageState === "reserved"
             ? ob.liveClientMessageId
             : pageNamespace === "output"
@@ -1556,6 +1630,7 @@ export class ConversationStateDO extends DurableObject {
         );
       }
       const duplicate = !updateExisting && isSlackDuplicateMessage(json.error);
+      if (json.ok === true && json.ts) committedTs = json.ts;
       if (
         page.index === 0 &&
         ob.liveMessageState === "reserved" &&
@@ -1578,6 +1653,7 @@ export class ConversationStateDO extends DurableObject {
             );
           }
           reconciledLiveTs = found;
+          committedTs = found;
           this.activeTurns.confirmLiveMessage(
             ob.threadKey,
             ob.executionId,
@@ -1608,6 +1684,19 @@ export class ConversationStateDO extends DurableObject {
           }
         }
       }
+      if (
+        duplicate &&
+        !(page.index === 0 && ob.liveMessageState === "reserved" && ob.liveClientMessageId)
+      ) {
+        const recovered = await this.findSlackMessageByClientId(ob, env, clientMessageId);
+        if (!recovered) {
+          throw new ObligationDeferredError(
+            OBLIGATION_AMBIGUOUS_DEFER_MS,
+            "message_identity_unreconciled",
+          );
+        }
+        committedTs = recovered;
+      }
       if (!duplicate && (!res.ok || json.ok !== true)) {
         if (res.status === 429) {
           if (token) {
@@ -1629,6 +1718,31 @@ export class ConversationStateDO extends DurableObject {
         }
         if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
         throw new Error(`${updateExisting ? "chat.update" : "chat.postMessage"} failed: ${json.error ?? res.status}`);
+      }
+      if (!committedTs) {
+        if (recoveredSlackObservationConfigured(env)) {
+          if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          throw new ObligationDeferredError(
+            OBLIGATION_AMBIGUOUS_DEFER_MS,
+            "recovered_message_timestamp_missing",
+          );
+        }
+      } else {
+        try {
+          await observeRecoveredSlackMessage(env, ob.threadKey, {
+            operation: updateExisting ? "updated" : "posted",
+            channel: ob.channel,
+            ts: committedTs,
+            ...(ob.threadTs ? { threadTs: ob.threadTs } : {}),
+            text: page.text,
+          });
+        } catch (error) {
+          if (token) this.activeTurns.failRender(ob.threadKey, ob.executionId, token);
+          throw new ObligationDeferredError(
+            OBLIGATION_AMBIGUOUS_DEFER_MS,
+            error instanceof Error ? `knowledge_observation_failed:${error.message}` : "knowledge_observation_failed",
+          );
+        }
       }
     }
 
@@ -1652,15 +1766,30 @@ export class ConversationStateDO extends DurableObject {
   private async findSlackMessageByClientId(
     ob: RenderObligationRow,
     env: ConversationStateDoEnv,
+    clientMessageId = ob.liveClientMessageId,
   ): Promise<string | undefined> {
-    if (!env.SLACK_BOT_TOKEN || !ob.liveClientMessageId) return undefined;
+    return this.findSlackMessageByClientIdValues(
+      ob.channel,
+      ob.threadTs,
+      env,
+      clientMessageId,
+    );
+  }
+
+  private async findSlackMessageByClientIdValues(
+    channel: string,
+    threadTs: string | undefined,
+    env: ConversationStateDoEnv,
+    clientMessageId: string | undefined,
+  ): Promise<string | undefined> {
+    if (!env.SLACK_BOT_TOKEN || !clientMessageId) return undefined;
     const body = new URLSearchParams({
-      channel: ob.channel,
+      channel,
       limit: "100",
       inclusive: "true",
     });
-    const method = ob.threadTs ? "conversations.replies" : "conversations.history";
-    if (ob.threadTs) body.set("ts", ob.threadTs);
+    const method = threadTs ? "conversations.replies" : "conversations.history";
+    if (threadTs) body.set("ts", threadTs);
     try {
       const response = await fetch(`https://slack.com/api/${method}`, {
         method: "POST",
@@ -1676,7 +1805,7 @@ export class ConversationStateDO extends DurableObject {
       };
       if (!response.ok || json.ok !== true) return undefined;
       return json.messages?.find(
-        (message) => message.client_msg_id === ob.liveClientMessageId,
+        (message) => message.client_msg_id === clientMessageId,
       )?.ts;
     } catch {
       return undefined;

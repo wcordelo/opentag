@@ -23,6 +23,10 @@ export type ConnectorAccessGrant = Readonly<{
   /** Optional exact scope constraints; required for project/channel grants. */
   projectId?: string;
   channelId?: string;
+  /** Optional exact repository constraint for repository-backed connectors. */
+  repoId?: string;
+  /** Optional exact wiki/document-space constraint. */
+  spaceId?: string;
   /** Opaque reference only; never a token, key, or secret value. */
   credentialRef?: string;
 }>;
@@ -200,6 +204,8 @@ export function parseConnectorAccessGrant(value: unknown): ConnectorAccessGrant 
   }
   const projectId = input.projectId === undefined ? undefined : safeId(input.projectId, "connector_project_id");
   const channelId = input.channelId === undefined ? undefined : safeId(input.channelId, "connector_channel_id");
+  const repoId = input.repoId === undefined ? undefined : safeId(input.repoId, "connector_repo_id");
+  const spaceId = input.spaceId === undefined ? undefined : safeId(input.spaceId, "connector_space_id");
   if (input.scope === "project" && !projectId) {
     throw new ConnectorAuthorizationError("project_connector_scope_requires_project_id");
   }
@@ -215,6 +221,8 @@ export function parseConnectorAccessGrant(value: unknown): ConnectorAccessGrant 
     scope: input.scope,
     ...(projectId ? { projectId } : {}),
     ...(channelId ? { channelId } : {}),
+    ...(repoId ? { repoId } : {}),
+    ...(spaceId ? { spaceId } : {}),
     ...(credentialRef ? { credentialRef } : {}),
   });
 }

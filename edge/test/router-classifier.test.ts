@@ -12,6 +12,11 @@ describe("router v1 heuristic classifier", () => {
       tier: 1,
       matchedRule: "t1.11",
     });
+    expect(classifyRouterMessage({ message: "search Slack for the exact canary marker" })).toMatchObject({
+      tier: 1,
+      matchedRule: "t1.12",
+      primarySignal: "retrieval_verb",
+    });
   });
 
   it("recognizes construction and long-running signals without dispatching them", () => {

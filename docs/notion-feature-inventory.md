@@ -3,22 +3,22 @@
 Status: **historical Notion audit reconciled with the merged connector/platform
 work, the 2026-08-01 live rollout, and the credential-broker branch**
 
-Updated: **2026-08-01**
+Updated: **2026-08-02**
 
 The historical comparison used the source revisions recorded below. Current
 implementation and deployment truth is in
 [current-state.md](./current-state.md); this inventory remains the durable
 mapping from daily Centaur findings to OpenTag decisions.
-The isolated credential-broker branch extends the fail-closed boundary with an
-optional Secrets Store custody adapter; no provider mapping or token is live.
+The credential-broker, queue-backed effecter, OAuth/marketplace, billing,
+identity-custody, deletion, provisioning, and trace/query/router work is now in
+the merged mainline. Its external boundaries remain fail-closed: no provider
+mapping, token, callback, custody resolution, or real effect is live.
 
-The queue-backed effecter implementation is maintained in the isolated
-`codex/weekly-platform-effecter` branch and remains fail-closed until an
-approved provider adapter and custody boundary are configured.
-
-The OAuth/marketplace branch adds replay-safe state, durable trust/version
-gates, and an authenticated provider-adapter protocol, but does not claim a
-provider callback, token exchange, or custody deployment.
+The local knowledge milestone adds Cloudflare-only Supermemory and Graphify
+service boundaries, Slack outbound observation, bot-message indexing,
+reaction/membership capture, and revocable ACL leases. Those Workers and their
+R2 buckets are not present in the live account yet; see
+[`docs/current-state.md`](./current-state.md) for the current gate.
 
 ## Scope and source availability
 
@@ -88,10 +88,15 @@ for the complete document-by-document status map.
 
 ## Current landing and activation gates
 
-The deployed baseline is merged OpenTag `main` `498164f`, served as Worker
-version `a7674fb3-219b-4b93-893a-53792f51824f`. The following architecture work
-is implemented and validated in isolated, non-draft PRs but is not live until
-it is merged and redeployed:
+The current merged baseline is OpenTag `main` `d075431`. The current bot code
+deployment is `636be4c0-d8ec-4023-8af4-4157cdb6a6ac` with a later secret-only
+rollout; live health reports the model, reconciliation trigger, knowledge
+bindings, relay allowlist, and broker auth as configured. Supermemory and
+Graphify are deployed privately, but R2/provider credentials and operational
+derived-index readiness remain open.
+
+The following architecture work is merged and source/test validated, but its
+external effects remain gated:
 
 - [#29 platform effecter](https://github.com/wcordelo/opentag/pull/29) and
   [#30 credential broker](https://github.com/wcordelo/opentag/pull/30) establish
@@ -107,9 +112,10 @@ it is merged and redeployed:
   [#43 trace/query/router safety](https://github.com/wcordelo/opentag/pull/43)
   close follow-up validation gaps.
 
-After merge, validate the complete mainline together, deploy the bot plus only
-the approved effect workers, and run synthetic/non-production smoke tests. Do
-not enable Drive or Linear until broker custody, exact grants, OAuth/provider
+Before claiming knowledge completeness, supply the least-scope R2/provider
+credentials, prove derived-index FUSE boot and queue/descriptor convergence,
+read back the live `all_delivered` policy, and run a human Slack canary. Do not
+enable Drive or Linear until broker custody, exact grants, OAuth/provider
 configuration, ACL policy, and a test workspace are all present. Do not enable
 Tier 1 or Tier 3 routing until shadow volume, quality, feedback, latency, cost,
 and rollback evidence meet an explicit rollout decision.
@@ -226,8 +232,9 @@ change, not evidence that all earlier gaps are complete.
   review point).** The Jul 30 review recorded mention-only steering and an
   exact-mentioned Stop. The current reconciliation supersedes the ordinary
   reply portion: the bot reads every human thread reply, routes clear
-  questions/action requests/problem reports without a tag, keeps passive
-  conversation as history, and still requires an exact bot mention for Stop.
+  questions/action requests/problem reports without a tag, including from
+  top-level channel messages, keeps passive conversation as history, and still
+  requires an exact bot mention for Stop.
   Duplicate `app_mention`/threaded `message` delivery is rejected before
   admission so it cannot create a stale active-turn warning. See
   `docs/current-state.md` for live evidence.

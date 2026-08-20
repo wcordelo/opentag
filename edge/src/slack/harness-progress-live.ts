@@ -9,9 +9,7 @@ import type { SlackWebClient } from "./web-api.js";
 import { isDefinitiveSlackFailure } from "./web-api.js";
 import {
   applyProgressEvent,
-  formatContextLine,
   renderProgressMarkdown,
-  type HarnessContextLine,
   type ProgressItem,
 } from "./harness-progress.js";
 
@@ -37,11 +35,10 @@ export function createHarnessProgressLiveRenderer(opts: {
   threadKey: string;
   executionId: string;
   now?: () => number;
-  /** Progress section heading. Harness default; AG-UI uses "*Working…*". */
+  /** Optional progress section heading. */
   progressHeading?: string;
 }): HarnessProgressLiveRenderer {
   const items = new Map<string, ProgressItem>();
-  let context: HarnessContextLine | undefined;
   let progressTs: string | undefined;
   let lastPosted = "";
   let lastUpdateAt = 0;
@@ -53,20 +50,12 @@ export function createHarnessProgressLiveRenderer(opts: {
   const clientMessageId = harnessProgressClientMessageId(opts.executionId);
 
   function markdown(done?: boolean, failed?: boolean): string {
-    const parts: string[] = [];
-    if (context) parts.push(formatContextLine(context));
-    if (items.size > 0) {
-      parts.push(
-        renderProgressMarkdown(items.values(), {
-          done,
-          failed,
-          heading: progressHeading,
-        }),
-      );
-    } else if (context) {
-      parts.push(done ? "_Complete_" : failed ? "_Interrupted or failed_" : "_Working…_");
-    }
-    return parts.join("\n\n");
+    if (items.size === 0) return "";
+    return renderProgressMarkdown(items.values(), {
+      done,
+      failed,
+      heading: progressHeading,
+    });
   }
 
   async function ensurePosted(text: string): Promise<void> {
@@ -136,6 +125,8 @@ export function createHarnessProgressLiveRenderer(opts: {
           channel: opts.channelId,
           ts: progressTs!,
           text,
+          ...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
+          knowledgeIndex: true,
         });
         return true;
       },
@@ -159,34 +150,6 @@ export function createHarnessProgressLiveRenderer(opts: {
     handleEvent(event) {
       return enqueue(async () => {
         if (terminal) return;
-        if (event.kind === "context" && event.payload && typeof event.payload === "object") {
-          const p = event.payload as Record<string, unknown>;
-          const next: HarnessContextLine = {
-            harnessType:
-              typeof p.harnessType === "string" ? p.harnessType : "claudecode",
-            model: typeof p.model === "string" ? p.model : undefined,
-            modelEvidence:
-              p.modelEvidence === "requested" ||
-              p.modelEvidence === "container_argument" ||
-              p.modelEvidence === "provider_reported" ||
-              p.modelEvidence === "unknown"
-                ? p.modelEvidence
-                : "unknown",
-          };
-          const evidenceRank: Record<HarnessContextLine["modelEvidence"], number> = {
-            unknown: 0,
-            requested: 1,
-            container_argument: 2,
-            provider_reported: 3,
-          };
-          // Match SessionEventDO: only upgrade on strictly higher evidence.
-          if (
-            !context ||
-            evidenceRank[next.modelEvidence] > evidenceRank[context.modelEvidence]
-          ) {
-            context = next;
-          }
-        }
         if (event.kind === "progress" && event.payload && typeof event.payload === "object") {
           const p = event.payload as Record<string, unknown>;
           if (
@@ -231,12 +194,10 @@ export function createHarnessProgressLiveRenderer(opts: {
       });
     },
     contextLine() {
-      return context ? formatContextLine(context) : "";
+      return "";
     },
     finalAnswerPrefix() {
-      // Context line may appear once above the final answer; progress stays
-      // on its own message and must never enter final answer text.
-      return context ? `${formatContextLine(context)}\n\n` : "";
+      return "";
     },
   };
 }

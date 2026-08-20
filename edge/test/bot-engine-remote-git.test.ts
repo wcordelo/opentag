@@ -99,7 +99,8 @@ vi.mock("../src/create-bot-store.js", () => ({
 }));
 
 const setStatus = vi.fn(async () => undefined);
-const reactMock = vi.hoisted(() => vi.fn(async () => true));
+const reactMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+const unreactMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const adapterOptionsMock = vi.hoisted(() => vi.fn());
 vi.mock("../src/slack/cloudflare-slack-adapter.js", () => ({
   markThreadNextRenderFinal: vi.fn((thread: { __testFinal?: boolean }) => {
@@ -112,13 +113,13 @@ vi.mock("../src/slack/cloudflare-slack-adapter.js", () => ({
     setStatus = setStatus;
     bindThreadExecutionFence() {}
     async react(
-      _conversationKey: string,
-      _emoji: string,
-      _target: unknown,
+      conversationKey: string,
+      emoji: string,
+      target: unknown,
       fence?: { threadKey: string; executionId: string },
       final = false,
     ) {
-      const result = await reactMock();
+      const result = await reactMock(conversationKey, emoji, target, fence, final);
       if (result && final && fence) {
         const claim = await store.activeTurn.beginRender(fence);
         if (claim.status === "claimed") {
@@ -131,6 +132,9 @@ vi.mock("../src/slack/cloudflare-slack-adapter.js", () => ({
         }
       }
       return result;
+    }
+    async unreact(conversationKey: string, emoji: string, target: unknown) {
+      return unreactMock(conversationKey, emoji, target);
     }
   },
 }));
@@ -330,6 +334,7 @@ describe("production Slack remote-git ingress", () => {
     runBundledAgentTurn.mockClear();
     setStatus.mockClear();
     reactMock.mockClear();
+    unreactMock.mockClear();
     reactMock.mockResolvedValue(true);
     adapterOptionsMock.mockClear();
     memoryWriteMock.mockReset();
@@ -381,6 +386,45 @@ describe("production Slack remote-git ingress", () => {
     }
   });
 
+  it("releases the busy-note claim when durable indexing fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const forget = vi.fn(async () => undefined);
+    const feedbackStore = {
+      dedup: {
+        seen: vi.fn(async () => false),
+        has: vi.fn(async () => false),
+        forget,
+      },
+    };
+    globalThis.fetch = vi.fn(async () => Response.json({ ok: true, ts: "222.333" }));
+    try {
+      await postTurnRejectedFeedback(
+        {
+          SLACK_BOT_TOKEN: "xoxb-test",
+          DEFERRED_INGRESS: {
+            idFromName: (name: string) => ({ name }),
+            get: () => ({
+              prepare: vi.fn(async () => {
+                throw new Error("observation_unavailable");
+              }),
+            }),
+          },
+        } as never,
+        feedbackStore as never,
+        {
+          reason: "concurrent",
+          teamId: "T1",
+          channelId: "C1",
+          threadTs: "111.222",
+          threadKey: "tenant:T1:slack:C1:111.222",
+        },
+      );
+      expect(forget).toHaveBeenCalledWith("busy-note:tenant:T1:slack:C1:111.222");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("terminalizes trivial reaction and post shortcuts without launching an agent", async () => {
     const reacted = await emitMention("thanks!");
     expect(reactMock).toHaveBeenCalledOnce();
@@ -396,6 +440,91 @@ describe("production Slack remote-git ingress", () => {
     expect(posted.post).toHaveBeenCalledOnce();
     expect(await store.activeTurn.latest("C1")).toBeUndefined();
     expect(runBundledAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it("adds a working reaction before an agent turn and removes it after the turn", async () => {
+    runBundledAgentTurn.mockResolvedValueOnce({
+      status: "completed",
+      terminalPersisted: true,
+    });
+
+    await emitMention("explain the current Slack indexing behavior");
+
+    expect(reactMock).toHaveBeenCalledWith(
+      "C1::111.222",
+      "eyes",
+      { channel: "C1", ts: "111.333", threadTs: "111.222" },
+      expect.objectContaining({ executionId: "slack:C1:111.333" }),
+      false,
+    );
+    expect(unreactMock).toHaveBeenCalledWith(
+      "C1::111.222",
+      "eyes",
+      { channel: "C1", ts: "111.333", threadTs: "111.222" },
+    );
+    expect(reactMock.mock.invocationCallOrder[0]).toBeLessThan(
+      unreactMock.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not publish a Slack assistant working status", async () => {
+    runBundledAgentTurn.mockResolvedValueOnce({
+      status: "completed",
+      terminalPersisted: true,
+    });
+
+    await emitMention("explain the current Slack indexing behavior");
+
+    expect(setStatus).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "Thinking…" }),
+    );
+    expect((setStatus.mock.calls as unknown as Array<[{ status?: string }]>).every(
+      ([args]) => args.status === "",
+    )).toBe(true);
+  });
+
+  it("durably owns working-reaction cleanup across an interrupted turn", async () => {
+    runBundledAgentTurn.mockResolvedValueOnce({
+      status: "completed",
+      terminalPersisted: true,
+    });
+    const prepare = vi.fn(async () => ({
+      accepted: true,
+      status: "pending" as const,
+    }));
+    const complete = vi.fn(async () => ({
+      completed: true,
+      status: "completed" as const,
+    }));
+
+    await emitMention("explain the current Slack indexing behavior", true, {
+      DEFERRED_INGRESS: {
+        idFromName: (name: string) => ({ name }),
+        get: () => ({ prepare, complete }),
+      },
+    });
+
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      id: "reaction-cleanup:T1:C1:111.333:eyes",
+      kind: "reaction_cleanup",
+      teamId: "T1",
+      notBefore: expect.any(Number),
+      payload: {
+        teamId: "T1",
+        channelId: "C1",
+        timestamp: "111.333",
+        name: "eyes",
+      },
+    }));
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      reactMock.mock.invocationCallOrder[0]!,
+    );
+    expect(unreactMock.mock.invocationCallOrder[0]).toBeLessThan(
+      complete.mock.invocationCallOrder[0]!,
+    );
+    expect(complete).toHaveBeenCalledWith(
+      "reaction-cleanup:T1:C1:111.333:eyes",
+    );
   });
 
   it("fences mention memory/research mutations and atomically finalizes their replies", async () => {

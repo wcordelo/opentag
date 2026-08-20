@@ -1,0 +1,61 @@
+name = "opentag-graphify"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[containers]]
+class_name = "GraphQueryContainer"
+image = "./Dockerfile"
+image_build_context = "."
+max_instances = 1
+instance_type = "standard-1"
+
+[[containers]]
+class_name = "GraphBuilderContainer"
+image = "./Dockerfile"
+image_build_context = "."
+max_instances = 1
+instance_type = "standard-1"
+
+[[durable_objects.bindings]]
+name = "GRAPHIFY"
+class_name = "GraphQueryContainer"
+
+[[durable_objects.bindings]]
+name = "GRAPHIFY_BUILDER"
+class_name = "GraphBuilderContainer"
+
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "GraphifyRegistryDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GraphQueryContainer", "GraphBuilderContainer", "GraphifyRegistryDO"]
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "opentag-code-graphs"
+
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+GRAPHIFY_COMMIT = "00efd6e7969837ae4a9f11d8d504dcd3b20b09df"
+GRAPHIFY_ALLOWED_REPO_ORGS = "wcordelo"
+# Initial catalog registrations use the OpenTag production workspace and its
+# default project scope. Existing disabled registrations remain disabled.
+GRAPHIFY_DEFAULT_TEAM_ID = "T0BBBEDLEGY"
+GRAPHIFY_DEFAULT_PROJECT_ID = "workspace-default"
+# Server-owned JSON catalog. Registration accepts only a repoId from this
+# catalog; callers cannot submit a clone URL or filesystem path. The initial
+# tracked source is this OpenTag repository; add additional projects only as
+# explicit catalog changes.
+GRAPHIFY_REPOSITORY_CATALOG = "{\"opentag\":{\"cloneUrl\":\"https://github.com/wcordelo/opentag.git\",\"defaultBranch\":\"main\"}}"
+# Secrets: GRAPHIFY_SERVICE_AUTH_TOKEN, GRAPHIFY_ADMIN_TOKEN,
+# GRAPHIFY_CONTAINER_AUTH_TOKEN, and GITHUB_TOKEN.
+# The ARTIFACTS R2 binding is mounted read-only by the Sandbox SDK without
+# bucket-scoped credentials.
+# No public Graphify upstream HTTP server is exposed. The bot uses the
+# GRAPHIFY service binding and the local stdio MCP remains development-only.

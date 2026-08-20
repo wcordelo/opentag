@@ -22,6 +22,8 @@ records. When documents disagree, use this precedence order:
 | [multi-repo-architecture.md](./multi-repo-architecture.md) | Complete-history qm, Nanocodex, Buzz, and Centaur deep dive plus the current OpenTag implementation ledger |
 | [extending.md](./extending.md) | How to add commands, tools, tasks, cards, runtimes, state, and egress |
 | [operations.md](./operations.md) | Local validation, Container builds, deploy order, metrics, troubleshooting |
+| [supermemory-cloudflare-migration.md](./supermemory-cloudflare-migration.md) | Approval-gated Supermemory Railway-to-Cloudflare migration, parity, and rollback runbook |
+| [graphify-local-mcp.md](./graphify-local-mcp.md) | Pinned local Graphify stdio MCP workflow for architecture and coding work |
 | [current-state.md](./current-state.md) | Current feature-by-feature live/synthetic/fail-closed evidence and gap reconciliation |
 | [setup.md](./setup.md) | Slack, Cloudflare, runtime, harness, and research setup |
 | [../edge/README.md](../edge/README.md) | Testable Cloudflare target and package layout |

@@ -38,6 +38,7 @@ import {
   isDefinitiveSlackFailure,
   SlackApiError,
   type SlackRateScheduler,
+  type SlackMessageObservation,
   type SlackWebClient,
 } from "./web-api.js";
 import { conflateChatSdkStream } from "./conflate.js";
@@ -106,6 +107,27 @@ type FencedTarget = { [EXECUTION_FENCE]?: ExecutionFence };
 type FinalFencedTarget = FencedTarget & { [NEXT_RENDER_FINAL]?: boolean };
 type FencedRef = MessageRef & { [EXECUTION_FENCE]?: ExecutionFence };
 
+function stableRendererPostMessageId(
+  executionId: string,
+  args: {
+    channel: string;
+    thread_ts?: string;
+    text: string;
+    blocks?: unknown[];
+    attachments?: unknown[];
+  },
+): string {
+  return stableSlackClientMessageId(JSON.stringify([
+    executionId,
+    "renderer-post",
+    args.channel,
+    args.thread_ts ?? "",
+    args.text,
+    args.blocks ?? [],
+    args.attachments ?? [],
+  ]));
+}
+
 export class ActiveTurnRenderSuppressedError extends Error {
   constructor() {
     super("active_turn_render_suppressed");
@@ -149,12 +171,20 @@ function isSlackSizeFailure(error: unknown): boolean {
   ].includes(error.slackError);
 }
 
+function visibleAgentRunError(message: unknown): string {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (/insufficient[ _-]?quota|no credits remaining|quota exceeded|add credits|billing/i.test(text)) {
+    return "The model provider is unavailable right now. Check the configured model credentials or quota.";
+  }
+  return text || "unknown error";
+}
+
 type CloudflareSlackAdapterBaseOptions = {
   botToken: string;
   /** Optional bot user id for loop guards; resolved lazily if omitted. */
   botUserId?: string;
   teamId?: string;
-  sessionViewer?: { baseUrl: string; secret: string; runtimeLabel: string };
+  sessionViewer?: { baseUrl: string; secret: string };
   quickBaseDomain?: string;
   /**
    * Minimum ms between `chat.update` calls while streaming (default 800).
@@ -180,6 +210,11 @@ type CloudflareSlackAdapterBaseOptions = {
   liveReconcileAttempts?: number;
   liveReconcileDelayMs?: number;
   reconcileSleep?: (ms: number) => Promise<void>;
+  knowledgeMessageObserver?: (
+    teamId: string | undefined,
+    observation: SlackMessageObservation,
+  ) => Promise<void> | void;
+  knowledgeMessageObserverRequired?: boolean;
 };
 
 /** Production construction always carries the authoritative lifecycle store. */
@@ -241,6 +276,16 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   constructor(private readonly opts: CloudflareSlackAdapterOptions) {
     this.client = createSlackWebClient(opts.botToken, {
       ...(opts.slackScheduler ? { scheduler: opts.slackScheduler } : {}),
+      knowledgeTeamId: () => this.teamId,
+      ...(opts.knowledgeMessageObserverRequired
+        ? { messageObserverRequired: true }
+        : {}),
+      ...(opts.knowledgeMessageObserver
+        ? {
+            messageObserver: (observation) =>
+              opts.knowledgeMessageObserver!(observation.teamId, observation),
+          }
+        : {}),
     });
     this.botUserId = opts.botUserId;
     this.teamId = opts.teamId;
@@ -399,7 +444,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         type: "context",
         elements: [{
           type: "mrkdwn",
-          text: `<${url}|Open session events> · ${viewer.runtimeLabel}`,
+          text: `<${url}|Open session events>`,
         }],
       },
     };
@@ -440,6 +485,51 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     );
   }
 
+  private async observeReconciledMessage(
+    args: Parameters<SlackWebClient["postMessage"]>[0],
+    ts: string,
+    teamId?: string,
+  ): Promise<void> {
+    if (!this.opts.knowledgeMessageObserver) {
+      if (this.opts.knowledgeMessageObserverRequired) {
+        throw new Error("knowledge_observer_required");
+      }
+      return;
+    }
+    try {
+      await this.opts.knowledgeMessageObserver(teamId ?? this.teamId, {
+        operation: "posted",
+        ...(teamId ? { teamId } : {}),
+        channel: args.channel,
+        ts,
+        ...(args.thread_ts ? { threadTs: args.thread_ts } : {}),
+        text: args.text,
+        ...(args.blocks ? { blocks: args.blocks } : {}),
+        ...(args.attachments ? { attachments: args.attachments } : {}),
+      });
+    } catch (error) {
+      console.error(
+        "[slack] reconciled knowledge observation failed",
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
+  }
+
+  private knowledgeTeamId(value: unknown): string | undefined {
+    const threadKey = this.fenceOf(value)?.threadKey;
+    const match = threadKey?.match(/^tenant:([^:]+):/);
+    if (match?.[1]) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return undefined;
+      }
+    }
+    if (threadKey) return undefined;
+    return this.teamId;
+  }
+
   /**
    * Post the one reserved live placeholder and durably reconcile its Slack
    * timestamp. A transport-ambiguous post is resolved by exact client id
@@ -451,10 +541,19 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
   ): Promise<{ ok: boolean; ts?: string; error?: string; duplicate?: boolean }> {
     const fence = this.fenceOf(value);
     const clientMessageId = fence?.liveClientMessageId;
+    const teamId = this.knowledgeTeamId(value);
     if (!fence || !clientMessageId || !this.opts.stateStore) {
-      return this.client.postMessage(args);
+      return this.client.postMessage({
+        ...args,
+        ...(clientMessageId ? { client_msg_id: clientMessageId } : {}),
+        ...(teamId ? { knowledgeTeamId: teamId } : {}),
+      });
     }
-    const postArgs = { ...args, client_msg_id: clientMessageId };
+    const postArgs = {
+      ...args,
+      client_msg_id: clientMessageId,
+      ...(teamId ? { knowledgeTeamId: teamId } : {}),
+    };
     const confirm = async (ts: string) => {
       const confirmed = await this.opts.stateStore!.activeTurn.confirmLiveMessage({
         threadKey: fence.threadKey,
@@ -485,7 +584,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         clientMessageId,
         limit: 100,
       });
-      if (found.found && found.ts) return confirm(found.ts);
+      if (found.found && found.ts) {
+        const confirmed = await confirm(found.ts);
+        await this.observeReconciledMessage(args, found.ts, teamId);
+        return confirmed;
+      }
     }
     // A bounded series of negative reads is still not proof that Slack did not
     // apply the post: message indexing may lag the write response. Keep the
@@ -1050,6 +1153,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       text,
       unfurl_links: false,
       unfurl_media: false,
+      ...(isFinal ? { knowledgeIndex: true } : {}),
     };
     if (msg.accent) {
       body.attachments = [{ color: msg.accent, blocks: msg.blocks }];
@@ -1088,6 +1192,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       (ref as { channel?: string }).channel ??
       String((ref as { id?: string }).id ?? "");
     const ts = (ref as { ts?: string }).ts ?? ref.id;
+    const threadTs = (ref as { threadTs?: string }).threadTs;
     await this.fenced(ref, async () => requireSlackOk(
       "chat.update",
       await this.client.updateMessage({
@@ -1095,6 +1200,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       ts,
       text,
       blocks: msg.blocks,
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+      knowledgeIndex: true,
+      ...(this.knowledgeTeamId(ref)
+        ? { knowledgeTeamId: this.knowledgeTeamId(ref) }
+        : {}),
       }),
     ));
   }
@@ -1156,6 +1266,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
             ts,
             text: pages[0]!.text,
             blocks: pages[0]!.blocks,
+            ...(thread_ts ? { thread_ts } : {}),
+            ...(final ? { knowledgeIndex: true } : {}),
+            ...(this.knowledgeTeamId(target)
+              ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+              : {}),
             }),
           );
           if (final) {
@@ -1166,10 +1281,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
                 thread_ts,
                 text: page.text,
                 blocks: page.blocks,
+                knowledgeIndex: true,
                 client_msg_id: stableSlackPageClientMessageId(
                   identity,
                   page.index,
                 ),
+                ...(this.knowledgeTeamId(target)
+                  ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+                  : {}),
               }));
             }
           }
@@ -1181,6 +1300,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
             ts,
             text: visibleError,
             blocks: buildSlackMessagePages(visibleError)[0]!.blocks,
+            ...(thread_ts ? { thread_ts } : {}),
+            knowledgeIndex: true,
+            ...(this.knowledgeTeamId(target)
+              ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+              : {}),
           }));
           sizeLimited = true;
         }
@@ -1285,6 +1409,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       const visibleArgs = final
         ? { ...args, text: pages[0]!.text, blocks: pages[0]!.blocks }
         : args;
+      const updateArgs = {
+        ...visibleArgs,
+        ...(t.threadTs ? { thread_ts: t.threadTs } : {}),
+        ...(final ? { knowledgeIndex: true } : {}),
+        ...(this.knowledgeTeamId(target)
+          ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+          : {}),
+      };
       const text = args.text;
       if (text.length > lastMirroredLen) {
         const delta = text.slice(lastMirroredLen);
@@ -1294,7 +1426,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       let sizeLimited = false;
       await this.fenced(target, async () => {
         try {
-          requireSlackOk("chat.update", await this.client.updateMessage(visibleArgs));
+          requireSlackOk("chat.update", await this.client.updateMessage(updateArgs));
           if (paged) {
             const identity = renderFence?.executionId ?? `${args.channel}:${args.ts}`;
             for (const page of pages.slice(1)) {
@@ -1303,10 +1435,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
                 thread_ts: t.threadTs,
                 text: page.text,
                 blocks: page.blocks,
+                knowledgeIndex: true,
                 client_msg_id: stableSlackPageClientMessageId(
                   identity,
                   page.index,
                 ),
+                ...(this.knowledgeTeamId(target)
+                  ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+                  : {}),
               }));
             }
           }
@@ -1317,9 +1453,13 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
               thread_ts: t.threadTs,
               text: "Session and artifact actions for this answer.",
               blocks: decorationBlocks,
+              knowledgeIndex: true,
               client_msg_id: stableSlackClientMessageId(
                 `${identity}:final-answer-decoration`,
               ),
+              ...(this.knowledgeTeamId(target)
+                ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+                : {}),
             }));
           }
         } catch (error) {
@@ -1330,6 +1470,11 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
             ts: args.ts,
             text: visibleError,
             blocks: buildSlackMessagePages(visibleError)[0]!.blocks,
+            ...(t.threadTs ? { thread_ts: t.threadTs } : {}),
+            knowledgeIndex: true,
+            ...(this.knowledgeTeamId(target)
+              ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+              : {}),
           }));
           sizeLimited = true;
         }
@@ -1388,12 +1533,23 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
               blocks: [...postBlocks, context.block],
             }
           : args;
+        const clientMessageId = renderFence
+          ? stableRendererPostMessageId(renderFence.executionId, visibleArgs)
+          : undefined;
+        const postArgs = {
+          ...visibleArgs,
+          ...(clientMessageId ? { client_msg_id: clientMessageId } : {}),
+          ...(runErrorPostFinal ? { knowledgeIndex: true } : {}),
+          ...(this.knowledgeTeamId(target)
+            ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+            : {}),
+        };
         const r = await this.fenced(
           target,
           async () => requireSlackPost(await (
             liveMessagePosted
-              ? this.client.postMessage(visibleArgs)
-              : this.postLiveMessage(target, visibleArgs)
+              ? this.client.postMessage(postArgs)
+              : this.postLiveMessage(target, postArgs)
           )),
           runErrorPostFinal,
         );
@@ -1434,16 +1590,13 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         await sendUpdate(args, false);
       },
     };
-    const statusTs = t.threadTs ?? t.statusTs;
-    // Prefer one stable "Working…" progress message (Centaur-style) over
-    // Channels' per-tool ✅ status pings, which strand the thread if a turn
-    // crashes after announcing a tool and before the final answer.
+    // Prefer one stable progress message over Channels' assistant status and
+    // per-tool status pings. The working reaction is the only live progress
+    // indicator; empty-status cleanup remains owned by the lifecycle and Stop
+    // recovery paths for stale state from older builds.
     const renderer = createRunRenderer({
       transport,
       target: { channel: t.channel, threadTs: t.threadTs },
-      status: statusTs
-        ? { threadTs: statusTs, isPane: false }
-        : undefined,
       showToolStatus: false,
     });
     // Lazily create progress only when a tool runs so text-only turns keep the
@@ -1462,7 +1615,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         threadTs: t.threadTs,
         threadKey: renderFence.threadKey,
         executionId: renderFence.executionId,
-        progressHeading: "*Working…*",
+        progressHeading: "",
       });
       await progressLive.handleEvent({
         kind: "context",
@@ -1586,7 +1739,14 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         runErrorPostFinal = true;
         try {
           await progressLive?.markTerminal({ ok: false });
-          await baseSubscriber.onRunErrorEvent?.(args);
+          const event = args.event;
+          await baseSubscriber.onRunErrorEvent?.({
+            ...args,
+            event: {
+              ...event,
+              message: visibleAgentRunError(event.message),
+            },
+          });
         } finally {
           runErrorPostFinal = false;
         }
@@ -1606,12 +1766,20 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         // result. This final post is also the atomic lifecycle commit point.
         await progressLive?.markTerminal({ ok: true });
         const context = await this.sessionContextBlock(renderFence);
+        const clientMessageId = renderFence
+          ? stableSlackClientMessageId(`${renderFence.executionId}:empty-terminal`)
+          : undefined;
         await this.fenced(target, async () => requireSlackPost(
           await this.client.postMessage({
             channel: t.channel,
             thread_ts: t.threadTs,
             text: "_(Agent completed without a text response.)_",
+            knowledgeIndex: true,
+            ...(clientMessageId ? { client_msg_id: clientMessageId } : {}),
             ...(context ? { blocks: [context.block] } : {}),
+            ...(this.knowledgeTeamId(target)
+              ? { knowledgeTeamId: this.knowledgeTeamId(target) }
+              : {}),
           }),
         ), true);
         if (context && this.opts.stateStore) {

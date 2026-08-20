@@ -105,10 +105,43 @@ function executionContext(): ExecutionContext {
 }
 
 describe("Slack ingress durable-owner retry boundary", () => {
+  it("owns a knowledge event before acknowledging Slack", async () => {
+    const signingSecret = "signing-secret";
+    const prepare = vi.fn(async () => ({ accepted: true, status: "pending" as const }));
+    const env = makeEnv(prepare, signingSecret);
+    const body = JSON.stringify({
+      type: "event_callback",
+      event_id: "EvKnowledgeIngress",
+      team_id: "T1",
+      event: {
+        type: "reaction_added",
+        user: "U1",
+        item: { type: "message", channel: "C1", ts: "1710000000.100000" },
+      },
+    });
+
+    const response = await worker.request(
+      await signedRequest("/slack/events", body, signingSecret, "application/json"),
+      undefined,
+      env,
+      executionContext(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      id: "knowledge-event:T1:EvKnowledgeIngress",
+      kind: "knowledge_event",
+      teamId: "T1",
+      payload: expect.objectContaining({ event_id: "EvKnowledgeIngress" }),
+    }));
+  });
+
   it("returns 503 after file-turn alarm ownership fails, then 200 for the identical retry", async () => {
     const signingSecret = "signing-secret";
     const prepare = vi.fn()
+      .mockResolvedValueOnce({ accepted: true, status: "pending" })
       .mockRejectedValueOnce(new Error("alarm_write_failed"))
+      .mockResolvedValueOnce({ accepted: false, status: "pending" })
       .mockResolvedValueOnce({ accepted: false, status: "pending" });
     const env = makeEnv(prepare, signingSecret);
     const body = JSON.stringify({
@@ -140,9 +173,10 @@ describe("Slack ingress durable-owner retry boundary", () => {
 
     expect(first.status).toBe(503);
     expect(retry.status).toBe(200);
-    expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls[1]).toEqual(prepare.mock.calls[0]);
-    expect(prepare.mock.calls[0]![0]).toMatchObject({
+    const fileTurnCalls = prepare.mock.calls.filter((call) => call[0]?.kind === "file_turn");
+    expect(fileTurnCalls).toHaveLength(2);
+    expect(fileTurnCalls[1]).toEqual(fileTurnCalls[0]);
+    expect(fileTurnCalls[0]![0]).toMatchObject({
       id: "file-turn:EvFileTurnRetry",
       kind: "file_turn",
       teamId: "T1",
@@ -275,8 +309,11 @@ describe("Slack ingress durable-owner retry boundary", () => {
       "F1",
     )).status).toBe(200);
 
-    expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls.map((call) => call[0])).toEqual([
+    const lateFileCalls = prepare.mock.calls.filter(
+      (call) => (call[0] as { kind?: string } | undefined)?.kind === "late_file",
+    );
+    expect(lateFileCalls).toHaveLength(2);
+    expect(lateFileCalls.map((call) => call[0])).toEqual([
       expect.objectContaining({
         id: expect.stringContaining("EvMention2"),
         kind: "late_file",

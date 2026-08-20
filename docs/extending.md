@@ -409,7 +409,7 @@ Multi-source knowledge retrieval is additive on the Supermemory Local sidecar:
 
 - Tools (explicit bundle grant; not in `DEFAULT_BUNDLE`): `search_slack`, `search_wiki`, `search_code`, `search_custom`, unified `search`.
 - Connectors normalize into the shared document contract (`sourceKey` / flat metadata) then Local `add` via the Queue consumer only.
-- MCP: `POST /mcp/knowledge` with `Authorization: Bearer $ADMIN_SECRET` — raw citations, no planner, no ingest.
+- MCP: `POST /mcp/knowledge` with operator `Authorization: Bearer $ADMIN_SECRET` or the internal actor-token header — raw citations, no planner, no ingest. External MCP remains operator-only; actor tokens are short-lived, single-use, scope-bound, and require durable audit.
 - Web UI orchestration helpers live in `edge/src/web-ui/knowledge-query.ts` (planner → executor → synthesis).
 - Project scopes: `edge/src/knowledge/projects.ts`. Isolation modes other than `metadata_filter` require proven Local project tags.
 

@@ -4,6 +4,9 @@
  * Live signed pilot is OUT of this slice; all relay I/O is mocked.
  */
 
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { describe, expect, it } from "vitest";
 import {
   BUZZ_M1_POLICY_AUDIT_MARKER,
@@ -20,9 +23,11 @@ import {
   publicKeyHexFromPrivate,
   randomPrivateKeyHex,
   signNostrEvent,
+  sha256HexBytes,
   verifyNostrEvent,
 } from "../src/buzz/nostr-crypto.js";
 import { buildNip98AuthorizationHeader } from "../src/buzz/nip98-auth.js";
+import { BUZZ_ADMIT_REPLY_CONTENT } from "../src/buzz/events-publisher.js";
 import {
   BUZZ_RECEIVE_AUTH_REJECTED,
   BUZZ_RECEIVE_EVENT_UNVERIFIED,
@@ -35,6 +40,7 @@ import {
 } from "../src/buzz/receive.js";
 import {
   buzzRuntimeAdmitKey,
+  buzzRuntimeReplyKey,
   createBuzzRuntimeAdmit,
 } from "../src/buzz/runtime-admit.js";
 import {
@@ -64,6 +70,22 @@ const ROOT = "c".repeat(64);
 const TENANT = canonicalInternalTenantId("11111111-1111-4111-8111-111111111111");
 const RELAY_BASE = "https://opentag-contract-test.example.invalid";
 const NOW = 1_785_424_252;
+
+function validAuthTag(
+  agentPubkeyHex: string,
+  ownerSecretHex = "1".repeat(64),
+  conditions = "",
+): string {
+  const ownerSecret = parsePrivateKeyHex(ownerSecretHex);
+  const ownerPubkeyHex = publicKeyHexFromPrivate(ownerSecret);
+  const message = sha256(
+    new TextEncoder().encode(
+      `nostr:agent-auth:${agentPubkeyHex}:${conditions}`,
+    ),
+  );
+  const signatureHex = bytesToHex(schnorr.sign(message, ownerSecret));
+  return JSON.stringify(["auth", ownerPubkeyHex, conditions, signatureHex]);
+}
 
 function matchingAllowlist(
   overrides: Partial<{ allowed: string; live: string }> = {},
@@ -141,6 +163,30 @@ function wakeFor(event: { id: string; pubkey: string }) {
   };
 }
 
+async function verifyNip98Request(
+  url: string,
+  init: RequestInit | undefined,
+): Promise<Record<string, unknown>> {
+  const headers = new Headers(init?.headers);
+  const authorization = headers.get("authorization") ?? "";
+  expect(authorization.startsWith("Nostr ")).toBe(true);
+  const encoded = authorization.slice("Nostr ".length);
+  const event = JSON.parse(
+    new TextDecoder().decode(
+      Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)),
+    ),
+  ) as Record<string, unknown>;
+  expect(await verifyNostrEvent(event)).toBe(true);
+  expect(event.kind).toBe(27235);
+  const tags = event.tags as string[][];
+  const tag = (name: string) => tags.find((entry) => entry[0] === name)?.[1];
+  const body = new TextEncoder().encode(String(init?.body ?? ""));
+  expect(tag("u")).toBe(url);
+  expect(tag("method")).toBe("POST");
+  expect(tag("payload")).toBe(await sha256HexBytes(body));
+  return event;
+}
+
 function collectStrings(value: unknown, out: string[]): void {
   if (typeof value === "string") {
     out.push(value);
@@ -171,6 +217,9 @@ describe("Buzz signer secret seam", () => {
     expect(loadBuzzOpenTagSigner(undefined)).toBeUndefined();
     expect(loadBuzzOpenTagSigner("")).toBeUndefined();
     expect(() => loadBuzzOpenTagSigner("not-a-key")).toThrow(
+      "buzz_signer_invalid_secret_shape",
+    );
+    expect(() => loadBuzzOpenTagSigner("0".repeat(64))).toThrow(
       "buzz_signer_invalid_secret_shape",
     );
     try {
@@ -225,6 +274,27 @@ describe("Buzz signer secret seam", () => {
       expect(text).not.toContain("a".repeat(64));
       expect(text).not.toContain("b".repeat(128));
     }
+  });
+
+  it("rejects a tag that is not cryptographically bound to the configured signer", () => {
+    const signer = loadBuzzOpenTagSigner("2".repeat(64))!;
+    const otherSigner = loadBuzzOpenTagSigner("3".repeat(64))!;
+    const tag = validAuthTag(otherSigner.publicKeyHex, "1".repeat(64));
+    expect(() => loadBuzzOpenTagAuthTag(tag, signer.publicKeyHex)).toThrow(
+      "buzz_auth_tag_signer_mismatch",
+    );
+  });
+
+  it("rejects malformed NIP-OA condition clauses", () => {
+    const tag = JSON.stringify([
+      "auth",
+      "a".repeat(64),
+      "kind=01",
+      "b".repeat(128),
+    ]);
+    expect(() => loadBuzzOpenTagAuthTag(tag)).toThrow(
+      "buzz_auth_tag_invalid_shape",
+    );
   });
 });
 
@@ -302,6 +372,24 @@ describe("NIP-98 /query fetcher failure taxonomy", () => {
       relayHttpBaseUrl: RELAY_BASE,
       signer,
       fetchImpl: async () => new Response("boom", { status: 502 }),
+    });
+    await expect(
+      fetcher.fetchAndVerify({
+        messageId: "a".repeat(64),
+        channelId: CHANNEL,
+        authorPubkey: "b".repeat(64),
+        tenantId: TENANT,
+      }),
+    ).rejects.toThrow(BUZZ_RECEIVE_FETCH_FAILED);
+  });
+
+  it("526 → buzz_receive_fetch_failed (transient)", async () => {
+    const secret = randomPrivateKeyHex();
+    const signer = loadBuzzOpenTagSigner(secret)!;
+    const fetcher = createBuzzNip98QueryFetcher({
+      relayHttpBaseUrl: RELAY_BASE,
+      signer,
+      fetchImpl: async () => new Response("origin unavailable", { status: 526 }),
     });
     await expect(
       fetcher.fetchAndVerify({
@@ -418,6 +506,76 @@ describe("NIP-98 /query fetcher failure taxonomy", () => {
     expect(got).toMatchObject({ id: event.id, pubkey });
   });
 
+  it("runs the configured receive path through signed relay I/O and durable replay", async () => {
+    const signerSecret = randomPrivateKeyHex();
+    const authorSecret = randomPrivateKeyHex();
+    const { event } = await signedKind9(authorSecret, "hello from the synthetic relay");
+    const { store, close } = makeSqliteStateStore();
+    const requests: string[] = [];
+
+    try {
+      const deps = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: signerSecret,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+        },
+        store,
+        {
+          nowSeconds: () => NOW,
+          fetchImpl: async (url, init) => {
+            const urlText = String(url);
+            requests.push(urlText);
+            await verifyNip98Request(urlText, init);
+            const headers = new Headers(init?.headers);
+            expect(headers.get(BUZZ_OPEN_TAG_AUTH_TAG_HEADER)).toBeNull();
+            if (urlText === `${RELAY_BASE}/query`) {
+              expect(JSON.parse(String(init?.body))).toEqual([
+                { ids: [event.id], limit: 1 },
+              ]);
+              return Response.json([event]);
+            }
+            if (urlText === `${RELAY_BASE}/events`) {
+              const posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+              expect(await verifyNostrEvent(posted)).toBe(true);
+              expect(posted.kind).toBe(9);
+              expect(posted.content).toBe(BUZZ_ADMIT_REPLY_CONTENT);
+              expect(JSON.stringify(posted)).not.toContain("hello from the synthetic relay");
+              return Response.json({ accepted: true });
+            }
+            return Response.json({ error: "unexpected_path" }, { status: 404 });
+          },
+        },
+      );
+      expect(deps).toBeDefined();
+
+      const first = await processBuzzWakeReceive(wakeFor(event), deps!);
+      expect(first.status).toBe("accepted");
+      expect(requests).toEqual([`${RELAY_BASE}/query`, `${RELAY_BASE}/events`]);
+      expect(await store.kv.get(buzzRuntimeAdmitKey(TENANT, event.id))).toMatchObject({
+        tenant_id: TENANT,
+        event_id: event.id,
+      });
+      const replyClaim = await store.kv.get<Record<string, unknown>>(
+        buzzRuntimeReplyKey(TENANT, event.id),
+      );
+      expect(replyClaim?.reply_event_id).toMatch(/^[0-9a-f]{64}$/);
+      const durable = JSON.stringify([
+        await store.kv.get(buzzRuntimeAdmitKey(TENANT, event.id)),
+        replyClaim,
+      ]);
+      expect(durable).not.toContain(signerSecret);
+      expect(durable).not.toContain(authorSecret);
+
+      const replay = await processBuzzWakeReceive(wakeFor(event), deps!);
+      expect(replay).toMatchObject({ status: "duplicate", stage: "pre_fetch" });
+      expect(requests).toHaveLength(2);
+    } finally {
+      close();
+    }
+  });
+
   it("sends x-auth-tag when optional authTagJson is set", async () => {
     const authorSecret = randomPrivateKeyHex();
     const { pubkey, event } = await signedKind9(authorSecret);
@@ -517,6 +675,105 @@ describe("HTTP mapping: permanent vs transient", () => {
     expect(admits).toHaveLength(1);
     expect(attempts).toBe(2);
   });
+
+  it("retries a relay 526 on redelivery and durably rejects the replay", async () => {
+    const { event } = await signedKind9("4".repeat(64));
+    const { store, close } = makeSqliteStateStore();
+    let queryAttempts = 0;
+    let eventPosts = 0;
+    try {
+      const deps = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: "2".repeat(64),
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+        },
+        store,
+        {
+          nowSeconds: () => NOW,
+          fetchImpl: async (url) => {
+            if (String(url).endsWith("/query")) {
+              queryAttempts += 1;
+              return queryAttempts === 1
+                ? new Response("origin unavailable", { status: 526 })
+                : Response.json([event]);
+            }
+            eventPosts += 1;
+            return Response.json({ accepted: true });
+          },
+        },
+      );
+      const first = await handleBuzzWakeHttp(wakeFor(event), deps);
+      expect(first.status).toBe(502);
+      await expect(first.json()).resolves.toEqual({
+        status: "error",
+        error: BUZZ_RECEIVE_FETCH_FAILED,
+      });
+
+      const second = await handleBuzzWakeHttp(wakeFor(event), deps);
+      expect(second.status).toBe(200);
+      await expect(second.json()).resolves.toMatchObject({
+        status: "accepted",
+        event_id: event.id,
+      });
+      const replay = await handleBuzzWakeHttp(wakeFor(event), deps);
+      expect(replay.status).toBe(200);
+      await expect(replay.json()).resolves.toMatchObject({
+        status: "duplicate",
+        stage: "pre_fetch",
+      });
+      expect(queryAttempts).toBe(2);
+      expect(eventPosts).toBe(1);
+    } finally {
+      close();
+    }
+  });
+
+  it("retries a relay timeout on redelivery and admits once", async () => {
+    const { event } = await signedKind9("4".repeat(64));
+    const { store, close } = makeSqliteStateStore();
+    let queryAttempts = 0;
+    try {
+      const deps = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: "2".repeat(64),
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+        },
+        store,
+        {
+          nowSeconds: () => NOW,
+          fetchImpl: async (url) => {
+            if (String(url).endsWith("/query")) {
+              queryAttempts += 1;
+              if (queryAttempts === 1) {
+                throw new DOMException("timed out", "AbortError");
+              }
+              return Response.json([event]);
+            }
+            return Response.json({ accepted: true });
+          },
+        },
+      );
+      const first = await handleBuzzWakeHttp(wakeFor(event), deps);
+      expect(first.status).toBe(502);
+      await expect(first.json()).resolves.toEqual({
+        status: "error",
+        error: BUZZ_RECEIVE_FETCH_FAILED,
+      });
+      const second = await handleBuzzWakeHttp(wakeFor(event), deps);
+      expect(second.status).toBe(200);
+      await expect(second.json()).resolves.toMatchObject({
+        status: "accepted",
+        event_id: event.id,
+      });
+      expect(queryAttempts).toBe(2);
+    } finally {
+      close();
+    }
+  });
 });
 
 describe("Runtime admit (minimal, post-authoritative)", () => {
@@ -572,16 +829,21 @@ describe("Channel→tenant map + wake binding gate", () => {
   });
 
   it("tryBuild returns undefined when the signer secret is unset", () => {
-    const deps = tryBuildBuzzWakeReceiveDeps(
-      {
-        [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: undefined,
-        [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
-        [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
-        [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
-      },
-      undefined,
-    );
-    expect(deps).toBeUndefined();
+    const { store, close } = makeSqliteStateStore();
+    try {
+      const deps = tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: undefined,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+        },
+        store,
+      );
+      expect(deps).toBeUndefined();
+    } finally {
+      close();
+    }
   });
 
   it("tryBuild returns undefined when distinct allowed-origin is unset", () => {
@@ -633,16 +895,34 @@ describe("Channel→tenant map + wake binding gate", () => {
     }
   });
 
+  it("tryBuild rejects an auth tag minted for another signer before relay I/O", () => {
+    const { store, close } = makeSqliteStateStore();
+    try {
+      const signerSecret = "2".repeat(64);
+      const otherSigner = loadBuzzOpenTagSigner("3".repeat(64))!;
+      const tag = validAuthTag(otherSigner.publicKeyHex, "1".repeat(64));
+      expect(() => tryBuildBuzzWakeReceiveDeps(
+        {
+          [BUZZ_OPEN_TAG_SIGNER_SECRET_NAME]: signerSecret,
+          [BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME]: tag,
+          [BUZZ_RELAY_HTTP_BASE_URL_VAR]: RELAY_BASE,
+          [BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN_VAR]: RELAY_BASE,
+          [BUZZ_CHANNEL_TENANT_MAP_VAR]: JSON.stringify({ [CHANNEL]: String(TENANT) }),
+        },
+        store,
+      )).toThrow("buzz_auth_tag_signer_mismatch");
+    } finally {
+      close();
+    }
+  });
+
   it("tryBuild forwards optional auth-tag and omits header when unset", async () => {
     const { store, close } = makeSqliteStateStore();
     try {
       const secret = randomPrivateKeyHex();
-      const authTag = JSON.stringify([
-        "auth",
-        "e".repeat(64),
-        "",
-        "f".repeat(128),
-      ]);
+      const authTag = validAuthTag(
+        loadBuzzOpenTagSigner(secret)!.publicKeyHex,
+      );
       const mapJson = JSON.stringify({ [CHANNEL]: String(TENANT) });
       const seen: Array<string | null> = [];
       const depsWith = tryBuildBuzzWakeReceiveDeps(

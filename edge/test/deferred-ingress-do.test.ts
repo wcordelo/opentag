@@ -32,6 +32,7 @@ function fakeCtx(options: { failFirstAlarm?: boolean } = {}) {
         }
         alarm = at;
       },
+      deleteAlarm: async () => { alarm = null; },
       transaction: async <T>(fn: (txn: unknown) => Promise<T>) => fn({
         get: async <T>(key: string) => values.get(key) as T | undefined,
         put: async <T>(key: string, value: T) => { values.set(key, value); },
@@ -106,6 +107,17 @@ describe("durable Slack ingress ownership", () => {
     ["late_file", { file: "F1" }],
     ["quick_action", { action: "retry" }],
     ["file_turn", { event_id: "Ev-file", event: { files: [{ id: "F1" }] } }],
+    ["knowledge_event", { event_id: "Ev-knowledge", team_id: "T1", event: { type: "message" } }],
+    ["knowledge_observation", {
+      teamId: "T1",
+      observation: { operation: "posted", channel: "C1", ts: "1.2" },
+    }],
+    ["reaction_cleanup", {
+      teamId: "T1",
+      channelId: "C1",
+      timestamp: "1.2",
+      name: "eyes",
+    }],
   ] as const)(
     "repairs a missing %s alarm on the identical retry and executes once",
     async (kind, payload) => {
@@ -137,6 +149,29 @@ describe("durable Slack ingress ownership", () => {
       expect(fetch).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("completes a cleanup lease before its delayed alarm", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const ctx = fakeCtx();
+    const owner = new DeferredIngressDO(ctx as never, {
+      BOT_SELF: { fetch: vi.fn() },
+    } as never);
+    await owner.prepare({
+      id: "reaction-cleanup:T1:C1:1.2:eyes",
+      kind: "reaction_cleanup",
+      teamId: "T1",
+      notBefore: 300_000,
+      payload: {
+        teamId: "T1",
+        channelId: "C1",
+        timestamp: "1.2",
+        name: "eyes",
+      },
+    });
+    await expect(owner.complete("reaction-cleanup:T1:C1:1.2:eyes"))
+      .resolves.toEqual({ completed: true, status: "completed" });
+    expect(await owner.getState()).toMatchObject({ status: "completed" });
+  });
 });
 
 describe("cross-isolate Slack rate reservations", () => {
@@ -147,11 +182,36 @@ describe("cross-isolate Slack rate reservations", () => {
     await expect(owner.reserve({ minIntervalMs: 1_000 })).resolves.toEqual({
       delayMs: 0,
       reservedAt: 10_000,
+      generation: 0,
     });
     await expect(owner.reserve({ minIntervalMs: 1_000 })).resolves.toEqual({
       delayMs: 1_000,
       reservedAt: 11_000,
+      generation: 0,
     });
     expect(ctx.values.get("nextAllowedAt")).toBe(12_000);
+  });
+
+  it("preempts queued normal reservations and accepts the control reservation", async () => {
+    const ctx = fakeCtx();
+    const owner = new SlackRateLimitDO(ctx as never, {} as never);
+    vi.spyOn(Date, "now").mockReturnValue(20_000);
+    const first = await owner.reserve({ minIntervalMs: 1_000 });
+    const queued = await owner.reserve({ minIntervalMs: 1_000 });
+    expect(first.generation).toBe(0);
+    expect(queued).toMatchObject({ delayMs: 1_000, generation: 0 });
+
+    const preempted = await owner.preempt();
+    const control = await owner.reserve({ minIntervalMs: 1_000, priority: "control" });
+    expect(preempted.generation).toBe(1);
+    expect(control).toMatchObject({ delayMs: 0, generation: 2 });
+    await expect(owner.commit({
+      generation: queued.generation,
+      minIntervalMs: 1_000,
+    })).resolves.toEqual({ accepted: false });
+    await expect(owner.commit({
+      generation: control.generation,
+      minIntervalMs: 1_000,
+    })).resolves.toEqual({ accepted: true });
   });
 });

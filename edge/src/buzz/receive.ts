@@ -244,6 +244,8 @@ export async function processBuzzWakeReceive(
     // Authoritative unseen → re-enter fetch/admit path below.
   }
 
+  enforceBuzzRelayOriginAllowlist(deps.allowlist);
+
   const verifiedRaw = await deps.fetcher.fetchAndVerify({
     messageId: wakeClaim.wake.messageId,
     channelId: wakeClaim.wake.channelId,
@@ -253,10 +255,6 @@ export async function processBuzzWakeReceive(
   // Wake channel_id is expectedChannelId — rejects fetched events from another channel.
   const inbound = bindVerifiedEventToWake(verifiedRaw, wakeClaim.wake);
   const conversationKey = buzzConversationKey(wakeClaim.tenantId, inbound);
-
-  // Installation allowlist — shared by wake-first and loss-side re-entry.
-  // Before authoritative claim so deny does not leave a durable "processed" key.
-  enforceBuzzRelayOriginAllowlist(deps.allowlist);
 
   const authoritative = await claimAuthoritativeBuzzEvent(
     wakeClaim.tenantId,

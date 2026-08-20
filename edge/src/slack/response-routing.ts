@@ -26,7 +26,9 @@ export type SlackThreadReplyRouteInput = Readonly<{
 }>;
 
 const ACTION_REQUEST =
-  /^(?:check|look(?:\s+at)?|review|tell|explain|investigate|confirm|find|fix|send|run|create|draft|update|summarize|recap|take\s+a\s+look)\b|\b(?:can|could|would)\s+you\b|\bhelp\s+me(?:\s+with|\s+to)?\b|\b(?:i|we)\s+(?:need|want)\s+you\s+to\b/i;
+  /^(?:check|look(?:\s+at)?|review|tell|explain|investigate|confirm|find|search|look\s+up|lookup|query|fix|send|run|create|draft|update|summarize|recap|take\s+a\s+look)\b|\b(?:can|could|would)\s+you\b|\bhelp\s+me(?:\s+with|\s+to)?\b|\b(?:i|we)\s+(?:need|want)\s+you\s+to\b|\b(?:please\s+)?(?:reply|respond|answer)\s+(?:exactly|with|to)\b/i;
+const NEGATIVE_RESPONSE_REQUEST =
+  /\b(?:please\s+)?(?:do\s+not|don't|dont|never)\s+(?:reply|respond|answer)\b/i;
 const PROBLEM_REPORT =
   /\b(?:delay|latency|slow(?:ness)?|stuck|blocked|error|broken|failed|failure|not\s+working|timeout|timed\s*out)\b|\b(?:can't|cannot|unable\s+to)\s+(?:access|connect|see|find|open|run|use|send|load|log\s*in|complete|finish|reply|reach|deploy|respond)\b/i;
 
@@ -65,6 +67,13 @@ export function classifySlackResponseRoute(input: {
     );
   }
   const routedText = classification.normalizedMessage;
+  if (NEGATIVE_RESPONSE_REQUEST.test(routedText)) {
+    return Object.freeze({
+      decision: "observe",
+      reason: "observe_conversation",
+      classification,
+    });
+  }
   if (routedText.includes("?")) return respond("question", classification);
   if (ACTION_REQUEST.test(routedText)) {
     return respond("action_request", classification);

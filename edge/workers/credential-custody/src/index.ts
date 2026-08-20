@@ -13,6 +13,7 @@ import {
 import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js";
 import type { WorkspaceConfigDO } from "../../../src/config/workspace-config-do.js";
 import { platformTenantObjectName } from "../../../src/platform/tenant-routing.js";
+import { tenantStub } from "../../../src/tenancy.js";
 
 type SecretsStoreSecret = Readonly<{
   get(): Promise<string>;
@@ -167,9 +168,7 @@ async function verifyConnectorAuthorization(
   if (!env.WORKSPACE_CONFIG) {
     throw new CustodyError("workspace_config_unavailable", 503);
   }
-  const authorizationStub = env.WORKSPACE_CONFIG.get(
-    env.WORKSPACE_CONFIG.idFromName(request.labels.workspaceId),
-  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+  const authorizationStub = tenantStub(env.WORKSPACE_CONFIG, request.labels.workspaceId);
   const authorizationResponse = await authorizationStub.fetch(
     "https://workspace/verifyConnectorAuthorization",
     {

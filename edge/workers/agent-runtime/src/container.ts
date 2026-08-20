@@ -8,7 +8,7 @@ import type { Env } from "./env.js";
  * Must be assigned as a **class field** (`envVars = triageEnvVars()`), not a
  * getter: `@cloudflare/containers` sets `envVars = {}` on the base class, which
  * becomes an own property and shadows any subclass getter — leaving the
- * container with no OPENAI_API_KEY / Linear secrets.
+ * container with no model-provider / Linear secrets.
  */
 function triageEnvVars(): Record<string, string> {
   const e = env as Env;
@@ -19,6 +19,9 @@ function triageEnvVars(): Record<string, string> {
   };
   const keys = [
     "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "AGENT_PROVIDER",
+    "AGENT_BASE_URL",
     "AGENT_MODEL",
     "LINEAR_API_KEY",
     "LINEAR_MCP_URL",
@@ -55,7 +58,7 @@ export class TriageContainer extends Container<Env> {
 
   override onStart(): void {
     console.log(
-      `[opentag-agent] triage container started · LINEAR_TEAM_KEY=${this.envVars.LINEAR_TEAM_KEY ?? "unset"} · openai=${this.envVars.OPENAI_API_KEY ? "set" : "MISSING"}`,
+      `[opentag-agent] triage container started · LINEAR_TEAM_KEY=${this.envVars.LINEAR_TEAM_KEY ?? "unset"} · provider=${this.envVars.AGENT_PROVIDER ?? "openai"} · modelKey=${this.envVars.DEEPSEEK_API_KEY || this.envVars.OPENAI_API_KEY ? "set" : "MISSING"}`,
     );
   }
 

@@ -105,6 +105,8 @@ export function buildPermissionSnapshot(
         scope: grant.scope,
         ...(grant.projectId ? { projectId: bounded(grant.projectId) } : {}),
         ...(grant.channelId ? { channelId: bounded(grant.channelId) } : {}),
+        ...(grant.repoId ? { repoId: bounded(grant.repoId) } : {}),
+        ...(grant.spaceId ? { spaceId: bounded(grant.spaceId) } : {}),
         ...(grant.credentialRef ? { credentialRef: bounded(grant.credentialRef) } : {}),
       }));
   const snapshot = deepFreeze({

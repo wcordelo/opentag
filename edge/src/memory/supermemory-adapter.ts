@@ -1,6 +1,7 @@
 import {
   KNOWLEDGE_LIMITS,
   KNOWLEDGE_EXECUTION_BUDGETS,
+  knowledgeQueryDigest,
   parseLocalDocumentStatus,
   slackKnowledgeMetadataAsFlat,
   slackSourceKey,
@@ -10,16 +11,19 @@ import {
   type SlackKnowledgeMetadata,
 } from "./knowledge-contract.js";
 import type { SupermemoryClient } from "./supermemory-client.js";
-import { createSupermemoryClient } from "./supermemory-client.js";
+import { createSupermemoryClientFromEnv } from "./supermemory-client.js";
 import {
   createSlackKnowledgePageReader,
   fetchKnowledgeThread,
+  type KnowledgeThreadFetchCheckpoint,
   type KnowledgeThreadFetchOutcome,
 } from "../slack/knowledge-thread-fetcher.js";
 import { sharedSlackRateScheduler } from "../slack/web-api.js";
 import { normalizeSlackThread } from "./normalize-slack-thread.js";
+import { enrichSlackThreadForIndex } from "./connectors/slack-enrichment.js";
 import type { KnowledgeDispatch, KnowledgeQueueEnv } from "./knowledge-jobs.js";
 import { isLocalMutationContractVerified } from "./local-mutation-contract.js";
+import { normalizeDerivedIndexGeneration } from "./derived-index-generation.js";
 import { tenantStub } from "../tenancy.js";
 
 export const SUPERMEMORY_POLL = Object.freeze({
@@ -35,15 +39,22 @@ export type LocalOperationErrorCode =
   | "knowledge_unavailable"
   | "local_rejected"
   | "local_malformed_response"
-  | "local_document_failed";
+  | "local_document_failed"
+  | "local_ambiguous_identity";
 
 export class SupermemoryAdapterError extends Error {
+  readonly persistedCode: string;
+
   constructor(
     readonly code: LocalOperationErrorCode,
     readonly retryable: boolean,
+    readonly status?: number,
   ) {
     super(code);
     this.name = "SupermemoryAdapterError";
+    this.persistedCode = status === undefined
+      ? code
+      : `${retryable ? "knowledge" : "local"}_http_${status}`;
   }
 }
 
@@ -58,6 +69,10 @@ export type PollResult =
       nextPollAt: number;
       pollDeadlineAt: number;
     };
+
+export type AmbiguousDocumentResolution =
+  | { status: "found"; localDocumentId: string; workflowStatus: LocalDocumentStatus }
+  | { status: "not_found" };
 
 export type SlackSearchScope = {
   teamId: string;
@@ -75,13 +90,29 @@ function defaultClock(): Clock {
   };
 }
 
+function errorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown };
+  };
+  for (const candidate of [value.status, value.statusCode, value.response?.status]) {
+    const status = typeof candidate === "number" ? candidate : Number(candidate);
+    if (Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  }
+  return undefined;
+}
+
 function retryableError(error: unknown): SupermemoryAdapterError {
   if (error instanceof SupermemoryAdapterError) return error;
-  const status = typeof error === "object" && error !== null && "status" in error
-    ? Number((error as { status?: unknown }).status)
-    : undefined;
-  const retryable = status === undefined || status === 408 || status === 409 || status === 429 || status >= 500;
-  return new SupermemoryAdapterError(retryable ? "knowledge_unavailable" : "local_rejected", retryable);
+  const status = errorStatus(error);
+  const retryable = status === undefined || status === 408 || status === 429 || status >= 500;
+  return new SupermemoryAdapterError(retryable ? "knowledge_unavailable" : "local_rejected", retryable, status);
+}
+
+function isAcceptedMutationStatus(status: LocalDocumentStatus): status is "queued" | "done" {
+  return status === "queued" || status === "done";
 }
 
 function requiredMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
@@ -185,8 +216,64 @@ export class SupermemoryAdapter {
       } catch {
         throw new SupermemoryAdapterError("local_malformed_response", false);
       }
-      if (status !== "queued") throw new SupermemoryAdapterError("local_malformed_response", false);
+      if (!isAcceptedMutationStatus(status)) throw new SupermemoryAdapterError("local_malformed_response", false);
       return { localDocumentId: response.id, status };
+    } catch (error) {
+      throw retryableError(error);
+    }
+  }
+
+  async findSlackDocument(input: {
+    teamId: string;
+    sourceKey: string;
+  }): Promise<AmbiguousDocumentResolution> {
+    try {
+      const response = await this.client.documents.list({
+        containerTags: [workspaceTag(input.teamId)],
+        filters: { AND: [
+          { key: "workspaceId", value: input.teamId },
+          { key: "sourceKey", value: input.sourceKey },
+        ] },
+        includeContent: false,
+        limit: 10,
+        page: 1,
+        order: "desc",
+        sort: "updatedAt",
+      });
+      if (!response || !Array.isArray(response.memories)) {
+        throw new SupermemoryAdapterError("local_malformed_response", true);
+      }
+      const candidates = response.memories.filter((memory) => {
+        if (!memory || typeof memory !== "object") return false;
+        const item = memory as {
+          id?: unknown;
+          customId?: unknown;
+        };
+        return typeof item.id === "string" && Boolean(item.id) && item.customId === input.sourceKey;
+      });
+      for (const candidate of candidates) {
+        const item = candidate as { metadata?: unknown };
+        if (!item.metadata || typeof item.metadata !== "object" || Array.isArray(item.metadata) ||
+          (item.metadata as Record<string, unknown>).sourceKey !== input.sourceKey) {
+          throw new SupermemoryAdapterError("local_ambiguous_identity", false);
+        }
+      }
+      const matches = candidates;
+      if (matches.length > 1) {
+        throw new SupermemoryAdapterError("local_ambiguous_identity", false);
+      }
+      const match = matches[0] as {
+        id: string;
+        status?: unknown;
+      } | undefined;
+      if (!match) return { status: "not_found" };
+      let workflowStatus: LocalDocumentStatus;
+      try {
+        workflowStatus = parseLocalDocumentStatus(match.status);
+      } catch {
+        throw new SupermemoryAdapterError("local_malformed_response", false);
+      }
+      return { status: "found", localDocumentId: match.id, workflowStatus };
     } catch (error) {
       throw retryableError(error);
     }
@@ -209,6 +296,17 @@ export class SupermemoryAdapter {
         containerTag: workspaceTag(input.teamId),
         metadata,
       });
+      const responseRecord = response && typeof response === "object"
+        ? response as unknown as Record<string, unknown>
+        : undefined;
+      console.log(JSON.stringify({
+        event: "knowledge_local_update_response",
+        idPresent: typeof responseRecord?.id === "string" && responseRecord.id.length > 0,
+        status: typeof responseRecord?.status === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(responseRecord.status)
+          ? responseRecord.status
+          : undefined,
+        keys: responseRecord ? Object.keys(responseRecord).sort().slice(0, 16) : [],
+      }));
       if (!response || typeof response.id !== "string" || !response.id) {
         throw new SupermemoryAdapterError("local_malformed_response", false);
       }
@@ -218,7 +316,7 @@ export class SupermemoryAdapter {
       } catch {
         throw new SupermemoryAdapterError("local_malformed_response", false);
       }
-      if (status !== "queued") throw new SupermemoryAdapterError("local_malformed_response", false);
+      if (!isAcceptedMutationStatus(status)) throw new SupermemoryAdapterError("local_malformed_response", false);
       return { localDocumentId: response.id, status };
     } catch (error) {
       throw retryableError(error);
@@ -245,7 +343,10 @@ export class SupermemoryAdapter {
     sourceKey: string;
     pollDeadlineAt?: number;
   }): Promise<PollResult> {
-    const pollDeadlineAt = input.pollDeadlineAt ?? this.clock.now() + SUPERMEMORY_POLL.deadlineMs;
+    const now = this.clock.now();
+    const pollDeadlineAt = input.pollDeadlineAt !== undefined && input.pollDeadlineAt > now
+      ? input.pollDeadlineAt
+      : now + SUPERMEMORY_POLL.deadlineMs;
     let delay: number = SUPERMEMORY_POLL.initialDelayMs;
     let polls = 0;
     let lastStatus: Exclude<LocalDocumentStatus, "done" | "failed"> = "unknown";
@@ -283,9 +384,17 @@ export class SupermemoryAdapter {
     };
   }
 
-  async searchSlack(input: SlackSearchScope & { query: string; limit: number }): Promise<KnowledgeCitation[]> {
+  async searchSlackForConvergence(
+    input: SlackSearchScope & { query: string; limit: number },
+  ): Promise<{ citations: KnowledgeCitation[]; providerResultCount: number; queryDigest: string }> {
     const query = input.query.trim();
     if (!query || query.length > 1_000 || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > KNOWLEDGE_LIMITS.maxSearchLimit) {
+      throw new SupermemoryAdapterError("local_rejected", false);
+    }
+    let queryDigest: string;
+    try {
+      queryDigest = await knowledgeQueryDigest(query);
+    } catch {
       throw new SupermemoryAdapterError("local_rejected", false);
     }
     const retrievedAt = new Date(this.clock.now()).toISOString();
@@ -304,13 +413,18 @@ export class SupermemoryAdapter {
       if (!response || !Array.isArray(response.results)) {
         throw new SupermemoryAdapterError("local_malformed_response", true);
       }
-      return response.results
+      const citations = response.results
         .map((result) => citationFromResult(result, input, retrievedAt))
         .filter((citation): citation is KnowledgeCitation => citation !== undefined)
         .slice(0, input.limit);
+      return { citations, providerResultCount: response.results.length, queryDigest };
     } catch (error) {
       throw retryableError(error);
     }
+  }
+
+  async searchSlack(input: SlackSearchScope & { query: string; limit: number }): Promise<KnowledgeCitation[]> {
+    return (await this.searchSlackForConvergence(input)).citations;
   }
 }
 
@@ -342,7 +456,7 @@ async function recordOutcome(
 type IngestionAdapter = Pick<
   SupermemoryAdapter,
   "addSlackDocument" | "updateSlackDocument" | "deleteSlackDocument" | "pollDocument"
->;
+> & Partial<Pick<SupermemoryAdapter, "findSlackDocument">>;
 
 export type KnowledgeDispatchDependencies = {
   createAdapter?: (env: KnowledgeQueueEnv) => IngestionAdapter;
@@ -363,6 +477,9 @@ function slackDocumentMetadata(input: {
   observedAt: string;
   indexedAt: string;
   aclPolicyRef: string;
+  reactionCount?: number;
+  distillStatus?: "ok" | "skipped";
+  burstCount?: number;
 }): SlackKnowledgeMetadata {
   return {
     schemaVersion: 1,
@@ -374,6 +491,9 @@ function slackDocumentMetadata(input: {
     contentRevision: input.revision,
     ...(input.rootAuthorId ? { rootAuthorId: input.rootAuthorId } : {}),
     rootTs: input.threadTs,
+    ...(input.reactionCount ? { reactionCount: input.reactionCount } : {}),
+    ...(input.distillStatus ? { distillStatus: input.distillStatus } : {}),
+    ...(input.burstCount !== undefined ? { burstCount: input.burstCount } : {}),
     observedAt: input.observedAt,
     indexedAt: input.indexedAt,
     aclPolicyRef: input.aclPolicyRef,
@@ -387,11 +507,40 @@ export function createKnowledgeSupermemoryDispatch(
 ): KnowledgeDispatch {
   return async (job, env, context) => {
   const now = () => Date.now();
+  let phase = "start";
+  try {
   const mutationsVerified = isLocalMutationContractVerified(env);
+  let indexGeneration: string | undefined;
+  try {
+    indexGeneration = normalizeDerivedIndexGeneration(env.SUPERMEMORY_INDEX_GENERATION);
+  } catch {
+    indexGeneration = undefined;
+  }
   const recordFencedOutcome = async (outcome: unknown): Promise<void> => {
+    if (outcome && typeof outcome === "object" && !Array.isArray(outcome)) {
+      const value = outcome as Record<string, unknown>;
+      console.log(JSON.stringify({
+        event: "knowledge_dispatch_outcome",
+        teamId: job.teamId,
+        sourceType: job.sourceType,
+        reason: job.reason,
+        ...(typeof value.status === "string" ? { status: value.status } : {}),
+        ...(typeof value.errorClass === "string" ? { errorClass: value.errorClass } : {}),
+        ...(typeof value.errorCode === "string" ? { errorCode: value.errorCode } : {}),
+        ...(typeof value.incompleteReason === "string" ? { incompleteReason: value.incompleteReason } : {}),
+      }));
+    }
     await context.validateSource();
     await recordOutcome(env, job.teamId, job.sourceKey, context.leaseToken, outcome);
   };
+  if (env.SUPERMEMORY && !indexGeneration) {
+    await recordFencedOutcome({
+      status: "retryable_failure",
+      errorClass: "dependency_unavailable",
+      errorCode: "knowledge_index_generation_unconfigured",
+    });
+    return { status: "recorded_retry" };
+  }
   if (job.reason === "delete" || !context.source.enabled) {
     if (!mutationsVerified) {
       await recordFencedOutcome({
@@ -402,11 +551,16 @@ export function createKnowledgeSupermemoryDispatch(
       return { status: "recorded_permanent" };
     }
     const state = await knowledgeDoCall<{
-      ledger: { localDocumentId?: string } | null;
+      ledger: { localDocumentId?: string; derivedIndexGeneration?: string } | null;
     }>(env, job.teamId, "/state", { sourceKey: job.sourceKey });
     const localDocumentId = state.ledger?.localDocumentId;
-    if (localDocumentId) {
-      if (!env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
+    const localDocumentIsInTargetIndex = !indexGeneration ||
+      state.ledger?.derivedIndexGeneration === indexGeneration;
+    if (localDocumentId && localDocumentIsInTargetIndex) {
+      const client = dependencies.createAdapter
+        ? undefined
+        : createSupermemoryClientFromEnv(env);
+      if (!dependencies.createAdapter && !client) {
         await recordFencedOutcome({
           status: "retryable_failure",
           errorClass: "dependency_unavailable",
@@ -418,10 +572,7 @@ export function createKnowledgeSupermemoryDispatch(
       try {
         adapter = dependencies.createAdapter
           ? dependencies.createAdapter(env)
-          : new SupermemoryAdapter(createSupermemoryClient({
-              baseURL: env.SUPERMEMORY_URL,
-              apiKey: env.SUPERMEMORY_API_KEY,
-            }));
+          : new SupermemoryAdapter(client!);
       } catch {
         await recordFencedOutcome({
           status: "retryable_failure",
@@ -442,7 +593,7 @@ export function createKnowledgeSupermemoryDispatch(
         await recordFencedOutcome({
           status: classified.retryable ? "retryable_failure" : "permanent_failure",
           errorClass: "local_delete",
-          errorCode: classified.code,
+          errorCode: classified.persistedCode,
         });
         return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
       }
@@ -454,7 +605,10 @@ export function createKnowledgeSupermemoryDispatch(
     });
     return { status: "recorded_permanent" };
   }
-  if (!env.SLACK_BOT_TOKEN || !env.SUPERMEMORY_URL || !env.SUPERMEMORY_API_KEY) {
+  const client = dependencies.createAdapter
+    ? undefined
+    : createSupermemoryClientFromEnv(env);
+  if (!env.SLACK_BOT_TOKEN || (!dependencies.createAdapter && !client)) {
     await recordFencedOutcome({
       status: "retryable_failure",
       errorClass: "dependency_unavailable",
@@ -466,26 +620,40 @@ export function createKnowledgeSupermemoryDispatch(
   try {
     adapter = dependencies.createAdapter
       ? dependencies.createAdapter(env)
-      : new SupermemoryAdapter(createSupermemoryClient({
-          baseURL: env.SUPERMEMORY_URL,
-          apiKey: env.SUPERMEMORY_API_KEY,
-        }));
+      : new SupermemoryAdapter(client!);
   } catch {
     await recordFencedOutcome({
       status: "retryable_failure", errorClass: "dependency_unavailable", errorCode: "knowledge_local_unavailable",
     });
     return { status: "recorded_retry" };
   }
-  const fetched = dependencies.fetchThread
-    ? await dependencies.fetchThread(job, env)
-    : await fetchKnowledgeThread({
-        channel: job.channelId,
-        threadTs: job.threadTs,
-        readPage: createSlackKnowledgePageReader({
-          botToken: env.SLACK_BOT_TOKEN,
-          scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
-        }),
-      });
+  phase = "slack_thread_fetch";
+  let fetched: KnowledgeThreadFetchOutcome;
+  if (dependencies.fetchThread) {
+    fetched = await dependencies.fetchThread(job, env);
+  } else {
+    const storedCheckpoint = await knowledgeDoCall<{
+      checkpoint: KnowledgeThreadFetchCheckpoint | null;
+    }>(env, job.teamId, "/thread-fetch/progress/get", { job });
+    fetched = await fetchKnowledgeThread({
+      channel: job.channelId,
+      threadTs: job.threadTs,
+      readPage: createSlackKnowledgePageReader({
+        botToken: env.SLACK_BOT_TOKEN,
+        scheduler: sharedSlackRateScheduler(env.ENVIRONMENT, env.SLACK_RATE_LIMIT),
+      }),
+      ...(storedCheckpoint.checkpoint ? { initial: storedCheckpoint.checkpoint } : {}),
+      onCheckpoint: async (checkpoint) => {
+        await knowledgeDoCall(env, job.teamId, "/thread-fetch/progress/save", {
+          job,
+          checkpoint,
+        });
+      },
+    });
+    if (fetched.status === "complete") {
+      await knowledgeDoCall(env, job.teamId, "/thread-fetch/progress/clear", { job });
+    }
+  }
   if (fetched.status === "skipped") {
     await recordFencedOutcome({
       status: "permanent_failure",
@@ -495,13 +663,14 @@ export function createKnowledgeSupermemoryDispatch(
     return { status: "recorded_permanent" };
   }
   if (fetched.status === "incomplete") {
+    const sizeBound = fetched.reason === "message_cap" || fetched.reason === "byte_cap";
     await recordFencedOutcome({
-      status: "retryable_failure",
-      errorClass: "slack_thread_incomplete",
+      status: sizeBound ? "permanent_failure" : "retryable_failure",
+      errorClass: sizeBound ? "slack_thread_size_bound" : "slack_thread_incomplete",
       errorCode: fetched.reason,
       incompleteReason: fetched.reason,
     });
-    return { status: "recorded_retry" };
+    return { status: sizeBound ? "recorded_permanent" : "recorded_retry" };
   }
   const normalized = await normalizeSlackThread(fetched, {
     teamId: job.teamId,
@@ -511,8 +680,42 @@ export function createKnowledgeSupermemoryDispatch(
     aclPolicyRef: context.source.readerPolicyRef,
   });
   if (normalized.status !== "complete") throw new Error("complete thread normalized as incomplete");
+  if (job.observedMessageTs && !normalized.canonical.messages.some(
+    (message) => message.ts === job.observedMessageTs,
+  )) {
+    await recordFencedOutcome({
+      status: "retryable_failure",
+      errorClass: "slack_thread_incomplete",
+      errorCode: "observed_message_missing",
+      incompleteReason: "observed_message_missing",
+    });
+    return { status: "recorded_retry" };
+  }
+  await knowledgeDoCall(env, job.teamId, "/message-thread/put", {
+    teamId: job.teamId,
+    projectId: job.projectId,
+    channelId: job.channelId,
+    threadTs: job.threadTs,
+    sourceKey: job.sourceKey,
+    messageTs: normalized.canonical.messages
+      .map((message) => message.ts)
+      .filter((messageTs) => /^\d+\.\d+$/.test(messageTs)),
+  });
+  const enrichment = await enrichSlackThreadForIndex({
+    transcript: normalized.content,
+    messages: normalized.canonical.messages
+      .filter((message) => message.kind === "message" && message.text.length > 0)
+      .map((message) => ({
+        authorId: message.authorId,
+        text: message.text,
+        ...(message.reactions !== undefined ? { reactions: message.reactions } : {}),
+      })),
+    threadTopic: normalized.canonical.messages[0]?.text ?? "",
+  });
+  const indexedContent = enrichment.threadEmbedText;
   await context.validateSource();
-  const prepared = await knowledgeDoCall<
+  phase = "prepare_revision";
+  let prepared = await knowledgeDoCall<
     | { decision: "add" }
     | { decision: "update"; localDocumentId: string }
     | { decision: "poll"; localDocumentId: string; pollDeadlineAt?: number }
@@ -523,8 +726,17 @@ export function createKnowledgeSupermemoryDispatch(
     leaseToken: context.leaseToken,
     desiredRevision: normalized.revision,
     mutationsVerified,
+    ...(indexGeneration ? { indexGeneration } : {}),
   });
   if (prepared.decision === "blocked") {
+    if (prepared.reason === "index_generation_mismatch") {
+      await recordFencedOutcome({
+        status: "retryable_failure",
+        errorClass: "dependency_configuration",
+        errorCode: "knowledge_index_generation_mismatch",
+      });
+      return { status: "recorded_retry" };
+    }
     if (prepared.reason === "unsupported_update_contract") {
       await recordFencedOutcome({
         status: "preserve_indexed",
@@ -533,14 +745,69 @@ export function createKnowledgeSupermemoryDispatch(
       });
       return { status: "recorded_permanent" };
     }
-    await recordFencedOutcome({
-      status: "permanent_failure",
-      errorClass: "unsupported_capability",
-      errorCode: prepared.reason === "tombstoned"
-        ? "unsupported_delete_contract"
-        : "ambiguous_add_contract",
-    });
-    return { status: "recorded_permanent" };
+    if (prepared.reason === "ambiguous_add_contract") {
+      if (!adapter.findSlackDocument) {
+        await recordFencedOutcome({
+          status: "permanent_failure",
+          errorClass: "local_add",
+          errorCode: "ambiguous_add_contract",
+        });
+        return { status: "recorded_permanent" };
+      }
+      phase = "ambiguous_identity_probe";
+      let resolution: AmbiguousDocumentResolution;
+      try {
+        resolution = await adapter.findSlackDocument({
+          teamId: job.teamId,
+          sourceKey: job.sourceKey,
+        });
+      } catch (error) {
+        const classified = error instanceof SupermemoryAdapterError
+          ? error
+          : new SupermemoryAdapterError("knowledge_unavailable", true);
+        await recordFencedOutcome({
+          status: classified.retryable ? "retryable_failure" : "permanent_failure",
+          errorClass: "local_add",
+          errorCode: classified.persistedCode,
+          ...(classified.retryable ? { incompleteReason: "ambiguous_add_contract" } : {}),
+        });
+        return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
+      }
+      if (resolution.status === "found") {
+        phase = "resolve_ambiguous_add";
+        const resolved = await knowledgeDoCall<{
+          decision: "poll";
+          localDocumentId: string;
+          pollDeadlineAt: number;
+        }>(env, job.teamId, "/resolveAmbiguousAdd", {
+          sourceKey: job.sourceKey,
+          leaseToken: context.leaseToken,
+          desiredRevision: normalized.revision,
+          resolution: "found",
+          localDocumentId: resolution.localDocumentId,
+          workflowStatus: resolution.workflowStatus,
+          pollDeadlineAt: now() + SUPERMEMORY_POLL.deadlineMs,
+          nextPollAt: now(),
+        });
+        prepared = resolved;
+      } else {
+        phase = "resolve_ambiguous_add";
+        const resolved = await knowledgeDoCall<{ decision: "add" }>(env, job.teamId, "/resolveAmbiguousAdd", {
+          sourceKey: job.sourceKey,
+          leaseToken: context.leaseToken,
+          desiredRevision: normalized.revision,
+          resolution: "not_found",
+        });
+        prepared = resolved;
+      }
+    } else {
+      await recordFencedOutcome({
+        status: "permanent_failure",
+        errorClass: "unsupported_capability",
+        errorCode: "unsupported_delete_contract",
+      });
+      return { status: "recorded_permanent" };
+    }
   }
   if (prepared.decision === "noop") return { status: "recorded_success" };
 
@@ -567,20 +834,24 @@ export function createKnowledgeSupermemoryDispatch(
       observedAt: job.requestedAt,
       indexedAt: new Date(now()).toISOString(),
       aclPolicyRef: context.source.readerPolicyRef,
+      reactionCount: enrichment.reactionCount,
+      distillStatus: enrichment.distillStatus,
+      burstCount: enrichment.burstDocuments.length,
     });
+    phase = prepared.decision === "update" ? "provider_update" : "provider_add";
     let accepted: { localDocumentId: string; status: LocalDocumentStatus };
     try {
       if (prepared.decision === "update") {
         accepted = await adapter.updateSlackDocument({
           teamId: job.teamId,
           localDocumentId: prepared.localDocumentId,
-          content: normalized.content,
+          content: indexedContent,
           metadata,
         });
       } else {
         accepted = await adapter.addSlackDocument({
           teamId: job.teamId,
-          content: normalized.content,
+          content: indexedContent,
           metadata,
         });
       }
@@ -589,7 +860,7 @@ export function createKnowledgeSupermemoryDispatch(
       await recordFencedOutcome({
         status: classified.retryable ? "retryable_failure" : "permanent_failure",
         errorClass: prepared.decision === "update" ? "local_update" : "local_add",
-        errorCode: classified.code,
+          errorCode: classified.persistedCode,
       });
       return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
     }
@@ -598,6 +869,7 @@ export function createKnowledgeSupermemoryDispatch(
     // The durable add_started / update_started marker then prevents a duplicate external write.
     await context.validateSource();
     const pollDeadlineAt = now() + SUPERMEMORY_POLL.deadlineMs;
+    phase = "record_local_acceptance";
     const persisted = await knowledgeDoCall<{ recorded: boolean }>(env, job.teamId, "/localAccepted", {
       sourceKey: job.sourceKey,
       leaseToken: context.leaseToken,
@@ -606,11 +878,13 @@ export function createKnowledgeSupermemoryDispatch(
       workflowStatus: accepted.status,
       pollDeadlineAt,
       nextPollAt: now(),
+      ...(indexGeneration ? { indexGeneration } : {}),
     });
     if (!persisted.recorded) throw new Error("durable_local_document_id_not_recorded");
   }
 
   await context.validateSource();
+  phase = "provider_poll";
   let polled: PollResult;
   try {
     polled = await adapter.pollDocument({
@@ -623,7 +897,7 @@ export function createKnowledgeSupermemoryDispatch(
     await recordFencedOutcome({
       status: classified.retryable ? "retryable_failure" : "permanent_failure",
       errorClass: "local_poll",
-      errorCode: classified.code,
+      errorCode: classified.persistedCode,
     });
     return { status: classified.retryable ? "recorded_retry" : "recorded_permanent" };
   }
@@ -635,6 +909,7 @@ export function createKnowledgeSupermemoryDispatch(
       localDocumentId,
       workflowStatus: "done",
       pollCount: polled.polls,
+      ...(indexGeneration ? { indexGeneration } : {}),
     });
     return { status: "recorded_success" };
   }
@@ -647,6 +922,7 @@ export function createKnowledgeSupermemoryDispatch(
       pollDeadlineAt: polled.pollDeadlineAt,
       nextPollAt: polled.nextPollAt,
       pollCount: polled.polls,
+      ...(indexGeneration ? { indexGeneration } : {}),
     });
     return { status: "recorded_retry" };
   }
@@ -654,6 +930,17 @@ export function createKnowledgeSupermemoryDispatch(
     status: "permanent_failure", errorClass: "local_poll", errorCode: "local_document_failed",
   });
   return { status: "recorded_permanent" };
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: "knowledge_dispatch_failure",
+      teamId: job.teamId,
+      sourceType: job.sourceType,
+      reason: job.reason,
+      phase,
+      ...(error instanceof SupermemoryAdapterError ? { errorCode: error.persistedCode } : {}),
+    }));
+    throw error;
+  }
   };
 }
 

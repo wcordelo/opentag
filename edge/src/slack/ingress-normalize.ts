@@ -103,12 +103,13 @@ export type SlackNeutralEvent =
       source:
         | "app_mention"
         | "direct_message"
+        | "channel_message"
         | "thread_reply"
         | "trusted_rich_mention";
       channel: string;
       /** Thread anchor: present for mentions and thread replies. */
       threadTs?: string;
-      /** Inbound message ts (lets a renderer anchor a "thinking…" status on DMs). */
+      /** Inbound message ts used to anchor the durable turn and stale-status cleanup. */
       ts?: string;
       userText: string;
       senderUserId?: string;
@@ -233,7 +234,10 @@ export function normalizeSlackEvent(
     const text = (event.text ?? "").trim();
     const hasFiles = hasFilesOn(event);
     if (!text && !hasFiles) return undefined;
-    const isDM = event.channel_type === "im";
+    const isDM =
+      event.channel_type === "im" ||
+      event.channel_type === "mpim" ||
+      channel.startsWith("D");
     const eventId = deriveEventId(body, event, channel);
     if (isDM) {
       return {
@@ -251,13 +255,12 @@ export function normalizeSlackEvent(
         files: hasFiles ? event.files : undefined,
       };
     }
-    if (!event.thread_ts) return undefined;
     if (hasExplicitBotMention(text, botUserId)) return undefined;
     return {
       kind: "turn",
-      source: "thread_reply",
+      source: event.thread_ts ? "thread_reply" : "channel_message",
       channel,
-      threadTs: event.thread_ts,
+      ...(event.thread_ts ? { threadTs: event.thread_ts } : {}),
       ts: event.ts,
       userText: stripMentions(text),
       senderUserId: event.user,

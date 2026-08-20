@@ -20,6 +20,15 @@ See [../current-state.md](./current-state.md) for evidence and
 [.../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md](../goal-outputs/multi-repo-parent-sync-architecture-backfill/CURRENT-STATE-RECONCILIATION.md)
 for the backfill status map.
 
+The 2026-08-02 implementation reconciliation adds source-typed job, ledger,
+outbox, event, history, and DLQ identity to the local Cloudflare path. Slack is
+the only connector with an ingestion consumer today; wiki, code, custom
+database, and Drive jobs are accepted into the durable workflow only to reach
+a recorded `unsupported_source_type` permanent outcome. This specification's
+historical Postgres topology and its broader connector plan therefore remain
+design references until their connector-specific contracts and live gates are
+implemented.
+
 
 Date: **2026-07-17**
 
@@ -106,7 +115,8 @@ These are launch gates, not claims about current performance.
 
 - Replacing Slack with a knowledge web UI.
 - Making Socket Mode a second Slack transport.
-- Indexing all workspace DMs or multiparty DMs.
+- Treating Slack delivery outside the installed app's scopes and membership as
+  guaranteed; `all_delivered` covers every event Slack actually delivers.
 - Granting access because a source appears in a project.
 - Allowing an LLM to choose or widen authorization filters.
 - Building a general enterprise identity provider or group-sync product.
@@ -520,8 +530,13 @@ workspace-wide bearer access is forbidden.
 Slack private membership snapshots are reconciled from Slack membership events
 and periodic `conversations.members` reads. A private source whose membership
 snapshot exceeds its configured maximum age is excluded until refresh succeeds.
-This trades temporary omission for non-disclosure. A final authorization check
-runs before evidence leaves the knowledge Worker.
+The local default is five minutes and the deployment may set
+`KNOWLEDGE_SLACK_ACL_MAX_AGE_MS` within the bounded Worker range. This trades
+temporary omission for non-disclosure. The KnowledgeDO issues a short-lived
+read lease, revokes leases when membership state is invalidated or replaced,
+and rechecks the lease before evidence leaves the knowledge Worker. The
+current JSON member-set cap is sufficient for ordinary channels; very large
+workspaces need an indexed membership table before the cap is raised.
 
 ### 7.3 Postgres defense in depth
 
@@ -564,9 +579,17 @@ version in the same transaction that makes the new version visible.
 
 OpenTag will not adopt Socket Mode. The current `/slack/events` route already
 receives `message.channels`, `message.groups`, `message.im`, and
-`message.mpim`; only configured public/private channel sources are eligible for
-knowledge ingestion. DMs and MPIMs are excluded by default and cannot be
-enabled through an LLM or ordinary channel command.
+`message.mpim`. The server-owned WorkspaceConfigDO admission policy supports
+an `explicit` mode for administrator-managed sources and an `all_delivered`
+mode that materializes the deployment's default project, reader policy, and
+retention policy for every Slack event delivered to the installed app. The
+policy is never selected by an LLM, message author, or caller-supplied
+project. An existing disabled source remains an opt-out. Slack installation,
+channel membership, scopes, and event delivery remain the outer completeness
+boundary. Switching from `all_delivered` to `explicit` disables enabled
+workspace-default rows transactionally after active ingestion effects drain and
+marks them as explicit opt-outs; restoring `all_delivered` does not recreate
+those rows silently.
 
 Add `reaction_added`, `reaction_removed`, `member_joined_channel`, and
 `member_left_channel` bot event subscriptions. Add `reactions:read` to the app
@@ -574,6 +597,37 @@ manifest. Reaction events reingest the affected thread; membership events
 invalidate the channel ACL snapshot immediately. Retain periodic membership
 reconciliation because event delivery is at-least-once and not a complete
 authorization ledger.
+
+The manifest also subscribes to `app_uninstalled`, `tokens_revoked`, the public
+channel lifecycle family (`channel_archive`, `channel_unarchive`,
+`channel_deleted`, `channel_left`, and `channel_unshared`), and the private
+channel lifecycle family (`group_archive`, `group_unarchive`, `group_deleted`,
+`group_close`, `group_open`, and `group_left`). WorkspaceConfigDO persists a
+per-team installation generation and per-channel lifecycle state. Verified
+lifecycle delivery is fenced by `(team_id,event_id)`. Uninstall or bot-token
+revocation marks the installation revoked, disables Slack sources, deletes
+active ingestion-effect leases, and invalidates ACL state for every known
+Slack channel. A user-only OAuth revocation is ignored when Slack identifies no
+bot token as revoked. Archive, deletion, unsharing, close, or bot-leave events
+do the same for one channel; unarchive/open records the channel as active but
+never re-enables a source by itself. Reinstallation requires explicit
+activation and a new generation, and old disabled sources still require the
+deletion/reindex contract before they can be enabled again. This is a local
+source contract; installed manifest readback, live lifecycle canaries, and
+derived-index tombstone receipts remain rollout gates.
+
+The bounded backfill route also supports a server-owned discovery mode with
+`discoverAll: true`. The caller does not provide channel IDs or Slack cursors.
+OpenTag calls `conversations.list` for public/private channels, IMs, and MPIMs
+with archived records included, classifies only active conversations where the
+installed bot is a member, and persists a digest-bound inventory receipt in the
+tenant KnowledgeDO before fetching history. Incomplete pagination, API failure, duplicate/over-limit
+inventory, zero eligible conversations, and the current 50-conversation
+manifest bound fail closed rather than creating a partial “complete” manifest.
+Retries reuse the same receipt and scope digest. The receipt proves only
+visibility to the installed bot at that checkpoint; per-conversation history,
+long-thread, file, edit/delete, unsupported-subtype, and derived-index
+convergence receipts remain separate closure requirements.
 
 For an eligible verified event:
 
@@ -591,9 +645,41 @@ For an eligible verified event:
    change or the snapshot is stale.
 
 Edits, deletes, reaction changes, and new replies all reingest the whole thread.
-The bot must not index its own generated answers unless a source explicitly
-opts in; default behavior excludes all OpenTag-authored messages from knowledge
-artifacts while retaining human replies around them.
+Every message returned by Slack, including OpenTag-authored bot messages, is
+captured in the canonical thread artifact with an explicit `authorKind` of
+`human`, `bot`, or `system`. Bot messages are never eligible for turn
+admission, so indexing an OpenTag answer cannot wake the agent or create an
+ingestion loop. Unsupported Slack system subtypes remain explicit omitted
+markers; they are not silently treated as human content. Retrieval may return
+bot-authored content and must preserve that attribution in the citation.
+
+The event envelope is not the authoritative thread identity for every event.
+Reaction deliveries resolve a missing parent through the durable body-free
+message-to-thread map written after a complete thread fetch, then use an exact
+root-message history lookup only when the map has no row; an unresolved
+reaction is retried rather than assigned to a guessed root. `message_replied`
+and `message_changed` use the nested message parent when Slack supplies it.
+Because a documented `message_deleted` event may contain only `deleted_ts`,
+deletion scheduling resolves that timestamp through the same map, emits a root
+delete only when the mapped thread equals the deleted timestamp, and otherwise
+emits an exact reply delete followed by whole-thread reconciliation. An
+unresolved deleted timestamp remains a retryable closure gap. The map stores no
+message body and is not a search artifact.
+
+### 8.2.1 Provider indexing versus retrieval convergence
+
+The authoritative ledger records `indexed` only when the derived provider
+accepts the document and its bounded status poll reaches `done`. That receipt
+does not claim that the document is retrievable by search. A separate durable
+`knowledge_query_convergence` receipt is keyed by source key, content revision,
+and derived-index generation and records only a SHA-256 query digest, provider
+result count, matching citation count, status, and check time. `queryable`
+requires at least one exact citation with the expected source and content
+revision; a completed zero-result search is `not_found`, and provider or
+validation failures are `failed`. Stale document IDs, revisions, generations,
+and malformed digests are rejected. The receipt never stores the raw query or
+message body. This keeps an ingestion success from masking a provider search
+or ACL/convergence failure.
 
 ### 8.3 Slack distillation
 
@@ -910,7 +996,8 @@ Minimum routes:
 | `POST /admin/backfills` | admin auth | create bounded backfill |
 | `POST /admin/tombstones/sweep` | admin auth | physical deletion sweep |
 | `GET /admin/queries/:id` | admin auth | redacted audit diagnosis |
-| `GET /health` | none, no secrets | dependency readiness |
+| `GET /health` | none, no secrets | bounded liveness only |
+| `GET /ready` | admin auth | strict bot release readiness with bounded service-binding probes |
 | `POST /mcp` | user/operator token | MCP transport |
 
 Admin mutation routes do not count as user model tools and are never exposed to
@@ -1035,7 +1122,8 @@ Document exact procedures for:
 - applying/rolling back schema migrations;
 - rotating actor, Slack, GitHub, document, and OpenAI secrets;
 - adding/disabling/deleting a source;
-- Slack and code backfills;
+- Slack and code backfills, including server-owned Slack conversation inventory,
+  digest-bound scope, and incomplete-discovery recovery;
 - replaying or quarantining DLQ messages;
 - rebuilding IDF statistics;
 - building/reindexing HNSW without blocking ingestion;
@@ -1154,11 +1242,36 @@ membership reconciliation, edit/delete/reaction handling, and bounded backfill.
 
 - Slack is acknowledged on the existing latency path regardless of indexing
   outcome.
-- Unsigned events, DMs, MPIMs, untracked channels, and bot-only messages do not
-  enter the production corpus by default.
+- Unsigned events, DMs, MPIMs, and untracked channels do not enter the
+  production corpus by default. Bot-authored messages in an enabled source do
+  enter the corpus with explicit attribution, but bot-only messages never
+  admit a new turn.
+- Every committed bot write flows through the shared Slack Web API observer by
+  default, including placeholders, progress updates, and tool-status rows.
+  Local marker fields never reach Slack; only an explicit internal
+  `knowledgeIndex: false` suppresses observation. Every observation schedules
+  a whole-thread refetch. Update observations use a deterministic content
+  revision so same-body retries deduplicate while changed updates remain
+  separately durable. A bot write does not invent a project or bypass
+  source admission.
 - A reply/edit/delete/reaction refresh replaces the whole thread artifact.
+- The documented Slack reaction payload shape, nested `message_replied` and
+  `message_changed` parent fields, and `message_deleted` `deleted_ts`-only
+  shape are handled explicitly. Reaction/deletion resolution uses durable
+  body-free message-to-thread metadata; missing metadata fails closed instead
+  of guessing a root. Complete thread fetches populate that metadata before
+  derived-index dispatch.
 - Private membership removal suppresses results within the configured maximum
-  ACL age; refresh failure fails closed.
+  ACL age; refresh failure fails closed. ACL refresh commits only when its
+  `expectedRevision` matches the durable invalidation revision. The refresh
+  worker fetches `conversations.members` with bounded pagination, sends the
+  canonical sorted member set to the KnowledgeDO, and retrieval requires the
+  requester to be present in that fresh set.
+- Uninstall, token-revocation, archive, and bot-leave events advance a durable
+  installation/channel lifecycle generation, disable the affected source and
+  active ingestion leases, invalidate ACL state, and are idempotent under
+  `(team_id,event_id)`. Reinstall activation is explicit and does not silently
+  re-enable old indexed sources.
 - Existing Slack bot turn, Stop, dedup, and recovery tests remain green.
 
 ### KB-5 — Distillation, bursting, embeddings, and IDF

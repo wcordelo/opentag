@@ -11,9 +11,11 @@ import {
   parsePrivateKeyHex,
   publicKeyHexFromPrivate,
   signNostrEvent,
+  verifyNipOaAuthTag,
   type NostrSignedEvent,
   type NostrUnsignedEvent,
 } from "./nostr-crypto.js";
+import { BuzzContractError } from "./contract.js";
 
 /** Exact Cloudflare Worker secret name for the M1 test-only OpenTag signer. */
 export const BUZZ_OPEN_TAG_SIGNER_SECRET_NAME = "BUZZ_OPEN_TAG_SIGNER_SECRET";
@@ -48,8 +50,8 @@ export const BUZZ_OPEN_TAG_AUTH_TAG_SECRET_NAME = "BUZZ_OPEN_TAG_AUTH_TAG";
 /** HTTP header name the Buzz relay reads for NIP-OA on `/query` (bridge.rs). */
 export const BUZZ_OPEN_TAG_AUTH_TAG_HEADER = "x-auth-tag";
 
-/** Opaque code when the auth-tag secret is present but not valid NIP-OA JSON. */
 export const BUZZ_AUTH_TAG_INVALID_SHAPE = "buzz_auth_tag_invalid_shape";
+export const BUZZ_AUTH_TAG_SIGNER_MISMATCH = "buzz_auth_tag_signer_mismatch";
 
 export type BuzzOpenTagSigner = Readonly<{
   /** Hex pubkey derived from the secret — safe to log / admit to a channel. */
@@ -75,7 +77,12 @@ export function loadBuzzOpenTagSigner(
   } catch {
     throw new Error("buzz_signer_invalid_secret_shape");
   }
-  const publicKeyHex = publicKeyHexFromPrivate(secret);
+  let publicKeyHex: string;
+  try {
+    publicKeyHex = publicKeyHexFromPrivate(secret);
+  } catch {
+    throw new Error("buzz_signer_invalid_secret_shape");
+  }
   return Object.freeze({
     publicKeyHex,
     async sign(event: NostrUnsignedEvent): Promise<NostrSignedEvent> {
@@ -96,6 +103,7 @@ export function loadBuzzOpenTagSigner(
  */
 export function loadBuzzOpenTagAuthTag(
   raw: string | undefined,
+  agentPubkeyHex?: string,
 ): string | undefined {
   // Truly unset / empty CF secret → standalone NIP-98 path (explicit default).
   if (raw === undefined || raw.length === 0) {
@@ -104,38 +112,56 @@ export function loadBuzzOpenTagAuthTag(
   const trimmed = raw.trim();
   // Present but blank after trim is mis-set, not unset — fail closed.
   if (trimmed.length === 0) {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
   if (!Array.isArray(parsed) || parsed.length !== 4) {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
   if (parsed[0] !== "auth") {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
   for (let i = 1; i < 4; i += 1) {
     if (typeof parsed[i] !== "string") {
-      throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+      throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
     }
   }
   const owner = parsed[1] as string;
   const conditions = parsed[2] as string;
   const sig = parsed[3] as string;
-  // NIP-OA: owner/sig lowercase hex; conditions empty or ASCII without whitespace.
   if (!/^[0-9a-f]{64}$/.test(owner) || !/^[0-9a-f]{128}$/.test(sig)) {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+    throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
   }
-  if (/\s/.test(conditions)) {
-    throw new Error(BUZZ_AUTH_TAG_INVALID_SHAPE);
+  if (conditions.length > 0) {
+    for (const clause of conditions.split("&")) {
+      const match = /^(kind=|created_at[<>])([0-9]+)$/.exec(clause);
+      if (match === null) {
+        throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
+      }
+      const digits = match[2] ?? "";
+      if (digits.length > 1 && digits.startsWith("0")) {
+        throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
+      }
+      const value = Number(digits);
+      const maximum = match[1] === "kind=" ? 65_535 : 4_294_967_295;
+      if (!Number.isSafeInteger(value) || value > maximum) {
+        throw new BuzzContractError(BUZZ_AUTH_TAG_INVALID_SHAPE);
+      }
+    }
   }
-  // Canonical re-serialize: validation checked parsed elements; returning the
-  // trimmed raw would let interior whitespace between JSON tokens ride into
-  // the header (Athena defense-in-depth).
+  if (agentPubkeyHex !== undefined && !verifyNipOaAuthTag({
+    ownerPubkeyHex: owner,
+    conditions,
+    signatureHex: sig,
+    agentPubkeyHex,
+  })) {
+    throw new BuzzContractError(BUZZ_AUTH_TAG_SIGNER_MISMATCH);
+  }
   return JSON.stringify(parsed);
 }
 

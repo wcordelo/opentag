@@ -107,7 +107,9 @@ describe("slack enrichment", () => {
       corpusSize: 100,
     });
     expect(result.distillStatus).toBe("skipped");
-    expect(result.threadEmbedText).toBe("full thread text");
+    expect(result.threadEmbedText).toContain("full thread text");
+    expect(result.threadEmbedText).toContain("engagement reactions:1");
+    expect(result.reactionCount).toBe(1);
     expect(result.burstDocuments.length).toBeGreaterThanOrEqual(0);
   });
 });

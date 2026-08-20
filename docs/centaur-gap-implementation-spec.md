@@ -14,11 +14,13 @@ Source comparison: Centaur daily gap reviews through fork sync `14c6577`
 > preserved as historical acceptance criteria.
 
 > **Current Slack routing note (2026-08-01):** The rich-payload authorization
-> contract remains exact and fail-closed, but ordinary human thread routing is
-> now response-routed rather than mention-only. DMs, files, explicit mentions,
-> questions, action requests, and problem reports may enter the normal
-> lifecycle without a tag; passive thread conversation remains history-only.
-> Stop still requires an exact bot mention. Slack's duplicate threaded
+> contract remains exact and fail-closed, but ordinary human message routing is
+> now response-routed rather than mention-only. DMs, MPIMs, files, explicit
+> mentions, questions, action requests, and problem reports may enter the
+> normal lifecycle without a tag, including from top-level channel messages;
+> passive channel/thread conversation remains history-only.
+> A threaded human `stop` command may be unmentioned; a top-level channel
+> `stop` still requires an exact bot mention. Slack's duplicate threaded
 > `message` delivery for an `app_mention` is rejected before pre-admission to
 > prevent a stale active-turn warning. See [`docs/current-state.md`](./current-state.md)
 > for the live canary evidence.
@@ -94,7 +96,7 @@ These constraints are requirements, not guidance:
 | --- | --- | --- |
 | Permission enforcement | Access bundles filter tools and policies remove memory/task tools. Harness egress separately enforces repository, credential, and remote-write rules. There is no common redacted inspection surface. | `edge/src/config/access-bundle.ts`, `edge/src/config/workspace-config-do.ts`, `edge/src/tools/guard.ts`, `edge/workers/sandbox/src/egress-policy.ts` |
 | Thread runtime selection | Inline flags are stripped and model/harness values persist per thread. Channel configuration contains prompt, policies, and bundle only. | `edge/src/slack/overrides.ts`, `edge/src/store/thread-overrides.ts`, `edge/src/agent-turn.ts`, `edge/src/config/workspace-config-do.ts` |
-| Rich Slack mentions and thread response routing | Ingress accepts `app_mention`, DMs, files, and response-worthy thread replies. Passive conversation is observed without admission; bot-only messages are rejected and rich automation mentions remain exact/fail-closed. | `edge/src/slack/ingress-normalize.ts`, `edge/src/slack/response-routing.ts`, `edge/src/slack/pre-admit-turn.ts`, `edge/src/slack/cloudflare-slack-adapter.ts` |
+| Rich Slack mentions and response routing | Ingress accepts `app_mention`, DMs/MPIMs, files, top-level channel messages, and response-worthy thread replies. Passive conversation is observed without admission; bot-only messages are rejected and rich automation mentions remain exact/fail-closed. | `edge/src/slack/ingress-normalize.ts`, `edge/src/slack/response-routing.ts`, `edge/src/slack/pre-admit-turn.ts`, `edge/src/slack/cloudflare-slack-adapter.ts` |
 | Requester identity | Request context assumes a Slack requester ID and profile enrichment calls `users.info`. | `edge/src/request-context.ts`, `edge/src/agent-turn.ts` |
 | Harness inspection | The harness receives a validated turn envelope but no permission snapshot. | `edge/src/harness/client.ts`, `edge/workers/sandbox/turn-contract.ts`, `edge/workers/sandbox/src/router.ts`, `edge/workers/sandbox/harness-server.ts` |
 

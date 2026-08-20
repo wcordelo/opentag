@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env.js";
 import { ActiveTurnEngine } from "../src/store/active-turn-engine.js";
 import { migrate } from "../src/store/schema.js";
@@ -206,6 +206,11 @@ function ordinaryFileJob() {
 describe("deferred ingress discriminates duplicate from concurrent admission", () => {
   beforeEach(() => {
     bot.handleEventsBody.mockClear();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("keeps a distinct-concurrent ordinary file turn pending, then hands it off once", async () => {
@@ -227,6 +232,7 @@ describe("deferred ingress discriminates duplicate from concurrent admission", (
     expect(bot.handleEventsBody).not.toHaveBeenCalled();
 
     state.clearRows();
+    await vi.advanceTimersByTimeAsync(1_000);
     await owner.alarm();
     expect(await owner.getState()).toMatchObject({ status: "completed" });
     expect(bot.handleEventsBody).toHaveBeenCalledTimes(1);
@@ -299,6 +305,7 @@ describe("deferred ingress discriminates duplicate from concurrent admission", (
     expect(bot.handleEventsBody).not.toHaveBeenCalled();
 
     state.clearRows();
+    await vi.advanceTimersByTimeAsync(1_000);
     await owner.alarm();
     expect(await owner.getState()).toMatchObject({ status: "completed" });
     expect(state.values.get("late-file-consumed:EvMention")).toBe(true);

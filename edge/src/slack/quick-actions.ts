@@ -16,6 +16,7 @@ import {
 } from "./quick-card.js";
 import { conversationKeyOf, DM_SCOPE } from "./channels-slack-lite.js";
 import { bindRequestContext } from "../request-context.js";
+import type { VerifiedIngressEvidence } from "../platform/contract.js";
 import { createSlackWebClient, sharedSlackRateScheduler } from "./web-api.js";
 import { getOrCreateBot } from "../bot-engine.js";
 import type { Env } from "../env.js";
@@ -43,6 +44,7 @@ export type PreparedQuickAction = Readonly<{
   conversationKey: string;
   quickEventId: string;
   preAdmittedTurn: NonNullable<Awaited<ReturnType<typeof preAdmitSlackTurn>>>;
+  verifiedIngress?: VerifiedIngressEvidence;
 }>;
 
 const PROMPTS: Record<QuickActionKind, (ref: QuickRef) => string> = {
@@ -180,6 +182,7 @@ export async function prepareQuickAction(
   env: Env,
   payload: unknown,
   teamId = "unknown",
+  verifiedIngress?: VerifiedIngressEvidence,
 ): Promise<{ handled: boolean; prepared?: PreparedQuickAction }> {
   const body = payload as QuickInteractionPayload;
   const action = body.actions?.[0];
@@ -239,6 +242,7 @@ export async function prepareQuickAction(
       conversationKey,
       quickEventId,
       preAdmittedTurn,
+      ...(verifiedIngress ? { verifiedIngress } : {}),
     }),
   };
 }
@@ -258,6 +262,7 @@ export async function handoffPreparedQuickAction(
     conversationKey,
     quickEventId,
     preAdmittedTurn,
+    verifiedIngress,
   } = prepared;
   const isDm = channel.startsWith("D");
   let handedOff = false;
@@ -302,6 +307,7 @@ export async function handoffPreparedQuickAction(
     bindRequestContext(resolved, {
       teamId,
       requesterId: resolved.id,
+      ...(verifiedIngress ? { verifiedIngress } : {}),
       preAdmittedTurn,
       ...((messageTs ?? threadTs)
         ? {
@@ -337,8 +343,9 @@ export async function handleQuickAction(
   env: Env,
   payload: unknown,
   teamId = "unknown",
+  verifiedIngress?: VerifiedIngressEvidence,
 ): Promise<{ handled: boolean }> {
-  const result = await prepareQuickAction(env, payload, teamId);
+  const result = await prepareQuickAction(env, payload, teamId, verifiedIngress);
   if (!result.prepared) return { handled: result.handled };
   return handoffPreparedQuickAction(env, result.prepared);
 }

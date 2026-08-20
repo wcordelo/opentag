@@ -10,13 +10,12 @@ resolves the tenant/platform Durable Object, claims one intent, invokes an
 explicitly registered adapter, and reports a bounded external receipt or a
 safe retry/terminal failure through the lease owner.
 
-The default Worker remains fail-closed for every effect except the explicitly
-reviewed `connector_effect` path. The current deployment registers the
-private Linear provider adapter only for `connector_effect`; provisioning,
-identity, credential-custody, OAuth, marketplace, billing, memory, and unknown
-effect kinds still end as `effect_adapter_unconfigured`. The bot's
-`PLATFORM_PROVIDER_EFFECTS_MODE` remains `disabled` until the controlled
-workspace and custody mapping are ready.
+The default Worker remains fail-closed until a provider adapter is explicitly
+configured. Each effect family has its own least-privilege service binding and
+bearer secret; provisioning, identity, credential custody, connector OAuth,
+marketplace, billing, memory deletion, and connector effects cannot share an
+adapter boundary. An adapter is registered only when both its binding and
+secret are present, and it receives only its matching effect kind.
 
 Every successful adapter invocation must return an opaque external receipt
 reference. The runner will not mark an effect completed from an empty or
@@ -28,11 +27,31 @@ is in flight. If the state owner cannot record a failure or completion, the
 request returns a retryable 503 rather than fabricating a receipt; the provider
 adapter must therefore use the intent idempotency key for reconciliation.
 
-An approved provider Worker is connected through the
-`PLATFORM_EFFECT_ADAPTER` service binding and
-`PLATFORM_EFFECT_ADAPTER_AUTH_TOKEN` secret. When both are configured, only
-`connector_effect` is sent to `POST /execute` on that binding using this versioned,
-metadata-only envelope:
+An approved provider Worker can be connected for one effect family through its
+dedicated service binding and bearer secret. The supported pairs are
+`PROVISIONING_EFFECT_ADAPTER`/
+`PROVISIONING_EFFECT_ADAPTER_AUTH_TOKEN`,
+`IDENTITY_CUSTODY_EFFECT_ADAPTER`/
+`IDENTITY_CUSTODY_EFFECT_ADAPTER_AUTH_TOKEN`,
+`CREDENTIAL_CUSTODY_EFFECT_ADAPTER`/
+`CREDENTIAL_CUSTODY_EFFECT_ADAPTER_AUTH_TOKEN`,
+`CONNECTOR_OAUTH_EFFECT_ADAPTER`/
+`CONNECTOR_OAUTH_EFFECT_ADAPTER_AUTH_TOKEN`,
+`MARKETPLACE_EFFECT_ADAPTER`/
+`MARKETPLACE_EFFECT_ADAPTER_AUTH_TOKEN`,
+`BILLING_METER_EFFECT_ADAPTER`/
+`BILLING_METER_EFFECT_ADAPTER_AUTH_TOKEN`, and
+`MEMORY_DELETION_EFFECT_ADAPTER`/
+`MEMORY_DELETION_EFFECT_ADAPTER_AUTH_TOKEN`.
+
+The connector effect boundary uses the dedicated
+`CONNECTOR_EFFECT_ADAPTER`/`CONNECTOR_EFFECT_ADAPTER_AUTH_TOKEN` pair.
+
+The Worker registers an adapter only when both members of a pair are present.
+An adapter receives only its matching effect kind; a credential adapter cannot
+receive provisioning or billing intents. The `/health` response exposes the
+configured kind list and non-secret missing-binding/missing-auth states.
+Every adapter uses this versioned, metadata-only envelope:
 
 ```json
 {

@@ -732,6 +732,57 @@ token, not only in the manifest.
 
 ## Platform effect handoff
 
+### Tenant locator and provisioning
+
+The platform metadata Durable Object's reserved object
+`__platform_marketplace__` owns the external-platform tenant locator index.
+The index is the only source of the internal tenant UUID used to address
+tenant metadata objects; callers must not construct or submit a Durable Object
+name. Each active record has a canonical tenant UUID and monotonic version.
+Revocation is terminal, and resolver failures remain fail-closed.
+
+The admin-only routes are:
+
+- `POST /admin/platform/tenant-locator` to register an active mapping;
+- `POST /admin/platform/tenant-locator/resolve` to return `resolved`,
+  `not_found`, `ambiguous`, or `inactive`; and
+- `POST /admin/platform/tenant-locator/revoke` to advance the version and
+  terminally revoke a mapping.
+
+`POST /admin/platform/provision` registers the deterministic mapping before it
+creates tenant state, so retries are idempotent and a revoked mapping cannot
+be silently reactivated. The registry stores only identifiers, versions, and
+timestamps. The registry-backed Slack adapter must resolve the mapping before
+building a platform request context; that context carries the locator version
+to later effect boundaries for stale-mapping rejection.
+
+Population of this registry is still a bootstrap operation. Do not treat a
+successful admin response as proof of a Slack installation, Durable Object
+creation outside the metadata ledger, identity custody, OAuth grant, or
+connector readiness. Complete the required provisioning steps with opaque
+external receipts and run a non-production install smoke before enabling a
+tenant-scoped provider.
+
+### Identity-link lifecycle
+
+Identity links are stored in the selected tenant metadata object and bind the
+external subject tuple to a canonical principal and verified proof metadata.
+Use the admin-only routes with a tenant ID for controlled bootstrap:
+
+- `POST /admin/platform/identity-link` writes an active version;
+- `POST /admin/platform/identity-link/resolve` returns the active principal
+  and proof or a fail-closed status; and
+- `POST /admin/platform/identity-link/revoke` advances the version and makes
+  the subject link terminally inactive.
+
+The identity-link ledger is not an identity provider or key-custody system.
+Proof issuance, public-key generation, signing, private-key storage, and
+external revocation remain owned by the approved identity/custody authority.
+Never put private keys, tokens, OAuth codes, or generic provider payloads in
+an identity-link request or receipt. The registry-backed Slack adapter should
+resolve the tenant first and then resolve the subject link from that tenant
+object before constructing a platform request context.
+
 ### Credential broker deployment order
 
 The credential broker can be deployed before its custody backend to publish a

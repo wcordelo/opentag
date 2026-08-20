@@ -6,12 +6,16 @@ import {
   validateCredentialBrokerRequest,
   validateCredentialBrokerResponse,
 } from "../../../src/connectors/credential-broker.js";
+import {
+  assertConnectorAuthorizationSnapshotMatchesBinding,
+  ConnectorAuthorizationSnapshotError,
+  PlatformStateConnectorAuthorizationReader,
+  type ConnectorAuthorizationSnapshot,
+} from "../../../src/connectors/authorization-snapshot.js";
 import type { CredentialCustodyReference } from "../../../src/platform/layer3-contract.js";
-import { validateCredentialCustodyReference } from "../../../src/platform/layer3-contract.js";
 import type { PlatformStateDO } from "../../../src/platform/platform-state-do.js";
 import type { WorkspaceConfigDO } from "../../../src/config/workspace-config-do.js";
 import { deriveInternalTenantId } from "../../../src/platform/tenant-id.js";
-import { platformTenantObjectName } from "../../../src/platform/tenant-routing.js";
 import { tenantStub } from "../../../src/tenancy.js";
 
 type BrokerEnv = {
@@ -79,7 +83,11 @@ function expiresAtAfter(now: number, value: string | undefined): boolean {
 async function readCredentialMetadata(
   env: BrokerEnv["Bindings"],
   request: ReturnType<typeof validateCredentialBrokerRequest>,
-): Promise<{ tenantId: string; credential: CredentialCustodyReference }> {
+): Promise<{
+  tenantId: string;
+  credential: CredentialCustodyReference;
+  snapshot: ConnectorAuthorizationSnapshot;
+}> {
   if (!env.WORKSPACE_CONFIG) {
     throw new CredentialBrokerError("workspace_config_unavailable", 503);
   }
@@ -107,31 +115,52 @@ async function readCredentialMetadata(
   if (!env.PLATFORM_STATE) {
     throw new CredentialBrokerError("platform_state_unavailable", 503);
   }
+  const platformBinding = request.labels.platformBinding;
+  if (!platformBinding) {
+    throw new CredentialBrokerError("platform_authorization_required", 403);
+  }
   const tenantId = await deriveInternalTenantId({
     externalPlatform: "slack",
     externalTenantId: request.labels.workspaceId,
   });
-  const stub = env.PLATFORM_STATE.get(
-    env.PLATFORM_STATE.idFromName(platformTenantObjectName(tenantId)),
-  ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
-  const response = await stub.fetch("https://platform-state/credential/get", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ credentialRef: request.reference.ref }),
-  });
-  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
-  if (!response.ok) {
-    const code = typeof body.error === "string" ? body.error : "credential_metadata_unavailable";
-    const status = response.status === 404 ? 404 : response.status === 409 ? 409 : 503;
-    throw new CredentialBrokerError(code, status);
+  if (
+    platformBinding.tenantId !== tenantId ||
+    platformBinding.platform !== "slack" ||
+    platformBinding.platformTenantId !== request.labels.workspaceId
+  ) {
+    throw new CredentialBrokerError("platform_tenant_mismatch", 403);
   }
-  let credential: CredentialCustodyReference;
+  let snapshot: ConnectorAuthorizationSnapshot;
   try {
-    credential = validateCredentialCustodyReference(body);
-  } catch {
-    throw new CredentialBrokerError("credential_metadata_invalid", 503);
+    snapshot = await new PlatformStateConnectorAuthorizationReader(env.PLATFORM_STATE).resolve({
+      tenantId,
+      principalId: platformBinding.principalId,
+      platform: platformBinding.platform,
+      platformTenantId: platformBinding.platformTenantId,
+      platformSubjectId: platformBinding.platformSubjectId,
+      tenantLocatorVersion: platformBinding.tenantLocatorVersion,
+      connectorId: request.labels.connectorId,
+      action: request.labels.action,
+    });
+    assertConnectorAuthorizationSnapshotMatchesBinding(
+      snapshot,
+      platformBinding,
+      {
+        connectorId: request.labels.connectorId,
+        action: request.labels.action,
+        credentialRef: request.reference.ref,
+        credentialVersion: request.reference.version,
+      },
+    );
+  } catch (error) {
+    if (error instanceof CredentialBrokerError) throw error;
+    if (error instanceof ConnectorAuthorizationSnapshotError) {
+      throw new CredentialBrokerError(error.code, error.status);
+    }
+    const code = error instanceof Error ? error.message : "connector_authorization_snapshot_unavailable";
+    throw new CredentialBrokerError(code, 503);
   }
-  return { tenantId, credential };
+  return { tenantId, credential: snapshot.credential, snapshot };
 }
 
 function assertResolutionAllowed(
@@ -139,6 +168,7 @@ function assertResolutionAllowed(
   tenantId: string,
   credential: CredentialCustodyReference,
   policy: ConnectorPolicy,
+  snapshot: ConnectorAuthorizationSnapshot,
 ): void {
   const now = Date.now();
   if (!expiresAtAfter(now, request.labels.expiresAt)) {
@@ -171,6 +201,12 @@ function assertResolutionAllowed(
     : policy.requiredScopes.every(hasScope);
   if (!scopesAllowed) {
     throw new CredentialBrokerError("credential_scope_missing", 403);
+  }
+  if (
+    snapshot.connectorId !== request.labels.connectorId ||
+    snapshot.action !== request.labels.action
+  ) {
+    throw new CredentialBrokerError("connector_authorization_snapshot_mismatch", 403);
   }
 }
 
@@ -287,8 +323,8 @@ app.post("/resolve", async (c) => {
       throw new CredentialBrokerError("connector_labels_tampered", 403);
     }
     const policy = policyFor(request);
-    const { tenantId, credential } = await readCredentialMetadata(c.env, request);
-    assertResolutionAllowed(request, tenantId, credential, policy);
+    const { tenantId, credential, snapshot } = await readCredentialMetadata(c.env, request);
+    assertResolutionAllowed(request, tenantId, credential, policy, snapshot);
     return c.json(await resolveFromCustody(c.env, request, tenantId, credential), 200, {
       "cache-control": "no-store",
     });

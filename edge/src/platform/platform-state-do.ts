@@ -44,6 +44,23 @@ import type { SqlExecutor, TransactionRunner } from "../store/sql.js";
 import { deriveInternalTenantId } from "./tenant-id.js";
 import { platformTenantObjectName } from "./tenant-routing.js";
 import { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
+import {
+  TENANT_LOCATOR_OBJECT_NAME,
+  TenantLocatorContractError,
+  tenantLocatorResolutionFromRecord,
+  type TenantLocatorRecord,
+  validateTenantLocatorLookup,
+  validateTenantLocatorRecord,
+  validateTenantLocatorRevocation,
+} from "./tenant-locator.js";
+import {
+  IdentityLinkContractError,
+  identityLinkResolutionFromRecord,
+  type IdentityLinkRecord,
+  validateIdentityLinkLookup,
+  validateIdentityLinkRecord,
+  validateIdentityLinkRevocation,
+} from "./identity-link.js";
 
 /**
  * Metadata-only platform state.
@@ -60,7 +77,7 @@ import { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
  * reserved object because it is platform-wide rather than tenant-owned.
  */
 
-export const PLATFORM_MARKETPLACE_OBJECT_NAME = "__platform_marketplace__";
+export const PLATFORM_MARKETPLACE_OBJECT_NAME = TENANT_LOCATOR_OBJECT_NAME;
 export { deriveInternalTenantId } from "./tenant-id.js";
 export { platformTenantObjectName } from "./tenant-routing.js";
 export { PLATFORM_STATE_SCHEMA_VERSION } from "./platform-state-version.js";
@@ -85,6 +102,19 @@ const PLATFORM_DDL = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_provisioning_external
    ON provisioning(external_platform, external_tenant_id)`,
+  `CREATE TABLE IF NOT EXISTS tenant_locators (
+     external_platform TEXT NOT NULL,
+     external_tenant_id TEXT NOT NULL,
+     tenant_id TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+     updated_at TEXT NOT NULL,
+     revoked_at TEXT,
+     locator_json TEXT NOT NULL,
+     PRIMARY KEY (external_platform, external_tenant_id)
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_tenant_locators_tenant
+   ON tenant_locators(tenant_id)`,
   `CREATE TABLE IF NOT EXISTS provisioning_step_receipts (
      idempotency_key TEXT NOT NULL,
      step TEXT NOT NULL,
@@ -128,6 +158,19 @@ const PLATFORM_DDL = [
      issued_at TEXT NOT NULL,
      revoked_at TEXT,
      updated_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS identity_links (
+     external_platform TEXT NOT NULL,
+     external_tenant_id TEXT NOT NULL,
+     external_subject_id TEXT NOT NULL,
+     tenant_id TEXT NOT NULL,
+     principal_json TEXT NOT NULL,
+     identity_link_json TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+     updated_at TEXT NOT NULL,
+     revoked_at TEXT,
+     PRIMARY KEY (external_platform, external_tenant_id, external_subject_id)
    )`,
   `CREATE TABLE IF NOT EXISTS credential_custody_refs (
      credential_ref TEXT PRIMARY KEY,
@@ -349,6 +392,52 @@ type ProvisioningStepReceiptRow = {
   external_receipt_ref: string;
   observed_at: string;
 };
+
+type TenantLocatorRow = {
+  external_platform: string;
+  external_tenant_id: string;
+  tenant_id: string;
+  version: number;
+  status: TenantLocatorRecord["status"];
+  updated_at: string;
+  revoked_at: string | null;
+  locator_json: string;
+};
+
+type IdentityLinkRow = {
+  external_platform: string;
+  external_tenant_id: string;
+  external_subject_id: string;
+  tenant_id: string;
+  principal_json: string;
+  identity_link_json: string;
+  version: number;
+  status: IdentityLinkRecord["status"];
+  updated_at: string;
+  revoked_at: string | null;
+};
+
+function tenantLocatorFromRow(row: TenantLocatorRow): TenantLocatorRecord {
+  return validateTenantLocatorRecord(parseJson<unknown>(row.locator_json));
+}
+
+function identityLinkFromRow(row: IdentityLinkRow): IdentityLinkRecord {
+  return validateIdentityLinkRecord({
+    schemaVersion: 1,
+    tenantId: row.tenant_id,
+    subject: {
+      platform: row.external_platform,
+      platformTenantId: row.external_tenant_id,
+      platformSubjectId: row.external_subject_id,
+    },
+    principal: parseJson<unknown>(row.principal_json),
+    identityLink: parseJson<unknown>(row.identity_link_json),
+    version: row.version,
+    status: row.status,
+    updatedAt: row.updated_at,
+    ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  });
+}
 
 function provisioningReceipt(
   row: ProvisioningRow,
@@ -799,6 +888,139 @@ export class PlatformStateEngine {
     return { ok: true, duplicate: false, receipt: effectReceipt(this.effectById(intent.intentId)!) };
   }
 
+  /**
+   * Register the server-owned external-platform to internal-tenant mapping.
+   * The platform marketplace object is the only object allowed to own this
+   * index; tenant objects only receive the already-derived internal ID.
+   */
+  putTenantLocator(value: unknown): { ok: true; duplicate: boolean; locator: TenantLocatorRecord } {
+    const locator = validateTenantLocatorRecord(value);
+    if (locator.status !== "active") {
+      throw new TenantLocatorContractError("tenant_locator_put_requires_active", 400);
+    }
+    return this.tx(() => {
+      const current = this.sql.exec<TenantLocatorRow>(
+        `SELECT * FROM tenant_locators
+         WHERE external_platform = ? AND external_tenant_id = ?`,
+        locator.platform,
+        locator.platformTenantId,
+      ).toArray()[0];
+      if (current) {
+        const currentRecord = tenantLocatorFromRow(current);
+        if (currentRecord.tenantId !== locator.tenantId) {
+          throw new TenantLocatorContractError("tenant_locator_tenant_conflict", 409);
+        }
+        if (currentRecord.status === "revoked") {
+          throw new TenantLocatorContractError("tenant_locator_revoked", 409);
+        }
+        if (locator.version < currentRecord.version) {
+          throw new TenantLocatorContractError("tenant_locator_version_stale", 409);
+        }
+        if (locator.version === currentRecord.version) {
+          if (JSON.stringify(currentRecord) !== JSON.stringify(locator)) {
+            throw new TenantLocatorContractError("tenant_locator_version_conflict", 409);
+          }
+          return { ok: true, duplicate: true, locator: currentRecord };
+        }
+        if (locator.version !== currentRecord.version + 1) {
+          throw new TenantLocatorContractError("tenant_locator_version_gap", 409);
+        }
+      } else {
+        const sameTenant = this.sql.exec<TenantLocatorRow>(
+          `SELECT * FROM tenant_locators WHERE tenant_id = ?`,
+          locator.tenantId,
+        ).toArray()[0];
+        if (sameTenant) {
+          throw new TenantLocatorContractError("tenant_locator_tenant_conflict", 409);
+        }
+        if (locator.version !== 1) {
+          throw new TenantLocatorContractError("tenant_locator_initial_version_invalid", 409);
+        }
+      }
+
+      this.sql.exec(
+        `INSERT INTO tenant_locators (
+           external_platform, external_tenant_id, tenant_id, version,
+           status, updated_at, revoked_at, locator_json
+         ) VALUES (?, ?, ?, ?, 'active', ?, NULL, ?)
+         ON CONFLICT(external_platform, external_tenant_id) DO UPDATE SET
+           tenant_id = excluded.tenant_id,
+           version = excluded.version,
+           status = excluded.status,
+           updated_at = excluded.updated_at,
+           revoked_at = NULL,
+           locator_json = excluded.locator_json`,
+        locator.platform,
+        locator.platformTenantId,
+        locator.tenantId,
+        locator.version,
+        locator.updatedAt,
+        json(locator),
+      );
+      return { ok: true, duplicate: false, locator };
+    });
+  }
+
+  revokeTenantLocator(value: unknown): { ok: true; duplicate: boolean; locator: TenantLocatorRecord } {
+    const revocation = validateTenantLocatorRevocation(value);
+    return this.tx(() => {
+      const current = this.sql.exec<TenantLocatorRow>(
+        `SELECT * FROM tenant_locators
+         WHERE external_platform = ? AND external_tenant_id = ?`,
+        revocation.platform,
+        revocation.platformTenantId,
+      ).toArray()[0];
+      if (!current) throw new TenantLocatorContractError("tenant_locator_not_found", 404);
+      const currentRecord = tenantLocatorFromRow(current);
+      if (currentRecord.status === "revoked") {
+        if (currentRecord.version === revocation.version && currentRecord.revokedAt === revocation.revokedAt) {
+          return { ok: true, duplicate: true, locator: currentRecord };
+        }
+        throw new TenantLocatorContractError("tenant_locator_revoked", 409);
+      }
+      if (revocation.version !== currentRecord.version + 1) {
+        throw new TenantLocatorContractError(
+          revocation.version < currentRecord.version + 1
+            ? "tenant_locator_version_stale"
+            : "tenant_locator_version_gap",
+          409,
+        );
+      }
+      const locator = validateTenantLocatorRecord({
+        ...currentRecord,
+        version: revocation.version,
+        status: "revoked",
+        updatedAt: revocation.revokedAt,
+        revokedAt: revocation.revokedAt,
+      });
+      this.sql.exec(
+        `UPDATE tenant_locators
+         SET version = ?, status = 'revoked', updated_at = ?, revoked_at = ?, locator_json = ?
+         WHERE external_platform = ? AND external_tenant_id = ?`,
+        locator.version,
+        locator.updatedAt,
+        locator.revokedAt ?? null,
+        json(locator),
+        locator.platform,
+        locator.platformTenantId,
+      );
+      return { ok: true, duplicate: false, locator };
+    });
+  }
+
+  resolveTenantLocator(value: unknown) {
+    const lookup = validateTenantLocatorLookup(value);
+    const rows = this.sql.exec<TenantLocatorRow>(
+      `SELECT * FROM tenant_locators
+       WHERE external_platform = ? AND external_tenant_id = ?`,
+      lookup.platform,
+      lookup.platformTenantId,
+    ).toArray();
+    if (rows.length === 0) return { status: "not_found" as const };
+    if (rows.length !== 1) return { status: "ambiguous" as const };
+    return tenantLocatorResolutionFromRecord(tenantLocatorFromRow(rows[0]!));
+  }
+
   async provision(value: unknown): Promise<ReturnType<typeof provisioningReceipt>> {
     const request = validateProvisioningRequest(value);
     const tenantId = await deriveInternalTenantId(request);
@@ -976,6 +1198,159 @@ export class PlatformStateEngine {
       const stored = this.provisioningByKey(key)!;
       return provisioningReceipt(stored, this.provisioningStepReceipts(stored.idempotency_key));
     });
+  }
+
+  putIdentityLink(value: unknown): { ok: true; duplicate: boolean; record: IdentityLinkRecord } {
+    const record = validateIdentityLinkRecord(value);
+    if (record.status !== "active") {
+      throw new IdentityLinkContractError("identity_link_put_requires_active", 400);
+    }
+    if (record.principal.status !== "active") {
+      throw new IdentityLinkContractError("identity_principal_inactive", 409);
+    }
+    return this.tx(() => {
+      const tenant = assertProvisionedRow(this.provisioningByTenant(record.tenantId), record.tenantId);
+      if (
+        tenant.external_platform !== record.subject.platform ||
+        tenant.external_tenant_id !== record.subject.platformTenantId
+      ) {
+        throw new IdentityLinkContractError("identity_link_tenant_conflict", 409);
+      }
+      const current = this.sql.exec<IdentityLinkRow>(
+        `SELECT * FROM identity_links
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+      ).toArray()[0];
+      if (current) {
+        const currentRecord = identityLinkFromRow(current);
+        if (currentRecord.tenantId !== record.tenantId) {
+          throw new IdentityLinkContractError("identity_link_tenant_conflict", 409);
+        }
+        if (currentRecord.identityLink.principalId !== record.identityLink.principalId) {
+          throw new IdentityLinkContractError("identity_link_principal_conflict", 409);
+        }
+        if (currentRecord.status === "revoked") {
+          throw new IdentityLinkContractError("identity_link_revoked", 409);
+        }
+        if (record.version < currentRecord.version) {
+          throw new IdentityLinkContractError("identity_link_version_stale", 409);
+        }
+        if (record.version === currentRecord.version) {
+          if (JSON.stringify(currentRecord) !== JSON.stringify(record)) {
+            throw new IdentityLinkContractError("identity_link_version_conflict", 409);
+          }
+          return { ok: true, duplicate: true, record: currentRecord };
+        }
+        if (record.version !== currentRecord.version + 1) {
+          throw new IdentityLinkContractError("identity_link_version_gap", 409);
+        }
+      } else if (record.version !== 1) {
+        throw new IdentityLinkContractError("identity_link_initial_version_invalid", 409);
+      }
+
+      this.sql.exec(
+        `INSERT INTO identity_links (
+           external_platform, external_tenant_id, external_subject_id,
+           tenant_id, principal_json, identity_link_json, version, status,
+           updated_at, revoked_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL)
+         ON CONFLICT(external_platform, external_tenant_id, external_subject_id) DO UPDATE SET
+           tenant_id = excluded.tenant_id,
+           principal_json = excluded.principal_json,
+           identity_link_json = excluded.identity_link_json,
+           version = excluded.version,
+           status = excluded.status,
+           updated_at = excluded.updated_at,
+           revoked_at = NULL`,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+        record.tenantId,
+        json(record.principal),
+        json(record.identityLink),
+        record.version,
+        record.updatedAt,
+      );
+      return { ok: true, duplicate: false, record };
+    });
+  }
+
+  revokeIdentityLink(value: unknown): { ok: true; duplicate: boolean; record: IdentityLinkRecord } {
+    const revocation = validateIdentityLinkRevocation(value);
+    return this.tx(() => {
+      const current = this.sql.exec<IdentityLinkRow>(
+        `SELECT * FROM identity_links
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        revocation.platform,
+        revocation.platformTenantId,
+        revocation.platformSubjectId,
+      ).toArray()[0];
+      if (!current) throw new IdentityLinkContractError("identity_link_not_found", 404);
+      const currentRecord = identityLinkFromRow(current);
+      if (currentRecord.status === "revoked") {
+        if (currentRecord.version === revocation.version && currentRecord.revokedAt === revocation.revokedAt) {
+          return { ok: true, duplicate: true, record: currentRecord };
+        }
+        throw new IdentityLinkContractError("identity_link_revoked", 409);
+      }
+      if (revocation.version !== currentRecord.version + 1) {
+        throw new IdentityLinkContractError(
+          revocation.version < currentRecord.version + 1
+            ? "identity_link_version_stale"
+            : "identity_link_version_gap",
+          409,
+        );
+      }
+      const record = validateIdentityLinkRecord({
+        ...currentRecord,
+        version: revocation.version,
+        identityLink: {
+          ...currentRecord.identityLink,
+          identityLinkVersion: revocation.version,
+        },
+        status: "revoked",
+        updatedAt: revocation.revokedAt,
+        revokedAt: revocation.revokedAt,
+      });
+      this.sql.exec(
+        `UPDATE identity_links
+         SET version = ?, identity_link_json = ?, status = 'revoked',
+             updated_at = ?, revoked_at = ?
+         WHERE external_platform = ?
+           AND external_tenant_id = ?
+           AND external_subject_id = ?`,
+        record.version,
+        json(record.identityLink),
+        record.updatedAt,
+        record.revokedAt ?? null,
+        record.subject.platform,
+        record.subject.platformTenantId,
+        record.subject.platformSubjectId,
+      );
+      return { ok: true, duplicate: false, record };
+    });
+  }
+
+  resolveIdentityLink(value: unknown) {
+    const lookup = validateIdentityLinkLookup(value);
+    const rows = this.sql.exec<IdentityLinkRow>(
+      `SELECT * FROM identity_links
+       WHERE external_platform = ?
+         AND external_tenant_id = ?
+         AND external_subject_id = ?`,
+      lookup.platform,
+      lookup.platformTenantId,
+      lookup.platformSubjectId,
+    ).toArray();
+    if (rows.length === 0) return { status: "not_found" as const };
+    if (rows.length !== 1) return { status: "ambiguous" as const };
+    return identityLinkResolutionFromRecord(identityLinkFromRow(rows[0]!));
   }
 
   putIdentity(value: unknown): { ok: true; duplicate: boolean; reference: IdentityCustodyReference } {
@@ -1309,18 +1684,31 @@ export class PlatformStateEngine {
     });
   }
 
-  putOAuthGrant(value: unknown): { ok: true; duplicate: boolean; grant: ConnectorOAuthGrant } {
+  putOAuthGrant(
+    value: unknown,
+    marketplaceSnapshot?: unknown,
+  ): { ok: true; duplicate: boolean; grant: ConnectorOAuthGrant } {
     const grant = validateConnectorOAuthGrant(value);
     if (grant.status !== "active") throw new PlatformStateError("oauth_active_grant_required", 400);
     return this.tx(() => {
       assertTenantActive(this.provisioningByTenant(grant.tenantId), grant.tenantId);
-      const marketplace = this.sql.exec<MarketplaceRow>(
-        `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
-        grant.connectorId,
-        grant.marketplaceVersion,
-      ).toArray()[0];
-      if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
-      const marketplaceEntry = marketplaceFromRow(marketplace);
+      const marketplaceEntry = marketplaceSnapshot === undefined
+        ? (() => {
+          const marketplace = this.sql.exec<MarketplaceRow>(
+            `SELECT * FROM marketplace_entries WHERE connector_id = ? AND version = ?`,
+            grant.connectorId,
+            grant.marketplaceVersion,
+          ).toArray()[0];
+          if (!marketplace) throw new PlatformStateError("oauth_marketplace_not_found", 409);
+          return marketplaceFromRow(marketplace);
+        })()
+        : validateConnectorMarketplaceEntry(marketplaceSnapshot);
+      if (
+        marketplaceEntry.connectorId !== grant.connectorId ||
+        marketplaceEntry.version !== grant.marketplaceVersion
+      ) {
+        throw new PlatformStateError("oauth_marketplace_snapshot_mismatch", 409);
+      }
       assertConnectorMarketplaceEntryActivatable(marketplaceEntry);
       if (marketplaceEntry.status !== "curated") {
         throw new PlatformStateError("oauth_marketplace_not_curated", 409);
@@ -2220,8 +2608,17 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function responseForError(error: unknown): Response {
-  if (error instanceof PlatformFoundationError || error instanceof PlatformStateError) {
-    const status = error instanceof PlatformStateError ? error.status : 400;
+  if (
+    error instanceof PlatformFoundationError ||
+    error instanceof PlatformStateError ||
+    error instanceof TenantLocatorContractError ||
+    error instanceof IdentityLinkContractError
+  ) {
+    const status = error instanceof PlatformStateError ||
+      error instanceof TenantLocatorContractError ||
+      error instanceof IdentityLinkContractError
+      ? error.status
+      : 400;
     return Response.json({ error: error.code }, { status });
   }
   console.error("[platform-state] request failed", error instanceof Error ? error.message : "unknown");
@@ -2281,6 +2678,24 @@ export class PlatformStateDO extends DurableObject {
       if (url.pathname === "/provision" && request.method === "POST") {
         return Response.json(await this.engine.provision(await readJson(request)));
       }
+      if (url.pathname === "/tenant-locator" && request.method === "POST") {
+        return Response.json(this.engine.putTenantLocator(await readJson(request)));
+      }
+      if (url.pathname === "/tenant-locator/revoke" && request.method === "POST") {
+        return Response.json(this.engine.revokeTenantLocator(await readJson(request)));
+      }
+      if (url.pathname === "/tenant-locator/resolve" && request.method === "POST") {
+        return Response.json(this.engine.resolveTenantLocator(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link" && request.method === "POST") {
+        return Response.json(this.engine.putIdentityLink(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link/revoke" && request.method === "POST") {
+        return Response.json(this.engine.revokeIdentityLink(await readJson(request)));
+      }
+      if (url.pathname === "/identity-link/resolve" && request.method === "POST") {
+        return Response.json(this.engine.resolveIdentityLink(await readJson(request)));
+      }
       if (url.pathname === "/provision/step" && request.method === "POST") {
         return Response.json(this.engine.advanceProvisioning(await readJson(request)));
       }
@@ -2335,7 +2750,12 @@ export class PlatformStateDO extends DurableObject {
         return Response.json(this.engine.revokeMarketplace(await readJson(request)));
       }
       if (url.pathname === "/oauth" && request.method === "POST") {
-        return Response.json(this.engine.putOAuthGrant(await readJson(request)));
+        const input = await readJson(request);
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+          throw new PlatformStateError("oauth_request_invalid", 400);
+        }
+        const { marketplaceSnapshot, ...grant } = input as Record<string, unknown>;
+        return Response.json(this.engine.putOAuthGrant(grant, marketplaceSnapshot));
       }
       if (url.pathname === "/oauth/get" && request.method === "POST") {
         return Response.json(this.engine.getOAuthGrant(await readJson(request)));

@@ -1,15 +1,19 @@
 # Platform and routing foundation
 
-Status: **source-complete metadata foundation; synthetic-live; credential-broker
-boundary validated locally; external effecter and connector custody still gated**
+Status: **source-complete metadata foundation; synthetic-live; provider-independent
+effect boundaries deployed fail-closed; external providers and connector custody
+still gated**
 
-Updated: **2026-08-01**
+Updated: **2026-08-02**
 
 The OAuth state/marketplace gates and authenticated provider-adapter protocol
 are locally validated but remain fail-closed without approved provider custody.
 The effect ledger, router measurement ledger, marketplace trust gates, and
-replay-safe OAuth state store are validated in code; no hosted platform effecter,
-connector credential broker, or live provider OAuth exchange is deployed.
+replay-safe OAuth state store are validated in code. The provider-independent
+platform effecter, credential custody/broker, provisioning, identity custody,
+OAuth callback/effecter, billing, and memory-deletion Workers are deployed from
+merged main, but no provider adapter, internal caller credential, or live
+provider OAuth exchange is configured.
 
 This document records the architecture that is now explicit in code and the
 parts that remain product or infrastructure gates. It prevents a future
@@ -111,6 +115,46 @@ one reserved object. The ledger provides:
   and the request becomes `completed` only when every source has a successful
   terminal receipt.
 
+## Tenant locator and provisioning boundary
+
+The server-owned tenant locator registry now lives in the reserved platform
+metadata object (`__platform_marketplace__`). It records the external platform
+and tenant identifier, the canonical internal tenant UUID, a monotonic mapping
+version, and active/revoked status. It stores no credentials, provider
+payloads, or caller-selected Durable Object names.
+
+`/admin/platform/provision` registers the derived mapping before forwarding the
+idempotent provisioning request to the tenant metadata object. Direct admin
+routes also expose `/admin/platform/tenant-locator`, `/resolve`, and `/revoke`
+for controlled bootstrap and lifecycle operations. A mapping cannot be
+silently rebound, skip a version, or reactivate after revocation. Resolution
+returns `not_found`, `ambiguous`, or `inactive` instead of inventing a tenant.
+
+`PlatformStateTenantLocatorReader` is the read-only application boundary, and
+`adaptVerifiedSlackRequestContextFromRegistry` uses it before adapting the
+legacy Slack request shape. The existing context and effect contracts retain
+the locator version so a stale request cannot cross an authorization boundary.
+This closes the source-level tenant-locator gap; production population still
+requires an approved bootstrap authority, real provisioning receipts, and a
+non-production install smoke.
+
+### Identity-link boundary
+
+Each tenant metadata object now has a metadata-only identity-link ledger. It
+binds one external subject to one canonical internal principal and a verified
+identity proof, with independent authorization and identity-link versions.
+Writes require matching tenant/principal/subject relationships and contiguous
+versions; a subject cannot be silently rebound to another principal, and
+revocation is terminal. Expired or suspended links resolve as `inactive`.
+
+The admin-only `/admin/platform/identity-link`, `/resolve`, and `/revoke`
+routes are bootstrap/lifecycle seams. `PlatformStateIdentityLinkReader`
+addresses only the tenant object selected by the already-resolved locator and
+stores no private key or provider token. The Slack adapter can resolve both
+the locator and identity link from these read-only boundaries before building
+`PlatformRequestContext`. Identity/key generation, signing, custody, and proof
+issuance remain the separate authenticated custody/provider responsibility.
+
 ## External effect handoff
 
 `platform_effect_intents` is the only durable handoff between the metadata
@@ -153,7 +197,6 @@ The lifecycle is:
 Provisioning, identity/credential revocation, OAuth grant rotation/revocation,
 marketplace curation/revocation, billing meter events, and memory deletion
 requests now create these intents automatically.
-
 Connector writes and reads use the same boundary through the reviewed
 `connector_effect` kind. Its closed metadata vocabulary contains only the
 connector/action pair, opaque credential reference and version, immutable
@@ -174,16 +217,39 @@ it registers no provider adapters and therefore fails closed until custody,
 provider, and billing decisions are approved. The queue and effecter service
 binding are dispatch architecture only; they do not imply that an external
 provider or credential custody system is configured.
+When an adapter is approved, it must use the dedicated binding for exactly one
+effect family (for example, `CREDENTIAL_CUSTODY_EFFECT_ADAPTER`); each family
+has its own bearer secret and the Worker exposes only that matching kind to the
+adapter.
 
 ## Credential broker boundary
 
 `edge/workers/credential-broker/` is the last-mile resolver for connector
 tokens. It authenticates the bot service binding, derives the canonical Slack
-tenant id, re-reads public credential metadata from `PlatformStateDO`, and
-checks the credential version, tenant, provider, expiry, and connector scope
-before contacting custody. It supports only explicitly registered connector
-actions (`google_drive/search` and `linear/create_issue`) and fails closed for
-unknown actions.
+tenant id, requires a server-owned platform binding in the immutable label,
+and composes the active principal's OAuth grant, curated marketplace version,
+and public credential metadata from `PlatformStateDO`. It checks the grant,
+credential, tenant, principal, marketplace version, provider, expiry, and
+connector scope before contacting custody. It supports only explicitly
+registered connector actions (`google_drive/search` and
+`linear/create_issue`) and fails closed for unknown or legacy unbound labels.
+
+The composed metadata-only snapshot lives in
+`edge/src/connectors/authorization-snapshot.ts`. Its version fences are
+included in the signed connector label, so a rotated grant, marketplace
+revocation, credential revocation, or scope change cannot silently reuse an
+older authorization at the custody boundary.
+
+The runtime seam is `edge/src/connectors/platform-authorization.ts`. Slack HMAC
+verification emits only a digest-bound ingress record; the bot copies that
+record into the immutable request context and preserves it through deferred
+file turns and quick-action jobs. Before Drive or Linear asks
+`WorkspaceConfigDO` for labels, the seam resolves the server-owned tenant
+locator and identity link, composes the current OAuth/marketplace/custody
+snapshot, and supplies only the resulting version fence to the DO. Missing
+platform state, missing ingress evidence, stale identity versions, and record
+drift fail closed. Deferred retries reuse the signed Slack timestamp and body
+digest, so the durable job identity is stable across replay.
 
 The broker forwards immutable labels and public credential metadata to a
 separately authenticated `CUSTODY` service binding. The optional
@@ -341,13 +407,13 @@ executor.
   product-facing feedback controls are implemented. The workspace-scoped
   measurement and misroute ledgers are now present, but Tier 1 is still not
   enabled and no feedback control currently routes a user turn.
-- The platform-state migration, effect leases, admin routes, credential-broker
-  boundary, optional Secrets Store custody adapter, and identity custody
-  protocol are locally validated, but the production bootstrap authority,
-  tenant locator integration, configured identity provider/key custody adapter,
-  Slack OAuth callback, marketplace trust review process, billing/plan
-  enforcement, memory deletion executor, configured custody mapping, and
-  provider adapters are not live.
+- The platform-state migration, tenant-locator and identity-link
+  registry/readers, effect leases, admin routes, credential-broker boundary,
+  optional Secrets Store custody adapter, and identity custody protocol are
+  locally validated, but the production bootstrap/proof authority, configured
+  identity provider/key custody adapter, Slack OAuth callback, marketplace
+  trust review process, billing/plan enforcement, memory deletion executor,
+  configured custody mapping, and provider adapters are not live.
 - Worker Secrets are the approved deployment/bootstrap mechanism. They are not
   a complete per-tenant custody backend for a shared Worker fleet; the broker
   must preserve tenant isolation, rotation, revocation, and audit.

@@ -1,7 +1,7 @@
 # Notion-derived OpenTag feature inventory
 
 Status: **historical Notion audit reconciled with the merged connector/platform
-work, the 2026-08-01 live rollout, and the credential-broker branch**
+work, the 2026-08-01 and 2026-08-02 live rollouts, and the credential-broker branch**
 
 Updated: **2026-08-02**
 
@@ -11,14 +11,23 @@ implementation and deployment truth is in
 mapping from daily Centaur findings to OpenTag decisions.
 The credential-broker, queue-backed effecter, OAuth/marketplace, billing,
 identity-custody, deletion, provisioning, and trace/query/router work is now in
-the merged mainline. Its external boundaries remain fail-closed: no provider
-mapping, token, callback, custody resolution, or real effect is live.
+the merged mainline and the provider-independent boundaries are deployed
+fail-closed. No provider mapping, caller credential, token, callback, custody
+resolution, or real effect is live.
 
 The local knowledge milestone adds Cloudflare-only Supermemory and Graphify
 service boundaries, Slack outbound observation, bot-message indexing,
 reaction/membership capture, and revocable ACL leases. Those Workers and their
 R2 buckets are not present in the live account yet; see
 [`docs/current-state.md`](./current-state.md) for the current gate.
+
+The queue-backed effecter implementation is deployed and requires a dedicated
+service binding and bearer secret per effect family. It remains fail-closed
+until an approved provider adapter and custody boundary are configured.
+
+The OAuth/marketplace branch adds replay-safe state, durable trust/version
+gates, and an authenticated provider-adapter protocol, but does not claim a
+provider callback, token exchange, or custody deployment.
 
 ## Scope and source availability
 
@@ -79,7 +88,8 @@ blocked now have a precise evidence status:
 - router classification is **live-verified in shadow mode** with Tier 2 still
   dispatched;
 - Drive and Linear remain **fail-closed** because the deployed bot has no
-  `CONNECTOR_CREDENTIALS` broker/provider custody; and
+  broker authorization, custody mapping, provider adapter, or test-workspace
+  grant, even though the internal broker service binding is deployed; and
 - the Buzz receive route is **live fail-closed**, not authenticated-live.
 
 The original Notion findings and dates are not rewritten. See the
@@ -100,22 +110,30 @@ external effects remain gated:
 
 - [#29 platform effecter](https://github.com/wcordelo/opentag/pull/29) and
   [#30 credential broker](https://github.com/wcordelo/opentag/pull/30) establish
-  the secret-free handoff and custody boundary;
+  the secret-free handoff and custody boundary; both boundaries are deployed
+  without provider credentials;
 - [#31 OAuth/marketplace](https://github.com/wcordelo/opentag/pull/31),
   [#32 billing policy](https://github.com/wcordelo/opentag/pull/32),
   [#37 identity custody](https://github.com/wcordelo/opentag/pull/37),
   [#38 memory deletion](https://github.com/wcordelo/opentag/pull/38), and
   [#39 provisioning](https://github.com/wcordelo/opentag/pull/39) add the
-  provider-independent metadata and receipt boundaries; and
+  provider-independent metadata and receipt boundaries, now deployed from
+  merged main;
 - [#41 OAuth scope hardening](https://github.com/wcordelo/opentag/pull/41),
   [#42 billing adapter](https://github.com/wcordelo/opentag/pull/42), and
   [#43 trace/query/router safety](https://github.com/wcordelo/opentag/pull/43)
-  close follow-up validation gaps.
+  close follow-up validation gaps. The later foundation stack [#45](https://github.com/wcordelo/opentag/pull/45),
+  [#47](https://github.com/wcordelo/opentag/pull/47),
+  [#48](https://github.com/wcordelo/opentag/pull/48), and
+  [#49](https://github.com/wcordelo/opentag/pull/49), and dependent PRs
+  [#50](https://github.com/wcordelo/opentag/pull/50) through
+  [#53](https://github.com/wcordelo/opentag/pull/53) are consolidated in this
+  source/test branch. They are not a production deployment or cutover claim.
 
-Before claiming knowledge completeness, supply the least-scope R2/provider
-credentials, prove derived-index FUSE boot and queue/descriptor convergence,
-read back the live `all_delivered` policy, and run a human Slack canary. Do not
-enable Drive or Linear until broker custody, exact grants, OAuth/provider
+Before claiming knowledge completeness, validate the complete mainline together,
+redeploy only after approval, supply least-scope R2/provider credentials, prove
+derived-index FUSE boot and queue/descriptor convergence, read back the live
+`all_delivered` policy, and run a human Slack canary. Do not enable Drive or Linear until broker custody, exact grants, OAuth/provider
 configuration, ACL policy, and a test workspace are all present. Do not enable
 Tier 1 or Tier 3 routing until shadow volume, quality, feedback, latency, cost,
 and rollback evidence meet an explicit rollout decision.
@@ -161,10 +179,14 @@ and rollback evidence meet an explicit rollout decision.
   product requirement. It would need connector grants, a broker, read-only
   bounded pagination/media/reference normalization, item-level errors, and
   citation/ACL tests.
-- **Evaluate — immutable connector-policy labels.** This foundation is now
-  implemented on merged main in `edge/src/connectors/authorization.ts`, with
-  credential references, access-bundle revisions, revocation, and citation
-  binding. A real broker and custody service remain outstanding.
+- **Evaluate — immutable connector-policy labels.** The connector label,
+  credential-reference, access-bundle revision, revocation, and citation
+  foundation is implemented. The follow-up snapshot fence now also requires
+  an active server-owned OAuth grant bound to a curated marketplace version
+  and matching custody reference before the broker can request a token. The
+  verified Slack runtime identity-binding seam now resolves that snapshot for
+  normal, deferred-file, and quick-action turns. The real broker/custody
+  deployment and provider token remain outstanding.
 - **N/A — Python durable-workflow event waits.** OpenTag uses Durable Objects.
 - **N/A — Codex-specific instruction-size configuration.** OpenTag’s pinned
   Claude Code harness does not need that Centaur-specific setting.
@@ -296,8 +318,10 @@ change, not evidence that all earlier gaps are complete.
 - the optional Secrets Store custody Worker, which validates the same immutable
   labels and reference/version pair before reading a named secret binding.
   The merged baseline also includes an authenticated effecter runner/Worker,
-  metadata-only queue wakeup/retry, and an admin recovery wake route; all
-  provider adapters remain fail-closed when unconfigured.
+  metadata-only queue wakeup/retry, and an admin recovery wake route. Effect
+  families use separate provider bindings and bearer secrets; each adapter is
+  registered only for its matching kind and all remain fail-closed when
+  unconfigured.
 - source-scoped memory deletion receipts bound to the request epoch; requests
   reach `completed` only after every source reports `deleted` or `not_found`,
   while failed receipts remain explicit and terminal; and a fail-closed,
@@ -305,7 +329,16 @@ change, not evidence that all earlier gaps are complete.
 - receipt-bound provisioning step advancement; a tenant cannot become `active`
   from a bare outcome and each required footprint retains an opaque external
   receipt before activation; and a fail-closed, step-scoped bootstrap adapter
-  boundary that does not carry credentials or generic resource payloads.
+  boundary that does not carry credentials or generic resource payloads;
+- a server-owned, versioned external-platform tenant-locator registry with
+  read-only resolution, terminal revocation, collision/version-gap checks, and
+  registry-backed Slack context adaptation. The registry is source-complete in
+  the current implementation branch but is not included in the already-live
+  deployment until that branch is merged and deployed;
+- a tenant-scoped identity-link ledger and read-only resolver that binds
+  external subjects to canonical principals, validates proof relationships and
+  contiguous versions, and makes expiry/suspension/revocation fail closed.
+  Identity proof issuance and key custody remain external gates.
 
 ### Still required before “everything” is live
 
@@ -317,11 +350,13 @@ change, not evidence that all earlier gaps are complete.
    credential store or provider mapping is currently configured.
 2. **Provisioning/identity:** [PR #37](https://github.com/wcordelo/opentag/pull/37)
    and [PR #39](https://github.com/wcordelo/opentag/pull/39) add provider-independent
-   custody and receipt adapters. The local tenant ledger requires an external
-   receipt for every required provisioning step. Still choose the tenant
-   locator/isolation model, configure the bootstrap adapter, establish
-   identity/key custody, and supply real receipts for every DO, bundle, OAuth,
-   and identity step.
+   custody and receipt adapters. The server-owned tenant locator registry and
+   registry-backed Slack boundary are now source-complete, but the local tenant
+   ledger still requires an external receipt for every required provisioning
+   step. Still choose the isolation model, configure the bootstrap and proof
+   authorities, establish identity/key custody, populate the locator and
+   identity-link ledgers through the approved install flow, and supply real
+   receipts for every DO, bundle, OAuth, and identity step.
 3. **OAuth/marketplace:** [PR #31](https://github.com/wcordelo/opentag/pull/31)
    and [PR #41](https://github.com/wcordelo/opentag/pull/41) add replay-safe state,
    curation gates, and exact scope/custody binding. Still choose callback
@@ -360,9 +395,11 @@ change, not evidence that all earlier gaps are complete.
    deletion ownership.
 2. Deploy and smoke-test the credential broker/effect worker against a test
    provider and test tenant; keep all live provider secrets outside OpenTag.
-3. Enable Drive and Linear only for explicitly granted test workspaces.
-4. Measure router shadow traffic and implement gates before changing dispatch.
-5. Revisit X, richer progress, prompt composition, and rollout cohorts based on
+3. Run the approved provisioning/bootstrap flow to populate and receipt-check
+   tenant locators before enabling any tenant-scoped connector.
+4. Enable Drive and Linear only for explicitly granted test workspaces.
+5. Measure router shadow traffic and implement gates before changing dispatch.
+6. Revisit X, richer progress, prompt composition, and rollout cohorts based on
    product demand.
 
 The historical baseline remains unchanged. The audit did not create another

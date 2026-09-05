@@ -47,6 +47,8 @@ jobs:
       - run: npm run check:knowledge-rollout
       - run: npm ci --prefix workers/supermemory
       - run: npm ci --prefix workers/graphify
+      - run: npm ci --prefix workers/claudex-proxy
       - run: npm --prefix workers/supermemory run typecheck
       - run: npm --prefix workers/graphify run typecheck
+      - run: npm --prefix workers/claudex-proxy run typecheck
       - run: npm run validate:deploy-config

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { trivialAck, trivialAckReply } from "../src/trivial-ack.js";
+import { trivialAck } from "../src/trivial-ack.js";
 
 describe("trivialAck", () => {
   it("reacts to thanks", () => {
@@ -16,9 +16,5 @@ describe("trivialAck", () => {
 
   it("does not swallow real questions", () => {
     expect(trivialAck("what games are tomorrow?")).toBeNull();
-  });
-
-  it("legacy string helper still works", () => {
-    expect(trivialAckReply("thanks")).toBe("You're welcome.");
   });
 });

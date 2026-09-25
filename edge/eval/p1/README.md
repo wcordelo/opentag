@@ -26,7 +26,9 @@ node edge/eval/p1/build-frozen-eval.mjs
 cd edge/eval/p1 && npm install && node run-eval.mjs
 ```
 
-Writes `baseline-results.json`.
+Writes `baseline-results.json`. The `bge-reranker-base` arm uses `AutoTokenizer` +
+`AutoModelForSequenceClassification` with `text_pair` (cross-encoder logits), not the
+text-classification pipeline.
 
 ## Run Jev arms (requires `TYPESAFE_API_KEY`)
 

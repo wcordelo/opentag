@@ -89,16 +89,16 @@ const shadow: RouterShadowRecord = {
   },
 };
 
-// recordedAt must stay inside RouterMeasurementDO's 30-day retention window because
-// /record prunes by wall-clock now(), not the payload timestamp.
-const recentRecordedAt = new Date(Date.now() - 86_400_000).toISOString();
+// Replay-style timestamp: older than the 30-day retention window. Idempotent /record
+// must still dedupe before prune can delete the row.
+const staleRecordedAt = "2026-01-01T00:00:00.000Z";
 
 const measurement = createRouterDispatchMeasurement({
   workspaceId: "workspace-1",
   threadKey: "slack:C1:thread-1",
   executionId: "execution-1",
   shadowRecord: shadow,
-  recordedAt: recentRecordedAt,
+  recordedAt: staleRecordedAt,
 });
 
 describe("RouterMeasurementDO", () => {

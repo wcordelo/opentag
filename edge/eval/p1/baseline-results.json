@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T07:32:15.772Z",
+  "generatedAt": "2026-09-25T07:54:41.430Z",
   "provenance": {
     "wiki": "Real docs/*.md in repo root indexed as wiki:T_eval:docs:{pageId} with ## section chunks",
     "code": "Real edge/src files chunked by export function boundaries (see build-frozen-eval.mjs codePaths)",
@@ -8,6 +8,26 @@
     "queryCount": 26,
     "limitations": "No live Slack canary threads or Supermemory index; custom_db rows are fixture-derived, not production data"
   },
+  "reorderEvidence": {
+    "queryId": "q01",
+    "query": "reciprocal rank fusion k=60 dedupe",
+    "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+    "rrfTop5": [
+      "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+      "custom_db:T_eval:sales_kpi:arr_kpi",
+      "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+      "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+      "custom_db:T_eval:sales_kpi:nps_kpi"
+    ],
+    "bgeTop5": [
+      "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+      "wiki:T_eval:docs:ROUTER-SPEC#5-observability-and-cost-attribution",
+      "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+      "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+      "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24"
+    ]
+  },
+  "reorderedQueryCount": 26,
   "arms": {
     "rrf": {
       "arm": "rrf",
@@ -15,10 +35,11 @@
       "queryCount": 26,
       "mrrAt5": 0.2467948717948718,
       "top3Recall": 0.4230769230769231,
-      "p95LatencyMs": 0.003717999999999222,
+      "p95LatencyMs": 0.0037599999999997635,
       "perQuery": [
         {
           "queryId": "q01",
+          "query": "reciprocal rank fusion k=60 dedupe",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
           "rank": 4,
           "order": [
@@ -43,10 +64,11 @@
             "wiki:T_eval:docs:ARCHITECTURE#system-topology",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27"
           ],
-          "latencyMs": 0.012936999999997312
+          "latencyMs": 0.01274100000000189
         },
         {
           "queryId": "q02",
+          "query": "optional LLM rerank of search candidates",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
           "rank": 10,
           "order": [
@@ -71,10 +93,11 @@
             "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217"
           ],
-          "latencyMs": 0.002751999999997423
+          "latencyMs": 0.0027679999999996596
         },
         {
           "queryId": "q03",
+          "query": "parallel multi-list search fused with RRF",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
           "rank": 4,
           "order": [
@@ -99,10 +122,11 @@
             "wiki:T_eval:docs:connector-authorization-architecture#access-bundles",
             "code:T_eval:opentag:src/tools/search-slack.ts:626-663"
           ],
-          "latencyMs": 0.0019620000000024618
+          "latencyMs": 0.001784000000000674
         },
         {
           "queryId": "q04",
+          "query": "KNOWLEDGE_RERANK_MODE jev-score jev-noul",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
           "rank": 7,
           "order": [
@@ -127,10 +151,11 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103"
           ],
-          "latencyMs": 0.0016940000000005284
+          "latencyMs": 0.001606999999999914
         },
         {
           "queryId": "q05",
+          "query": "TypeSafe Jev reranker fetch systemone",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
           "rank": 18,
           "order": [
@@ -155,10 +180,11 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33"
           ],
-          "latencyMs": 0.0023070000000018354
+          "latencyMs": 0.0025859999999973127
         },
         {
           "queryId": "q06",
+          "query": "unified knowledge search tool RRF k=60",
           "goldSourceKey": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
           "rank": 1,
           "order": [
@@ -183,10 +209,11 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
             "code:T_eval:opentag:src/tools/search-slack.ts:626-663"
           ],
-          "latencyMs": 0.0015689999999999316
+          "latencyMs": 0.0020810000000004436
         },
         {
           "queryId": "q07",
+          "query": "search_slack ACL lease authorize",
           "goldSourceKey": "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
           "rank": 4,
           "order": [
@@ -211,10 +238,11 @@
             "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
             "code:T_eval:opentag:src/tools/search-slack.ts:284-295"
           ],
-          "latencyMs": 0.0016089999999984173
+          "latencyMs": 0.0016239999999996257
         },
         {
           "queryId": "q08",
+          "query": "MCP retrieval primitives knowledge base",
           "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
           "rank": 1,
           "order": [
@@ -239,10 +267,11 @@
             "wiki:T_eval:docs:semantic-algos-integration#current-implementation-status-2026-08-01",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50"
           ],
-          "latencyMs": 0.0017279999999999518
+          "latencyMs": 0.0013170000000002346
         },
         {
           "queryId": "q09",
+          "query": "KnowledgeCitationBase excerpt contentRevision",
           "goldSourceKey": "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
           "rank": -1,
           "order": [
@@ -267,10 +296,11 @@
             "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205"
           ],
-          "latencyMs": 0.00204000000000093
+          "latencyMs": 0.0016689999999996985
         },
         {
           "queryId": "q10",
+          "query": "SupermemoryAdapter searchSlack hybrid",
           "goldSourceKey": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
           "rank": -1,
           "order": [
@@ -295,10 +325,11 @@
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27"
           ],
-          "latencyMs": 0.003717999999999222
+          "latencyMs": 0.0037599999999997635
         },
         {
           "queryId": "q11",
+          "query": "Durable Object naming ConversationStateDO",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
           "rank": 3,
           "order": [
@@ -323,10 +354,11 @@
             "wiki:T_eval:docs:extending#extend-durable-state",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217"
           ],
-          "latencyMs": 0.002753999999999479
+          "latencyMs": 0.002855000000000274
         },
         {
           "queryId": "q12",
+          "query": "No Socket Mode Slack Events API",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#3-slack-events-api",
           "rank": 3,
           "order": [
@@ -351,10 +383,11 @@
             "wiki:T_eval:docs:PRODUCT#hard-invariants",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986"
           ],
-          "latencyMs": 0.0009349999999983538
+          "latencyMs": 0.0009969999999981383
         },
         {
           "queryId": "q13",
+          "query": "AGENT_RUNTIME service binding 1042",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
           "rank": 3,
           "order": [
@@ -379,10 +412,11 @@
             "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
           ],
-          "latencyMs": 0.0007939999999990732
+          "latencyMs": 0.0008650000000010039
         },
         {
           "queryId": "q14",
+          "query": "GET /ready profile=knowledge blockers",
           "goldSourceKey": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
           "rank": 12,
           "order": [
@@ -407,10 +441,11 @@
             "wiki:T_eval:docs:current-state#2026-08-02-12-44-pdt-recovery-and-deployment-preflight-continuat",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
           ],
-          "latencyMs": 0.0008020000000001914
+          "latencyMs": 0.0008569999999998856
         },
         {
           "queryId": "q15",
+          "query": "Supermemory R2 Worker Secrets tigrisfs",
           "goldSourceKey": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
           "rank": -1,
           "order": [
@@ -435,10 +470,11 @@
             "wiki:T_eval:docs:HANDOFF#one-click-r2-secret-path-repair-and-live-preflight-2026-08-02-23",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24"
           ],
-          "latencyMs": 0.0007279999999987297
+          "latencyMs": 0.0012089999999993495
         },
         {
           "queryId": "q16",
+          "query": "local validation deployment units health checks",
           "goldSourceKey": "wiki:T_eval:docs:operations",
           "rank": 3,
           "order": [
@@ -463,10 +499,11 @@
             "wiki:T_eval:docs:current-state#fresh-local-validation-and-image-build-gate-2026-08-02-23-37-pdt",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986"
           ],
-          "latencyMs": 0.0012180000000014957
+          "latencyMs": 0.0012579999999999814
         },
         {
           "queryId": "q17",
+          "query": "Cloudflare edge bot spine architecture",
           "goldSourceKey": "wiki:T_eval:docs:ARCHITECTURE",
           "rank": -1,
           "order": [
@@ -491,10 +528,11 @@
             "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
           ],
-          "latencyMs": 0.0014679999999991367
+          "latencyMs": 0.0011830000000010443
         },
         {
           "queryId": "q18",
+          "query": "knowledge base reranker top 20 candidates",
           "goldSourceKey": "wiki:T_eval:docs:knowledge-base-implementation-spec",
           "rank": 17,
           "order": [
@@ -519,10 +557,11 @@
             "wiki:T_eval:docs:DECISIONS#7-mid-thread-memory-structured-confirm",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33"
           ],
-          "latencyMs": 0.0018029999999988888
+          "latencyMs": 0.0012869999999978177
         },
         {
           "queryId": "q19",
+          "query": "model reranking strict schema 0 to 10",
           "goldSourceKey": "wiki:T_eval:docs:knowledge-base-implementation-spec",
           "rank": -1,
           "order": [
@@ -547,10 +586,11 @@
             "wiki:T_eval:docs:extending#extend-durable-state",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236"
           ],
-          "latencyMs": 0.0009390000000024656
+          "latencyMs": 0.0016190000000015914
         },
         {
           "queryId": "q20",
+          "query": "router tier 1 retrieval relevance floor",
           "goldSourceKey": "wiki:T_eval:docs:ROUTER-SPEC",
           "rank": -1,
           "order": [
@@ -575,10 +615,11 @@
             "wiki:T_eval:docs:current-state#decisions-now-locked",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103"
           ],
-          "latencyMs": 0.0015709999999984348
+          "latencyMs": 0.001217999999997943
         },
         {
           "queryId": "q21",
+          "query": "research task plane OrchestratorDO",
           "goldSourceKey": "wiki:T_eval:docs:research-actors",
           "rank": -1,
           "order": [
@@ -603,10 +644,11 @@
             "wiki:T_eval:docs:ARCHITECTURE#architectural-invariants",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22"
           ],
-          "latencyMs": 0.0009879999999995448
+          "latencyMs": 0.0008179999999988752
         },
         {
           "queryId": "q22",
+          "query": "Graphify local MCP stdio",
           "goldSourceKey": "wiki:T_eval:docs:graphify-local-mcp",
           "rank": 3,
           "order": [
@@ -631,10 +673,11 @@
             "wiki:T_eval:docs:HANDOFF#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113"
           ],
-          "latencyMs": 0.0008230000000004623
+          "latencyMs": 0.0007289999999997576
         },
         {
           "queryId": "q23",
+          "query": "OPENTAG_KNOWLEDGE_DEPLOY_APPROVED deploy gate",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:deploy_gate",
           "rank": 2,
           "order": [
@@ -659,10 +702,11 @@
             "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59"
           ],
-          "latencyMs": 0.0007230000000006953
+          "latencyMs": 0.0007429999999999382
         },
         {
           "queryId": "q24",
+          "query": "annual recurring revenue sales_kpi",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:arr_kpi",
           "rank": 2,
           "order": [
@@ -687,10 +731,11 @@
             "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
           ],
-          "latencyMs": 0.0008230000000004623
+          "latencyMs": 0.0008049999999997226
         },
         {
           "queryId": "q25",
+          "query": "Slack ACL lease KnowledgeDO authorize",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:slack_acl",
           "rank": 2,
           "order": [
@@ -715,10 +760,11 @@
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958"
           ],
-          "latencyMs": 0.0007510000000010564
+          "latencyMs": 0.000845000000001761
         },
         {
           "queryId": "q26",
+          "query": "SUPERMEMORY_CONSUMER_MODE paused queue",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:supermemory_mode",
           "rank": 2,
           "order": [
@@ -743,7 +789,7 @@
             "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147"
           ],
-          "latencyMs": 0.0006220000000034531
+          "latencyMs": 0.0007009999999993966
         }
       ]
     },
@@ -751,763 +797,2921 @@
       "arm": "bge-reranker-base",
       "model": "Xenova/bge-reranker-base",
       "queryCount": 26,
-      "mrrAt5": 0.2467948717948718,
-      "top3Recall": 0.4230769230769231,
-      "p95LatencyMs": 1636.5220390000004,
+      "mrrAt5": 0.4583333333333333,
+      "top3Recall": 0.5769230769230769,
+      "p95LatencyMs": 506.77149499999996,
       "perQuery": [
         {
           "queryId": "q01",
+          "query": "reciprocal rank fusion k=60 dedupe",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
-          "rank": 4,
+          "rank": 3,
           "order": [
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:ROUTER-SPEC#5-observability-and-cost-attribution",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:platform-foundation-architecture#oauth-state-and-marketplace-activation",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
             "wiki:T_eval:docs:current-state#2026-08-02-21-25-pdt-provider-startup-continuation",
+            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "wiki:T_eval:docs:ARCHITECTURE",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "wiki:T_eval:docs:platform-foundation-architecture#oauth-state-and-marketplace-activation",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "wiki:T_eval:docs:ARCHITECTURE#system-topology",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27"
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:ARCHITECTURE",
+            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists"
           ],
-          "latencyMs": 6101.220412000001,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 432.87695800000006,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": 3.423029661178589
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -7.939387321472168
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+              "score": -5.091866493225098
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+              "score": -1.3721036911010742
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -7.939142227172852
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
+              "score": -9.051759719848633
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -4.081315994262695
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -7.316788673400879
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#5-observability-and-cost-attribution",
+              "score": -1.179247498512268
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -5.954061031341553
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -8.370260238647461
+            },
+            {
+              "id": "wiki:T_eval:docs:platform-foundation-architecture#oauth-state-and-marketplace-activation",
+              "score": -6.475893497467041
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+              "score": -2.2830331325531006
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -7.597593784332275
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#2026-08-02-21-25-pdt-provider-startup-continuation",
+              "score": -4.3627119064331055
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -6.272459030151367
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE",
+              "score": -8.590926170349121
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -7.4273247718811035
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#system-topology",
+              "score": -6.818162441253662
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -6.5540995597839355
+            }
+          ]
         },
         {
           "queryId": "q02",
+          "query": "optional LLM rerank of search candidates",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-          "rank": 10,
+          "rank": 4,
           "order": [
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:research-actors#environment-variables",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:DECISIONS#product-shape-current",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "wiki:T_eval:docs:research-actors#environment-variables",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+            "wiki:T_eval:docs:DECISIONS#product-shape-current",
+            "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
             "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217"
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 1636.5220390000004,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 471.862895,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": 7.117928504943848
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.173086166381836
+            },
+            {
+              "id": "wiki:T_eval:docs:research-actors#environment-variables",
+              "score": -3.338541030883789
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": 0.08660659939050674
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.181964874267578
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#product-shape-current",
+              "score": -5.143791675567627
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": 3.7986674308776855
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.180146217346191
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+              "score": -7.056466102600098
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+              "score": 0.5820239782333374
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.181914329528809
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+              "score": -8.463324546813965
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": 1.6376011371612549
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -8.971702575683594
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
+              "score": -7.5564775466918945
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+              "score": -3.9082677364349365
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
+              "score": -5.471424102783203
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": -3.70591402053833
+            },
+            {
+              "id": "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
+              "score": -5.737717151641846
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+              "score": -7.50134801864624
+            }
+          ]
         },
         {
           "queryId": "q03",
+          "query": "parallel multi-list search fused with RRF",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-          "rank": 4,
+          "rank": 7,
           "order": [
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:slack_acl",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:research-actors#environment-variables",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:VISION-SPEC#appendix-a-how-to-read-the-rest-of-the-repo",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
             "wiki:T_eval:docs:connector-authorization-architecture#access-bundles",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663"
+            "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+            "wiki:T_eval:docs:VISION-SPEC#appendix-a-how-to-read-the-rest-of-the-repo",
+            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1337.8250829999997,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 393.3409179999999,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": 6.672894477844238
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -9.366259574890137
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+              "score": -1.4985542297363281
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -4.571249485015869
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -9.857525825500488
+            },
+            {
+              "id": "wiki:T_eval:docs:research-actors#environment-variables",
+              "score": -5.987171173095703
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -6.474854469299316
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -9.972997665405273
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
+              "score": -3.0095903873443604
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": 2.593024492263794
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -9.99663257598877
+            },
+            {
+              "id": "wiki:T_eval:docs:VISION-SPEC#appendix-a-how-to-read-the-rest-of-the-repo",
+              "score": -8.545260429382324
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": 1.4647780656814575
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.421638488769531
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+              "score": -7.539679527282715
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+              "score": -0.5972894430160522
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+              "score": -7.196750164031982
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+              "score": -6.669271469116211
+            },
+            {
+              "id": "wiki:T_eval:docs:connector-authorization-architecture#access-bundles",
+              "score": -7.223165035247803
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "score": -8.58910083770752
+            }
+          ]
         },
         {
           "queryId": "q04",
+          "query": "KNOWLEDGE_RERANK_MODE jev-score jev-noul",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
           "rank": 7,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "wiki:T_eval:docs:DECISIONS#22-router-rollout",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103"
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "wiki:T_eval:docs:DECISIONS#22-router-rollout",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1364.021843999999,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 502.5825010000003,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+              "score": 3.104294776916504
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.65657901763916
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+              "score": -4.302859306335449
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": 2.0429139137268066
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -6.970180034637451
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+              "score": -5.186856746673584
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -0.4692870080471039
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.141607284545898
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+              "score": -6.689310550689697
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
+              "score": 5.337902545928955
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.061609268188477
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
+              "score": -8.588769912719727
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": 0.40097394585609436
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -9.54308795928955
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
+              "score": -9.52415657043457
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": 4.544984340667725
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#22-router-rollout",
+              "score": -8.014070510864258
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
+              "score": -4.522546291351318
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
+              "score": -3.8723602294921875
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": 0.08239570260047913
+            }
+          ]
         },
         {
           "queryId": "q05",
+          "query": "TypeSafe Jev reranker fetch systemone",
           "goldSourceKey": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-          "rank": 18,
+          "rank": 2,
           "order": [
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:setup#how-it-fits-together",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:extending#add-configuration-or-a-secret",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#17-open-decisions-requiring-operator-product-approval",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "wiki:T_eval:docs:extending#add-configuration-or-a-secret",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33"
+            "wiki:T_eval:docs:setup#how-it-fits-together",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#17-open-decisions-requiring-operator-product-approval",
+            "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 1360.9355090000008,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 472.78761799999984,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": 4.666488170623779
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.182560920715332
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
+              "score": -9.305877685546875
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -1.0682169198989868
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.175541877746582
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+              "score": -5.036988258361816
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": -0.6522804498672485
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.124692916870117
+            },
+            {
+              "id": "wiki:T_eval:docs:setup#how-it-fits-together",
+              "score": -8.137811660766602
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+              "score": -3.404325246810913
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.181198120117188
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#add-configuration-or-a-secret",
+              "score": -6.513829708099365
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -2.3637962341308594
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.181604385375977
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#17-open-decisions-requiring-operator-product-approval",
+              "score": -9.168335914611816
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
+              "score": -4.682400703430176
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
+              "score": -9.475305557250977
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -0.16581152379512787
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+              "score": -8.064688682556152
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -5.548861026763916
+            }
+          ]
         },
         {
           "queryId": "q06",
+          "query": "unified knowledge search tool RRF k=60",
           "goldSourceKey": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-          "rank": 1,
+          "rank": 3,
           "order": [
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "wiki:T_eval:docs:extending#documentation-checklist-for-extensions",
+            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663"
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "wiki:T_eval:docs:extending#documentation-checklist-for-extensions",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1350.7559720000008,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 420.1131959999998,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -1.111055850982666
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -7.449685096740723
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+              "score": -5.461330413818359
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+              "score": 5.207123756408691
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -9.33094310760498
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
+              "score": -1.2876918315887451
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -2.652391195297241
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.179766654968262
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+              "score": -3.5570640563964844
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "score": -6.740227699279785
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.18230152130127
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
+              "score": -6.81619930267334
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": 3.053126335144043
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -8.044837951660156
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+              "score": -2.0923190116882324
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "score": -6.491678714752197
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#documentation-checklist-for-extensions",
+              "score": -9.50202465057373
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "score": -6.716038227081299
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+              "score": -7.0379638671875
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "score": -6.631109237670898
+            }
+          ]
         },
         {
           "queryId": "q07",
+          "query": "search_slack ACL lease authorize",
           "goldSourceKey": "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
-          "rank": 4,
+          "rank": 2,
           "order": [
-            "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
+            "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
+            "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#6-release-gates",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
             "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+            "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+            "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#6-release-gates",
+            "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
             "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
-            "code:T_eval:opentag:src/tools/search-slack.ts:284-295"
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1342.058078,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 417.37037299999974,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
+              "score": 0.8828397989273071
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": 6.795121192932129
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+              "score": -3.888972520828247
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
+              "score": 4.1887431144714355
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.178479194641113
+            },
+            {
+              "id": "wiki:T_eval:docs:connector-authorization-architecture#drive-readiness-gate",
+              "score": -4.320224285125732
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
+              "score": 0.4708784818649292
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.178747177124023
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#6-release-gates",
+              "score": -6.175395965576172
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "score": -2.3824000358581543
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.182570457458496
+            },
+            {
+              "id": "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
+              "score": -6.84498405456543
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+              "score": -2.4063496589660645
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.699942588806152
+            },
+            {
+              "id": "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
+              "score": -4.691305160522461
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+              "score": 0.29660189151763916
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+              "score": -4.604616641998291
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "score": -2.605475902557373
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
+              "score": -7.820512294769287
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
+              "score": 1.214706301689148
+            }
+          ]
         },
         {
           "queryId": "q08",
+          "query": "MCP retrieval primitives knowledge base",
           "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
           "rank": 1,
           "order": [
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:README#proposed-specifications",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+            "wiki:T_eval:docs:README#proposed-specifications",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
-            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
             "wiki:T_eval:docs:semantic-algos-integration#current-implementation-status-2026-08-01",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50"
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1480.0512560000006,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 485.7507779999996,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": 4.0488786697387695
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -6.9420976638793945
+            },
+            {
+              "id": "wiki:T_eval:docs:README#proposed-specifications",
+              "score": -1.33243727684021
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -3.4727864265441895
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -6.600498199462891
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+              "score": 1.3143688440322876
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "score": -2.0929009914398193
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -7.280807018280029
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+              "score": -6.229426860809326
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+              "score": -3.1090564727783203
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -7.56126070022583
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
+              "score": -2.631812572479248
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": -4.880282878875732
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -6.249940872192383
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
+              "score": -3.6328558921813965
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
+              "score": -4.365288257598877
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+              "score": -3.5552127361297607
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
+              "score": -4.3912553787231445
+            },
+            {
+              "id": "wiki:T_eval:docs:semantic-algos-integration#current-implementation-status-2026-08-01",
+              "score": -2.742168426513672
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -4.005870819091797
+            }
+          ]
         },
         {
           "queryId": "q09",
+          "query": "KnowledgeCitationBase excerpt contentRevision",
           "goldSourceKey": "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#5-citation-and-api-contract",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:ARCHITECTURE",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:ARCHITECTURE#system-topology",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1024-1045",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#5-citation-and-api-contract",
             "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-            "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1024-1045",
+            "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
+            "wiki:T_eval:docs:ARCHITECTURE#system-topology",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+            "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
             "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205"
+            "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:ARCHITECTURE",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 1331.668384999999,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 446.7620689999994,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -2.440401315689087
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.18253231048584
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#5-citation-and-api-contract",
+              "score": 1.733565092086792
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
+              "score": 1.7739102840423584
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.181063652038574
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE",
+              "score": -9.910130500793457
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -2.413252115249634
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.180985450744629
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#system-topology",
+              "score": -7.229836940765381
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1024-1045",
+              "score": -5.850150108337402
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -9.83232593536377
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
+              "score": -7.0285773277282715
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
+              "score": -3.009873867034912
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.176419258117676
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
+              "score": -8.556577682495117
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+              "score": 0.09243813157081604
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+              "score": -9.376021385192871
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -4.186712741851807
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
+              "score": -9.228533744812012
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -8.302732467651367
+            }
+          ]
         },
         {
           "queryId": "q10",
+          "query": "SupermemoryAdapter searchSlack hybrid",
           "goldSourceKey": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:README#proposed-specifications",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#18-external-technical-constraints-verified-for-this-spec",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27"
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
+            "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "wiki:T_eval:docs:README#proposed-specifications",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#18-external-technical-constraints-verified-for-this-spec",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1324.0559409999987,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 405.13019600000007,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
+              "score": 0.7874065637588501
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -7.118672847747803
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
+              "score": -2.1693572998046875
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": 1.9353833198547363
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -7.716319561004639
+            },
+            {
+              "id": "wiki:T_eval:docs:README#proposed-specifications",
+              "score": -3.6526401042938232
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -1.0055341720581055
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -6.218118667602539
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
+              "score": -2.921417474746704
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -4.498120307922363
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -1.3570884466171265
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
+              "score": -5.571496963500977
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -4.383410453796387
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -3.5192952156066895
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#18-external-technical-constraints-verified-for-this-spec",
+              "score": -6.460480213165283
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -3.4131410121917725
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+              "score": -0.004795674234628677
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -4.939031600952148
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+              "score": 4.652153491973877
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -3.3868319988250732
+            }
+          ]
         },
         {
           "queryId": "q11",
+          "query": "Durable Object naming ConversationStateDO",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
-          "rank": 3,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
-            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:DECISIONS",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:299-322",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "wiki:T_eval:docs:extending#extend-durable-state",
+            "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
+            "wiki:T_eval:docs:operations#platform-effect-handoff",
             "wiki:T_eval:docs:DECISIONS#18-shared-fleet-tenancy",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:operations#platform-effect-handoff",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:ARCHITECTURE#stop-and-cancellation",
+            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:299-322",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-            "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-            "wiki:T_eval:docs:extending#extend-durable-state",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217"
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1316.3912859999982,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 438.8758820000003,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+              "score": -9.608967781066895
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.178680419921875
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
+              "score": 5.314685821533203
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+              "score": -8.600809097290039
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.178264617919922
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS",
+              "score": 5.063218593597412
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:299-322",
+              "score": -9.037490844726562
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.182544708251953
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#18-shared-fleet-tenancy",
+              "score": -3.721750259399414
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "score": -7.654245376586914
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.181432723999023
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#platform-effect-handoff",
+              "score": -2.712977886199951
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
+              "score": -9.183819770812988
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.182263374328613
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#stop-and-cancellation",
+              "score": -8.393113136291504
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
+              "score": -9.501659393310547
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
+              "score": 0.4119027853012085
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "score": -9.927291870117188
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#extend-durable-state",
+              "score": 0.794096827507019
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+              "score": -9.864728927612305
+            }
+          ]
         },
         {
           "queryId": "q12",
+          "query": "No Socket Mode Slack Events API",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#3-slack-events-api",
-          "rank": 3,
+          "rank": 2,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:DECISIONS#3-slack-events-api",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:setup",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "wiki:T_eval:docs:DECISIONS#3-slack-events-api",
+            "wiki:T_eval:docs:PRODUCT#hard-invariants",
+            "wiki:T_eval:docs:setup",
+            "wiki:T_eval:docs:DECISIONS#sign-off",
             "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:DECISIONS#sign-off",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:DECISIONS#product-shape-current",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-            "wiki:T_eval:docs:PRODUCT#hard-invariants",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986"
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1361.9165859999994,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 494.61650499999996,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": -4.911190509796143
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -6.409031391143799
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#3-slack-events-api",
+              "score": 5.971166133880615
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -5.032853603363037
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -4.917229652404785
+            },
+            {
+              "id": "wiki:T_eval:docs:setup",
+              "score": 3.7791829109191895
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -2.921893358230591
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -7.693973064422607
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
+              "score": 6.611618995666504
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": -6.714007377624512
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -9.889936447143555
+            },
+            {
+              "id": "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
+              "score": 1.5516748428344727
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
+              "score": -2.634605884552002
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -7.703950881958008
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#sign-off",
+              "score": 3.7009119987487793
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+              "score": -3.625366687774658
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#product-shape-current",
+              "score": -2.901129722595215
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -6.303884029388428
+            },
+            {
+              "id": "wiki:T_eval:docs:PRODUCT#hard-invariants",
+              "score": 4.4711594581604
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
+              "score": -7.43644380569458
+            }
+          ]
         },
         {
           "queryId": "q13",
+          "query": "AGENT_RUNTIME service binding 1042",
           "goldSourceKey": "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
-          "rank": 3,
+          "rank": 2,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:setup#how-it-fits-together",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:setup",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
             "wiki:T_eval:docs:setup#2-environment-variables",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:extending#add-configuration-or-a-secret",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
             "wiki:T_eval:docs:operations#configuration-ownership",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+            "wiki:T_eval:docs:setup",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
             "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1375.0766909999984,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 515.4555290000008,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -6.109981060028076
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -9.939558029174805
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
+              "score": -0.34245944023132324
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -8.183808326721191
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -9.804283142089844
+            },
+            {
+              "id": "wiki:T_eval:docs:setup#how-it-fits-together",
+              "score": -0.11588025093078613
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -7.70322847366333
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -9.784356117248535
+            },
+            {
+              "id": "wiki:T_eval:docs:setup",
+              "score": -7.583241939544678
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -10.1589937210083
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.179032325744629
+            },
+            {
+              "id": "wiki:T_eval:docs:setup#2-environment-variables",
+              "score": -0.713713526725769
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -6.18374490737915
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.310530662536621
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#add-configuration-or-a-secret",
+              "score": -1.2317156791687012
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+              "score": -6.70136833190918
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#configuration-ownership",
+              "score": -5.508896827697754
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": -8.410724639892578
+            },
+            {
+              "id": "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
+              "score": -9.054451942443848
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+              "score": -7.98125696182251
+            }
+          ]
         },
         {
           "queryId": "q14",
+          "query": "GET /ready profile=knowledge blockers",
           "goldSourceKey": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
-          "rank": 12,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:operations#health-checks",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-            "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "wiki:T_eval:docs:operations#health-checks",
             "wiki:T_eval:docs:current-state#2026-08-02-12-44-pdt-recovery-and-deployment-preflight-continuat",
+            "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
+            "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+            "wiki:T_eval:docs:operations",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
           ],
-          "latencyMs": 1515.4228780000012,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 454.46150899999975,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+              "score": -4.6912031173706055
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -4.850510597229004
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#health-checks",
+              "score": 1.6701431274414062
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+              "score": -3.782499313354492
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -5.67712926864624
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
+              "score": -0.5331151485443115
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
+              "score": -4.745307445526123
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -6.574530124664307
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+              "score": -5.745948791503906
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+              "score": -4.910437107086182
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -7.274240493774414
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
+              "score": 4.448188304901123
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "score": -0.6382906436920166
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -6.443821430206299
+            },
+            {
+              "id": "wiki:T_eval:docs:operations",
+              "score": -5.781191825866699
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+              "score": -5.100943088531494
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
+              "score": -0.44333359599113464
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "score": -3.69724702835083
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#2026-08-02-12-44-pdt-recovery-and-deployment-preflight-continuat",
+              "score": 0.33864155411720276
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+              "score": -7.523338794708252
+            }
+          ]
         },
         {
           "queryId": "q15",
+          "query": "Supermemory R2 Worker Secrets tigrisfs",
           "goldSourceKey": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "wiki:T_eval:docs:HANDOFF#latest-live-checkpoint-2026-08-05-14-52-pdt",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#current-read-only-gate-2026-08-02-22-15-pdt",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration",
             "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration",
+            "wiki:T_eval:docs:HANDOFF#one-click-r2-secret-path-repair-and-live-preflight-2026-08-02-23",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#current-read-only-gate-2026-08-02-22-15-pdt",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-            "wiki:T_eval:docs:HANDOFF#latest-live-checkpoint-2026-08-05-14-52-pdt",
             "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "wiki:T_eval:docs:HANDOFF#one-click-r2-secret-path-repair-and-live-preflight-2026-08-02-23",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24"
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1341.1894840000023,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 414.11381299999994,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
+              "score": -8.182588577270508
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -5.055939674377441
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
+              "score": 2.0611839294433594
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -5.990633964538574
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.180741310119629
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+              "score": -1.8484196662902832
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+              "score": -1.9074137210845947
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.181859016418457
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
+              "score": 0.20889338850975037
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": -6.209420204162598
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.180630683898926
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration",
+              "score": -1.389616847038269
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -2.6966519355773926
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -3.163017749786377
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#current-read-only-gate-2026-08-02-22-15-pdt",
+              "score": 0.7489084005355835
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
+              "score": -3.9553723335266113
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#latest-live-checkpoint-2026-08-05-14-52-pdt",
+              "score": 1.522018551826477
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": -4.154946804046631
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#one-click-r2-secret-path-repair-and-live-preflight-2026-08-02-23",
+              "score": -1.9259103536605835
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -6.713891983032227
+            }
+          ]
         },
         {
           "queryId": "q16",
+          "query": "local validation deployment units health checks",
           "goldSourceKey": "wiki:T_eval:docs:operations",
-          "rank": 3,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:HANDOFF#deployed-supermemory-source-mismatch-recheck-2026-08-02-23-12-pd",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:HANDOFF#local-provider-readiness-correction-2026-08-02-20-37-pdt",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:HANDOFF#full-local-validation-rerun-2026-08-02-21-09-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:244-255",
             "wiki:T_eval:docs:HANDOFF#fresh-local-validation-and-image-build-gate-2026-08-02-23-37-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
             "wiki:T_eval:docs:current-state#fresh-local-validation-and-image-build-gate-2026-08-02-23-37-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986"
+            "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
+            "wiki:T_eval:docs:HANDOFF#local-provider-readiness-correction-2026-08-02-20-37-pdt",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
+            "wiki:T_eval:docs:HANDOFF#deployed-supermemory-source-mismatch-recheck-2026-08-02-23-12-pd",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:244-255",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1295.4566149999991,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 506.77149499999996,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
+              "score": -4.747331619262695
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -7.491635322570801
+            },
+            {
+              "id": "wiki:T_eval:docs:operations",
+              "score": 3.626739978790283
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
+              "score": -7.911435604095459
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -9.096620559692383
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#deployed-supermemory-source-mismatch-recheck-2026-08-02-23-12-pd",
+              "score": -4.912904739379883
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+              "score": -8.164213180541992
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -6.987977027893066
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
+              "score": -2.651763916015625
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+              "score": -7.891170978546143
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -7.744052886962891
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#local-provider-readiness-correction-2026-08-02-20-37-pdt",
+              "score": -2.7873849868774414
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
+              "score": -6.388987064361572
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -8.871347427368164
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#full-local-validation-rerun-2026-08-02-21-09-pdt",
+              "score": -0.3916986584663391
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:244-255",
+              "score": -6.464834213256836
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#fresh-local-validation-and-image-build-gate-2026-08-02-23-37-pdt",
+              "score": -1.027935266494751
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
+              "score": -6.615147113800049
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#fresh-local-validation-and-image-build-gate-2026-08-02-23-37-pdt",
+              "score": -1.027935266494751
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
+              "score": -6.747074604034424
+            }
+          ]
         },
         {
           "queryId": "q17",
+          "query": "Cloudflare edge bot spine architecture",
           "goldSourceKey": "wiki:T_eval:docs:ARCHITECTURE",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:centaur-port",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:centaur-gap-implementation-spec#7-expected-file-map",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:research-actors",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-            "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:operations#install-and-validate",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:setup",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
             "wiki:T_eval:docs:HANDOFF#qm-centaur-buzz-nanocodex-guidance",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
             "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
+            "wiki:T_eval:docs:research-actors",
+            "wiki:T_eval:docs:centaur-port",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "wiki:T_eval:docs:centaur-gap-implementation-spec#7-expected-file-map",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1332.2903379999989,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 494.65941100000055,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -6.494029521942139
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.179083824157715
+            },
+            {
+              "id": "wiki:T_eval:docs:centaur-port",
+              "score": -5.714178562164307
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -9.215435981750488
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.178594589233398
+            },
+            {
+              "id": "wiki:T_eval:docs:centaur-gap-implementation-spec#7-expected-file-map",
+              "score": -7.0655107498168945
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -8.64769458770752
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.079971313476562
+            },
+            {
+              "id": "wiki:T_eval:docs:research-actors",
+              "score": -3.803295612335205
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -10.181327819824219
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.18165111541748
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#install-and-validate",
+              "score": 1.784354567527771
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -9.517793655395508
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.180893898010254
+            },
+            {
+              "id": "wiki:T_eval:docs:setup",
+              "score": -2.4973084926605225
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+              "score": -9.606790542602539
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#qm-centaur-buzz-nanocodex-guidance",
+              "score": -2.5177857875823975
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": -9.779584884643555
+            },
+            {
+              "id": "wiki:T_eval:docs:PRODUCT#current-architecture-spine",
+              "score": -3.479647636413574
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+              "score": -8.573380470275879
+            }
+          ]
         },
         {
           "queryId": "q18",
+          "query": "knowledge base reranker top 20 candidates",
           "goldSourceKey": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-          "rank": 17,
+          "rank": 14,
           "order": [
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:README#proposed-specifications",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt",
+            "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:current-state#slack-indexing-audit-2026-08-02-23-26-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
             "wiki:T_eval:docs:DECISIONS#7-mid-thread-memory-structured-confirm",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33"
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+            "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt",
+            "wiki:T_eval:docs:current-state#slack-indexing-audit-2026-08-02-23-26-pdt",
+            "wiki:T_eval:docs:README#proposed-specifications",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:supermemory_mode"
           ],
-          "latencyMs": 1346.3926580000007,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 478.6237579999997,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": -1.454880952835083
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -9.827007293701172
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
+              "score": -2.030240774154663
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -2.8353757858276367
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -7.834871292114258
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+              "score": -4.45037841796875
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -1.83554208278656
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.177651405334473
+            },
+            {
+              "id": "wiki:T_eval:docs:README#proposed-specifications",
+              "score": -6.100818157196045
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": -4.032280921936035
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.08499813079834
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt",
+              "score": -4.462433815002441
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
+              "score": -2.533184051513672
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.1796236038208
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#slack-indexing-audit-2026-08-02-23-26-pdt",
+              "score": -4.462433815002441
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+              "score": -8.02979564666748
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
+              "score": -6.880429267883301
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -3.2807931900024414
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#7-mid-thread-memory-structured-confirm",
+              "score": -4.038214206695557
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -4.151783466339111
+            }
+          ]
         },
         {
           "queryId": "q19",
+          "query": "model reranking strict schema 0 to 10",
           "goldSourceKey": "wiki:T_eval:docs:knowledge-base-implementation-spec",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:current-state#final-read-only-gate-sweep-2026-08-02-20-59-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:ROUTER-SPEC#6-mapping-to-the-pricing-model",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:current-state#2026-08-04-00-10-pdt-bot-error-boundary-deployment",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:323-339",
+            "wiki:T_eval:docs:current-state#final-read-only-gate-sweep-2026-08-02-20-59-pdt",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
+            "wiki:T_eval:docs:current-state#2026-08-04-00-10-pdt-bot-error-boundary-deployment",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
             "wiki:T_eval:docs:extending#extend-durable-state",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236"
+            "wiki:T_eval:docs:ROUTER-SPEC#6-mapping-to-the-pricing-model",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1401.9309119999998,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 481.07408600000053,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+              "score": -5.122690677642822
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.1800537109375
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+              "score": -1.1008518934249878
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -4.17880392074585
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.179883003234863
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#final-read-only-gate-sweep-2026-08-02-20-59-pdt",
+              "score": -6.129777908325195
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
+              "score": -7.904434680938721
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.180861473083496
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
+              "score": -8.538002967834473
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -2.8703560829162598
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.180298805236816
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#6-mapping-to-the-pricing-model",
+              "score": -8.370463371276855
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -3.626627206802368
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.87918758392334
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#2026-08-04-00-10-pdt-bot-error-boundary-deployment",
+              "score": -7.714122772216797
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": -4.293379783630371
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+              "score": -4.6287970542907715
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:323-339",
+              "score": -5.501357555389404
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#extend-durable-state",
+              "score": -8.102060317993164
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:185-236",
+              "score": -7.2513861656188965
+            }
+          ]
         },
         {
           "queryId": "q20",
+          "query": "router tier 1 retrieval relevance floor",
           "goldSourceKey": "wiki:T_eval:docs:ROUTER-SPEC",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:DECISIONS#22-router-rollout",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "wiki:T_eval:docs:DECISIONS#22-router-rollout",
             "wiki:T_eval:docs:platform-foundation-architecture#router-shadow-mode",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:ROUTER-SPEC#7-what-the-router-is-not",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
             "wiki:T_eval:docs:ROUTER-SPEC#4-fallback-and-degradation-behavior",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
+            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
             "wiki:T_eval:docs:current-state#decisions-now-locked",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103"
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:supermemory_mode"
           ],
-          "latencyMs": 1352.1772289999972,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 392.87032,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
+              "score": -5.856513500213623
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -9.808632850646973
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#22-router-rollout",
+              "score": -3.785930633544922
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -3.755110740661621
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.179468154907227
+            },
+            {
+              "id": "wiki:T_eval:docs:platform-foundation-architecture#router-shadow-mode",
+              "score": -4.406007766723633
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": -9.222232818603516
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -9.211387634277344
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
+              "score": -6.4684600830078125
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": -5.759898662567139
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.159850120544434
+            },
+            {
+              "id": "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
+              "score": -6.355532646179199
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": -6.095126628875732
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.181245803833008
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#7-what-the-router-is-not",
+              "score": -5.020992755889893
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -5.7176833152771
+            },
+            {
+              "id": "wiki:T_eval:docs:ROUTER-SPEC#4-fallback-and-degradation-behavior",
+              "score": -5.349165439605713
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -7.01662015914917
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#decisions-now-locked",
+              "score": -9.119158744812012
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -9.136602401733398
+            }
+          ]
         },
         {
           "queryId": "q21",
+          "query": "research task plane OrchestratorDO",
           "goldSourceKey": "wiki:T_eval:docs:research-actors",
           "rank": -1,
           "order": [
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:DECISIONS",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "wiki:T_eval:docs:DECISIONS",
             "wiki:T_eval:docs:evaluation",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "wiki:T_eval:docs:ARCHITECTURE",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+            "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
             "wiki:T_eval:docs:ARCHITECTURE#architectural-invariants",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22"
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1300.8012929999968,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 452.7051850000007,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:26-184",
+              "score": -9.98197078704834
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.180575370788574
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS",
+              "score": -2.2040188312530518
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": -7.200684547424316
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.182191848754883
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
+              "score": 3.464381456375122
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -8.099603652954102
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.00487232208252
+            },
+            {
+              "id": "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
+              "score": -8.014688491821289
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -8.836644172668457
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.13945484161377
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
+              "score": 1.9190478324890137
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -9.468740463256836
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.864144325256348
+            },
+            {
+              "id": "wiki:T_eval:docs:evaluation",
+              "score": -3.0498039722442627
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -8.979172706604004
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE",
+              "score": -3.8911702632904053
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+              "score": -9.600502014160156
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#architectural-invariants",
+              "score": -8.250844955444336
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": -9.47702407836914
+            }
+          ]
         },
         {
           "queryId": "q22",
+          "query": "Graphify local MCP stdio",
           "goldSourceKey": "wiki:T_eval:docs:graphify-local-mcp",
-          "rank": 3,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:graphify-local-mcp",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:README#current-guides",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
             "wiki:T_eval:docs:HANDOFF#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113"
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
+            "wiki:T_eval:docs:README#current-guides",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 1395.9396759999945,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 406.52187700000104,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": -5.796137809753418
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -10.180827140808105
+            },
+            {
+              "id": "wiki:T_eval:docs:graphify-local-mcp",
+              "score": 8.01573657989502
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "score": -4.71616268157959
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.179179191589355
+            },
+            {
+              "id": "wiki:T_eval:docs:README#current-guides",
+              "score": -8.56026840209961
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
+              "score": -6.728015899658203
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -10.07857894897461
+            },
+            {
+              "id": "wiki:T_eval:docs:operations",
+              "score": 4.241599082946777
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:292-298",
+              "score": -8.954615592956543
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -10.178865432739258
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
+              "score": -4.4455246925354
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+              "score": -6.491296291351318
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -10.1672945022583
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
+              "score": -6.060681343078613
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+              "score": -4.672645568847656
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+              "score": -3.6731481552124023
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+              "score": -9.348270416259766
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
+              "score": -4.801654815673828
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
+              "score": -7.292257785797119
+            }
+          ]
         },
         {
           "queryId": "q23",
+          "query": "OPENTAG_KNOWLEDGE_DEPLOY_APPROVED deploy gate",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:deploy_gate",
-          "rank": 2,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1148-1184",
             "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:operations#deployment-map",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:current-state#2026-08-03-23-55-pdt-external-gate-ownership-check",
-            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:HANDOFF#2026-08-03-23-55-pdt-external-gate-ownership-check",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:setup#production-deploy",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:notion-feature-inventory#recommended-order",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "wiki:T_eval:docs:operations#deployment-map",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
+            "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
+            "wiki:T_eval:docs:current-state#2026-08-03-23-55-pdt-external-gate-ownership-check",
             "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59"
+            "wiki:T_eval:docs:HANDOFF#2026-08-03-23-55-pdt-external-gate-ownership-check",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1148-1184",
+            "wiki:T_eval:docs:setup#production-deploy",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1347.373090000001,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 501.4839119999997,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1148-1184",
+              "score": -2.6237595081329346
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": 6.670736789703369
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#deployment-map",
+              "score": 2.2478480339050293
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
+              "score": -3.1039676666259766
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -6.340118408203125
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#2026-08-03-23-55-pdt-external-gate-ownership-check",
+              "score": -0.31171998381614685
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-25",
+              "score": 0.6533181667327881
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -6.06638240814209
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#2026-08-03-23-55-pdt-external-gate-ownership-check",
+              "score": -1.0005613565444946
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -4.204747200012207
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -10.051301002502441
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
+              "score": 1.9998993873596191
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "score": -4.475902080535889
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -6.263112545013428
+            },
+            {
+              "id": "wiki:T_eval:docs:setup#production-deploy",
+              "score": -2.830421209335327
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+              "score": -4.374295711517334
+            },
+            {
+              "id": "wiki:T_eval:docs:notion-feature-inventory#recommended-order",
+              "score": 4.3296966552734375
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -4.281129837036133
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
+              "score": -0.43089476227760315
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": -3.920581102371216
+            }
+          ]
         },
         {
           "queryId": "q24",
+          "query": "annual recurring revenue sales_kpi",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:arr_kpi",
-          "rank": 2,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
             "custom_db:T_eval:sales_kpi:arr_kpi",
-            "wiki:T_eval:docs:VISION-SPEC#0-current-state-read-this-first",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
-            "wiki:T_eval:docs:ARCHITECTURE",
-            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:ARCHITECTURE#system-topology",
-            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
+            "wiki:T_eval:docs:VISION-SPEC#0-current-state-read-this-first",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-            "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+            "wiki:T_eval:docs:ARCHITECTURE",
+            "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+            "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
+            "custom_db:T_eval:sales_kpi:nps_kpi",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+            "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+            "wiki:T_eval:docs:ARCHITECTURE#system-topology",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
-            "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54"
+            "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission"
           ],
-          "latencyMs": 1296.0526549999995,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 445.09267399999953,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-24",
+              "score": 2.8122289180755615
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": 5.100649833679199
+            },
+            {
+              "id": "wiki:T_eval:docs:VISION-SPEC#0-current-state-read-this-first",
+              "score": -6.804776191711426
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:25-51",
+              "score": -7.8522868156433105
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -8.548585891723633
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE",
+              "score": -7.710548400878906
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:52-103",
+              "score": -7.135805606842041
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -8.895812034606934
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#system-topology",
+              "score": -9.009542465209961
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
+              "score": -9.009413719177246
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -9.35096549987793
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
+              "score": -8.176911354064941
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
+              "score": -5.703572750091553
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -9.031238555908203
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
+              "score": -9.98907470703125
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
+              "score": -7.665378570556641
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#normal-turn-lifecycle",
+              "score": -8.853588104248047
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:1-22",
+              "score": -8.821438789367676
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#active-turn-and-effect-fences",
+              "score": -9.421714782714844
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
+              "score": -7.648922920227051
+            }
+          ]
         },
         {
           "queryId": "q25",
+          "query": "Slack ACL lease KnowledgeDO authorize",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:slack_acl",
-          "rank": 2,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
+            "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1103-1126",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#17-open-decisions-requiring-operator-product-approval",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958"
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+            "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
+            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1103-1126",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1328.1049070000008,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 457.367021,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
+              "score": 0.7900798320770264
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": 6.032172203063965
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
+              "score": -1.391560435295105
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
+              "score": 1.057808756828308
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -6.864965915679932
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#3-current-state-gap",
+              "score": 0.6210577487945557
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
+              "score": 0.11845147609710693
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -7.074319362640381
+            },
+            {
+              "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
+              "score": -0.10943084955215454
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
+              "score": 1.218242883682251
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -5.194127082824707
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
+              "score": -3.249086618423462
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1103-1126",
+              "score": -4.428603172302246
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": -6.062379360198975
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#goal-blocked-on-external-gates-2026-08-02-23-36-pdt",
+              "score": -4.20883321762085
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "score": -4.389472484588623
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#17-open-decisions-requiring-operator-product-approval",
+              "score": -1.642657995223999
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+              "score": -2.5480003356933594
+            },
+            {
+              "id": "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
+              "score": -2.7568275928497314
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+              "score": -6.397491931915283
+            }
+          ]
         },
         {
           "queryId": "q26",
+          "query": "SUPERMEMORY_CONSUMER_MODE paused queue",
           "goldSourceKey": "custom_db:T_eval:sales_kpi:supermemory_mode",
-          "rank": 2,
+          "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
+            "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
-            "custom_db:T_eval:sales_kpi:nps_kpi",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:operations#configuration-ownership",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
             "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147"
+            "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1422.8476549999978,
-          "model": "Xenova/bge-reranker-base"
+          "latencyMs": 500.67077999999856,
+          "model": "Xenova/bge-reranker-base",
+          "scores": [
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+              "score": -4.145296573638916
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
+              "score": 8.024235725402832
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
+              "score": -0.17618213593959808
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -3.009831428527832
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:arr_kpi",
+              "score": -5.679089069366455
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
+              "score": 5.38492488861084
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+              "score": -1.0663995742797852
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:nps_kpi",
+              "score": -9.594292640686035
+            },
+            {
+              "id": "wiki:T_eval:docs:operations#configuration-ownership",
+              "score": -5.690156936645508
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+              "score": -5.800540447235107
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:deploy_gate",
+              "score": -6.676139831542969
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
+              "score": -2.455197811126709
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
+              "score": -4.364845275878906
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -8.95586109161377
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
+              "score": -2.2331697940826416
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
+              "score": -3.4323527812957764
+            },
+            {
+              "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
+              "score": 0.07291197031736374
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -1.0498790740966797
+            },
+            {
+              "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
+              "score": 0.17298085987567902
+            },
+            {
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
+              "score": 2.1787171363830566
+            }
+          ]
         }
       ]
     }

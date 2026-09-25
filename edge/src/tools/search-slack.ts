@@ -14,6 +14,7 @@ import {
 import type { Env } from "../env.js";
 import { parseConnectorAccessGrant } from "../connectors/authorization.js";
 import { KNOWLEDGE_LIMITS, type KnowledgeCitation } from "../memory/knowledge-contract.js";
+import { resolveKnowledgeCandidateRerank } from "../memory/retrieval/knowledge-rerank.js";
 import { SupermemoryAdapter, SupermemoryAdapterError } from "../memory/supermemory-adapter.js";
 import { createSupermemoryClientFromEnv } from "../memory/supermemory-client.js";
 import { requirePermissionSnapshot } from "../permissions/context.js";
@@ -312,6 +313,23 @@ export async function isSlackKnowledgeMember(
   }
 }
 
+async function rerankSlackCitations(
+  env: Env,
+  query: string,
+  citations: KnowledgeCitation[],
+  limit: number,
+): Promise<KnowledgeCitation[]> {
+  const rerank = resolveKnowledgeCandidateRerank(env);
+  if (!rerank || citations.length === 0) return citations.slice(0, limit);
+  const byKey = new Map(citations.map((citation) => [citation.sourceKey, citation]));
+  const candidates = citations.map((citation) => ({
+    id: citation.sourceKey,
+    excerpt: citation.excerpt,
+  }));
+  const reranked = await rerank({ query, candidates, topN: limit });
+  return reranked.map((candidate) => byKey.get(candidate.id)!).filter(Boolean);
+}
+
 async function citationIsCurrent(
   env: Env,
   teamId: string,
@@ -453,7 +471,8 @@ export async function searchSlackKnowledge(input: {
       !aclFinal) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
-    return { status: "ok", citations: current };
+    const ranked = await rerankSlackCitations(input.env, query, current, limit);
+    return { status: "ok", citations: ranked };
   } catch (error) {
     return {
       status: "knowledge_unavailable",
@@ -584,7 +603,8 @@ export async function searchSlackKnowledgeForActor(input: {
     ) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
-    return { status: "ok", citations: current };
+    const ranked = await rerankSlackCitations(input.env, query, current, limit);
+    return { status: "ok", citations: ranked };
   } catch (error) {
     return {
       status: "knowledge_unavailable",

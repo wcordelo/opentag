@@ -4,6 +4,7 @@
  */
 
 import type { KnowledgeCitationBase } from "../memory/knowledge-contract.js";
+import type { CandidateRerankFn } from "../memory/retrieval/knowledge-rerank.js";
 import { unifiedKnowledgeSearch, type SearchListFn } from "../memory/retrieval/unified-search.js";
 
 export type KnowledgeToolName =
@@ -36,6 +37,7 @@ export type WebUiQueryInput = {
   synthesizer: SynthesisLlm;
   perListLimit?: number;
   finalLimit?: number;
+  candidateRerank?: CandidateRerankFn;
 };
 
 export type WebUiQueryResult = {
@@ -70,6 +72,7 @@ export async function runWebUiKnowledgeQuery(
         lists,
         perListLimit: input.perListLimit ?? 8,
         rrfK: 60,
+        candidateRerank: input.candidateRerank,
         finalLimit: input.finalLimit ?? 10,
       });
 

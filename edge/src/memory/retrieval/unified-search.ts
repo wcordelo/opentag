@@ -1,6 +1,7 @@
 /** Parallel multi-list search fused with RRF and optional LLM rerank. */
 
 import type { KnowledgeCitationBase } from "../knowledge-contract.js";
+import type { CandidateRerankFn } from "./knowledge-rerank.js";
 import { llmRerank, type RerankLlm } from "./rerank.js";
 import { reciprocalRankFusion, type RankedItem } from "./rrf.js";
 
@@ -54,6 +55,8 @@ export async function unifiedKnowledgeSearch(input: {
   perListLimit?: number;
   rrfK?: number;
   rerank?: RerankLlm;
+  /** Jev or other candidate-level reranker; falls back to RRF order on error. */
+  candidateRerank?: CandidateRerankFn;
   finalLimit?: number;
 }): Promise<KnowledgeCitationBase[]> {
   const perListLimit = input.perListLimit ?? DEFAULT_PER_LIST_LIMIT;
@@ -75,6 +78,15 @@ export async function unifiedKnowledgeSearch(input: {
     excerpt: entry.item.citation.excerpt,
     score: entry.score,
   }));
+
+  if (input.candidateRerank) {
+    const reranked = await input.candidateRerank({
+      query: input.query,
+      candidates,
+      topN: finalLimit,
+    });
+    return reranked.map(({ id: _id, ...citation }) => citation);
+  }
 
   if (input.rerank) {
     const reranked = await llmRerank({

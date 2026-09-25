@@ -148,6 +148,17 @@ export interface Env {
   /** Workers Secret used only to mint and verify short-lived internal knowledge actor tokens. */
   KNOWLEDGE_ACTOR_TOKEN_SECRET?: string;
   /**
+   * Optional Jev rerank mode for knowledge search: `off` (default), `jev-score`, or
+   * `jev-noul`. Requires `TYPESAFE_API_KEY`; any error falls back to RRF order.
+   */
+  KNOWLEDGE_RERANK_MODE?: string;
+  /** TypeSafe model id for Jev reranking (default `jev-latest`). */
+  KNOWLEDGE_RERANK_MODEL?: string;
+  /** Per-candidate Jev request timeout in milliseconds (default 8000). */
+  KNOWLEDGE_RERANK_TIMEOUT_MS?: string;
+  /** TypeSafe API key for Jev reranking. Worker secret only; never log. */
+  TYPESAFE_API_KEY?: string;
+  /**
    * Exact gate for Local document update/delete. Only the string `verified`
    * enables mutations; unset/any other value keeps fail-closed unsupported_* paths.
    * SDK shapes are known; Local server-v0.0.5 live behavior remains unproven until R1 smoke.

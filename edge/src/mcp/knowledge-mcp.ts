@@ -33,6 +33,7 @@ import {
   isSlackKnowledgeMember,
   searchSlackKnowledgeForActor,
 } from "../tools/search-slack.js";
+import { resolveKnowledgeCandidateRerank } from "../memory/retrieval/knowledge-rerank.js";
 import { unifiedKnowledgeSearch } from "../memory/retrieval/unified-search.js";
 import {
   parseRawKnowledgeQuery,
@@ -869,6 +870,7 @@ export async function handleKnowledgeMcp(
           query: queryText,
           lists,
           rrfK: 60,
+          candidateRerank: resolveKnowledgeCandidateRerank(env),
           finalLimit: limit,
         });
         break;

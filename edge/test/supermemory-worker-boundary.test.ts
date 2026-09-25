@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { supermemoryContainerEnv } from "../workers/supermemory/src/container-env.js";
+import type { Env } from "../workers/supermemory/src/env.js";
 
 vi.mock("cloudflare:workers", () => ({
   env: {},
@@ -183,5 +185,33 @@ describe("Supermemory private Worker boundary", () => {
     expect(mountBucket).not.toHaveBeenCalled();
     const exec = (container as unknown as { exec: ReturnType<typeof vi.fn> }).exec;
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("scopes container credentials so facade tokens never reach the Container process", () => {
+    const values = supermemoryContainerEnv({
+      SUPERMEMORY_SERVICE_AUTH_TOKEN: "facade-token",
+      R2_ACCESS_KEY_ID: "r2-access-secret",
+      R2_SECRET_ACCESS_KEY: "r2-secret-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_BUCKET_NAME: "opentag-supermemory-state",
+      OPENAI_API_KEY: "provider-token",
+      OPENAI_BASE_URL: "https://openai.example/v1",
+      OPENAI_MODEL: "gpt-5.1",
+      SUPERMEMORY_DISABLE_TELEMETRY: "1",
+    } as Env);
+
+    expect(values).toMatchObject({
+      SUPERMEMORY_DATA_DIR: "/var/lib/supermemory",
+      AWS_ACCESS_KEY_ID: "r2-access-secret",
+      AWS_SECRET_ACCESS_KEY: "r2-secret-secret",
+      R2_ACCOUNT_ID: "account-id",
+      R2_BUCKET_NAME: "opentag-supermemory-state",
+      OPENAI_API_KEY: "provider-token",
+    });
+    expect(values).not.toHaveProperty("SUPERMEMORY_SERVICE_AUTH_TOKEN");
+    expect(values).not.toHaveProperty("STATE_BUCKET");
+    expect(values).not.toHaveProperty("R2_ACCESS_KEY_ID");
+    expect(values).not.toHaveProperty("R2_SECRET_ACCESS_KEY");
+    expect(values).not.toHaveProperty("SUPERMEMORY_ALLOW_LOCAL_DISK");
   });
 });

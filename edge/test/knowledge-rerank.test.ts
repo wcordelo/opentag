@@ -75,7 +75,7 @@ describe("knowledge rerank integration", () => {
       ["mid", 5],
       ["high", 9],
     ]);
-    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { state?: { candidate?: string } };
       const candidate = body.state?.candidate ?? "";
       const id = candidate.includes("high") ? "high" : candidate.includes("mid") ? "mid" : "low";
@@ -86,7 +86,7 @@ describe("knowledge rerank integration", () => {
           relevance: { type: "score", score },
         },
       });
-    });
+    }) as typeof fetch;
     const rerank = createJevCandidateRerank({
       apiKey: "test-key",
       mode: "jev-score",

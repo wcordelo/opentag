@@ -107,4 +107,32 @@ describe("knowledge rerank integration", () => {
     expect(parseKnowledgeRerankMode("jev-noul")).toBe("jev-noul");
     expect(parseKnowledgeRerankMode("bogus")).toBe("off");
   });
+
+  it("keeps RRF order when Jev fails on a larger pre-rerank pool", async () => {
+    const hits = Array.from({ length: 25 }, (_, index) => {
+      const id = `hit-${index}`;
+      return {
+        id,
+        citation: citation({ excerpt: `excerpt ${index}`, sourceKey: id }),
+        score: 1 - index * 0.01,
+      };
+    });
+    const list: SearchListFn = async () => hits;
+    const fetchImpl = vi.fn(async () => new Response("upstream down", { status: 503 }));
+    const rerank = createJevCandidateRerank({
+      apiKey: "test-key",
+      mode: "jev-score",
+      timeoutMs: 50,
+      maxCandidates: 40,
+      fetchImpl,
+    });
+    const results = await unifiedKnowledgeSearch({
+      query: "deploy",
+      lists: [list],
+      candidateRerank: rerank,
+      finalLimit: 8,
+    });
+    expect(results.map((row) => row.sourceKey)).toEqual(hits.slice(0, 8).map((row) => row.id));
+    expect(fetchImpl).toHaveBeenCalled();
+  });
 });

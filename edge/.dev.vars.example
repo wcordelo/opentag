@@ -26,6 +26,10 @@ INTERNAL_SECRET=dev-internal-secret
 # KNOWLEDGE_RERANK_MODE=off|jev-score|jev-noul
 # KNOWLEDGE_RERANK_MODEL=jev-latest
 # KNOWLEDGE_RERANK_TIMEOUT_MS=8000
+# JEV_RERANK_TOP_N=20
+# JEV_RERANK_MAX_EXCERPT_CHARS=8000
+# JEV_RERANK_BLEND_MODE=rrf-blend|jev-only
+# JEV_RERANK_BLEND_WEIGHT=0.7
 # Optional P2 router Jev shadow (default off; requires TYPESAFE_API_KEY secret):
 # ROUTER_JEV_SHADOW=on
 # ROUTER_JEV_MODEL=jev-latest

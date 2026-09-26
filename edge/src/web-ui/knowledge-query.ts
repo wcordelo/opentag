@@ -70,7 +70,7 @@ export async function runWebUiKnowledgeQuery(
     : await unifiedKnowledgeSearch({
         query: input.query,
         lists,
-        perListLimit: input.perListLimit ?? 8,
+        perListLimit: input.perListLimit ?? 15,
         rrfK: 60,
         candidateRerank: input.candidateRerank,
         finalLimit: input.finalLimit ?? 10,

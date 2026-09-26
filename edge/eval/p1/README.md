@@ -10,7 +10,7 @@ Offline evaluation for the knowledge-search rerank prototype.
 | `code` | Real `edge/src` files chunked on `export function` boundaries |
 | `custom_db` | Fixture rows themed on `edge/test/connectors-phase2.test.ts` (not production DB) |
 
-Retriever: offline BM25 per source family (Supermemory unavailable offline), fused with RRF k=60, top 20 frozen per query in `frozen-candidates.json`.
+Retriever: offline BM25 per source family (windowed passages + page-title boost; Supermemory unavailable offline), fused with RRF k=60, top 40 frozen per query in `frozen-candidates.json` (per-list limit 15). Production uses the same query expansion and pool sizes via `unifiedKnowledgeSearch` + `JEV_RERANK_MAX_CANDIDATES=40`.
 
 **Limitations:** no live Slack canary threads or Supermemory index; custom_db rows are fixture-derived.
 
@@ -35,7 +35,15 @@ text-classification pipeline.
 Self-contained bundle (no npm deps):
 
 ```bash
+# Dry-run config (no API key)
+node edge/eval/p1/run-jev-eval.mjs --dry-run
+
+# Default: both jev-score and jev-noul, rrf-blend 0.7, top-20 window, 8k excerpt
 TYPESAFE_API_KEY=... node edge/eval/p1/run-jev-eval.mjs
+
+# Jev-only mode (ablation)
+TYPESAFE_API_KEY=... node edge/eval/p1/run-jev-eval.mjs \
+  --mode jev-score --blend jev-only
 ```
 
 Or from the artifact copy:
@@ -48,4 +56,8 @@ TYPESAFE_API_KEY=... node /opt/cursor/artifacts/p1-eval/run-jev-eval.mjs
 
 - MRR@5
 - Top-3 recall (gold `sourceKey` in top 3)
-- p95 latency per arm
+- Per-query and per-call p50/p95 latency
+- Call count and per-call error count
+
+Committed eval runs live under `results/`. BGE baselines: see `bge/README.md`
+(local Python venv; not part of CI).

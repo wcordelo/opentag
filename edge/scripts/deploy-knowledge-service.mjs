@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import { blockOpentagCloudflareDeploy } from "./block-opentag-cloudflare-deploy.mjs";
 
 const edgeRoot = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(edgeRoot, "..");
@@ -131,6 +132,7 @@ if (service === "graphify" && !catalogIsValid(config)) {
   process.stderr.write(`${configPath} must contain a valid non-empty tracked repository catalog\n`);
   process.exit(1);
 }
+if (!dryRun) blockOpentagCloudflareDeploy();
 if (!dryRun && process.env.OPENTAG_KNOWLEDGE_DEPLOY_APPROVED !== "true") {
   process.stderr.write("set OPENTAG_KNOWLEDGE_DEPLOY_APPROVED=true after explicit staging/deployment approval\n");
   process.exit(1);

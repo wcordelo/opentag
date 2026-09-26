@@ -16,7 +16,7 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 
 | Config or package | Role | Status |
 | --- | --- | --- |
-| `wrangler.bot.toml` | `opentag-bot`, production Slack surface | Active target |
+| `wrangler.bot.toml` | `opentag-bot` Worker config (synced downstream for deploy) | Source config; **deploy blocked in opentag** |
 | `wrangler.toml` | `opentag-edge`, local/development bot | Active target |
 | `workers/agent-runtime/` | `opentag-agent`, AG-UI triage Container | Production runtime |
 | `workers/sandbox/` | `opentag-harness`, Claude Code Container | Production coding runtime |
@@ -153,19 +153,11 @@ not fall back to AG-UI.
 
 ## Deploy
 
-Deployment is always an explicit operator action:
+**wcordelo/opentag** is the open upstream for bot code and features. A private downstream deployment repo mirrors selected paths one-way and owns **all** Cloudflare deploys (production, staging, and test). Enterprise-only features also live downstream.
 
-```bash
-npm run deploy:agent
-npm --prefix workers/claudex-proxy run deploy  # target before harness
-npm --prefix workers/sandbox run deploy        # target before bot
-npm run deploy:bot
-npm run deploy:research   # optional
-```
+Cloudflare deploy scripts in opentag exit non-zero before wrangler runs. Local bot work uses `npm run dev` or `wrangler dev --config wrangler.bot.toml`. Retrieval and reranker changes reach deployed Workers only through the downstream sync and deploy path.
 
-The harness has separate secrets, allowlists, and deployment steps in
-[docs/operations.md](../docs/operations.md). Do not deploy it merely because
-its package typechecks.
+See [docs/operations.md](../docs/operations.md) for the deployment runbook.
 
 ## Workers-safe CopilotKit Channels
 

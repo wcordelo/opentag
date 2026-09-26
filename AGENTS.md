@@ -1,9 +1,20 @@
 # AGENTS.md
 
+## Repository model
+
+**wcordelo/opentag** (this repo) is the open upstream: most product and bot feature work lands here. A private downstream deployment repo mirrors selected paths one-way and owns **all** Cloudflare deploys (production, staging, and test).
+
+| Work type | Where |
+| --- | --- |
+| Bot features, retrieval, tests, local `wrangler dev` | **opentag** (here) |
+| Worker vars/secrets, staging/preview/prod deploy, enterprise-only features | **Downstream deployment repo** |
+
+Cloudflare deploy scripts in opentag are blocked intentionally. `wrangler dev` and CI tests still run here. See [docs/operations.md](./docs/operations.md).
+
 ## Cursor Cloud / agent instructions
 
 - **Product docs:** [`docs/PRODUCT.md`](./docs/PRODUCT.md) · [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) · [`docs/centaur-port.md`](./docs/centaur-port.md) · [`docs/extending.md`](./docs/extending.md) · [`docs/operations.md`](./docs/operations.md)
-- **Slack product surface:** Cloudflare edge (`edge/`) — Events API bot Worker + StateStore. Production Worker: `opentag-bot` (`npm run deploy:bot`). Channels deps: `edge/vendor/` tarball + npm.
+- **Slack product surface:** Cloudflare edge (`edge/`) — Events API bot Worker + StateStore. Production Worker: `opentag-bot` (deploy from the private downstream deployment repo; `npm run deploy:bot` is blocked here). Channels deps: `edge/vendor/` tarball + npm.
 - **Agent brain (production):** `edge/workers/agent-runtime/` Container (`opentag-agent`). Bot uses **`AGENT_RUNTIME` service binding** + `AGENT_URL` path (same-zone `workers.dev` fetch → CF 1042).
 - **Agent brain (dev-only):** root `pnpm runtime` (`runtime.ts` / `lib/triage-agent.ts`) on `:8200`. Hardcoded to the **OpenAI adapter** (`@tanstack/ai-openai`): needs a working `OPENAI_API_KEY`; `AGENT_MODEL` only swaps the OpenAI model id and `ANTHROPIC_API_KEY` does not drive it. Runtime accepts AG-UI runs at `POST /api/copilotkit/agent/triage/run` (emits `RUN_STARTED` then streams; a bad/over-quota key surfaces as a `RUN_ERROR` SSE event, not a startup crash).
 - **Research tasks:** optional `edge/wrangler.research.toml` (internal); not on the CI critical path.
@@ -22,12 +33,10 @@ npm ci
 npm test                 # bot-spine unit only (includes durable-choice + thread-memory)
 npm run test:e2e         # StateStore workerd
 npm run typecheck
-npm run deploy:bot       # production bot
-npm run deploy:agent     # production AG-UI Container
 npm run dev              # local bot Worker (Slack Events)
 ```
 
-Harness validation is separate:
+Cloudflare deploy scripts are blocked in opentag; deploy from the downstream deployment repo. Harness validation is separate:
 
 ```bash
 cd edge/workers/sandbox
@@ -38,7 +47,7 @@ npm ci
 npm run typecheck
 ```
 
-Do not deploy any Worker or Container without explicit user approval.
+Do not run Cloudflare deploy scripts from opentag. Deploy only from the downstream deployment repo, and only with explicit operator approval there.
 
 Slack Request URLs must point at **`opentag-bot`**, not the research orchestrator.
 

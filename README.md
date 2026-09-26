@@ -8,6 +8,12 @@ optional repository coding — with runtime and state on Cloudflare Workers,
 Durable Objects, and Containers. Slack is the product surface; everything else
 stays behind the bot.
 
+**Repository model:** this repo (**wcordelo/opentag**) is the open upstream for
+most feature work. A private downstream deployment repo (berendo-labs/cosmos)
+mirrors selected paths one-way, adds enterprise-only features, and owns **all**
+Cloudflare deploys (production, staging, and test). Deploy scripts here are
+blocked; use the downstream repo to ship.
+
 Runs on **Cloudflare** (Workers, Durable Objects, Containers). The Slack bot
 engine uses CopilotKit’s [`@copilotkit/channels`](https://github.com/CopilotKit/CopilotKit/tree/main/packages/channels)
 package among other pieces — TanStack AI for the triage runtime, Claude Code
@@ -348,29 +354,20 @@ in the isolate).
 
 ### Production shape
 
-Deploy Containers + Workers. No laptop runtime or tunnel is required for Slack
-once Request URLs point at `opentag-bot`. Full walkthrough: [docs/setup.md](./docs/setup.md).
+### Production deploy (downstream repo)
 
-Requires **Workers Paid** (Cloudflare Containers).
+Cloudflare deploy scripts in **wcordelo/opentag** are blocked. Deploy from
+**berendo-labs/cosmos** after the one-way sync. Full walkthrough:
+[docs/setup.md](./docs/setup.md) and [docs/operations.md](./docs/operations.md).
+
+Requires **Workers Paid** (Cloudflare Containers) in the deployment account.
 
 ```bash
-# 1. Conversation runtime
-cd edge/workers/agent-runtime && npm ci
-npx wrangler secret put OPENAI_API_KEY
-# optional: LINEAR_API_KEY, LINEAR_TEAM_KEY (display name, e.g. Berendo), NOTION_*
-npm run deploy
-
-# 2. Coding plane (if you keep the shipped bindings) — targets before callers
+# Example sequence — run from the downstream deployment repo, not opentag
+cd edge/workers/agent-runtime && npm ci && npm run deploy
 cd ../claudex-proxy && npm ci && npm run deploy
 cd ../sandbox && npm ci && npm run deploy
-
-# 3. Bot
-cd ../..
-npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
-npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
-printf '%s' 'https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run' \
-  | npx wrangler secret put AGENT_URL --config wrangler.bot.toml
-npm run deploy:bot
+cd ../.. && npm run deploy:bot
 ```
 
 ### Slack app

@@ -1,0 +1,1020 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-26T05:59:39.707Z",
+  "inputsDir": "/workspace/edge/eval/p2",
+  "fixtureCount": 58,
+  "rules": [
+    {
+      "id": "router",
+      "label": "Current router (baseline)",
+      "kind": "baseline",
+      "params": null,
+      "inSample": {
+        "n": 58,
+        "tp": 41,
+        "fp": 4,
+        "fn": 1,
+        "tn": 12,
+        "accuracy": 0.9137931034482759,
+        "precision": 0.9111111111111111,
+        "recall": 0.9761904761904762,
+        "f1": 0.9425287356321839,
+        "falseRespondRate": 0.06896551724137931,
+        "falseRespondCount": 4,
+        "missedRespondCount": 1
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 0,
+          "ruleWorse": 0,
+          "pExact": 1
+        },
+        "flips": []
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 4,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "jev",
+      "label": "Jev alone (baseline)",
+      "kind": "baseline",
+      "params": null,
+      "inSample": {
+        "n": 58,
+        "tp": 38,
+        "fp": 1,
+        "fn": 4,
+        "tn": 15,
+        "accuracy": 0.9137931034482759,
+        "precision": 0.9743589743589743,
+        "recall": 0.9047619047619048,
+        "f1": 0.9382716049382716,
+        "falseRespondRate": 0.017241379310344827,
+        "falseRespondCount": 1,
+        "missedRespondCount": 4
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 4,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 0,
+          "ruleWorse": 0,
+          "pExact": 1
+        },
+        "flips": []
+      }
+    },
+    {
+      "id": "and",
+      "label": "AND: respond only if both respond",
+      "kind": "principled",
+      "params": null,
+      "inSample": {
+        "n": 58,
+        "tp": 37,
+        "fp": 1,
+        "fn": 5,
+        "tn": 15,
+        "accuracy": 0.896551724137931,
+        "precision": 0.9736842105263158,
+        "recall": 0.8809523809523809,
+        "f1": 0.925,
+        "falseRespondRate": 0.017241379310344827,
+        "falseRespondCount": 1,
+        "missedRespondCount": 5
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 3,
+          "ruleWorse": 4,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 0,
+          "ruleWorse": 1,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "or",
+      "label": "OR: respond if either responds",
+      "kind": "principled",
+      "params": null,
+      "inSample": {
+        "n": 58,
+        "tp": 42,
+        "fp": 4,
+        "fn": 0,
+        "tn": 12,
+        "accuracy": 0.9310344827586207,
+        "precision": 0.9130434782608695,
+        "recall": 1,
+        "f1": 0.9545454545454545,
+        "falseRespondRate": 0.06896551724137931,
+        "falseRespondCount": 4,
+        "missedRespondCount": 0
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 1,
+          "ruleWorse": 0,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 3,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "veto-0.2",
+      "label": "Router, Jev vetoes respond if p(respond) < 0.2",
+      "kind": "tuned",
+      "params": {
+        "t": 0.2
+      },
+      "inSample": {
+        "n": 58,
+        "tp": 41,
+        "fp": 2,
+        "fn": 1,
+        "tn": 14,
+        "accuracy": 0.9482758620689655,
+        "precision": 0.9534883720930233,
+        "recall": 0.9761904761904762,
+        "f1": 0.9647058823529412,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 1
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 2,
+          "ruleWorse": 0,
+          "pExact": 0.5
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 2,
+          "pExact": 0.6875
+        },
+        "flips": [
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "leaveOneOut": {
+        "grid": [
+          {
+            "t": 0.1
+          },
+          {
+            "t": 0.2
+          },
+          {
+            "t": 0.3
+          },
+          {
+            "t": 0.4
+          },
+          {
+            "t": 0.5
+          }
+        ],
+        "chosenParams": {
+          "{\"t\":0.1}": 58
+        },
+        "n": 58,
+        "tp": 41,
+        "fp": 2,
+        "fn": 1,
+        "tn": 14,
+        "accuracy": 0.9482758620689655,
+        "precision": 0.9534883720930233,
+        "recall": 0.9761904761904762,
+        "f1": 0.9647058823529412,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 1
+      }
+    },
+    {
+      "id": "veto-0.3",
+      "label": "Router, Jev vetoes respond if p(respond) < 0.3",
+      "kind": "tuned",
+      "params": {
+        "t": 0.3
+      },
+      "inSample": {
+        "n": 58,
+        "tp": 39,
+        "fp": 2,
+        "fn": 3,
+        "tn": 14,
+        "accuracy": 0.9137931034482759,
+        "precision": 0.9512195121951219,
+        "recall": 0.9285714285714286,
+        "f1": 0.9397590361445782,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 3
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 2,
+          "ruleWorse": 2,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 2,
+          "ruleWorse": 2,
+          "pExact": 1
+        },
+        "flips": [
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "respond",
+            "to": "observe",
+            "fixed": false
+          }
+        ]
+      },
+      "leaveOneOut": {
+        "grid": [
+          {
+            "t": 0.1
+          },
+          {
+            "t": 0.2
+          },
+          {
+            "t": 0.3
+          },
+          {
+            "t": 0.4
+          },
+          {
+            "t": 0.5
+          }
+        ],
+        "chosenParams": {
+          "{\"t\":0.1}": 58
+        },
+        "n": 58,
+        "tp": 41,
+        "fp": 2,
+        "fn": 1,
+        "tn": 14,
+        "accuracy": 0.9482758620689655,
+        "precision": 0.9534883720930233,
+        "recall": 0.9761904761904762,
+        "f1": 0.9647058823529412,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 1
+      }
+    },
+    {
+      "id": "jev+mem-0.5",
+      "label": "Jev, plus respond if router responds AND memoryNeeded >= 0.5",
+      "kind": "principled",
+      "params": {
+        "m": 0.5
+      },
+      "inSample": {
+        "n": 58,
+        "tp": 42,
+        "fp": 2,
+        "fn": 0,
+        "tn": 14,
+        "accuracy": 0.9655172413793104,
+        "precision": 0.9545454545454546,
+        "recall": 1,
+        "f1": 0.9767441860465117,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 0
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 3,
+          "ruleWorse": 0,
+          "pExact": 0.25
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 1,
+          "pExact": 0.375
+        },
+        "flips": [
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "jev+mem-0.8",
+      "label": "Jev, plus respond if router responds AND memoryNeeded >= 0.8",
+      "kind": "tuned",
+      "params": {
+        "m": 0.8
+      },
+      "inSample": {
+        "n": 58,
+        "tp": 42,
+        "fp": 2,
+        "fn": 0,
+        "tn": 14,
+        "accuracy": 0.9655172413793104,
+        "precision": 0.9545454545454546,
+        "recall": 1,
+        "f1": 0.9767441860465117,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 0
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 3,
+          "ruleWorse": 0,
+          "pExact": 0.25
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 1,
+          "pExact": 0.375
+        },
+        "flips": [
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "leaveOneOut": {
+        "grid": [
+          {
+            "m": 0.5
+          },
+          {
+            "m": 0.6
+          },
+          {
+            "m": 0.7
+          },
+          {
+            "m": 0.8
+          },
+          {
+            "m": 0.9
+          }
+        ],
+        "chosenParams": {
+          "{\"m\":0.5}": 58
+        },
+        "n": 58,
+        "tp": 42,
+        "fp": 2,
+        "fn": 0,
+        "tn": 14,
+        "accuracy": 0.9655172413793104,
+        "precision": 0.9545454545454546,
+        "recall": 1,
+        "f1": 0.9767441860465117,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 0
+      }
+    },
+    {
+      "id": "band-0.2-0.6",
+      "label": "Jev, but router decides when 0.2 <= p(respond) <= 0.6",
+      "kind": "tuned",
+      "params": {
+        "lo": 0.2,
+        "hi": 0.6
+      },
+      "inSample": {
+        "n": 58,
+        "tp": 42,
+        "fp": 2,
+        "fn": 0,
+        "tn": 14,
+        "accuracy": 0.9655172413793104,
+        "precision": 0.9545454545454546,
+        "recall": 1,
+        "f1": 0.9767441860465117,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 0
+      },
+      "vsRouter": {
+        "mcnemar": {
+          "ruleBetter": 3,
+          "ruleWorse": 0,
+          "pExact": 0.25
+        },
+        "flips": [
+          {
+            "id": "synthetic-side-chat-lunch",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-question-to-other",
+            "gold": "observe",
+            "from": "respond",
+            "to": "observe",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-oncall-page",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "vsJev": {
+        "mcnemar": {
+          "ruleBetter": 4,
+          "ruleWorse": 1,
+          "pExact": 0.375
+        },
+        "flips": [
+          {
+            "id": "synthetic-wiki-question",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-past-decision",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-meeting-schedule",
+            "gold": "observe",
+            "from": "observe",
+            "to": "respond",
+            "fixed": false
+          },
+          {
+            "id": "synthetic-thread-context-needed",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          },
+          {
+            "id": "synthetic-who-knows",
+            "gold": "respond",
+            "from": "observe",
+            "to": "respond",
+            "fixed": true
+          }
+        ]
+      },
+      "leaveOneOut": {
+        "grid": [
+          {
+            "lo": 0.1,
+            "hi": 0.5
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.6
+          },
+          {
+            "lo": 0.1,
+            "hi": 0.7
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.5
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.6
+          },
+          {
+            "lo": 0.2,
+            "hi": 0.7
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.5
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.6
+          },
+          {
+            "lo": 0.3,
+            "hi": 0.7
+          }
+        ],
+        "chosenParams": {
+          "{\"lo\":0.1,\"hi\":0.5}": 58
+        },
+        "n": 58,
+        "tp": 42,
+        "fp": 2,
+        "fn": 0,
+        "tn": 14,
+        "accuracy": 0.9655172413793104,
+        "precision": 0.9545454545454546,
+        "recall": 1,
+        "f1": 0.9767441860465117,
+        "falseRespondRate": 0.034482758620689655,
+        "falseRespondCount": 2,
+        "missedRespondCount": 0
+      }
+    }
+  ]
+}

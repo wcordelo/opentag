@@ -144,11 +144,105 @@ describe("router Jev shadow ingress E2E", () => {
     expect(byEvent.get("EvRespond")).toMatchObject({
       currentRoute: { decision: "respond" },
       jev: { model: "jev-test", route: { choice: "observe" } },
+      combinedRoute: { decision: "respond", rule: "4a" },
     });
     expect(byEvent.get("EvObserve")).toMatchObject({
       currentRoute: { decision: "observe", reason: "observe_conversation" },
       jev: { model: "jev-test" },
+      combinedRoute: { decision: "observe", rule: "4a" },
     });
+  });
+
+  it("applies rule 4a: router respond + high memoryNeeded upgrades Jev observe to combined respond", async () => {
+    const judgment = await callRouterJevJudgment({
+      apiKey: "test-key",
+      model: "jev-latest",
+      timeoutMs: 1500,
+      message: "what is the deploy status?",
+      source: "thread_reply",
+      fetchImpl: async () => Response.json({
+        model: "jev-test",
+        answers: {
+          route: { type: "choice", choice: "observe", probabilities: { respond: 0.2, observe: 0.8 } },
+          needsHuman: { type: "noul", noul: 0.1 },
+          memoryNeeded: { type: "noul", noul: 0.96 },
+        },
+      }),
+    });
+    const record = createResponseRouteJevMeasurement({
+      workspaceId: "T1",
+      eventId: "EvComboFlip",
+      threadKey: "slack:T1:C1:1.0",
+      executionId: "route-jev:EvComboFlip",
+      currentRoute: {
+        decision: "respond",
+        reason: "question",
+        classification: {
+          tier: 1,
+          confidence: 1,
+          classifierPath: "heuristic",
+          matchedRule: "t1.11",
+          primarySignal: "question_form",
+          surfaceFeatures: {
+            hasCodeBlock: false,
+            hasAttachment: false,
+            wordCount: 4,
+            matchedTier1Pattern: true,
+            matchedTier2Pattern: false,
+            tier3Flag: false,
+          },
+          normalizedMessage: "what is the deploy status",
+        },
+      },
+      jev: judgment,
+    });
+    expect(record.combinedRoute).toEqual({ decision: "respond", rule: "4a" });
+  });
+
+  it("applies rule 4a: router respond + low memoryNeeded keeps combined observe when Jev observes", async () => {
+    const judgment = await callRouterJevJudgment({
+      apiKey: "test-key",
+      model: "jev-latest",
+      timeoutMs: 1500,
+      message: "yo",
+      source: "thread_reply",
+      fetchImpl: async () => Response.json({
+        model: "jev-test",
+        answers: {
+          route: { type: "choice", choice: "observe", probabilities: { respond: 0.1, observe: 0.9 } },
+          needsHuman: { type: "noul", noul: 0.05 },
+          memoryNeeded: { type: "noul", noul: 0.1 },
+        },
+      }),
+    });
+    const record = createResponseRouteJevMeasurement({
+      workspaceId: "T1",
+      eventId: "EvComboStay",
+      threadKey: "slack:T1:C1:1.0",
+      executionId: "route-jev:EvComboStay",
+      currentRoute: {
+        decision: "respond",
+        reason: "question",
+        classification: {
+          tier: 1,
+          confidence: 1,
+          classifierPath: "heuristic",
+          matchedRule: "t1.11",
+          primarySignal: "question_form",
+          surfaceFeatures: {
+            hasCodeBlock: false,
+            hasAttachment: false,
+            wordCount: 1,
+            matchedTier1Pattern: true,
+            matchedTier2Pattern: false,
+            tier3Flag: false,
+          },
+          normalizedMessage: "yo",
+        },
+      },
+      jev: judgment,
+    });
+    expect(record.combinedRoute).toEqual({ decision: "observe", rule: "4a" });
   });
 
   it("records fetch failures without changing routing", async () => {

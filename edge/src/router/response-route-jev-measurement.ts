@@ -5,6 +5,13 @@ import { resolveRouterJevShadowConfig } from "./jev-route-config.js";
 import type { RouterJevRouteSource } from "./jev-route-questions.js";
 
 export const RESPONSE_ROUTE_JEV_SCHEMA_VERSION = 1 as const;
+export const COMBINED_ROUTE_RULE_4A = "4a" as const;
+export const COMBINED_ROUTE_MEMORY_THRESHOLD = 0.5;
+
+export type CombinedRouteDecision = Readonly<{
+  decision: SlackResponseRoute["decision"];
+  rule: typeof COMBINED_ROUTE_RULE_4A;
+}>;
 
 export type ResponseRouteJevMeasurement = Readonly<{
   schemaVersion: typeof RESPONSE_ROUTE_JEV_SCHEMA_VERSION;
@@ -17,8 +24,29 @@ export type ResponseRouteJevMeasurement = Readonly<{
     reason: SlackResponseRoute["reason"];
   }>;
   jev: RouterJevRouteJudgment;
+  combinedRoute: CombinedRouteDecision;
   recordedAt: string;
 }>;
+
+/** Rule 4a (shadow-only): respond if Jev says respond, or router says respond and memoryNeeded >= 0.5. */
+export function computeCombinedRouteRule4a(
+  currentRoute: Pick<SlackResponseRoute, "decision">,
+  jev: RouterJevRouteJudgment,
+): CombinedRouteDecision {
+  if (jev.error || !jev.route) {
+    return Object.freeze({
+      decision: currentRoute.decision,
+      rule: COMBINED_ROUTE_RULE_4A,
+    });
+  }
+  const respond = jev.route.choice === "respond"
+    || (currentRoute.decision === "respond"
+      && (jev.memoryNeeded?.noul ?? 0) >= COMBINED_ROUTE_MEMORY_THRESHOLD);
+  return Object.freeze({
+    decision: respond ? "respond" : "observe",
+    rule: COMBINED_ROUTE_RULE_4A,
+  });
+}
 
 export class ResponseRouteJevMeasurementError extends Error {
   constructor(readonly code: string, readonly status: 400 | 404 | 409 | 503 = 400) {
@@ -72,30 +100,57 @@ export function validateResponseRouteJevMeasurement(value: unknown): ResponseRou
   if (input.schemaVersion !== RESPONSE_ROUTE_JEV_SCHEMA_VERSION) {
     throw new ResponseRouteJevMeasurementError("response_route_jev_schema_invalid");
   }
-  const currentRoute = input.currentRoute;
-  if (!currentRoute || typeof currentRoute !== "object" || Array.isArray(currentRoute)) {
+  const currentRouteInput = input.currentRoute;
+  if (!currentRouteInput || typeof currentRouteInput !== "object" || Array.isArray(currentRouteInput)) {
     throw new ResponseRouteJevMeasurementError("current_route_invalid");
   }
-  const route = currentRoute as Record<string, unknown>;
+  const route = currentRouteInput as Record<string, unknown>;
   if (route.decision !== "respond" && route.decision !== "observe") {
     throw new ResponseRouteJevMeasurementError("current_route_invalid");
   }
   if (typeof route.reason !== "string" || route.reason.length === 0) {
     throw new ResponseRouteJevMeasurementError("current_route_invalid");
   }
+  const jev = validateJevJudgment(input.jev);
+  const currentRoute = Object.freeze({
+    decision: route.decision as SlackResponseRoute["decision"],
+    reason: route.reason as SlackResponseRoute["reason"],
+  });
+  const combinedRoute = validateCombinedRoute(input.combinedRoute, currentRoute, jev);
   return Object.freeze({
     schemaVersion: RESPONSE_ROUTE_JEV_SCHEMA_VERSION,
     workspaceId: identifier(input.workspaceId, "workspace_id"),
     eventId: identifier(input.eventId, "event_id"),
     threadKey: identifier(input.threadKey, "thread_key"),
     executionId: identifier(input.executionId, "execution_id"),
-    currentRoute: Object.freeze({
-      decision: route.decision as SlackResponseRoute["decision"],
-      reason: route.reason as SlackResponseRoute["reason"],
-    }),
-    jev: validateJevJudgment(input.jev),
+    currentRoute,
+    jev,
+    combinedRoute,
     recordedAt: timestamp(input.recordedAt, "recorded_at"),
   });
+}
+
+function validateCombinedRoute(
+  value: unknown,
+  currentRoute: Readonly<{ decision: SlackResponseRoute["decision"] }>,
+  jev: RouterJevRouteJudgment,
+): CombinedRouteDecision {
+  const expected = computeCombinedRouteRule4a(currentRoute, jev);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return expected;
+  }
+  const input = value as Record<string, unknown>;
+  if (
+    input.rule === COMBINED_ROUTE_RULE_4A
+    && (input.decision === "respond" || input.decision === "observe")
+    && input.decision === expected.decision
+  ) {
+    return Object.freeze({
+      decision: input.decision as SlackResponseRoute["decision"],
+      rule: COMBINED_ROUTE_RULE_4A,
+    });
+  }
+  throw new ResponseRouteJevMeasurementError("combined_route_invalid");
 }
 
 export function createResponseRouteJevMeasurement(input: {
@@ -107,17 +162,20 @@ export function createResponseRouteJevMeasurement(input: {
   jev: RouterJevRouteJudgment;
   recordedAt?: string;
 }): ResponseRouteJevMeasurement {
+  const currentRoute = {
+    decision: input.currentRoute.decision,
+    reason: input.currentRoute.reason,
+  };
+  const combinedRoute = computeCombinedRouteRule4a(currentRoute, input.jev);
   return validateResponseRouteJevMeasurement({
     schemaVersion: RESPONSE_ROUTE_JEV_SCHEMA_VERSION,
     workspaceId: input.workspaceId,
     eventId: input.eventId,
     threadKey: input.threadKey,
     executionId: input.executionId,
-    currentRoute: {
-      decision: input.currentRoute.decision,
-      reason: input.currentRoute.reason,
-    },
+    currentRoute,
     jev: input.jev,
+    combinedRoute,
     recordedAt: input.recordedAt ?? new Date().toISOString(),
   });
 }
@@ -178,12 +236,15 @@ export function scheduleRouterJevShadow(
       threadContext: input.threadContext,
       fetchImpl,
     });
+    const combinedRoute = computeCombinedRouteRule4a(input.currentRoute, jev);
     console.log(JSON.stringify({
       event: "router_jev_shadow",
       workspaceId,
       eventId: input.eventId,
       currentDecision: input.currentRoute.decision,
       jevRoute: jev.route?.choice,
+      combinedRoute: combinedRoute.decision,
+      combinedRouteRule: combinedRoute.rule,
       jevModel: jev.model,
       latencyMs: jev.latencyMs,
       error: jev.error,

@@ -19,6 +19,7 @@ import {
   currentKnowledgeToolAllows,
   loadCurrentKnowledgeReadAccess,
 } from "../memory/knowledge-read-authorization.js";
+import { resolveKnowledgeCandidateRerank } from "../memory/retrieval/knowledge-rerank.js";
 import {
   unifiedKnowledgeSearch,
   type SearchListFn,
@@ -31,7 +32,7 @@ const LIMITS = Object.freeze({
   maxQueryLength: 1_000,
   defaultLimit: 8,
   maxLimit: Math.min(10, KNOWLEDGE_LIMITS.maxSearchLimit),
-  perListLimit: 8,
+  perListLimit: 15,
 });
 
 export type UnifiedSearchResult =
@@ -202,6 +203,7 @@ export function createSearchKnowledgeTool(dependencies: {
           lists,
           perListLimit: LIMITS.perListLimit,
           rrfK: 60,
+          candidateRerank: resolveKnowledgeCandidateRerank(env),
           finalLimit: args.limit ?? LIMITS.defaultLimit,
         });
         await dependencies.assertActive(thread);

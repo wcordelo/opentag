@@ -21,3 +21,13 @@ INTERNAL_SECRET=dev-internal-secret
 #   ↑ must be provisioned independently of BUZZ_RELAY_HTTP_BASE_URL (never self-derived)
 # BUZZ_CHANNEL_TENANT_MAP={"80d210c7-6cf2-49b3-8dab-06cbee389c04":"<tenant-uuid>"}
 # wrangler secret put BUZZ_OPEN_TAG_SIGNER_SECRET
+
+# Optional Jev knowledge reranker (default off; requires TYPESAFE_API_KEY secret):
+# KNOWLEDGE_RERANK_MODE=off|jev-score|jev-noul
+# KNOWLEDGE_RERANK_MODEL=jev-latest
+# KNOWLEDGE_RERANK_TIMEOUT_MS=8000
+# JEV_RERANK_TOP_N=20
+# JEV_RERANK_MAX_EXCERPT_CHARS=8000
+# JEV_RERANK_BLEND_MODE=rrf-blend|jev-only
+# JEV_RERANK_BLEND_WEIGHT=0.7
+# wrangler secret put TYPESAFE_API_KEY

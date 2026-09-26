@@ -89,12 +89,16 @@ const shadow: RouterShadowRecord = {
   },
 };
 
+// Replay-style timestamp: older than the 30-day retention window. Idempotent /record
+// must still dedupe before prune can delete the row.
+const staleRecordedAt = "2026-01-01T00:00:00.000Z";
+
 const measurement = createRouterDispatchMeasurement({
   workspaceId: "workspace-1",
   threadKey: "slack:C1:thread-1",
   executionId: "execution-1",
   shadowRecord: shadow,
-  recordedAt: "2026-08-01T20:00:00.000Z",
+  recordedAt: staleRecordedAt,
 });
 
 describe("RouterMeasurementDO", () => {
@@ -141,7 +145,7 @@ describe("RouterMeasurementDO", () => {
         messageText: "That answer was not what I meant.",
         decidedTier: 1,
         correctedTier: 2,
-        createdAt: "2026-08-01T20:01:00.000Z",
+        createdAt: new Date().toISOString(),
       });
       expect(feedback.response.status).toBe(200);
       expect(feedback.body).toMatchObject({ ok: true, duplicate: false });
@@ -190,7 +194,7 @@ describe("RouterMeasurementDO", () => {
         messageText: "No, actually, that is not right.",
         decidedTier: 1,
         correctedTier: 2,
-        createdAt: "2026-08-01T20:01:00.000Z",
+        createdAt: new Date().toISOString(),
       });
       expect(wrongWorkspace.response.status).toBe(409);
       expect(wrongWorkspace.body.error).toBe("workspace_scope_mismatch");

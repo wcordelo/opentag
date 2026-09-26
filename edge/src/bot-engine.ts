@@ -17,7 +17,7 @@ import { edgeCommands, bindCommandEnv } from "./commands/index.js";
 import { resolveAllowedTools } from "./config/access-bundle.js";
 import { loadTurnAccess } from "./config/workspace-config-do.js";
 import { copyRequestContext } from "./request-context.js";
-import { trivialAckReply, trivialAck } from "./trivial-ack.js";
+import { trivialAck } from "./trivial-ack.js";
 import { reactIntent } from "./react-intent.js";
 import {
   bindInboundToThread,
@@ -58,7 +58,7 @@ import { scheduleRouterJevShadow } from "./router/response-route-jev-measurement
 
 export type BotEngineKind = "createBot";
 
-export { trivialAckReply, trivialAck } from "./trivial-ack.js";
+export { trivialAck } from "./trivial-ack.js";
 
 type BotHandle = {
   bot: Bot;

@@ -32,7 +32,7 @@ cd edge/workers/agent-runtime
 npm ci
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put LINEAR_API_KEY
-npx wrangler secret put LINEAR_TEAM_KEY   # display name, e.g. Berendo — not a bare key like CPK
+npx wrangler secret put LINEAR_TEAM_KEY   # display name, e.g. EXAMPLE — not a bare key like CPK
 # optional: AGENT_MODEL, NOTION_TOKEN, NOTION_MCP_AUTH_TOKEN, AGENT_AUTH_HEADER
 npm run deploy
 
@@ -114,7 +114,7 @@ curl -sD - -o /dev/null -X POST https://slack.com/api/auth.test \
 | `AGENT_RUNTIME` | `wrangler.bot.toml` binding | Service binding to agent Worker (prod) |
 | `OPENAI_API_KEY` | agent secrets / root `.env` | Model for triage runtime |
 | `LINEAR_API_KEY` | agent secrets / root `.env` | Linear MCP |
-| `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `Berendo`) |
+| `LINEAR_TEAM_KEY` | agent secrets / root `.env` | Team **display name** (e.g. `EXAMPLE`) |
 | `CONNECTOR_CREDENTIALS` | bot service binding | Resolves approved opaque connector references into short-lived tokens |
 | `NOTION_*` | agent secrets / root `.env` | Optional Notion MCP sidecar |
 | `ADMIN_SECRET` / `INTERNAL_SECRET` | edge | Admin routes / research forward |

@@ -228,7 +228,7 @@ export interface Env {
   BUZZ_OPEN_TAG_AUTH_TAG?: string;
   /**
    * Absolute HTTPS origin of the Buzz community host (no trailing slash),
-   * e.g. `https://berendo.communities.buzz.xyz`. Non-secret.
+   * e.g. `https://relay.example.communities.buzz.xyz`. Non-secret.
    */
   BUZZ_RELAY_HTTP_BASE_URL?: string;
   /**
@@ -242,6 +242,12 @@ export interface Env {
    * Server-side directory only; never populated from a wake body.
    */
   BUZZ_CHANNEL_TENANT_MAP?: string;
+
+  /**
+   * Linear workspace slug for fallback issue URLs (e.g. `example-org`).
+   * Downstream deployments set the real workspace slug.
+   */
+  LINEAR_WORKSPACE_SLUG?: string;
 }
 
 export type BotVariables = {

@@ -189,7 +189,7 @@ PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
 SLACK_BOT_USER_ID = "U0BAK4AJ2Q1"
-BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN = "https://berendo.communities.buzz.xyz"
+# BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN — provision in the downstream deployment repo.
 # Trusted rich-payload triggers remain disabled until actors are configured.
 # SLACK_TRUSTED_TRIGGER_ACTORS = "bot:B0123456789,app:A0123456789"
 # AGENT_URL: https://opentag-agent.<account>.workers.dev/api/copilotkit/agent/triage/run

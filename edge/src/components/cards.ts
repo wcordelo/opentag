@@ -32,7 +32,7 @@ export const issueCardSchema = z.object({
   state: z.string().optional().describe("Workflow state name."),
   assignee: z.string().optional().describe("Assignee display name."),
   priority: z.string().optional().describe("Priority label."),
-  team: z.string().optional().describe("Team key/name, e.g. 'Berendo'."),
+  team: z.string().optional().describe("Team key/name, e.g. 'EXAMPLE'."),
   cycle: z.string().optional().describe("Cycle name/number."),
   updated: z.string().optional().describe("Human-readable last-updated."),
   description: z

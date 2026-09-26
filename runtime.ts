@@ -11,7 +11,11 @@ import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { CopilotSseRuntime } from "@copilotkit/runtime/v2";
 import { createCopilotNodeListener } from "@copilotkit/runtime/v2/node";
-import { createTriageAgent, type TriageAgentEnv } from "./lib/triage-agent.js";
+import {
+  createTriageAgent,
+  resolveLinearTeamKey,
+  type TriageAgentEnv,
+} from "./lib/triage-agent.js";
 
 function envFromProcess(): TriageAgentEnv {
   return {
@@ -140,7 +144,7 @@ createServer((request, response) => {
     `[slack-runtime] listening on http://localhost:${port}/api/copilotkit/agent/triage/run`,
   );
   console.log(
-    `[slack-runtime] default Linear team: ${agentEnv.LINEAR_TEAM_KEY?.trim() || "Berendo"}`,
+    `[slack-runtime] default Linear team: ${resolveLinearTeamKey(agentEnv.LINEAR_TEAM_KEY)}`,
   );
   const connected = [
     agentEnv.LINEAR_API_KEY ? "Linear" : null,

@@ -14,6 +14,7 @@ import {
   type RequestActor,
 } from "./request-context.js";
 import { createDurableObjectStore } from "./store/index.js";
+import { resolveLinearWorkspaceSlug } from "./config/installation-config.js";
 import {
   appendThreadMemory,
   candidateFieldLines,
@@ -1121,7 +1122,9 @@ export async function runBundledAgentTurn(
   if (lastIssue) {
     toolContext.push({
       description: "Last created Linear issue in this thread",
-      value: formatLastIssueContext(lastIssue),
+      value: formatLastIssueContext(lastIssue, {
+        workspaceSlug: resolveLinearWorkspaceSlug(env.LINEAR_WORKSPACE_SLUG),
+      }),
     });
   }
 

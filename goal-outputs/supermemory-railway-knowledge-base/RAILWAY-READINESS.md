@@ -57,7 +57,7 @@ The snapshot contains four live projects, 15 services, 10 active public domains,
 | `signalsci` / `Presidio` | `ab49fc2b-246b-4d3f-9835-6fc6cda5ec95` | `4dfbd957-60c6-4389-b28c-4680534fba43` / SLEEPING, stopped / 2026-07-17 | none returned | none |
 | `signalsci` / `Web` | `9a3812a5-96de-4be5-a439-754755f31262` | `f46764b9-1590-4b46-91d3-85b2cd742170` / SLEEPING, stopped / 2026-07-19 | `web-production-32f73.up.railway.app` (`5b21c7fe-ccbd-4cb5-a75e-15daa83aa4f7`, service, ACTIVE) | none |
 | `signalsci` / `Worker` | `4a8d25f0-0721-4f33-a6a4-232500cdc7a0` | `285c7c79-8135-493c-80e1-a95746cb3174` / SUCCESS, **not stopped** / 2026-07-17 | none returned | none |
-| `consulting` / `audit` | `345f4dff-52be-468a-b239-71b6961cdb2f` | `f55598c3-44ca-490a-bdbb-9e3052bb831a` / SLEEPING, stopped / 2026-05-20 | `berendo-audit.up.railway.app` (`15ac1c2a-6002-401a-b9fa-5a1749d30d33`, service, ACTIVE) | none |
+| `consulting` / `audit` | `345f4dff-52be-468a-b239-71b6961cdb2f` | `f55598c3-44ca-490a-bdbb-9e3052bb831a` / SLEEPING, stopped / 2026-05-20 | `example-audit.up.railway.app` (`15ac1c2a-6002-401a-b9fa-5a1749d30d33`, service, ACTIVE) | none |
 | `consulting` / `Roadhand` | `d8434614-8251-4705-bc68-224f8a95ba25` | `5d562b93-c37e-473e-9538-0f1e000b3362` / SLEEPING, stopped / 2026-05-10 | `roadhand.up.railway.app` (`180b711c-3d53-48fb-b421-d64a99385fd9`, service, ACTIVE) | none |
 | `consulting` / `RivetRoute` | `f0f8eb86-84a7-4b87-8858-a38245fe2bb0` | `ab09e119-41a9-40a4-9b65-174ef31d2ec6` / SLEEPING, stopped / 2026-04-29 | `rivetroute.up.railway.app` (`61354e21-0502-40a9-b45e-3517947e10a9`, service, ACTIVE) | none |
 

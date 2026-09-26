@@ -15,7 +15,6 @@ function triageEnvVars(): Record<string, string> {
   const out: Record<string, string> = {
     PORT: "8200",
     NOTION_MCP_URL: "http://127.0.0.1:3001/mcp",
-    LINEAR_TEAM_KEY: "Berendo",
   };
   const keys = [
     "OPENAI_API_KEY",
@@ -35,9 +34,6 @@ function triageEnvVars(): Record<string, string> {
     if (typeof value === "string" && value.length > 0) {
       out[key] = value;
     }
-  }
-  if (out.LINEAR_TEAM_KEY === "CPK") {
-    out.LINEAR_TEAM_KEY = "Berendo";
   }
   return out;
 }

@@ -25,7 +25,7 @@ npx wrangler secret put DEEPSEEK_API_KEY
 # Keep the existing OPENAI_API_KEY only for an explicit rollback to the OpenAI provider.
 # npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put LINEAR_API_KEY
-npx wrangler secret put LINEAR_TEAM_KEY   # team display name, e.g. Berendo
+npx wrangler secret put LINEAR_TEAM_KEY   # team display name, e.g. example-org
 # optional:
 # npx wrangler secret put NOTION_TOKEN
 # npx wrangler secret put NOTION_MCP_AUTH_TOKEN
@@ -66,7 +66,7 @@ keys — distinct from sandbox egress-proxy containers; see [`docs/DECISIONS.md`
 
 ### Linear
 
-- `LINEAR_TEAM_KEY` = team **display name** or ID (`Berendo`), not a bare issue
+- `LINEAR_TEAM_KEY` = team **display name** or ID (`example-org`), not a bare issue
   prefix key like `CPK`.
 - After `confirm_write` returns APPROVED for a Linear issue, the agent must call
   `save_linear_issue` immediately in the same turn with the returned approvalId

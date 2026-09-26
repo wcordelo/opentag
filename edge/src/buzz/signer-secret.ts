@@ -22,7 +22,7 @@ export const BUZZ_OPEN_TAG_SIGNER_SECRET_NAME = "BUZZ_OPEN_TAG_SIGNER_SECRET";
 
 /**
  * Non-secret var: absolute HTTPS origin of the Buzz community host
- * (no trailing slash), e.g. `https://berendo.communities.buzz.xyz`.
+ * (no trailing slash), e.g. `https://relay.example.communities.buzz.xyz`.
  */
 export const BUZZ_RELAY_HTTP_BASE_URL_VAR = "BUZZ_RELAY_HTTP_BASE_URL";
 

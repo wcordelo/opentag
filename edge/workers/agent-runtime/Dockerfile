@@ -22,8 +22,7 @@ RUN chmod +x ./entrypoint.sh
 
 ENV PORT=8200
 ENV NOTION_MCP_URL=http://127.0.0.1:3001/mcp
-# Fallback if Worker secret is missing on a stale container; Worker envVars override.
-ENV LINEAR_TEAM_KEY=Berendo
+# LINEAR_TEAM_KEY is provisioned by the Worker secret; no workspace-specific default.
 EXPOSE 8200
 
 CMD ["./entrypoint.sh"]

@@ -254,7 +254,7 @@ describe("exact execution tool guards", () => {
         operation: "create_issue",
         title: "T",
         description: "D",
-        team: "Berendo",
+        team: "EXAMPLE",
         project: "Launch",
         milestone: "Beta",
       },
@@ -268,7 +268,7 @@ describe("exact execution tool guards", () => {
     expect(stored?.draft).toEqual({
       title: "T",
       description: "D",
-      team: "Berendo",
+      team: "EXAMPLE",
       project: "Launch",
       milestone: "Beta",
     });

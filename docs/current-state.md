@@ -467,14 +467,14 @@ subscriptions. Authenticated membership readback confirms bot
 `#new-channel`, `#social`, and `#skills`.
 
 The human explicit canary
-[`1785728816.021889`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
+[`1785728816.021889`](https://example.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
 returned `OPENTAG_MILESTONE_EXPLICIT_OK` at `1785728831.600039`. The
 bot-message event canary
-[`1785729068.726309`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
+[`1785729068.726309`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
 returned `OPENTAG_MESSAGE_EVENT_TAIL_OK` at `1785729079.363589`; the live
 tail recorded the channel-message route and an `indexed` queue outcome. The
 reaction lifecycle canary
-[`1785729211.926069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
+[`1785729211.926069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
 showed the working `eyes` reaction while running, returned
 `OPENTAG_REACTION_LIFECYCLE_OK` at `1785729227.808039`, and had no reaction
 after the terminal reply.
@@ -687,14 +687,14 @@ or no-mention retrieval routing.
 
 Two new controlled messages were posted in `#general` through the connected
 Slack user surface. The explicit mention at
-[`1785728816.021889`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
+[`1785728816.021889`](https://example.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
 received the exact reply `OPENTAG_MILESTONE_EXPLICIT_OK` at
 `1785728831.600039`; the thread's terminal reaction state was empty. The
 marker-shaped unmentioned message at
-[`1785728708.551929`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785728708551929)
+[`1785728708.551929`](https://example.slack.com/archives/C0BA1MKPRE3/p1785728708551929)
 received no reply and no reaction because it was not a question or recognized
 action request. A valid unmentioned deployment-status question at
-[`1785729068.726309`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
+[`1785729068.726309`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
 received `OPENTAG_MESSAGE_EVENT_TAIL_OK` at `1785729079.363589`. The live
 Worker tail recorded the `channel_message` route and a knowledge queue
 outcome of `indexed`; an authenticated operator search for the exact marker
@@ -703,7 +703,7 @@ The subsequent authenticated tenant status readback is 83 ledger rows:
 55 indexed, 2 pending, and 26 permanent failures, with zero pending outbox
 work and an empty tenant-local DLQ summary.
 Finally, the explicit reaction lifecycle control at
-[`1785729211.926069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
+[`1785729211.926069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
 showed `eyes` while the turn was running and no reaction after the final
 reply. The messages were authored as the connected William user with the
 Slack ChatGPT app marker, so this is a controlled live surface check, not
@@ -826,7 +826,7 @@ rewrite process is present.
 | Supermemory provider | Authenticated knowledge readiness is HTTP 200; the singleton is running version 18 with image `sha256:e0d3914e04e90f94f14472cbe7f3ccd0afc21db27a653353f10ae4c5d1cbcefe`; provider tail shows document write/poll and `/v4/search` HTTP 200 after the local model-cache overlay | Prove restart/remount persistence, update/delete/tombstone convergence, latency budget, parity against Railway, and convergence of the reopened rows |
 | Knowledge readiness | `/ready?profile=knowledge` returns HTTP 200 with all knowledge and code-graph checks true; `npm run check:knowledge-rollout -- --live` passes its static/live resource checks | Readiness probes do not prove Queue execution, complete history, provider parity, or searchable coverage |
 | Slack ACL freshness | Bot deployment `764a18ea-bda9-4209-bdbc-0b9cc81a6cba` runs reconciliation every five minutes with `KNOWLEDGE_SLACK_ACL_MAX_AGE_MS=600000`; the live cadence canary returned `OPENTAG_KNOWLEDGE_CADENCE_OK` | Reinstall/read back the manifest and prove reaction, membership, lifecycle, token-revocation, and private/MPIM event receipts |
-| No-tag retrieval routing | The deployed bot did not answer the top-level action request at [`1785725304.390959`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725304390959); the same request with an explicit mention at [`1785725373.889899`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725373889899) returned `OPENTAG_SUPERMEMORY_SEARCH_OK` at [`1785725391.260059`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725391260059). The current checkout adds retrieval rule `t1.12` and passes local route/pre-admission tests | Deploy the local routing fix under explicit approval, then rerun the unmentioned retrieval canary and confirm passive conversation remains silent |
+| No-tag retrieval routing | The deployed bot did not answer the top-level action request at [`1785725304.390959`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725304390959); the same request with an explicit mention at [`1785725373.889899`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725373889899) returned `OPENTAG_SUPERMEMORY_SEARCH_OK` at [`1785725391.260059`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725391260059). The current checkout adds retrieval rule `t1.12` and passes local route/pre-admission tests | Deploy the local routing fix under explicit approval, then rerun the unmentioned retrieval canary and confirm passive conversation remains silent |
 | Durable knowledge state | Latest status readback is 77 rows: 32 indexed, 19 leased, 2 pending, and 24 permanent failures; outbox and DLQ are empty; recovery reopened 30 `local_add` rows with 30 successful recovery receipts; latest reconciliation scanned 77 and enqueued 19 | Let the leased rows converge or expire/retry, retain the 24 intentionally bounded permanent outcomes, then complete inventory/backfill and produce a bounded completeness digest |
 | Workspace admission | `all_delivered` with `defaultProjectId: workspace-default` is server-owned and live | It covers eligible installed-app delivery, not every Slack workspace message; inventory and source/project identity convergence remain open |
 | Supermemory source contract at that historical deployment | Worker-owned `STATE_BUCKET` mount plus local model-cache bind overlay was source-complete and deployed; no new EIO was observed in the post-rollout tail sample | Current local source uses pinned tigrisfs; Docker/FUSE restart, remount, one-writer, redaction, and durability evidence remain open |
@@ -859,8 +859,8 @@ successfully. The authoritative row counts must still be read back after the
 drain; no complete-history claim is made from tail logs alone.
 
 The live Slack/provider evidence is recorded in the
-[ACL cadence canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719827818089)
-and [provider receipt canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719693438309).
+[ACL cadence canary](https://example.slack.com/archives/C0BA1MKPRE3/p1785719827818089)
+and [provider receipt canary](https://example.slack.com/archives/C0BA1MKPRE3/p1785719693438309).
 No Railway shutdown, migration cutover, credential removal, commit, push, or
 PR was performed.
 
@@ -875,10 +875,10 @@ though the instance listing is `running`; retain direct provider receipts as
 the evidence of application reachability and keep container health/restart
 evidence open.
 
-A fresh human [marker write](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725283368069)
-and [explicit-mention search](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725373889899)
+A fresh human [marker write](https://example.slack.com/archives/C0BA1MKPRE3/p1785725283368069)
+and [explicit-mention search](https://example.slack.com/archives/C0BA1MKPRE3/p1785725373889899)
 returned `Searching Slack` followed by `OPENTAG_SUPERMEMORY_SEARCH_OK`; the
-parent message had no lingering reaction. The matching [untagged search request](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725304390959)
+parent message had no lingering reaction. The matching [untagged search request](https://example.slack.com/archives/C0BA1MKPRE3/p1785725304390959)
 received no reply on the deployed version. The local router now recognizes
 leading `search`, `look up`, `lookup`, and `query` requests as retrieval/action
 traffic with regression coverage, but that repair has not been deployed.
@@ -939,9 +939,9 @@ live R2/FUSE EIO failure remains, so this is not a provider fix yet.
 | Live Slack bot membership | After inviting bot `U0BAK4AJ2Q1` to the three previously uncovered visible public channels, the bot-token inventory reports `is_member:true` in `#general` (`C0BA1MKPRE3`), `#new-channel` (`C0BADPYGSR3`), `#social` (`C0BAF3XC3AA`), and `#skills` (`C0BGS7FNQUE`); authenticated member readback includes the bot in all four. Installed-manifest readback and workspace-wide completeness remain open |
 | Local Slack inventory/backfill continuation | `discoverAll: true` now enumerates server-visible public/private/IM/MPIM conversations, including archived records for explicit exclusion, without caller cursors; it persists a digest-bound inventory receipt in KnowledgeDO, refuses incomplete/over-limit inventories, and reuses the receipt on retry; history cursors and accumulated thread state remain restart-safe under the exact source/job identity |
 | Local thread-fetch continuation | KnowledgeDO persists the next Slack cursor and accumulated page state under the exact source/job identity, resumes after retry/isolate loss, clears terminal work, and reports body-free `threadFetch` counts through the admin status surface; hard message/byte bounds remain explicit size-bound outcomes |
-| Slack canary thread | [final routing and concurrency canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
-| Slack passive-only canary | [top-level plus untagged `yo` remained silent](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
-| Stale-turn cleanup thread | [pre-fix thread stopped safely](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
+| Slack canary thread | [final routing and concurrency canary](https://example.slack.com/archives/C0BA1MKPRE3/p1785630816681659) |
+| Slack passive-only canary | [top-level plus untagged `yo` remained silent](https://example.slack.com/archives/C0BA1MKPRE3/p1785629853529029) |
+| Stale-turn cleanup thread | [pre-fix thread stopped safely](https://example.slack.com/archives/C0BA1MKPRE3/p1785626165915119) |
 | Cloudflare origin | `https://opentag-bot.williamlopezc.workers.dev` |
 
 ## 2026-08-02 21:25 PDT provider-startup continuation
@@ -1000,15 +1000,15 @@ or derived-index receipt is claimed.
 
 Current-version Slack controls in `#general`:
 
-- [explicit mention](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701425622489)
-  received `OPENTAG_POST_DEPLOY_EXPLICIT_OK` from `berendo`; terminal readback
+- [explicit mention](https://example.slack.com/archives/C0BA1MKPRE3/p1785701425622489)
+  received `OPENTAG_POST_DEPLOY_EXPLICIT_OK` from `example-bot`; terminal readback
   showed no lingering reaction.
-- [no-mention question](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701448262779)
+- [no-mention question](https://example.slack.com/archives/C0BA1MKPRE3/p1785701448262779)
   received `OPENTAG_POST_DEPLOY_NO_MENTION_OK`; terminal readback showed no
   lingering reaction.
-- [passive control](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701473534779)
+- [passive control](https://example.slack.com/archives/C0BA1MKPRE3/p1785701473534779)
   received no reply and no reaction.
-- The [smoke-style sentence](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701364700649)
+- The [smoke-style sentence](https://example.slack.com/archives/C0BA1MKPRE3/p1785701364700649)
   received no reply or reaction, demonstrating that routing still classifies
   non-question operational text as passive unless it contains a clear ask or
   mention.
@@ -1089,14 +1089,14 @@ are consistent with the retrieval canary's `Knowledge unavailable.` result.
 
 The authenticated Slack user can now create a real human-side canary. The
 explicit-mention message at
-[`1785694221.865769`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694221865769)
-received `eyes` from `berendo`, then the exact reply
+[`1785694221.865769`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694221865769)
+received `eyes` from `example-bot`, then the exact reply
 `OPENTAG_EXPLICIT_HUMAN_CANARY_OK`; a later reaction readback showed no
 remaining reaction. The no-mention question at
-[`1785694253.415069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694253415069)
+[`1785694253.415069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694253415069)
 received `OPENTAG_NO_MENTION_CANARY_OK` without a mention and with no lingering
 reaction. The passive `yo` control at
-[`1785694282.922709`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694282922709)
+[`1785694282.922709`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694282922709)
 received no reply, no reaction, and no busy warning. These prove current
 message event delivery, flexible routing, reaction add/remove, and the silent
 Slack surface. They do not yet prove a KnowledgeDO/derived-index receipt for
@@ -1105,7 +1105,7 @@ the human messages.
 ## 2026-08-02 11:16 PDT knowledge retrieval canary addendum
 
 A fresh human retrieval request at
-[`1785694376.778339`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
+[`1785694376.778339`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
 entered the deployed search path and produced the intermediate `Searching
 Slack` status, followed by `Knowledge unavailable.` at `1785694396.357459`.
 The `eyes` reaction was absent on terminal readback. This proves the current
@@ -1754,10 +1754,10 @@ with 7 healthy and 0 failed instances. The harness and bot were deployed by
 the guarded rollout command with Supermemory and Graphify explicitly skipped.
 
 A fresh explicit Slack control at
-[1785818656.409849](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785818656409849)
+[1785818656.409849](https://example.slack.com/archives/C0BA1MKPRE3/p1785818656409849)
 returned `4` at 1785818666.201239 and left no reaction on the parent. A fresh
 ordinary no-mention control at
-[1785818683.157419](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785818683157419)
+[1785818683.157419](https://example.slack.com/archives/C0BA1MKPRE3/p1785818683157419)
 remained silent, so installed ordinary-message event delivery and manifest
 readback remain open. A fresh `--nanocodex` request was quarantined before
 harness execution and is not recovery evidence.
@@ -1791,10 +1791,10 @@ needed before enabling provider effects. No secret should be pasted into chat.
 
 The installed app now delivered ordinary channel messages in `#general`:
 
-- Explicit question [1785819895.661429](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785819895661429) received `6` at 1785819903.847239.
-- Unmentioned top-level question [1785819923.155599](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785819923155599) received `6` at 1785819928.833469.
-- An unmentioned threaded follow-up [1785819948.422389](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785819948422389) received `5` at 1785819955.833559.
-- Passive conversation [1785820063.298189](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785820063298189) remained silent.
+- Explicit question [1785819895.661429](https://example.slack.com/archives/C0BA1MKPRE3/p1785819895661429) received `6` at 1785819903.847239.
+- Unmentioned top-level question [1785819923.155599](https://example.slack.com/archives/C0BA1MKPRE3/p1785819923155599) received `6` at 1785819928.833469.
+- An unmentioned threaded follow-up [1785819948.422389](https://example.slack.com/archives/C0BA1MKPRE3/p1785819948422389) received `5` at 1785819955.833559.
+- Passive conversation [1785820063.298189](https://example.slack.com/archives/C0BA1MKPRE3/p1785820063298189) remained silent.
 - The explicit and unmentioned parents had no remaining reactions after completion.
 
 This proves the flexible routing path and passive silence in the current
@@ -1893,7 +1893,7 @@ Graphify tool implementation. The tail separately showed background
 
 Read-only Linear discovery confirmed the isolated project
 `OpenTag E2E Provider Smoke - 2026-08-02`
-(`1e98bfb6-27d1-46d8-879c-7975107e7005`) in the Berendo team; no issue was
+(`1e98bfb6-27d1-46d8-879c-7975107e7005`) in the EXAMPLE team; no issue was
 created. The provider adapter now probes credential-broker readiness before
 advertising effects. Its controlled subject is configured as
 `workspace:controlled-linear-test`, and version

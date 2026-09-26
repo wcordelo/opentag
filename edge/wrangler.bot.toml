@@ -183,6 +183,8 @@ KNOWLEDGE_SLACK_ACL_MAX_AGE_MS = "600000"
 # service-bound Queue consumer and derived-index receipts.
 SUPERMEMORY_INDEX_GENERATION = "cloudflare-r2-v1"
 SUPERMEMORY_MUTATION_CONTRACT = "verified"
+# Requires TYPESAFE_API_KEY Worker secret; fails open to RRF order if the key is missing.
+KNOWLEDGE_RERANK_MODE = "jev-score"
 PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).

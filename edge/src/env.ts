@@ -148,8 +148,9 @@ export interface Env {
   /** Workers Secret used only to mint and verify short-lived internal knowledge actor tokens. */
   KNOWLEDGE_ACTOR_TOKEN_SECRET?: string;
   /**
-   * Optional Jev rerank mode for knowledge search: `off` (default), `jev-score`, or
-   * `jev-noul`. Requires `TYPESAFE_API_KEY`; any error falls back to RRF order.
+   * Jev rerank mode for knowledge search: `off`, `jev-score`, or `jev-noul`.
+   * Production pins `jev-score` in `wrangler.bot.toml`; local dev defaults to `off`.
+   * Requires `TYPESAFE_API_KEY`; missing key or API errors fall back to RRF order.
    */
   KNOWLEDGE_RERANK_MODE?: string;
   /** TypeSafe model id for Jev reranking (default `jev-latest`). */

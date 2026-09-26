@@ -533,9 +533,9 @@ cd edge
 | `SUPERMEMORY_INDEX_GENERATION` | Var | Bot | Immutable server-owned identity of the isolated Supermemory state store; required when the service binding is active |
 | `SUPERMEMORY_MIGRATION_MODE` | Explicit migration var | Bot | Enables the retained legacy URL/key fallback only during read-only parity burn-in |
 | `SUPERMEMORY_URL`, `SUPERMEMORY_API_KEY` | Legacy migration-only | Bot | Railway/read-only compatibility path; ignored unless migration mode is exactly `true` |
-| `KNOWLEDGE_RERANK_MODE` | Var | Bot | Optional Jev rerank for knowledge search: `off` (default), `jev-score`, or `jev-noul`; falls back to RRF order on error |
+| `KNOWLEDGE_RERANK_MODE` | Var | Bot | Pinned in `edge/wrangler.bot.toml` as `jev-score`; set to `off` to disable. Also accepts `jev-noul`. Missing `TYPESAFE_API_KEY` or API errors fall back to RRF order |
 | `KNOWLEDGE_RERANK_MODEL`, `KNOWLEDGE_RERANK_TIMEOUT_MS` | Var | Bot | Jev model alias (default `jev-latest`) and per-candidate timeout ms (default 8000) |
-| `TYPESAFE_API_KEY` | Secret | Bot | TypeSafe API key for Jev reranking; never logged or exposed to callers |
+| `TYPESAFE_API_KEY` | Secret | Bot | TypeSafe API key for Jev reranking; set with `npx wrangler secret put TYPESAFE_API_KEY --config wrangler.bot.toml` from `edge/` before deploy |
 | `STATE_BUCKET` | R2 binding | Supermemory facade | Dedicated `opentag-supermemory-state` binding used for the `api-key` bootstrap; the singleton Container mounts the same bucket through tigrisfs |
 | `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Var | Supermemory Worker/Container | Non-secret R2 endpoint and bucket identifiers passed only to the Container mount command |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Secrets | Supermemory Worker/Container | R2 S3 credentials mapped to AWS-compatible Container envVars; never sent to the bot or Supermemory child |
@@ -720,6 +720,7 @@ npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
 npx wrangler secret put AGENT_URL --config wrangler.bot.toml
 npx wrangler secret put ADMIN_SECRET --config wrangler.bot.toml
 npx wrangler secret put INTERNAL_SECRET --config wrangler.bot.toml
+npx wrangler secret put TYPESAFE_API_KEY --config wrangler.bot.toml
 OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' npm run deploy:bot
 ```
 

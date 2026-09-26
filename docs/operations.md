@@ -720,6 +720,9 @@ actual coverage.
 
 ## Deploy the AG-UI agent
 
+Deploy from the downstream deployment repo, not from opentag (`npm run deploy`
+is blocked here). In cosmos:
+
 ```bash
 cd edge/workers/agent-runtime
 npm ci

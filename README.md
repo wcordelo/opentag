@@ -9,8 +9,8 @@ Durable Objects, and Containers. Slack is the product surface; everything else
 stays behind the bot.
 
 **Repository model:** this repo (**wcordelo/opentag**) is the open upstream for
-most feature work. A private downstream deployment repo (berendo-labs/cosmos)
-mirrors selected paths one-way, adds enterprise-only features, and owns **all**
+most feature work. A private downstream deployment repo mirrors selected paths
+one-way, adds enterprise-only features, and owns **all**
 Cloudflare deploys (production, staging, and test). Deploy scripts here are
 blocked; use the downstream repo to ship.
 
@@ -356,8 +356,8 @@ in the isolate).
 
 ### Production deploy (downstream repo)
 
-Cloudflare deploy scripts in **wcordelo/opentag** are blocked. Deploy from
-**berendo-labs/cosmos** after the one-way sync. Full walkthrough:
+Cloudflare deploy scripts in **wcordelo/opentag** are blocked. Deploy from the
+private downstream deployment repo after the one-way sync. Full walkthrough:
 [docs/setup.md](./docs/setup.md) and [docs/operations.md](./docs/operations.md).
 
 Requires **Workers Paid** (Cloudflare Containers) in the deployment account.

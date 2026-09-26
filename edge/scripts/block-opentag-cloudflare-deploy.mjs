@@ -13,7 +13,7 @@ import { execSync } from "node:child_process";
 import process from "node:process";
 
 export const OPENTAG_CLOUDFLARE_DEPLOY_MESSAGE =
-  "Cloudflare deploys are disabled in wcordelo/opentag; deploy from the private downstream deployment repo (berendo-labs/cosmos). See docs/operations.md";
+  "Cloudflare deploys are disabled in wcordelo/opentag; deploy from the private downstream deployment repo. See docs/operations.md";
 
 const UPSTREAM_GITHUB_REPOSITORY = "wcordelo/opentag";
 

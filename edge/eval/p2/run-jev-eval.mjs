@@ -125,6 +125,9 @@ async function callJev(item, apiKey, model) {
     }
     const body = await response.json();
     const judgment = parseJudgment(body, state);
+    if (!judgment.route) {
+      return { error: "typesafe_missing_route", latencyMs, state };
+    }
     return { ...judgment, latencyMs, state };
   } catch (error) {
     return {
@@ -138,14 +141,16 @@ async function callJev(item, apiKey, model) {
 }
 
 function summarize(results) {
-  const goldRoute = results.map((row) => row.gold.route);
-  const goldMemory = results.map((row) => row.gold.memoryNeeded);
-  const goldHuman = results.map((row) => row.gold.needsHuman);
-  const currentRoute = results.map((row) => row.currentRouter.route);
-  const jevRoute = results.map((row) => row.jev.route?.choice ?? "observe");
-  const jevMemoryScores = results.map((row) => row.jev.memoryNeeded?.noul ?? 0);
+  const errorCount = results.filter((row) => row.jev.error).length;
+  const scored = results.filter((row) => !row.jev.error);
+  const goldRoute = scored.map((row) => row.gold.route);
+  const goldMemory = scored.map((row) => row.gold.memoryNeeded);
+  const goldHuman = scored.map((row) => row.gold.needsHuman);
+  const currentRoute = scored.map((row) => row.currentRouter.route);
+  const jevRoute = scored.map((row) => row.jev.route.choice);
+  const jevMemoryScores = scored.map((row) => row.jev.memoryNeeded?.noul ?? 0);
   const jevMemory = jevMemoryScores.map((score) => score >= 0.5);
-  const jevHumanScores = results.map((row) => row.jev.needsHuman?.noul ?? 0);
+  const jevHumanScores = scored.map((row) => row.jev.needsHuman?.noul ?? 0);
   const jevHuman = jevHumanScores.map((score) => score >= 0.5);
   const latencies = results.map((row) => row.jev.latencyMs).filter((value) => typeof value === "number");
 
@@ -156,6 +161,8 @@ function summarize(results) {
 
   return {
     itemCount: results.length,
+    scoredItemCount: scored.length,
+    errorCount,
     callsPerMessage: 1,
     agreementWithCurrentRouter: accuracy(jevRoute, currentRoute),
     agreementWithGoldRoute: accuracy(jevRoute, goldRoute),
@@ -198,6 +205,7 @@ function markdownTable(summary) {
     `| p95 latency (ms) | — | ${summary.latencyMs.p95.toFixed(0)} |`,
     `| Calls per message | — | ${summary.callsPerMessage} |`,
     `| Model version(s) | — | ${summary.models.join(", ") || "n/a"} |`,
+    `| Errored calls (excluded from accuracy) | — | ${summary.errorCount} |`,
   ].join("\n");
 }
 

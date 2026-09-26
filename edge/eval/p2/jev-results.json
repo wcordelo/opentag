@@ -1,0 +1,2475 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-26T05:48:19.935Z",
+  "summary": {
+    "itemCount": 58,
+    "callsPerMessage": 1,
+    "agreementWithCurrentRouter": 0.8620689655172413,
+    "agreementWithGoldRoute": 0.9137931034482759,
+    "currentRouterVsGold": {
+      "routeAccuracy": 0.9137931034482759,
+      "respond": {
+        "tp": 41,
+        "fp": 4,
+        "fn": 1,
+        "precision": 0.9111111111111111,
+        "recall": 0.9761904761904762,
+        "f1": 0.9425287356321839
+      },
+      "falseRespondRate": 0.06896551724137931
+    },
+    "jevVsGold": {
+      "routeAccuracy": 0.9137931034482759,
+      "respond": {
+        "tp": 38,
+        "fp": 1,
+        "fn": 4,
+        "precision": 0.9743589743589743,
+        "recall": 0.9047619047619048,
+        "f1": 0.9382716049382716
+      },
+      "falseRespondRate": 0.017241379310344827,
+      "falseRespondDeltaVsCurrent": -0.05172413793103448,
+      "memoryNeededAccuracy": 0.8275862068965517,
+      "memoryNeededF1": 0.782608695652174,
+      "memoryNeededThresholdSweep": [
+        {
+          "threshold": 0.3,
+          "tp": 18,
+          "fp": 16,
+          "fn": 0,
+          "precision": 0.5294117647058824,
+          "recall": 1,
+          "f1": 0.6923076923076924
+        },
+        {
+          "threshold": 0.4,
+          "tp": 18,
+          "fp": 13,
+          "fn": 0,
+          "precision": 0.5806451612903226,
+          "recall": 1,
+          "f1": 0.7346938775510204
+        },
+        {
+          "threshold": 0.5,
+          "tp": 18,
+          "fp": 10,
+          "fn": 0,
+          "precision": 0.6428571428571429,
+          "recall": 1,
+          "f1": 0.782608695652174
+        },
+        {
+          "threshold": 0.6,
+          "tp": 17,
+          "fp": 7,
+          "fn": 1,
+          "precision": 0.7083333333333334,
+          "recall": 0.9444444444444444,
+          "f1": 0.8095238095238096
+        },
+        {
+          "threshold": 0.7,
+          "tp": 15,
+          "fp": 4,
+          "fn": 3,
+          "precision": 0.7894736842105263,
+          "recall": 0.8333333333333334,
+          "f1": 0.8108108108108109
+        },
+        {
+          "threshold": 0.8,
+          "tp": 15,
+          "fp": 2,
+          "fn": 3,
+          "precision": 0.8823529411764706,
+          "recall": 0.8333333333333334,
+          "f1": 0.8571428571428571
+        },
+        {
+          "threshold": 0.9,
+          "tp": 8,
+          "fp": 1,
+          "fn": 10,
+          "precision": 0.8888888888888888,
+          "recall": 0.4444444444444444,
+          "f1": 0.5925925925925926
+        }
+      ],
+      "needsHumanAccuracy": 0.9482758620689655
+    },
+    "latencyMs": {
+      "p50": 146.94096199999967,
+      "p95": 207.72517399999924
+    },
+    "models": [
+      "jev-1.13.0"
+    ]
+  },
+  "results": [
+    {
+      "id": "heuristic-question-latency",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-question-latency",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.95,
+            "observe": 0.05
+          },
+          "confidence": 0.91
+        },
+        "needsHuman": {
+          "noul": 0.07
+        },
+        "memoryNeeded": {
+          "noul": 0.11
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 273.649002,
+        "state": {
+          "message": "whats your latency?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> ping"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-action-deploy",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "heuristic-action-deploy",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.04,
+            "respond": 0.96
+          },
+          "confidence": 0.92
+        },
+        "needsHuman": {
+          "noul": 0.08
+        },
+        "memoryNeeded": {
+          "noul": 0.8
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 120.20578600000005,
+        "state": {
+          "message": "please check the deploy status",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> help"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-channel-question",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-channel-question",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.52,
+            "observe": 0.48
+          },
+          "confidence": 0.04
+        },
+        "needsHuman": {
+          "noul": 0.15
+        },
+        "memoryNeeded": {
+          "noul": 0.58
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 164.848883,
+        "state": {
+          "message": "what is happening in the channel?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-search-slack",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "heuristic-search-slack",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.32,
+            "respond": 0.68
+          },
+          "confidence": 0.36
+        },
+        "needsHuman": {
+          "noul": 0.18
+        },
+        "memoryNeeded": {
+          "noul": 0.91
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 138.62587900000005,
+        "state": {
+          "message": "search Slack for the exact canary marker",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-canary-reply",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-canary-reply",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.29,
+            "respond": 0.71
+          },
+          "confidence": 0.41
+        },
+        "needsHuman": {
+          "noul": 0.16
+        },
+        "memoryNeeded": {
+          "noul": 0.08
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 147.94912,
+        "state": {
+          "message": "OPENTAG_MILESTONE_CANARY_20260803 — please reply exactly OPENTAG_MILESTONE_CANARY_OK",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-problem-delay",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-problem-delay",
+        "route": "respond",
+        "reason": "problem_report"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.33,
+            "respond": 0.67
+          },
+          "confidence": 0.34
+        },
+        "needsHuman": {
+          "noul": 0.18
+        },
+        "memoryNeeded": {
+          "noul": 0.15
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 151.94580899999994,
+        "state": {
+          "message": "I am noticing a big delay between messages",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-phatic-yo-thread",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-phatic-yo-thread",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.62,
+            "respond": 0.38
+          },
+          "confidence": 0.24
+        },
+        "needsHuman": {
+          "noul": 0.07
+        },
+        "memoryNeeded": {
+          "noul": 0.05
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 182.02270499999986,
+        "state": {
+          "message": "yo",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> hi"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-phatic-yo-channel",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-phatic-yo-channel",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.99,
+            "respond": 0.01
+          },
+          "confidence": 0.98
+        },
+        "needsHuman": {
+          "noul": 0.09
+        },
+        "memoryNeeded": {
+          "noul": 0.03
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 144.91477599999985,
+        "state": {
+          "message": "yo",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-standup-excuse",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-standup-excuse",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0.28,
+            "observe": 0.72
+          },
+          "confidence": 0.45
+        },
+        "needsHuman": {
+          "noul": 0.21
+        },
+        "memoryNeeded": {
+          "noul": 0.08
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 148.85170500000004,
+        "state": {
+          "message": "I can't make standup today",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-check-with-her",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-check-with-her",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0,
+            "observe": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.46
+        },
+        "memoryNeeded": {
+          "noul": 0.12
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 125.8362340000001,
+        "state": {
+          "message": "let me check with her real quick",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-dont-touch",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-dont-touch",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.95,
+            "respond": 0.05
+          },
+          "confidence": 0.89
+        },
+        "needsHuman": {
+          "noul": 0.37
+        },
+        "memoryNeeded": {
+          "noul": 0.48
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 166.74922500000002,
+        "state": {
+          "message": "please don't touch that",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-dont-reply",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-dont-reply",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 1,
+            "respond": 0
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.33
+        },
+        "memoryNeeded": {
+          "noul": 0.38
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 146.179576,
+        "state": {
+          "message": "please don't reply to that",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> earlier"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-code-block-only",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-code-block-only",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0.21,
+            "observe": 0.79
+          },
+          "confidence": 0.59
+        },
+        "needsHuman": {
+          "noul": 0.23
+        },
+        "memoryNeeded": {
+          "noul": 0.15
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 150.11235899999974,
+        "state": {
+          "message": "```\nthrow new Error('timeout')\n```",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-access-dashboard",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-access-dashboard",
+        "route": "respond",
+        "reason": "problem_report"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.04,
+            "respond": 0.96
+          },
+          "confidence": 0.92
+        },
+        "needsHuman": {
+          "noul": 0.4
+        },
+        "memoryNeeded": {
+          "noul": 0.74
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 125.47382500000003,
+        "state": {
+          "message": "I cannot access the deploy dashboard",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-dm-thanks",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-dm-thanks",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.32,
+            "respond": 0.68
+          },
+          "confidence": 0.36
+        },
+        "needsHuman": {
+          "noul": 0.07
+        },
+        "memoryNeeded": {
+          "noul": 0.05
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 123.78336200000012,
+        "state": {
+          "message": "thanks",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-mention-thanks",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-mention-thanks",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.46,
+            "respond": 0.54
+          },
+          "confidence": 0.09
+        },
+        "needsHuman": {
+          "noul": 0.07
+        },
+        "memoryNeeded": {
+          "noul": 0.05
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 144.85385700000006,
+        "state": {
+          "message": "thanks",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "heuristic-file-share",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "heuristic-file-share",
+        "route": "respond",
+        "reason": "file_share"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.13,
+            "respond": 0.87
+          },
+          "confidence": 0.75
+        },
+        "needsHuman": {
+          "noul": 0.28
+        },
+        "memoryNeeded": {
+          "noul": 0.65
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 147.62199799999962,
+        "state": {
+          "message": "",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": true,
+          "threadContext": [
+            "<@UBOT> see attached"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-side-chat-lunch",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-side-chat-lunch",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.99,
+            "respond": 0.01
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.74
+        },
+        "memoryNeeded": {
+          "noul": 0.06
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 125.86640800000032,
+        "state": {
+          "message": "@sarah want to grab lunch at 12?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-question-to-other",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-question-to-other",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.92,
+            "respond": 0.08
+          },
+          "confidence": 0.84
+        },
+        "needsHuman": {
+          "noul": 0.72
+        },
+        "memoryNeeded": {
+          "noul": 0.96
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 160.74385699999993,
+        "state": {
+          "message": "@mike do you remember what we decided on the auth migration?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> context"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-dm-question",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-dm-question",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.99,
+            "observe": 0.01
+          },
+          "confidence": 0.97
+        },
+        "needsHuman": {
+          "noul": 0.36
+        },
+        "memoryNeeded": {
+          "noul": 0.96
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 126.65046900000016,
+        "state": {
+          "message": "what did we decide about the router shadow rollout?",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-mention-summarize-thread",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-mention-summarize-thread",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.1
+        },
+        "memoryNeeded": {
+          "noul": 0.68
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 137.8285060000003,
+        "state": {
+          "message": "summarize this thread for me",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [
+            "long discussion about deploy"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-memory-opt-out",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-memory-opt-out",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.99,
+            "observe": 0.01
+          },
+          "confidence": 0.98
+        },
+        "needsHuman": {
+          "noul": 0.04
+        },
+        "memoryNeeded": {
+          "noul": 0,
+          "overriddenByOptOut": true
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 126.8596050000001,
+        "state": {
+          "message": "what is 2+2? answer without using memory",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": true
+        }
+      }
+    },
+    {
+      "id": "synthetic-dont-lookup",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-dont-lookup",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.06,
+            "respond": 0.94
+          },
+          "confidence": 0.87
+        },
+        "needsHuman": {
+          "noul": 0.06
+        },
+        "memoryNeeded": {
+          "noul": 0.04
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 318.9154159999998,
+        "state": {
+          "message": "explain HTTP status codes, don't look anything up",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> teach me"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-wiki-question",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-wiki-question",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.63,
+            "respond": 0.37
+          },
+          "confidence": 0.25
+        },
+        "needsHuman": {
+          "noul": 0.27
+        },
+        "memoryNeeded": {
+          "noul": 0.94
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 143.984735,
+        "state": {
+          "message": "where is the runbook for opentag-bot deploy documented?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-code-question",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-code-question",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.93,
+            "observe": 0.07
+          },
+          "confidence": 0.86
+        },
+        "needsHuman": {
+          "noul": 0.09
+        },
+        "memoryNeeded": {
+          "noul": 0.94
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 142.24551400000018,
+        "state": {
+          "message": "which file implements classifySlackResponseRoute?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> code question"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-past-decision",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-past-decision",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.67,
+            "respond": 0.33
+          },
+          "confidence": 0.33
+        },
+        "needsHuman": {
+          "noul": 0.34
+        },
+        "memoryNeeded": {
+          "noul": 0.97
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 180.26437100000066,
+        "state": {
+          "message": "what did we decide last week about Tier 1 KB dispatch?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-general-trivia",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-general-trivia",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.03
+        },
+        "memoryNeeded": {
+          "noul": 0.02
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 134.98572299999978,
+        "state": {
+          "message": "what is the capital of France?",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-human-escalation",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-human-escalation",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.03,
+            "respond": 0.97
+          },
+          "confidence": 0.93
+        },
+        "needsHuman": {
+          "noul": 0.95
+        },
+        "memoryNeeded": {
+          "noul": 0.13
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 146.74560700000075,
+        "state": {
+          "message": "I need to talk to a real person about billing immediately",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-hr-sensitive",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-hr-sensitive",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.97
+        },
+        "memoryNeeded": {
+          "noul": 0.46
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 152.9490450000003,
+        "state": {
+          "message": "I want to report harassment from my manager",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-legal-request",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-legal-request",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.04,
+            "respond": 0.96
+          },
+          "confidence": 0.91
+        },
+        "needsHuman": {
+          "noul": 0.87
+        },
+        "memoryNeeded": {
+          "noul": 0.5
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 142.90704900000037,
+        "state": {
+          "message": "please loop in legal on this customer contract clause",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-status-check",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-status-check",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.33,
+            "respond": 0.67
+          },
+          "confidence": 0.34
+        },
+        "needsHuman": {
+          "noul": 0.34
+        },
+        "memoryNeeded": {
+          "noul": 0.87
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 156.87242400000014,
+        "state": {
+          "message": "any update on the prod incident?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "SEV2 thread"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-ack-only",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-ack-only",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0,
+            "observe": 1
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.09
+        },
+        "memoryNeeded": {
+          "noul": 0.16
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 134.77473199999986,
+        "state": {
+          "message": "sounds good to me",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "plan discussion"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-lol-react",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-lol-react",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 1,
+            "respond": 0
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.11
+        },
+        "memoryNeeded": {
+          "noul": 0.3
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 145.8578550000002,
+        "state": {
+          "message": "lol that demo was wild",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-meeting-schedule",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-meeting-schedule",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0.38,
+            "observe": 0.62
+          },
+          "confidence": 0.25
+        },
+        "needsHuman": {
+          "noul": 0.31
+        },
+        "memoryNeeded": {
+          "noul": 0.29
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 186.94096400000035,
+        "state": {
+          "message": "can we move standup to 10am tomorrow?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-trusted-trigger",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-trusted-trigger",
+        "route": "respond",
+        "reason": "trusted_trigger"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.89,
+            "observe": 0.11
+          },
+          "confidence": 0.78
+        },
+        "needsHuman": {
+          "noul": 0.11
+        },
+        "memoryNeeded": {
+          "noul": 0.26
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 141.42167300000074,
+        "state": {
+          "message": "status",
+          "source": "trusted_rich_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-create-ticket",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-create-ticket",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.11,
+            "respond": 0.89
+          },
+          "confidence": 0.79
+        },
+        "needsHuman": {
+          "noul": 0.14
+        },
+        "memoryNeeded": {
+          "noul": 0.75
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 158.83630600000015,
+        "state": {
+          "message": "create a Linear ticket for the flaky e2e test",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> triage"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-fix-bug",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-fix-bug",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.37,
+            "respond": 0.63
+          },
+          "confidence": 0.26
+        },
+        "needsHuman": {
+          "noul": 0.36
+        },
+        "memoryNeeded": {
+          "noul": 0.85
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 141.56831599999987,
+        "state": {
+          "message": "fix the router measurement duplicate key bug",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-compare-options",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-compare-options",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.21
+        },
+        "memoryNeeded": {
+          "noul": 0.81
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 126.71738600000026,
+        "state": {
+          "message": "compare Choice vs Noul for this routing gate",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-thread-context-needed",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-thread-context-needed",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.78,
+            "respond": 0.22
+          },
+          "confidence": 0.56
+        },
+        "needsHuman": {
+          "noul": 0.22
+        },
+        "memoryNeeded": {
+          "noul": 0.86
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 153.60716700000012,
+        "state": {
+          "message": "what was the conclusion?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> we debated shadow mode for an hour",
+            "I think we should ship shadow first"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-explicit-mention-question",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-explicit-mention-question",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.09
+        },
+        "memoryNeeded": {
+          "noul": 0.52
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 207.72517399999924,
+        "state": {
+          "message": "how do I run edge tests locally?",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-mpim-side-note",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-mpim-side-note",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 1,
+            "respond": 0
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.16
+        },
+        "memoryNeeded": {
+          "noul": 0.05
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 154.07920000000013,
+        "state": {
+          "message": "heading out early today",
+          "source": "channel_message",
+          "channelType": "mpim",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-dm-without-memory-phrase",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-dm-without-memory-phrase",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.01,
+            "respond": 0.99
+          },
+          "confidence": 0.98
+        },
+        "needsHuman": {
+          "noul": 0.07
+        },
+        "memoryNeeded": {
+          "noul": 0,
+          "overriddenByOptOut": true
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 169.47011399999974,
+        "state": {
+          "message": "from general knowledge only: what is RRF?",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": true
+        }
+      }
+    },
+    {
+      "id": "synthetic-observe-explicit-bot",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-observe-explicit-bot",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0,
+            "observe": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.3
+        },
+        "memoryNeeded": {
+          "noul": 0.07
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 134.0075509999997,
+        "state": {
+          "message": "do not respond to this message please",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> FYI"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-oncall-page",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-oncall-page",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.14,
+            "respond": 0.86
+          },
+          "confidence": 0.71
+        },
+        "needsHuman": {
+          "noul": 0.76
+        },
+        "memoryNeeded": {
+          "noul": 0.68
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 129.6226230000002,
+        "state": {
+          "message": "page on-call — checkout is completely down",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-search-code",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-search-code",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.28,
+            "respond": 0.72
+          },
+          "confidence": 0.43
+        },
+        "needsHuman": {
+          "noul": 0.13
+        },
+        "memoryNeeded": {
+          "noul": 0.9
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 143.69500599999992,
+        "state": {
+          "message": "search code for RouterMeasurementDO usage",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-remind-decision",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-remind-decision",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.09,
+            "respond": 0.91
+          },
+          "confidence": 0.82
+        },
+        "needsHuman": {
+          "noul": 0.27
+        },
+        "memoryNeeded": {
+          "noul": 0.95
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 148.68580999999995,
+        "state": {
+          "message": "remind me what William said about shadow-only Jev",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-polite-question-other",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-polite-question-other",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.46,
+            "respond": 0.54
+          },
+          "confidence": 0.07
+        },
+        "needsHuman": {
+          "noul": 0.19
+        },
+        "memoryNeeded": {
+          "noul": 0.66
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 200.52455800000007,
+        "state": {
+          "message": "does anyone know if staging is green?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-thread-deploy-status",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-thread-deploy-status",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.06,
+            "respond": 0.94
+          },
+          "confidence": 0.89
+        },
+        "needsHuman": {
+          "noul": 0.1
+        },
+        "memoryNeeded": {
+          "noul": 0.87
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 146.94096199999967,
+        "state": {
+          "message": "what is the deploy status?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> start here",
+            "checking logs"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-security-human",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-security-human",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0,
+            "respond": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.94
+        },
+        "memoryNeeded": {
+          "noul": 0.55
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 154.2538539999996,
+        "state": {
+          "message": "I think someone exfiltrated customer data — get security now",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-no-memory-short",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-no-memory-short",
+        "route": "respond",
+        "reason": "explicit_mention"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.99,
+            "observe": 0.01
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.04
+        },
+        "memoryNeeded": {
+          "noul": 0,
+          "overriddenByOptOut": true
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 147.23669900000004,
+        "state": {
+          "message": "define SSE in one sentence, no memory",
+          "source": "app_mention",
+          "channelType": "channel",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": true
+        }
+      }
+    },
+    {
+      "id": "synthetic-channel-problem",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-channel-problem",
+        "route": "respond",
+        "reason": "problem_report"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.15,
+            "respond": 0.85
+          },
+          "confidence": 0.69
+        },
+        "needsHuman": {
+          "noul": 0.49
+        },
+        "memoryNeeded": {
+          "noul": 0.43
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 160.67415400000027,
+        "state": {
+          "message": "the bot is stuck and not replying in #eng",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-thread-action-review",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-thread-action-review",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "respond": 0.55,
+            "observe": 0.45
+          },
+          "confidence": 0.1
+        },
+        "needsHuman": {
+          "noul": 0.56
+        },
+        "memoryNeeded": {
+          "noul": 0.88
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 139.4408169999988,
+        "state": {
+          "message": "review the PR for shadow logging",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> coding"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-greeting-dm",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-greeting-dm",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.05,
+            "respond": 0.95
+          },
+          "confidence": 0.89
+        },
+        "needsHuman": {
+          "noul": 0.08
+        },
+        "memoryNeeded": {
+          "noul": 0.04
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 122.09164199999941,
+        "state": {
+          "message": "hey there",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-who-knows",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-who-knows",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "observe": 0.75,
+            "respond": 0.25
+          },
+          "confidence": 0.5
+        },
+        "needsHuman": {
+          "noul": 0.41
+        },
+        "memoryNeeded": {
+          "noul": 0.89
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 141.01326399999925,
+        "state": {
+          "message": "who knows about the Supermemory migration status?",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-offtopic-meme",
+      "gold": {
+        "route": "observe",
+        "needsHuman": false,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-offtopic-meme",
+        "route": "observe",
+        "reason": "observe_conversation"
+      },
+      "jev": {
+        "route": {
+          "choice": "observe",
+          "probabilities": {
+            "respond": 0,
+            "observe": 1
+          },
+          "confidence": 1
+        },
+        "needsHuman": {
+          "noul": 0.25
+        },
+        "memoryNeeded": {
+          "noul": 0.13
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 181.77191200000016,
+        "state": {
+          "message": "this meme is exactly our on-call life",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "random"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-ask-bot-in-thread",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-ask-bot-in-thread",
+        "route": "respond",
+        "reason": "question"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.07,
+            "respond": 0.93
+          },
+          "confidence": 0.85
+        },
+        "needsHuman": {
+          "noul": 0.1
+        },
+        "memoryNeeded": {
+          "noul": 0.66
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 162.8990190000004,
+        "state": {
+          "message": "can you summarize the outage timeline?",
+          "source": "thread_reply",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [
+            "<@UBOT> incident thread",
+            "10:02 deploy started",
+            "10:15 errors spiked"
+          ],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-human-manager",
+      "gold": {
+        "route": "respond",
+        "needsHuman": true,
+        "memoryNeeded": false
+      },
+      "currentRouter": {
+        "id": "synthetic-human-manager",
+        "route": "respond",
+        "reason": "direct_message"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.01,
+            "respond": 0.99
+          },
+          "confidence": 0.99
+        },
+        "needsHuman": {
+          "noul": 0.79
+        },
+        "memoryNeeded": {
+          "noul": 0.34
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 158.08306600000105,
+        "state": {
+          "message": "connect me with my manager about PTO",
+          "source": "direct_message",
+          "channelType": "im",
+          "botMentioned": true,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    },
+    {
+      "id": "synthetic-recap-channel",
+      "gold": {
+        "route": "respond",
+        "needsHuman": false,
+        "memoryNeeded": true
+      },
+      "currentRouter": {
+        "id": "synthetic-recap-channel",
+        "route": "respond",
+        "reason": "action_request"
+      },
+      "jev": {
+        "route": {
+          "choice": "respond",
+          "probabilities": {
+            "observe": 0.48,
+            "respond": 0.52
+          },
+          "confidence": 0.03
+        },
+        "needsHuman": {
+          "noul": 0.33
+        },
+        "memoryNeeded": {
+          "noul": 0.94
+        },
+        "model": "jev-1.13.0",
+        "latencyMs": 151.71526000000085,
+        "state": {
+          "message": "catch me up on the router spec changes",
+          "source": "channel_message",
+          "channelType": "channel",
+          "botMentioned": false,
+          "hasFiles": false,
+          "threadContext": [],
+          "memoryOptOut": false
+        }
+      }
+    }
+  ]
+}

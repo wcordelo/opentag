@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import { buildHarnessProvenance } from "./harness-provenance.mjs";
+import { blockOpentagBotProductionDeploy } from "./block-opentag-bot-production-deploy.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
@@ -215,11 +216,4 @@ if (deployKnowledge) {
   runWrangler(["deploy", "--config", graphifyConfig]);
 }
 runWrangler(["deploy", "--config", generatedHarnessConfig]);
-runWrangler([
-  "deploy",
-  "--config",
-  botConfig,
-  ...(supermemoryIndexGeneration
-    ? ["--var", `SUPERMEMORY_INDEX_GENERATION:${supermemoryIndexGeneration}`]
-    : []),
-]);
+blockOpentagBotProductionDeploy();

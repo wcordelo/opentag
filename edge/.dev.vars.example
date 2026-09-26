@@ -22,7 +22,7 @@ INTERNAL_SECRET=dev-internal-secret
 # BUZZ_CHANNEL_TENANT_MAP={"80d210c7-6cf2-49b3-8dab-06cbee389c04":"<tenant-uuid>"}
 # wrangler secret put BUZZ_OPEN_TAG_SIGNER_SECRET
 
-# Optional Jev knowledge reranker (production pins jev-score in wrangler.bot.toml; local default off):
+# Optional Jev knowledge reranker (default off; requires TYPESAFE_API_KEY secret):
 # KNOWLEDGE_RERANK_MODE=off|jev-score|jev-noul
 # KNOWLEDGE_RERANK_MODEL=jev-latest
 # KNOWLEDGE_RERANK_TIMEOUT_MS=8000

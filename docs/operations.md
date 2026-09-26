@@ -306,6 +306,7 @@ HTTP phase and receives HTTP 526; valid signed admission is still required.
 ```mermaid
 flowchart LR
     Operator["Operator"]
+    Cosmos["berendo-labs/cosmos<br/>production deploy"]
     Bot["opentag-bot<br/>wrangler.bot.toml"]
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
@@ -314,8 +315,10 @@ flowchart LR
     Supermemory["opentag-supermemory<br/>workers/supermemory"]
     Graphify["opentag-graphify<br/>workers/graphify"]
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
+    OpenTag["wcordelo/opentag<br/>bot source"]
 
-    Operator -->|"deploy:bot"| Bot
+    OpenTag -->|"one-way sync"| Cosmos
+    Cosmos -->|"deploy:bot"| Bot
     Operator -->|"deploy:agent"| Agent
     Operator -->|"explicit coding deploy"| Claudex
     Operator -->|"explicit coding deploy"| Harness
@@ -333,8 +336,11 @@ flowchart LR
 ```
 
 The bot, AG-UI agent, coding harness, Supermemory facade, and Graphify facade
-are deployed in the current production configuration. Research remains
-optional. The coding plane runs Claude Code
+are deployed in the current production configuration. **Production
+`opentag-bot` deploys come from berendo-labs/cosmos** (one-way sync from
+wcordelo/opentag); `npm run deploy:bot` in this repo is blocked. Bot code
+changes—including retrieval reranker and recall fixes—reach production only
+through the cosmos sync and deploy path. Research remains optional. The coding plane runs Claude Code
 (native Anthropic and Claudex/CLIProxyAPI) plus the native Nanocodex CLI in the
 same sandbox. Active service bindings require target-before-caller deploy order:
 Claudex proxy, harness, bot. The Supermemory and Graphify services are
@@ -533,9 +539,9 @@ cd edge
 | `SUPERMEMORY_INDEX_GENERATION` | Var | Bot | Immutable server-owned identity of the isolated Supermemory state store; required when the service binding is active |
 | `SUPERMEMORY_MIGRATION_MODE` | Explicit migration var | Bot | Enables the retained legacy URL/key fallback only during read-only parity burn-in |
 | `SUPERMEMORY_URL`, `SUPERMEMORY_API_KEY` | Legacy migration-only | Bot | Railway/read-only compatibility path; ignored unless migration mode is exactly `true` |
-| `KNOWLEDGE_RERANK_MODE` | Var | Bot | Pinned in `edge/wrangler.bot.toml` as `jev-score`; set to `off` to disable. Also accepts `jev-noul`. Missing `TYPESAFE_API_KEY` or API errors fall back to RRF order |
+| `KNOWLEDGE_RERANK_MODE` | Var | Bot | Optional Jev rerank for knowledge search: `off` (default), `jev-score`, or `jev-noul`; falls back to RRF order on error. Production var provisioning is in **berendo-labs/cosmos** |
 | `KNOWLEDGE_RERANK_MODEL`, `KNOWLEDGE_RERANK_TIMEOUT_MS` | Var | Bot | Jev model alias (default `jev-latest`) and per-candidate timeout ms (default 8000) |
-| `TYPESAFE_API_KEY` | Secret | Bot | TypeSafe API key for Jev reranking; set with `npx wrangler secret put TYPESAFE_API_KEY --config wrangler.bot.toml` from `edge/` before deploy |
+| `TYPESAFE_API_KEY` | Secret | Bot | TypeSafe API key for Jev reranking; never logged or exposed to callers. Set in cosmos before enabling rerank mode |
 | `STATE_BUCKET` | R2 binding | Supermemory facade | Dedicated `opentag-supermemory-state` binding used for the `api-key` bootstrap; the singleton Container mounts the same bucket through tigrisfs |
 | `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Var | Supermemory Worker/Container | Non-secret R2 endpoint and bucket identifiers passed only to the Container mount command |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Secrets | Supermemory Worker/Container | R2 S3 credentials mapped to AWS-compatible Container envVars; never sent to the bot or Supermemory child |
@@ -713,18 +719,11 @@ Containers base class and silently drops runtime secrets.
 
 ## Deploy the bot
 
-```bash
-cd edge
-npx wrangler secret put SLACK_BOT_TOKEN --config wrangler.bot.toml
-npx wrangler secret put SLACK_SIGNING_SECRET --config wrangler.bot.toml
-npx wrangler secret put AGENT_URL --config wrangler.bot.toml
-npx wrangler secret put ADMIN_SECRET --config wrangler.bot.toml
-npx wrangler secret put INTERNAL_SECRET --config wrangler.bot.toml
-npx wrangler secret put TYPESAFE_API_KEY --config wrangler.bot.toml
-OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' npm run deploy:bot
-```
+Production **`opentag-bot`** deploys come from **[berendo-labs/cosmos](https://github.com/berendo-labs/cosmos)** only. wcordelo/opentag is the bot source; cosmos syncs it one-way and runs production deploy there (Worker vars, secrets, and `npm run deploy:bot`).
 
-Slack Request URLs must point to the deployed bot Worker:
+From opentag, `npm run deploy:bot` exits non-zero with a pointer here and does not call wrangler. Local validation uses `npm run dev` or `wrangler dev --config wrangler.bot.toml`.
+
+In cosmos, configure bot secrets and deploy per that repo's runbook. Slack Request URLs must point to the deployed bot Worker:
 
 - `/slack/events`
 - `/slack/commands`
@@ -995,21 +994,18 @@ binding = "HARNESS"
 service = "opentag-harness"
 ```
 
-5. Deploy the harness, then set matching bot configuration and deploy the bot:
+5. Deploy the harness from opentag, then deploy the bot from **cosmos** (see [Deploy the bot](#deploy-the-bot)):
 
 ```bash
 cd edge/workers/sandbox
 npm run deploy
-cd ../..
-npx wrangler secret put HARNESS_AUTH_TOKEN --config wrangler.bot.toml
-# configure HARNESS_REPO_URL as a non-secret var or deployment-specific value
-OPENTAG_SUPERMEMORY_INDEX_GENERATION='cloudflare-r2-v1' npm run deploy:bot
 ```
 
-For a new installation, the same order is available through the one-command
-installer. It reads secret values only from `OPENTAG_SECRET_*` environment
-variables, sends them to Wrangler over stdin, never writes them to the
-repository, deploys the harness first, and deploys the bot second:
+Harness auth and bot binding configuration live in cosmos's synced `wrangler.bot.toml`.
+
+For a new installation, the one-command installer in opentag can still push
+secrets and deploy harness/knowledge dependencies. It stops before deploying
+`opentag-bot` (same guard as `npm run deploy:bot`); finish bot deploy in cosmos:
 
 ```bash
 cd edge

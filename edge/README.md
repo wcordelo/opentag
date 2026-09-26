@@ -16,7 +16,7 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 
 | Config or package | Role | Status |
 | --- | --- | --- |
-| `wrangler.bot.toml` | `opentag-bot`, production Slack surface | Active target |
+| `wrangler.bot.toml` | `opentag-bot` Worker config (synced to cosmos for production deploy) | Source config; **do not deploy from opentag** |
 | `wrangler.toml` | `opentag-edge`, local/development bot | Active target |
 | `workers/agent-runtime/` | `opentag-agent`, AG-UI triage Container | Production runtime |
 | `workers/sandbox/` | `opentag-harness`, Claude Code Container | Production coding runtime |
@@ -153,19 +153,20 @@ not fall back to AG-UI.
 
 ## Deploy
 
-Deployment is always an explicit operator action:
+Production **`opentag-bot`** deploys come from **[berendo-labs/cosmos](https://github.com/berendo-labs/cosmos)** only. This repo is the bot source; cosmos syncs it one-way and runs production deploy there. Retrieval changes (reranker, recall fixes, and related Worker vars) reach production only through that sync.
+
+From opentag, `npm run deploy:bot` is blocked intentionally (exit non-zero, no wrangler call). Local bot work uses `npm run dev` or `wrangler dev --config wrangler.bot.toml`.
+
+Other edge units still deploy from opentag when explicitly approved:
 
 ```bash
 npm run deploy:agent
 npm --prefix workers/claudex-proxy run deploy  # target before harness
-npm --prefix workers/sandbox run deploy        # target before bot
-npm run deploy:bot
+npm --prefix workers/sandbox run deploy        # target before bot (in cosmos)
 npm run deploy:research   # optional
 ```
 
-The harness has separate secrets, allowlists, and deployment steps in
-[docs/operations.md](../docs/operations.md). Do not deploy it merely because
-its package typechecks.
+See [docs/operations.md](../docs/operations.md) for cosmos bot deploy steps and secrets.
 
 ## Workers-safe CopilotKit Channels
 

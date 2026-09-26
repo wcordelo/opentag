@@ -1,6 +1,8 @@
 # Production Claude Tag bot spine (clean DO migration history).
 # Local `wrangler.toml` keeps name "opentag-edge" for dev; this config deploys
 # as opentag-bot to avoid the legacy ThreadDurableObject migration conflict.
+# Production deploys of opentag-bot come from berendo-labs/cosmos (one-way sync
+# from wcordelo/opentag); npm run deploy:bot in opentag is blocked.
 name = "opentag-bot"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"
@@ -183,8 +185,6 @@ KNOWLEDGE_SLACK_ACL_MAX_AGE_MS = "600000"
 # service-bound Queue consumer and derived-index receipts.
 SUPERMEMORY_INDEX_GENERATION = "cloudflare-r2-v1"
 SUPERMEMORY_MUTATION_CONTRACT = "verified"
-# Requires TYPESAFE_API_KEY Worker secret; fails open to RRF order if the key is missing.
-KNOWLEDGE_RERANK_MODE = "jev-score"
 PLATFORM_EFFECTS_QUEUE_NAME = "opentag-platform-effects"
 # Pin the production bot identity so self-authored Slack messages are rejected
 # before auth.test completes (and even when that best-effort lookup fails).
@@ -207,7 +207,6 @@ BUZZ_OPEN_TAG_ALLOWED_RELAY_ORIGIN = "https://berendo.communities.buzz.xyz"
 
 # Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, AGENT_URL,
 # ADMIN_SECRET, INTERNAL_SECRET, KNOWLEDGE_ACTOR_TOKEN_SECRET,
-# TYPESAFE_API_KEY,
 # SUPERMEMORY_SERVICE_AUTH_TOKEN, GRAPHIFY_SERVICE_AUTH_TOKEN,
 # CONNECTOR_BROKER_SHARED_SECRET, EFFECTOR_AUTH_TOKEN,
 # CONNECTOR_CREDENTIAL_BROKER_TOKEN, IDENTITY_CUSTODY_AUTH_TOKEN,

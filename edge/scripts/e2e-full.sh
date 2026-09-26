@@ -2,7 +2,7 @@
 # Full end-to-end verification for the Durable Object SQLite StateStore.
 #
 # 1. Typecheck
-# 2. StateStore conformance on node:sqlite (fast engine)
+# 2. Bot-spine unit tests (Node)
 # 3. StateStore conformance + DO checks inside workerd (real runtime)
 # 4. Real createBot driving the store (built from CopilotKit monorepo source)
 # 5. Live wrangler dev: GET /health + GET /debug/store through a real DO
@@ -24,7 +24,7 @@ bad() { echo -e "${RED}FAIL${NC} $1"; failures=$((failures + 1)); }
 step "1/5  Typecheck"
 if npx tsc --noEmit -p tsconfig.json; then ok "tsc --noEmit"; else bad "tsc --noEmit"; fi
 
-step "2/5  Engine suite (node:sqlite)"
+step "2/5  Bot-spine unit suite (Node)"
 if npx vitest run 2>&1 | tee /tmp/e2e-node.log; then
   ok "vitest (node)"
 else

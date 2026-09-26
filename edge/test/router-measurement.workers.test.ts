@@ -27,6 +27,43 @@ const shadow: RouterShadowRecord = {
 };
 
 describe("RouterMeasurementDO in workerd", () => {
+  it("returns duplicate:true on /record retry when recordedAt predates the retention window", async () => {
+    const workspaceId = `router-workers-stale-${crypto.randomUUID()}`;
+    const stub = env.ROUTER_MEASUREMENTS!.get(
+      env.ROUTER_MEASUREMENTS!.idFromName(workspaceId),
+    ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    const measurement = createRouterDispatchMeasurement({
+      workspaceId,
+      threadKey: "slack:C1:thread-1",
+      executionId: `execution-${crypto.randomUUID()}`,
+      shadowRecord: shadow,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const first = await stub.fetch("https://router-measurement/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(measurement),
+    });
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ ok: true, duplicate: false });
+
+    const duplicate = await stub.fetch("https://router-measurement/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(measurement),
+    });
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ ok: true, duplicate: true });
+
+    const summary = await stub.fetch("https://router-measurement/summary", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId }),
+    });
+    await expect(summary.json()).resolves.toMatchObject({ workspaceId, total: 1 });
+  });
+
   it("uses the deployed SQLite binding and migration for workspace measurements", async () => {
     const workspaceId = `router-workers-${crypto.randomUUID()}`;
     const stub = env.ROUTER_MEASUREMENTS!.get(
@@ -37,7 +74,8 @@ describe("RouterMeasurementDO in workerd", () => {
       threadKey: "slack:C1:thread-1",
       executionId: `execution-${crypto.randomUUID()}`,
       shadowRecord: shadow,
-      recordedAt: "2026-08-01T20:00:00.000Z",
+      // Stay inside the DO's 30-day retention window (prune uses wall-clock now()).
+      recordedAt: new Date(Date.now() - 86_400_000).toISOString(),
     });
 
     const record = await stub.fetch("https://router-measurement/record", {
@@ -46,6 +84,14 @@ describe("RouterMeasurementDO in workerd", () => {
       body: JSON.stringify(measurement),
     });
     expect(record.status).toBe(200);
+
+    const duplicate = await stub.fetch("https://router-measurement/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(measurement),
+    });
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ ok: true, duplicate: true });
 
     const outcome = await stub.fetch("https://router-measurement/outcome", {
       method: "POST",

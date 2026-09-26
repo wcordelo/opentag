@@ -161,7 +161,7 @@ export class CodeSearchAdapter {
     limit: number;
   }): Promise<KnowledgeCitationBase[]> {
     const query = input.query.trim();
-    if (!query || query.length > 1_000 || input.limit < 1 || input.limit > KNOWLEDGE_LIMITS.maxSearchLimit) {
+    if (!query || query.length > 1_000 || input.limit < 1 || input.limit > KNOWLEDGE_LIMITS.maxRetrievalListLimit) {
       throw new SupermemoryAdapterError("local_rejected", false);
     }
     const retrievedAt = new Date().toISOString();

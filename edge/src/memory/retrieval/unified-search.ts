@@ -1,6 +1,9 @@
 /** Parallel multi-list search fused with RRF and optional LLM rerank. */
 
 import type { KnowledgeCitationBase } from "../knowledge-contract.js";
+import type { CandidateRerankFn } from "./knowledge-rerank.js";
+import { expandKnowledgeSearchQuery } from "./knowledge-query-normalize.js";
+import { JEV_RERANK_MAX_CANDIDATES } from "./jev-questions.js";
 import { llmRerank, type RerankLlm } from "./rerank.js";
 import { reciprocalRankFusion, type RankedItem } from "./rrf.js";
 
@@ -17,9 +20,10 @@ export type SearchListFn = (
 
 type RerankCandidate = KnowledgeCitationBase & { id: string; excerpt: string };
 
-const DEFAULT_PER_LIST_LIMIT = 10;
+const DEFAULT_PER_LIST_LIMIT = 15;
 const DEFAULT_FINAL_LIMIT = 10;
 const DEFAULT_RRF_K = 60;
+const DEFAULT_RRF_POOL_LIMIT = JEV_RERANK_MAX_CANDIDATES;
 
 function toRankedList(hits: SearchListHit[]): RankedItem<SearchListHit>[] {
   // Prefer explicit scores when present; otherwise preserve list order.
@@ -54,20 +58,26 @@ export async function unifiedKnowledgeSearch(input: {
   perListLimit?: number;
   rrfK?: number;
   rerank?: RerankLlm;
+  /** Jev or other candidate-level reranker; falls back to RRF order on error. */
+  candidateRerank?: CandidateRerankFn;
+  /** Cap fused candidates kept for reranking (defaults to Jev pool size). */
+  rrfPoolLimit?: number;
   finalLimit?: number;
 }): Promise<KnowledgeCitationBase[]> {
   const perListLimit = input.perListLimit ?? DEFAULT_PER_LIST_LIMIT;
   const finalLimit = input.finalLimit ?? DEFAULT_FINAL_LIMIT;
   const rrfK = input.rrfK ?? DEFAULT_RRF_K;
+  const rrfPoolLimit = input.rrfPoolLimit ?? DEFAULT_RRF_POOL_LIMIT;
 
-  if (!input.query) return [];
+  const query = expandKnowledgeSearchQuery(input.query);
+  if (!query) return [];
   if (!Array.isArray(input.lists) || input.lists.length === 0) return [];
 
   const listResults = await Promise.all(
-    input.lists.map((list) => list(input.query, perListLimit)),
+    input.lists.map((list) => list(query, perListLimit)),
   );
   const rankedLists = listResults.map((hits) => toRankedList(hits));
-  const fused = reciprocalRankFusion(rankedLists, { k: rrfK });
+  const fused = reciprocalRankFusion(rankedLists, { k: rrfK }).slice(0, rrfPoolLimit);
 
   const candidates: RerankCandidate[] = fused.map((entry) => ({
     ...entry.item.citation,
@@ -75,6 +85,15 @@ export async function unifiedKnowledgeSearch(input: {
     excerpt: entry.item.citation.excerpt,
     score: entry.score,
   }));
+
+  if (input.candidateRerank) {
+    const reranked = await input.candidateRerank({
+      query: input.query,
+      candidates,
+      topN: finalLimit,
+    });
+    return reranked.map(({ id: _id, ...citation }) => citation);
+  }
 
   if (input.rerank) {
     const reranked = await llmRerank({

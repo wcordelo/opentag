@@ -4,6 +4,7 @@ import { CloudflareSlackAdapter } from "../src/slack/cloudflare-slack-adapter.js
 import {
   createResponseRouteJevMeasurement,
   scheduleRouterJevShadow,
+  type ScheduleRouterJevShadowInput,
 } from "../src/router/response-route-jev-measurement.js";
 import { callRouterJevJudgment } from "../src/router/jev-route-shadow.js";
 import { detectMemoryOptOut } from "../src/router/jev-route-questions.js";
@@ -289,6 +290,31 @@ describe("router Jev shadow ingress E2E", () => {
     await vi.waitFor(() => shadowRows.length === 1);
     expect(result).toEqual({ handled: true });
     expect(shadowRows[0]).toMatchObject({ error: "network_down" });
+  });
+
+  it("infers channel type for app_mention when Slack omits channel_type", async () => {
+    const shadowInputs: ScheduleRouterJevShadowInput[] = [];
+    const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+      routerJevShadow: (input) => { shadowInputs.push(input); },
+    });
+    await adapter.start(makeSink());
+    await adapter.handleEventsBody({
+      team_id: "T1",
+      event_id: "EvMention",
+      event: {
+        type: "app_mention",
+        channel: "C123CHANNEL",
+        user: "U1",
+        text: "<@UBOT> how do I run edge tests locally?",
+        ts: "2.0",
+      },
+    });
+    expect(shadowInputs).toHaveLength(1);
+    expect(shadowInputs[0]?.channelType).toBe("channel");
+    expect(shadowInputs[0]?.source).toBe("app_mention");
   });
 
   it("registers shadow Jev work with waitUntil on observe paths without blocking the ack", async () => {

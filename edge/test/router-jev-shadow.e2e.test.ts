@@ -291,6 +291,74 @@ describe("router Jev shadow ingress E2E", () => {
     expect(shadowRows[0]).toMatchObject({ error: "network_down" });
   });
 
+  it("registers shadow Jev work with waitUntil on observe paths without blocking the ack", async () => {
+    const waitUntilTasks: Promise<unknown>[] = [];
+    let resolveTypesafe: (() => void) | undefined;
+    const typesafeGate = new Promise<void>((resolve) => { resolveTypesafe = resolve; });
+    let typesafeStarted = false;
+    let typesafeFinished = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const value = String(url);
+      if (value.includes("api.typesafe.ai")) {
+        typesafeStarted = true;
+        await typesafeGate;
+        typesafeFinished = true;
+        return Response.json({
+          model: "jev-test",
+          answers: {
+            route: { type: "choice", choice: "observe", probabilities: { respond: 0.1, observe: 0.9 } },
+            needsHuman: { type: "noul", noul: 0.05 },
+            memoryNeeded: { type: "noul", noul: 0.1 },
+          },
+        });
+      }
+      return originalFetch(url, init);
+    }) as typeof fetch;
+
+    const adapter = new CloudflareSlackAdapter({
+      unsafeAllowUnfencedTestOnly: true,
+      botToken: "xoxb-test",
+      botUserId: "UBOT",
+      routerJevShadow: (input) => {
+        scheduleRouterJevShadow(
+          {
+            ROUTER_JEV_SHADOW: "on",
+            TYPESAFE_API_KEY: "test-key",
+            ROUTER_JEV_MODEL: "jev-latest",
+            ROUTER_JEV_TIMEOUT_MS: "1500",
+          },
+          input,
+          globalThis.fetch,
+        );
+      },
+    });
+    await adapter.start(makeSink());
+    const result = await adapter.handleEventsBody({
+      team_id: "T1",
+      event_id: "EvWaitUntil",
+      event: {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "yo",
+        ts: "5.0",
+        thread_ts: "1.0",
+      },
+    }, {
+      waitUntil: (promise) => { waitUntilTasks.push(promise); },
+    });
+
+    expect(result).toEqual({ handled: true });
+    expect(waitUntilTasks).toHaveLength(1);
+    expect(typesafeStarted).toBe(true);
+    expect(typesafeFinished).toBe(false);
+    resolveTypesafe?.();
+    await waitUntilTasks[0];
+    expect(typesafeFinished).toBe(true);
+  });
+
   it("does not call Jev when ROUTER_JEV_SHADOW is off", async () => {
     const typesafeCalls: string[] = [];
     const originalFetch = globalThis.fetch;

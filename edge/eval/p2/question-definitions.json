@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "modelDefault": "jev-latest",
   "timeoutMsDefault": 1500,
-  "memoryOptOutPattern": "\\b(?:without\\s+using\\s+memory|without\\s+memory|don'?t\\s+look\\s+anything\\s+up|don'?t\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|do\\s+not\\s+look\\s+anything\\s+up|do\\s+not\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|no\\s+memory|from\\s+general\\s+knowledge\\s+only)\\b",
+  "memoryOptOutPattern": "\\b(?:without\\s+using\\s+memory|without\\s+memory|don['\\u2019]?t\\s+look\\s+anything\\s+up|don['\\u2019]?t\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|do\\s+not\\s+look\\s+anything\\s+up|do\\s+not\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|no\\s+memory|from\\s+general\\s+knowledge\\s+only)\\b",
   "questions": {
     "route": {
       "type": "choice",

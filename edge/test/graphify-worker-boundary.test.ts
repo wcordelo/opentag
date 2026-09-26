@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  graphBuilderContainerEnv,
+  graphQueryContainerEnv,
+  type GraphifyContainerEnvSource,
+} from "../workers/graphify/src/container-env.js";
 
 vi.mock("cloudflare:workers", () => ({
   env: {},
@@ -284,5 +289,33 @@ describe("Graphify private Worker boundary", () => {
     expect(response.status).toBe(400);
     expect(registryFetch).not.toHaveBeenCalled();
     expect(queryFetch).not.toHaveBeenCalled();
+  });
+
+  it("scopes container credentials so query role never receives R2 or GitHub secrets", () => {
+    const source: GraphifyContainerEnvSource = {
+      GRAPHIFY_CONTAINER_AUTH_TOKEN: "container-token",
+      GRAPHIFY_COMMIT: "00efd6e7969837ae4a9f11d8d504dcd3b20b09df",
+      GRAPHIFY_ALLOWED_REPO_ORGS: "wcordelo",
+      GITHUB_TOKEN: "github-token",
+    };
+    const queryEnv = graphQueryContainerEnv(source);
+    expect(queryEnv).toMatchObject({
+      GRAPHIFY_R2_MOUNT: "/mnt/graphs",
+      GRAPHIFY_CONTAINER_AUTH_TOKEN: "container-token",
+    });
+    expect(queryEnv).not.toHaveProperty("AWS_ACCESS_KEY_ID");
+    expect(queryEnv).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+    expect(queryEnv).not.toHaveProperty("R2_BUCKET_NAME");
+    expect(queryEnv).not.toHaveProperty("GITHUB_TOKEN");
+
+    const builderEnv = graphBuilderContainerEnv(source);
+    expect(builderEnv).toMatchObject({
+      GRAPHIFY_COMMIT: source.GRAPHIFY_COMMIT,
+      GRAPHIFY_CONTAINER_AUTH_TOKEN: "container-token",
+      GITHUB_TOKEN: "github-token",
+    });
+    expect(builderEnv).not.toHaveProperty("AWS_ACCESS_KEY_ID");
+    expect(builderEnv).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+    expect(builderEnv).not.toHaveProperty("R2_BUCKET_NAME");
   });
 });

@@ -36,10 +36,10 @@ afterEach(() => {
 });
 
 describe("isOpentagUpstreamRepo", () => {
-  it("returns false when GITHUB_REPOSITORY is berendo-labs/cosmos", () => {
+  it("returns false when GITHUB_REPOSITORY is example-org/downstream-deploy", () => {
     expect(isOpentagUpstreamRepo({
       ...process.env,
-      GITHUB_REPOSITORY: "berendo-labs/cosmos",
+      GITHUB_REPOSITORY: "example-org/downstream-deploy",
     })).toBe(false);
   });
 

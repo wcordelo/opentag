@@ -304,8 +304,8 @@ HTTP phase and receives HTTP 526; valid signed admission is still required.
 ## Repository model
 
 **wcordelo/opentag** is the open upstream: most bot and retrieval feature work
-lands here. A private downstream deployment repo (berendo-labs/cosmos) mirrors
-selected paths one-way, adds enterprise-only features, and owns **all**
+lands here. A private downstream deployment repo mirrors selected paths one-way,
+adds enterprise-only features, and owns **all**
 Cloudflare deploys — production, staging, and test.
 
 | Work | Repository |
@@ -321,7 +321,7 @@ call). `wrangler dev` and the CI test sequence still run here.
 ```mermaid
 flowchart LR
     Operator["Operator"]
-    Cosmos["berendo-labs/cosmos<br/>all Cloudflare deploys"]
+    Downstream["private downstream deployment repo<br/>all Cloudflare deploys"]
     Bot["opentag-bot<br/>wrangler.bot.toml"]
     Agent["opentag-agent<br/>workers/agent-runtime"]
     Harness["opentag-harness<br/>workers/sandbox"]
@@ -332,14 +332,14 @@ flowchart LR
     Research["opentag-orchestrator<br/>wrangler.research.toml"]
     OpenTag["wcordelo/opentag<br/>bot source"]
 
-    OpenTag -->|"one-way sync"| Cosmos
-    Cosmos -->|"deploy (prod/staging/test)"| Bot
-    Cosmos -->|"deploy (prod/staging/test)"| Agent
-    Cosmos -->|"deploy (prod/staging/test)"| Claudex
-    Cosmos -->|"deploy (prod/staging/test)"| Harness
-    Cosmos -->|"deploy (prod/staging/test)"| Supermemory
-    Cosmos -->|"deploy (prod/staging/test)"| Graphify
-    Cosmos -.->|"deploy:research (optional)"| Research
+    OpenTag -->|"one-way sync"| Downstream
+    Downstream -->|"deploy (prod/staging/test)"| Bot
+    Downstream -->|"deploy (prod/staging/test)"| Agent
+    Downstream -->|"deploy (prod/staging/test)"| Claudex
+    Downstream -->|"deploy (prod/staging/test)"| Harness
+    Downstream -->|"deploy (prod/staging/test)"| Supermemory
+    Downstream -->|"deploy (prod/staging/test)"| Graphify
+    Downstream -.->|"deploy:research (optional)"| Research
     Operator -.->|"deploy scripts blocked"| OpenTag
 
     Bot -->|"AGENT_RUNTIME"| Agent
@@ -353,7 +353,8 @@ flowchart LR
 
 The bot, AG-UI agent, coding harness, Supermemory facade, and Graphify facade
 are deployed in the current production configuration. **All Cloudflare deploys
-run from berendo-labs/cosmos** (one-way sync from wcordelo/opentag); deploy
+run from the private downstream deployment repo** (one-way sync from
+wcordelo/opentag); deploy
 scripts in opentag are blocked. Bot code changes—including retrieval reranker
 and recall fixes—reach deployed Workers only through that sync and deploy
 path. Research remains optional. The coding plane runs Claude Code
@@ -721,7 +722,7 @@ actual coverage.
 ## Deploy the AG-UI agent
 
 Deploy from the downstream deployment repo, not from opentag (`npm run deploy`
-is blocked here). In cosmos:
+is blocked here). In the private downstream deployment repo:
 
 ```bash
 cd edge/workers/agent-runtime
@@ -739,14 +740,16 @@ Containers base class and silently drops runtime secrets.
 ## Deploy the bot
 
 All Cloudflare Worker and Container deploys — production, staging, and test —
-run from **berendo-labs/cosmos** only. wcordelo/opentag is the upstream source;
-cosmos syncs selected paths one-way and runs deploy scripts there.
+run from the **private downstream deployment repo** only. wcordelo/opentag is
+the upstream source; the private downstream deployment repo syncs selected
+paths one-way and runs deploy scripts there.
 
 From opentag, every `npm run deploy*` script and worker `npm run deploy` exits
 non-zero before wrangler with a pointer here. Local validation uses `npm run
 dev` or `wrangler dev --config wrangler.bot.toml`.
 
-In cosmos, configure secrets and deploy per that repo's runbook. Slack Request URLs must point to the deployed bot Worker:
+In the private downstream deployment repo, configure secrets and deploy per that
+repo's runbook. Slack Request URLs must point to the deployed bot Worker:
 
 - `/slack/events`
 - `/slack/commands`

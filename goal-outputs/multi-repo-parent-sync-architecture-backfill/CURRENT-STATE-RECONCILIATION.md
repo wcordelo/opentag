@@ -84,7 +84,7 @@ live artifact receipt.
 | Bot deployment inspected | guarded current code version `764a18ea-bda9-4209-bdbc-0b9cc81a6cba`; live health and authenticated knowledge readiness report the model, knowledge bindings, observer, index generation, relay allowlist, and broker auth configured |
 | Derived-index deployments | Supermemory and Graphify are private and deployed; Supermemory version 18 has a live document write/poll/search receipt, while the singleton query instances are still reported as `running` rather than `healthy`; restart/remount, parity, Graphify artifact, and complete convergence evidence remain open |
 | Harness deployment inspected | version `718af083-0b2d-4809-a878-7b98e7b3aef6`; Wrangler verifies image `sha256:2d9a0a10d718265b7ea331ba2de3b8fd309cb33cbdf6175d92036fc681004880` with seven healthy instances; source mapping remains open |
-| Slack evidence | ACL cadence [`1785719827818089`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719827818089) and provider receipt [`1785719693438309`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719693438309) are live; fresh marker [`1785725283.368069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725283368069) plus explicit search [`1785725373.889899`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725373889899) returned `OPENTAG_SUPERMEMORY_SEARCH_OK`, while untagged search [`1785725304.390959`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725304390959) remained silent on the deployed version |
+| Slack evidence | ACL cadence [`1785719827818089`](https://example.slack.com/archives/C0BA1MKPRE3/p1785719827818089) and provider receipt [`1785719693438309`](https://example.slack.com/archives/C0BA1MKPRE3/p1785719693438309) are live; fresh marker [`1785725283.368069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725283368069) plus explicit search [`1785725373.889899`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725373889899) returned `OPENTAG_SUPERMEMORY_SEARCH_OK`, while untagged search [`1785725304.390959`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725304390959) remained silent on the deployed version |
 | Buzz evidence | live empty `POST /buzz/wake` returns HTTP 400 `buzz_wake_unexpected_fields`; configuration/schema gate is live, signed admission remains open |
 
 The deployment was authorized as part of the end-to-end rollout. Secret values,
@@ -178,7 +178,7 @@ provider authorization.
 The authenticated human Slack controls now prove the current deployment's
 explicit routing, no-mention response routing, passive-message silence, and
 working-reaction cleanup. A fresh retrieval request at
-[`1785694376.778339`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
+[`1785694376.778339`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
 entered `Searching Slack` and returned `Knowledge unavailable.` at
 `1785694396.357459`. That is a live degraded knowledge/search result: it proves
 request admission and error cleanup, not marker indexing, KnowledgeDO

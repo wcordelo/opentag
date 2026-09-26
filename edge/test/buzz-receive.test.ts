@@ -36,7 +36,7 @@ const AUTHOR = "b".repeat(64);
 const ROOT = "c".repeat(64);
 const TENANT = canonicalInternalTenantId("11111111-1111-4111-8111-111111111111");
 const NOW = 1_785_424_252;
-const RELAY_ORIGIN = "https://berendo.communities.buzz.xyz";
+const RELAY_ORIGIN = "https://relay.example.communities.buzz.xyz";
 
 function matchingAllowlist(
   overrides: Partial<{ allowed: string; live: string }> = {},

@@ -76,7 +76,7 @@ Gotchas:
 
 ### Linear create pitfalls
 
-- `LINEAR_TEAM_KEY` = team **display name** (e.g. `Berendo`), not a bare key like `CPK`.
+- `LINEAR_TEAM_KEY` = team **display name** (e.g. `example-org`), not a bare key like `CPK`.
 - Bot token needs **`users:read.email`** (reinstall + refresh secret after scope changes).
 - Slack Web API: use **form-urlencoded** (`edge/src/slack/web-api.ts`) — JSON `users.info` skips email.
 - HITL Create/Cancel needs `choiceId` durable poll (`edge/src/hitl/durable-choice.ts`).

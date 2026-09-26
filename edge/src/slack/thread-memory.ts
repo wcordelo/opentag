@@ -1,3 +1,5 @@
+import { resolveLinearWorkspaceSlug } from "../config/installation-config.js";
+
 /**
  * Durable per-conversation turn memory for Workers.
  *
@@ -334,10 +336,21 @@ export function formatDraftContext(
   return lines.join("\n");
 }
 
-export function formatLastIssueContext(issue: LastCreatedIssue): string {
+export function formatLinearIssueUrl(
+  identifier: string,
+  workspaceSlug?: string,
+): string {
+  const slug = resolveLinearWorkspaceSlug(workspaceSlug);
+  return `https://linear.app/${slug}/issue/${identifier}`;
+}
+
+export function formatLastIssueContext(
+  issue: LastCreatedIssue,
+  options?: { workspaceSlug?: string },
+): string {
   const url =
     issue.url ??
-    `https://linear.app/berendo/issue/${issue.identifier}`;
+    formatLinearIssueUrl(issue.identifier, options?.workspaceSlug);
   return [
     `Last Linear issue created in this thread: ${issue.identifier}`,
     issue.title ? `title: ${issue.title}` : undefined,

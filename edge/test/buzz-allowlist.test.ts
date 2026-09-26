@@ -47,7 +47,7 @@ const AUTHOR = "b".repeat(64);
 const ROOT = "c".repeat(64);
 const TENANT = canonicalInternalTenantId("11111111-1111-4111-8111-111111111111");
 const NOW = 1_785_424_252;
-const ALLOWED = "https://berendo.communities.buzz.xyz";
+const ALLOWED = "https://relay.example.communities.buzz.xyz";
 const OTHER_ORIGIN = "https://evil.example.invalid";
 
 function directory(): BuzzChannelTenantDirectory {
@@ -110,8 +110,8 @@ function verifiedEvent() {
 
 describe("normalizeBuzzRelayOrigin", () => {
   it("strips trailing slash and lowercases host", () => {
-    expect(normalizeBuzzRelayOrigin("https://Berendo.Communities.Buzz.xyz/")).toBe(
-      "https://berendo.communities.buzz.xyz",
+    expect(normalizeBuzzRelayOrigin("https://Relay.Example.Communities.Buzz.xyz/")).toBe(
+      "https://relay.example.communities.buzz.xyz",
     );
   });
 

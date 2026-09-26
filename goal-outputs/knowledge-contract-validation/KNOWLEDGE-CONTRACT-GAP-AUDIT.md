@@ -91,13 +91,13 @@ lifecycle changes. Authenticated membership readback confirms bot
 `#new-channel`, `#social`, and `#skills`.
 
 The human explicit canary
-[`1785728816.021889`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
+[`1785728816.021889`](https://example.slack.com/archives/C0BA1MKPRE3/p1785728816021889)
 returned `OPENTAG_MILESTONE_EXPLICIT_OK` at `1785728831.600039`. The
 bot-message event canary
-[`1785729068.726309`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
+[`1785729068.726309`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729068726309)
 returned `OPENTAG_MESSAGE_EVENT_TAIL_OK` at `1785729079.363589`; the live
 tail recorded an indexed queue outcome. The reaction lifecycle canary
-[`1785729211.926069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
+[`1785729211.926069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785729211926069)
 showed the working `eyes` reaction while running, returned
 `OPENTAG_REACTION_LIFECYCLE_OK` at `1785729227.808039`, and had no reaction
 after terminal cleanup.
@@ -473,7 +473,7 @@ Slack application are not converged with that contract.
   `/buzz/wake` probe only reaches schema validation; local development vars do
   not contain a usable signer secret.
 - Configure the broker/custody binding map and an OpenTag-mediated controlled
-  provider workspace. The connected Linear surface exposes the Berendo team
+  provider workspace. The connected Linear surface exposes the EXAMPLE team
   but no projects; using the connector directly would bypass OpenTag's
   credential/effect boundary and is not an end-to-end provider test.
 - Run live ambiguous Slack write, isolate-loss, Queue/DLQ replay, provider
@@ -575,24 +575,24 @@ tenant-scoped callback has been proven.
 The connected Slack writer posted a current bot-authored marker at
 `1785693801.754259` and read it back from `#general`; this proves connector
 write/read and bot feedback-loop suppression only. Current human controls at
-[`1785694221.865769`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694221865769),
-[`1785694253.415069`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694253415069),
-and [`1785694282.922709`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694282922709)
+[`1785694221.865769`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694221865769),
+[`1785694253.415069`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694253415069),
+and [`1785694282.922709`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694282922709)
 prove delivery, flexible routing, reaction cleanup, and silent passive behavior.
 A retrieval request at
-[`1785694376.778339`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
+[`1785694376.778339`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
 returned `Knowledge unavailable.`, so KnowledgeDO/index convergence remains
 open.
 
 The current-version controls against the guarded bot deployment are
-[`1785701425.622489`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701425622489)
+[`1785701425.622489`](https://example.slack.com/archives/C0BA1MKPRE3/p1785701425622489)
 (explicit mention),
-[`1785701448.262779`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701448262779)
+[`1785701448.262779`](https://example.slack.com/archives/C0BA1MKPRE3/p1785701448262779)
 (no-mention question), and
-[`1785701473.534779`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701473534779)
+[`1785701473.534779`](https://example.slack.com/archives/C0BA1MKPRE3/p1785701473534779)
 (passive control). The first two received exact replies and had no terminal
 `eyes` reaction; the passive control received neither. A smoke-style sentence
-[`1785701364.700649`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785701364700649)
+[`1785701364.700649`](https://example.slack.com/archives/C0BA1MKPRE3/p1785701364700649)
 was silent, demonstrating routing classification for non-question operational
 text. Current-day search found no `OpenTag AG-UI` or `Working…` output after
 the deployment. These controls do not prove reaction/membership event
@@ -708,7 +708,7 @@ canary gate, but not the KnowledgeDO/derived-index receipt gate.
 ## 2026-08-02 11:16 PDT knowledge retrieval canary
 
 A fresh human request at
-[`1785694376.778339`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
+[`1785694376.778339`](https://example.slack.com/archives/C0BA1MKPRE3/p1785694376778339)
 asked the bot to find the exact prior marker
 `OPENTAG_NO_MENTION_CANARY_OK`. The bot entered `Searching Slack` and then
 returned `Knowledge unavailable.` at `1785694396.357459`; terminal readback
@@ -719,7 +719,7 @@ derived index. Until a tenant receipt and a successful marker search exist,
 workspace-wide indexing remains unproven and the live knowledge path should be
 treated as degraded.
 
-The connected Linear surface currently exposes a `Berendo` team and no
+The connected Linear surface currently exposes a `EXAMPLE` team and no
 projects. No project was created during this audit because a direct Linear
 connector write would bypass OpenTag's still-disabled broker/custody/effecter
 path and would not be an end-to-end provider test. The provider-workspace gate

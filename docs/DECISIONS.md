@@ -107,7 +107,7 @@ the waiter Promise. Poll interval is ~100ms. After Create, the bot posts
 ## 6. Linear default team
 
 `LINEAR_TEAM_KEY` must be the Linear team **display name** (or ID) that
-`list_issues` / `save_issue` accept — e.g. `Berendo` for this workspace (issue
+`list_issues` / `save_issue` accept — e.g. `EXAMPLE` for this workspace (issue
 prefix `BER-…`). A bare legacy key like `CPK` fails create/list. `get_team`
 still accepts UUID, key, or name.
 

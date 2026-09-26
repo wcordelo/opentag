@@ -47,4 +47,11 @@ describe("triage model provider configuration", () => {
       DEEPSEEK_API_KEY: "test-key",
     })).toContain('running DeepSeek model "deepseek-v4-flash"');
   });
+
+  it("uses a neutral default Linear team when LINEAR_TEAM_KEY is unset", () => {
+    expect(buildSystemPrompt({})).toContain('The default Linear team is "example-org"');
+    expect(buildSystemPrompt({ LINEAR_TEAM_KEY: "Acme" })).toContain(
+      'The default Linear team is "Acme"',
+    );
+  });
 });

@@ -258,14 +258,14 @@ The telemetry-enabled live bot deployment is
 `764a18ea-bda9-4209-bdbc-0b9cc81a6cba`. Its reconciliation schedule is every
 five minutes and `KNOWLEDGE_SLACK_ACL_MAX_AGE_MS` is 600000, so the scheduled
 ACL refresh cadence now has headroom over the authorization freshness bound.
-The live [cadence canary](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785719827818089)
+The live [cadence canary](https://example.slack.com/archives/C0BA1MKPRE3/p1785719827818089)
 returned `OPENTAG_KNOWLEDGE_CADENCE_OK`.
 
 The live retrieval canary exposed one deployment gap: the deployed bot did not
 answer the unmentioned action request at
-[`1785725304.390959`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725304390959),
+[`1785725304.390959`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725304390959),
 while the explicit-mention control at
-[`1785725373.889899`](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785725373889899)
+[`1785725373.889899`](https://example.slack.com/archives/C0BA1MKPRE3/p1785725373889899)
 returned `OPENTAG_SUPERMEMORY_SEARCH_OK`. The current local source contains
 retrieval rule `t1.12` and its route/pre-admission tests pass; deploy and rerun
 this canary only after the explicit production-deployment gate is approved.
@@ -653,7 +653,7 @@ synthetic platform provisioning and effect leases, the corrected identity read
 route, and the Buzz fail-closed probe. `POST /buzz/wake` returned HTTP 503
 `buzz_receive_not_configured` without contacting the relay.
 
-The Slack routing canary is [here](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785630816681659).
+The Slack routing canary is [here](https://example.slack.com/archives/C0BA1MKPRE3/p1785630816681659).
 It demonstrated an untagged problem/action request, a passive conversational
 statement with no bot turn, an explicit marker, and an untagged question. The
 explicit marker sent while the problem/action turn was still running received
@@ -661,8 +661,8 @@ the expected genuine-concurrency warning; after the first turn rendered
 `Complete`, a later explicit marker returned exactly
 `OPENTAG_ROUTING_FINAL_IDLE_OK` without a stale-turn warning. The earlier stale
 thread was safely cleared with an explicit Stop
-[here](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785626165915119).
-A separate [passive-only smoke](https://berendo.slack.com/archives/C0BA1MKPRE3/p1785629853529029)
+[here](https://example.slack.com/archives/C0BA1MKPRE3/p1785626165915119).
+A separate [passive-only smoke](https://example.slack.com/archives/C0BA1MKPRE3/p1785629853529029)
 used a fresh top-level user message and an untagged `yo`; after the prior turn
 was idle, Slack showed no bot reply.
 

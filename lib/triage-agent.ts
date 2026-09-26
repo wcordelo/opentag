@@ -325,10 +325,16 @@ function readOnlyMcpClient(
   });
 }
 
+const DEFAULT_LINEAR_TEAM_KEY = "example-org";
+
+export function resolveLinearTeamKey(raw?: string): string {
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_LINEAR_TEAM_KEY;
+}
+
 export function buildSystemPrompt(env: TriageAgentEnv): string {
   // Linear MCP read tools want team NAME or ID (not a bare key).
-  // Workspace default: Berendo (issue prefix BER-…).
-  const LINEAR_TEAM_KEY = (env.LINEAR_TEAM_KEY?.trim() || "Berendo");
+  const LINEAR_TEAM_KEY = resolveLinearTeamKey(env.LINEAR_TEAM_KEY);
   const providerConfig = resolveTriageAgentProvider(env);
   const providerName = providerConfig.provider === "deepseek" ? "DeepSeek" : "OpenAI";
   return [

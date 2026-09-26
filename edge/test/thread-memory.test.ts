@@ -5,6 +5,7 @@ import {
   coerceTicketFields,
   formatDraftContext,
   formatLastIssueContext,
+  formatLinearIssueUrl,
   parseLabeledFields,
   parseLastCreatedIssue,
   parseTicketDraft,
@@ -102,13 +103,28 @@ describe("parseTicketDraft", () => {
 });
 
 describe("parseLastCreatedIssue", () => {
-  it("finds Created Linear issue BER-6", () => {
+  it("finds Created Linear issue EX-6", () => {
     const last = parseLastCreatedIssue([
-      { text: "Created Linear issue BER-6: test description: test test", isBot: true },
+      { text: "Created Linear issue EX-6: test description: test test", isBot: true },
       { text: "provide linear link" },
     ]);
-    expect(last?.identifier).toBe("BER-6");
-    expect(formatLastIssueContext(last!)).toContain("BER-6");
+    expect(last?.identifier).toBe("EX-6");
+    expect(formatLastIssueContext(last!)).toContain("EX-6");
     expect(formatLastIssueContext(last!)).toContain("Do NOT call confirm_write");
+  });
+
+  it("builds fallback Linear URLs from the configured workspace slug", () => {
+    expect(formatLinearIssueUrl("EX-123")).toBe(
+      "https://linear.app/example-org/issue/EX-123",
+    );
+    expect(formatLinearIssueUrl("EX-123", "acme")).toBe(
+      "https://linear.app/acme/issue/EX-123",
+    );
+    expect(
+      formatLastIssueContext(
+        { identifier: "EX-7" },
+        { workspaceSlug: "acme" },
+      ),
+    ).toContain("https://linear.app/acme/issue/EX-7");
   });
 });

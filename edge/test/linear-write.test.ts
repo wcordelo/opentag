@@ -147,9 +147,9 @@ describe("Linear guarded write contract", () => {
             success: true,
             issue: {
               id: "issue-1",
-              identifier: "BER-42",
+              identifier: "EX-42",
               title: "Incident",
-              url: "https://linear.app/berendo/issue/BER-42/incident",
+              url: "https://linear.app/example-org/issue/EX-42/incident",
             },
           },
         },
@@ -173,7 +173,7 @@ describe("Linear guarded write contract", () => {
       now: NOW,
       revalidate: async () => { revalidated += 1; },
     });
-    expect(result).toMatchObject({ identifier: "BER-42", title: "Incident" });
+    expect(result).toMatchObject({ identifier: "EX-42", title: "Incident" });
     expect(revalidated).toBe(2);
     expect(tokenRequests).toHaveLength(1);
     expect(tokenRequests[0]!.headers.get("x-opentag-connector-authorization")).toMatch(/^sha256:/);
@@ -206,7 +206,7 @@ describe("Linear guarded write contract", () => {
       if (requests.length === 1) {
         return Response.json({
           data: {
-            teams: { nodes: [{ id: "team-1", name: "Berendo", key: "BER" }] },
+            teams: { nodes: [{ id: "team-1", name: "EXAMPLE", key: "EX" }] },
             users: { nodes: [{ id: "user-1", email: "user@example.com", name: "User" }] },
             projects: {
               nodes: [{
@@ -222,7 +222,7 @@ describe("Linear guarded write contract", () => {
         data: {
           issueCreate: {
             success: true,
-            issue: { id: "issue-2", identifier: "BER-43", title: "Named refs" },
+            issue: { id: "issue-2", identifier: "EX-43", title: "Named refs" },
           },
         },
       });
@@ -234,7 +234,7 @@ describe("Linear guarded write contract", () => {
       credentialBroker: broker,
       draft: {
         title: "Named refs",
-        team: "Berendo",
+        team: "EXAMPLE",
         assigneeEmail: "user@example.com",
         project: "Launch",
         milestone: "Beta",
@@ -242,7 +242,7 @@ describe("Linear guarded write contract", () => {
       fetchImpl,
       now: NOW,
     });
-    expect(result.identifier).toBe("BER-43");
+    expect(result.identifier).toBe("EX-43");
     expect(requests).toHaveLength(2);
     const mutation = JSON.parse(await requests[1]!.clone().text()) as {
       variables: { input: Record<string, string> };

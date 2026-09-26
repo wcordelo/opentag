@@ -339,6 +339,7 @@ describe("router Jev shadow ingress E2E", () => {
 
   it("forces memoryNeeded false when the user opts out of memory", async () => {
     expect(detectMemoryOptOut("answer without using memory")).toBe(true);
+    expect(detectMemoryOptOut("explain HTTP status codes, don't look anything up")).toBe(true);
     const judgment = await callRouterJevJudgment({
       apiKey: "test-key",
       model: "jev-latest",

@@ -2431,6 +2431,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
         verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
+        waitUntil: exec?.waitUntil?.bind(exec),
       });
     } finally {
       if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);

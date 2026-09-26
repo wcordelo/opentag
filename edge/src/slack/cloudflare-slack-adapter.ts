@@ -479,6 +479,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     body: unknown,
     normalized: Extract<import("./ingress-normalize.js").SlackNeutralEvent, { kind: "turn" }>,
     route: SlackResponseRoute,
+    waitUntil?: (promise: Promise<unknown>) => void,
   ): void {
     if (!this.opts.routerJevShadow) return;
     const teamId = this.teamId ??
@@ -507,6 +508,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
         normalized.source === "trusted_rich_mention",
       hasFiles: normalized.hasFiles,
       threadContext: [],
+      waitUntil,
       currentRoute: route,
     });
   }
@@ -730,6 +732,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       verifiedIngress?: VerifiedIngressEvidence;
       preAdmittedTurn?: PreAdmittedTurn;
       onTurnHandoff?: () => void;
+      waitUntil?: (promise: Promise<unknown>) => void;
     },
   ): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
@@ -777,7 +780,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       channelId: normalized.channel,
       threadTs: normalized.threadTs ?? normalized.ts,
     }));
-    this.scheduleRouterJevShadow(body, normalized, route);
+    this.scheduleRouterJevShadow(body, normalized, route, meta?.waitUntil);
     if (route.decision !== "respond") return { handled: true };
 
     const isDm = normalized.source === "direct_message";

@@ -58,7 +58,7 @@ export const MEMORY_NEEDED_CRITERIA = {
 } as const;
 
 const MEMORY_OPT_OUT_PATTERN =
-  /\b(?:without\s+using\s+memory|without\s+memory|don'?t\s+(?:use|look\s+up|lookup|search|retrieve)\s+(?:memory|anything|wiki|slack|code)|do\s+not\s+(?:use|look\s+up|lookup|search|retrieve)\s+(?:memory|anything|wiki|slack|code)|no\s+memory|from\s+general\s+knowledge\s+only)\b/i;
+  /\b(?:without\s+using\s+memory|without\s+memory|don'?t\s+look\s+anything\s+up|don'?t\s+(?:use|look\s+up|lookup|search|retrieve)\s+(?:memory|anything|wiki|slack|code)|do\s+not\s+look\s+anything\s+up|do\s+not\s+(?:use|look\s+up|lookup|search|retrieve)\s+(?:memory|anything|wiki|slack|code)|no\s+memory|from\s+general\s+knowledge\s+only)\b/i;
 
 /**
  * Deterministic override for edge/AGENTS.md rule 7. We detect explicit opt-out in

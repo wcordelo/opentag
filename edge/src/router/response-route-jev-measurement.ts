@@ -210,6 +210,8 @@ export type ScheduleRouterJevShadowInput = Readonly<{
   hasFiles?: boolean;
   threadContext?: readonly string[];
   currentRoute: SlackResponseRoute;
+  /** Workers runtime hook so shadow Jev work survives after observe early-return. */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }>;
 
 export function scheduleRouterJevShadow(
@@ -223,7 +225,7 @@ export function scheduleRouterJevShadow(
   const config = resolveRouterJevShadowConfig(env);
   if (!config.enabled || !config.apiKey) return;
   const workspaceId = input.workspaceId?.trim() || "unknown";
-  void (async () => {
+  const work = (async () => {
     const jev = await callRouterJevJudgment({
       apiKey: config.apiKey!,
       model: config.model,
@@ -265,4 +267,9 @@ export function scheduleRouterJevShadow(
       );
     }
   })();
+  if (input.waitUntil) {
+    input.waitUntil(work);
+  } else {
+    void work;
+  }
 }

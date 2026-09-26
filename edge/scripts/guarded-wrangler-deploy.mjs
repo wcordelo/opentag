@@ -1,13 +1,16 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { blockOpentagCloudflareDeploy } from "./block-opentag-cloudflare-deploy.mjs";
+import { buildWranglerArgv } from "./wrangler-deploy-args.mjs";
 
-blockOpentagCloudflareDeploy();
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (isMain) {
+  blockOpentagCloudflareDeploy();
 
-const edgeRoot = fileURLToPath(new URL("..", import.meta.url));
-const result = spawnSync("npx", ["wrangler", ...process.argv.slice(2)], {
-  cwd: edgeRoot,
-  stdio: "inherit",
-});
-process.exit(result.status ?? 1);
+  const result = spawnSync("npx", ["wrangler", ...buildWranglerArgv(process.argv.slice(2))], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
+  process.exit(result.status ?? 1);
+}

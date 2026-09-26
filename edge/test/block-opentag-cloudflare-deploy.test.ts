@@ -56,3 +56,42 @@ describe("isOpentagUpstreamRepo", () => {
     expect(isOpentagUpstreamRepo(env)).toBe(true);
   });
 });
+
+function buildWranglerArgv(argv: string[]): string[] {
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      "import { buildWranglerArgv } from './scripts/wrangler-deploy-args.mjs'; process.stdout.write(JSON.stringify(buildWranglerArgv(JSON.parse(process.argv[1]))));",
+      JSON.stringify(argv),
+    ],
+    {
+      cwd: edgeRoot,
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(stdout) as string[];
+}
+
+describe("buildWranglerArgv", () => {
+  it("prepends deploy when only config flags are passed", () => {
+    expect(buildWranglerArgv(["--config", "wrangler.toml"])).toEqual([
+      "deploy",
+      "--config",
+      "wrangler.toml",
+    ]);
+  });
+
+  it("leaves an explicit deploy subcommand unchanged", () => {
+    expect(buildWranglerArgv(["deploy", "--config", "wrangler.bot.toml"])).toEqual([
+      "deploy",
+      "--config",
+      "wrangler.bot.toml",
+    ]);
+  });
+
+  it("prepends deploy for an empty argv list", () => {
+    expect(buildWranglerArgv([])).toEqual(["deploy"]);
+  });
+});

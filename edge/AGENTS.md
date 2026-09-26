@@ -1,0 +1,17 @@
+# Bot design principles
+
+These rules apply to the Slack bot in `edge/` (judgment, memory, and retrieval).
+
+1. **Make bot judgments typed decisions** (Jev Choice / Noul / Score → probabilities), not text generation you parse back out. Why: decision models return structured choices fast and beat general-purpose LLM reranking. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))
+2. **Rerankers sort; they never drop.** Order by Score-10 or Noul probability; never delete candidates with a Noul threshold. Why: Noul-as-a-delete-gate "kept nothing"; sort and Score-10 both worked. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))
+3. **Fallback to prior order (RRF)** when a reranker errors or times out. Why: keeps the rerank slot low-risk. ([`src/memory/retrieval/rerank.ts`](./src/memory/retrieval/rerank.ts))
+4. **Relevance floors only on prefetched context** — never on results the agent explicitly requested; calibrate on labels first. Why: a floor on requested hits silently hides answers. (internal design notes: Supermemory + Jev for the Slack bot)
+5. **Memory gates judge whole threads**, not isolated sentences. Why: per-sentence filtering broke meaning in assistant turns and early lines referenced later. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))
+6. **Tag, don't drop.** Store gate scores as metadata; skip indexing only obvious noise (bot messages, reactions, acks) after shadow data supports it. Why: dropped text should stay searchable, and decisions often hide in casual chat. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201); internal design notes: Supermemory + Jev for the Slack bot)
+7. **Decide whether memory is needed before fetching** — harness-level classifier, not the generation model; honor "without using memory". Why: models are "very bad at deciding *when* some memory should be helpful." ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))
+8. **Flag stale memory; don't hide it.** Keep dates on memory; mark superseded or contradicted hits rather than dropping them. Why: dates let the agent discount lagging profiles; dated corrections beat silent overwrites. ([Dhravya Shah, Instinct memory](https://x.com/DhravyaShah/status/2101745550752428340))
+9. **Shadow new judgments first** — compute and log beside current logic, change nothing, until logs justify switching. Why: shadow-only changes are low risk and produce labels later steps need. (internal design notes: Supermemory + Jev for the Slack bot)
+10. **Measure against a baseline on a fixed labeled eval set before shipping** (e.g. MRR@5 and p95 vs RRF-only); calibrate thresholds on our data and pin the model version once tuned. Why: cookbook thresholds are examples; confidence measures concentration, not correctness; `jev-latest` moves. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201); internal design notes: Supermemory + Jev for the Slack bot)
+11. **Build on low effort; verify on high.** Implement and iterate at low/medium effort; run verification and edge-case testing at high effort. Why: extra effort mainly buys verification and edge-case coverage. ([Thariq, Spending your effort](https://x.com/trq212/status/2103576349499855160))
+
+Testing rules are in [Testing](../AGENTS.md#testing) (E2E-first); rule 10's eval set is in addition to those tests, not a replacement.

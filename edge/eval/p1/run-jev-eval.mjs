@@ -12,7 +12,7 @@
  *   --top-n <n>            Jev rerank window (default 20; mirrors JEV_RERANK_TOP_N)
  *   --max-candidates <n>   RRF pool cap (default 40; mirrors JEV_RERANK_MAX_CANDIDATES)
  *   --max-excerpt <n>      Excerpt truncation limit (default 8000)
- *   --blend <mode>         jev-only | rrf-blend (default jev-only)
+ *   --blend <mode>         rrf-blend | jev-only (default rrf-blend)
  *   --blend-weight <0-1>   Jev weight in rrf-blend mode (default 0.7)
  *   --mode <mode>          jev-score | jev-noul | both (default both)
  *   --out <path>           Results JSON path (default jev-results.json)
@@ -67,7 +67,7 @@ function parseArgs(argv) {
     topN: JEV_RERANK_TOP_N_DEFAULT,
     maxCandidates: JEV_RERANK_MAX_CANDIDATES_DEFAULT,
     maxExcerptChars: JEV_RERANK_MAX_EXCERPT_CHARS_DEFAULT,
-    blendMode: "jev-only",
+    blendMode: "rrf-blend",
     blendWeight: JEV_RERANK_BLEND_WEIGHT_DEFAULT,
     mode: "both",
     frozenPath: join(__dirname, "frozen-candidates.json"),

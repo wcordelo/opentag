@@ -23,6 +23,9 @@ export const JEV_EXCERPT_TRUNCATION_MARKER = "\n[... excerpt truncated for reran
 /** Blend Jev score with RRF rank instead of replacing order entirely. */
 export type JevRerankBlendMode = "jev-only" | "rrf-blend";
 
+/** Default blend mode when `JEV_RERANK_BLEND_MODE` is unset (P1 eval arm B). */
+export const JEV_RERANK_BLEND_MODE_DEFAULT: JevRerankBlendMode = "rrf-blend";
+
 /** Default weight on Jev score when `blendMode` is `rrf-blend` (remainder is RRF rank). */
 export const JEV_RERANK_BLEND_WEIGHT_DEFAULT = 0.7;
 
@@ -45,8 +48,9 @@ export function truncateJevExcerpt(excerpt: string, maxChars: number): string {
 }
 
 export function parseJevRerankBlendMode(value?: string): JevRerankBlendMode {
+  if (value === "jev-only") return "jev-only";
   if (value === "rrf-blend") return "rrf-blend";
-  return "jev-only";
+  return JEV_RERANK_BLEND_MODE_DEFAULT;
 }
 
 export function parseBoundedPositiveInt(

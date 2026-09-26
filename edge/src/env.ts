@@ -160,7 +160,7 @@ export interface Env {
   JEV_RERANK_TOP_N?: string;
   /** Max excerpt chars sent per Jev candidate (default 8000, cap 64000). */
   JEV_RERANK_MAX_EXCERPT_CHARS?: string;
-  /** `jev-only` (default) or `rrf-blend` to mix Jev score with RRF rank. */
+  /** `rrf-blend` (default) or `jev-only` to control Jev vs RRF rank mixing. */
   JEV_RERANK_BLEND_MODE?: string;
   /** Jev weight in `rrf-blend` mode, 0–1 (default 0.7). */
   JEV_RERANK_BLEND_WEIGHT?: string;

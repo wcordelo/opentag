@@ -9,6 +9,8 @@ import {
   buildJevRerankState,
   buildJevScoreQuestion,
   JEV_RERANK_MAX_CANDIDATES,
+  JEV_RERANK_BLEND_MODE_DEFAULT,
+  JEV_RERANK_BLEND_WEIGHT_DEFAULT,
   JEV_RERANK_MAX_EXCERPT_CHARS_DEFAULT,
   JEV_RERANK_MODEL_DEFAULT,
   JEV_RERANK_TOP_N_DEFAULT,
@@ -189,8 +191,8 @@ export function createJevCandidateRerank(options: JevRerankOptions): CandidateRe
   const maxCandidates = options.maxCandidates ?? JEV_RERANK_MAX_CANDIDATES;
   const rerankTopN = options.rerankTopN ?? JEV_RERANK_TOP_N_DEFAULT;
   const maxExcerptChars = options.maxExcerptChars ?? JEV_RERANK_MAX_EXCERPT_CHARS_DEFAULT;
-  const blendMode = options.blendMode ?? "jev-only";
-  const blendWeight = options.blendWeight ?? 0.7;
+  const blendMode = options.blendMode ?? JEV_RERANK_BLEND_MODE_DEFAULT;
+  const blendWeight = options.blendWeight ?? JEV_RERANK_BLEND_WEIGHT_DEFAULT;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
   return async ({ query, candidates, topN }) => {

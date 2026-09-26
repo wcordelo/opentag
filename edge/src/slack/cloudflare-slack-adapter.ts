@@ -501,7 +501,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       executionId: `route-jev:${eventId}`,
       message: normalized.userText,
       source: normalized.source,
-      channelType: rawEvent?.channel_type,
+      channelType: slackChannelTypeForRouterJev(normalized.channel, rawEvent?.channel_type),
       botMentioned:
         normalized.source === "app_mention" ||
         normalized.source === "direct_message" ||
@@ -1967,4 +1967,16 @@ function fallbackTextFromIr(ir: BotNode[]): string {
   walk(ir);
   const s = parts.join(" ").trim();
   return s.length > 0 ? s.slice(0, 200) : "(message)";
+}
+
+/** app_mention payloads omit channel_type; infer from Slack channel id when absent. */
+function slackChannelTypeForRouterJev(
+  channelId: string,
+  rawChannelType?: string,
+): string | undefined {
+  if (rawChannelType) return rawChannelType;
+  if (channelId.startsWith("D")) return "im";
+  if (channelId.startsWith("C")) return "channel";
+  if (channelId.startsWith("G")) return "group";
+  return undefined;
 }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-26T05:25:16.341Z",
+  "generatedAt": "2026-09-26T05:38:27.445Z",
   "provenance": {
     "wiki": "Real docs/*.md in repo root indexed as wiki:T_eval:docs:{pageId} with ## section chunks",
     "code": "Real edge/src files chunked by export function boundaries (see build-frozen-eval.mjs codePaths)",
@@ -38,7 +38,7 @@
       "recallAt20": 0.9615384615384616,
       "recallAt35": 1,
       "poolSize": 35,
-      "p95LatencyMs": 0.010476000000011254,
+      "p95LatencyMs": 0.014675000000011096,
       "perQuery": [
         {
           "queryId": "q01",
@@ -61,7 +61,7 @@
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:VISION-SPEC",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:28-54",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
@@ -82,7 +82,7 @@
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
             "wiki:T_eval:docs:operations"
           ],
-          "latencyMs": 0.014925000000005184
+          "latencyMs": 0.02634300000002554
         },
         {
           "queryId": "q02",
@@ -109,24 +109,24 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:DECISIONS",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC"
           ],
-          "latencyMs": 0.003414999999989732
+          "latencyMs": 0.007782000000020162
         },
         {
           "queryId": "q03",
@@ -155,11 +155,11 @@
             "wiki:T_eval:docs:research-actors#environment-variables",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:VISION-SPEC#8-competitive-positioning",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:ROUTER-SPEC",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
@@ -170,7 +170,7 @@
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC"
           ],
-          "latencyMs": 0.005684000000002243
+          "latencyMs": 0.008735999999998967
         },
         {
           "queryId": "q04",
@@ -209,12 +209,12 @@
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:28-54",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#14-evaluation-plan",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
             "wiki:T_eval:docs:DECISIONS#22-router-rollout"
           ],
-          "latencyMs": 0.007600999999993974
+          "latencyMs": 0.006372999999996409
         },
         {
           "queryId": "q05",
@@ -255,10 +255,10 @@
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#7-identity-authorization-and-auditing",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners"
           ],
-          "latencyMs": 0.005256000000002814
+          "latencyMs": 0.012311000000011063
         },
         {
           "queryId": "q06",
@@ -269,7 +269,7 @@
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
@@ -283,26 +283,26 @@
             "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:ROUTER-SPEC",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
             "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:28-54",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "wiki:T_eval:docs:extending",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking"
           ],
-          "latencyMs": 0.006042000000007874
+          "latencyMs": 0.009472999999985632
         },
         {
           "queryId": "q07",
@@ -313,29 +313,29 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:multi-repo-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#7-identity-authorization-and-auditing",
             "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "wiki:T_eval:docs:ROUTER-SPEC",
             "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
             "wiki:T_eval:docs:extending",
@@ -346,38 +346,38 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC"
           ],
-          "latencyMs": 0.007287999999988415
+          "latencyMs": 0.007917999999989433
         },
         {
           "queryId": "q08",
           "query": "MCP retrieval primitives knowledge base",
-          "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+          "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
           "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:README#proposed-specifications",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:semantic-algos-integration#current-implementation-status-2026-08-01",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "wiki:T_eval:docs:graphify-local-mcp",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:README",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
             "wiki:T_eval:docs:semantic-algos-integration",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
@@ -387,10 +387,10 @@
             "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:ROUTER-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "wiki:T_eval:docs:VISION-SPEC"
           ],
-          "latencyMs": 0.006911000000002332
+          "latencyMs": 0.006821000000002186
         },
         {
           "queryId": "q09",
@@ -410,7 +410,7 @@
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:connector-authorization-architecture#citation-contract",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:notion-feature-inventory",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
@@ -419,7 +419,7 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "wiki:T_eval:docs:connector-authorization-architecture",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
             "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
@@ -434,7 +434,7 @@
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen"
           ],
-          "latencyMs": 0.006404000000003407
+          "latencyMs": 0.008278000000018437
         },
         {
           "queryId": "q10",
@@ -445,16 +445,16 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:current-state",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:supermemory-cloudflare-migration",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:current-state#feature-by-feature-evidence",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
@@ -473,12 +473,12 @@
             "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
             "code:T_eval:opentag:src/tools/search-slack.ts:163-182",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt"
           ],
-          "latencyMs": 0.010476000000011254
+          "latencyMs": 0.009935000000012906
         },
         {
           "queryId": "q11",
@@ -495,7 +495,7 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:supermemory-cloudflare-migration",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
@@ -509,9 +509,9 @@
             "wiki:T_eval:docs:centaur-port",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "wiki:T_eval:docs:centaur-port#what-was-adapted-to-cloudflare",
-            "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
             "wiki:T_eval:docs:HANDOFF#latest-continuation-checkpoint-2026-08-04-control-path",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
             "wiki:T_eval:docs:ARCHITECTURE#system-topology",
@@ -522,7 +522,7 @@
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:DECISIONS#5-cross-isolate-hitl-awaitchoice"
           ],
-          "latencyMs": 0.007213000000007241
+          "latencyMs": 0.014302000000014914
         },
         {
           "queryId": "q12",
@@ -563,10 +563,10 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
             "wiki:T_eval:docs:setup#how-it-fits-together",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:setup#1-create-a-slack-app"
           ],
-          "latencyMs": 0.0020399999999938245
+          "latencyMs": 0.006180999999997994
         },
         {
           "queryId": "q13",
@@ -610,7 +610,7 @@
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
             "wiki:T_eval:docs:ARCHITECTURE#system-topology"
           ],
-          "latencyMs": 0.0031750000000272394
+          "latencyMs": 0.007126999999996997
         },
         {
           "queryId": "q14",
@@ -621,40 +621,40 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:current-state",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "wiki:T_eval:docs:HANDOFF#audit-reconciliation-2026-08-02-21-16-pdt-historical-snapshot",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+            "wiki:T_eval:docs:HANDOFF#audit-reconciliation-2026-08-02-21-16-pdt-historical-snapshot",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:current-state#audit-reconciliation-2026-08-02-21-16-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:operations#health-checks",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
             "wiki:T_eval:docs:HANDOFF#local-source-reconciliation-2026-08-02-20-16-pdt",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:multi-repo-architecture#review-and-validation-record",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:multi-repo-architecture"
           ],
-          "latencyMs": 0.001946000000003778
+          "latencyMs": 0.007568999999989501
         },
         {
           "queryId": "q15",
@@ -674,22 +674,22 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:operations#configuration-ownership",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:operations#deploy-and-connect-the-harness",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
             "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:HANDOFF#latest-live-checkpoint-2026-08-05-14-52-pdt",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:current-state#2026-08-03-23-37-pdt-container-rollout-readback",
@@ -698,7 +698,7 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:operations#local-source-reconciliation-2026-08-02-21-56-pdt"
           ],
-          "latencyMs": 0.001739000000014812
+          "latencyMs": 0.006188999999977796
         },
         {
           "queryId": "q16",
@@ -706,7 +706,7 @@
           "goldSourceKey": "wiki:T_eval:docs:operations",
           "rank": 3,
           "order": [
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:291-294",
@@ -737,12 +737,12 @@
             "wiki:T_eval:docs:ARCHITECTURE",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
             "wiki:T_eval:docs:HANDOFF#current-session-reconciliation-2026-08-02-19-00-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:VISION-SPEC",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:HANDOFF#local-stability-validation-2026-08-02-21-06-pdt"
           ],
-          "latencyMs": 0.002149000000002843
+          "latencyMs": 0.007298000000020011
         },
         {
           "queryId": "q17",
@@ -762,7 +762,7 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:connector-authorization-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
@@ -786,7 +786,7 @@
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
             "wiki:T_eval:docs:supermemory-cloudflare-migration"
           ],
-          "latencyMs": 0.002554000000003498
+          "latencyMs": 0.010277999999999565
         },
         {
           "queryId": "q18",
@@ -823,14 +823,14 @@
             "wiki:T_eval:docs:VISION-SPEC",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt"
           ],
-          "latencyMs": 0.0021470000000078926
+          "latencyMs": 0.014675000000011096
         },
         {
           "queryId": "q19",
@@ -861,9 +861,9 @@
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-            "wiki:T_eval:docs:current-state#2026-08-04-current-rollout-checkpoint",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "wiki:T_eval:docs:current-state#2026-08-04-current-rollout-checkpoint",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:current-state#final-read-only-gate-sweep-2026-08-02-20-59-pdt",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
@@ -874,7 +874,7 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:operations#current-rollout-blockers-2026-08-04"
           ],
-          "latencyMs": 0.0031779999999912434
+          "latencyMs": 0.008245999999985543
         },
         {
           "queryId": "q20",
@@ -899,26 +899,26 @@
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:current-state#decisions-now-locked",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:DECISIONS",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
             "wiki:T_eval:docs:current-state",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:platform-foundation-architecture#router-shadow-mode",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01",
             "code:T_eval:opentag:src/tools/search-slack.ts:183-200",
             "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
             "wiki:T_eval:docs:HANDOFF#what-is-implemented-now",
-            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:platform-foundation-architecture",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
             "wiki:T_eval:docs:VISION-SPEC#10-open-questions"
           ],
-          "latencyMs": 0.0028650000000141063
+          "latencyMs": 0.009483999999986281
         },
         {
           "queryId": "q21",
@@ -938,31 +938,31 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:ARCHITECTURE#research-task-plane",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:ARCHITECTURE#system-topology",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
             "code:T_eval:opentag:src/tools/search-slack.ts:90-162",
             "wiki:T_eval:docs:DECISIONS",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
             "wiki:T_eval:docs:research-actors#cloudflare-research-task-worker",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
             "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "wiki:T_eval:docs:PRODUCT",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
             "wiki:T_eval:docs:ARCHITECTURE#architectural-invariants",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:PRODUCT#product-surfaces"
           ],
-          "latencyMs": 0.00490300000001298
+          "latencyMs": 0.008687000000008993
         },
         {
           "queryId": "q22",
@@ -970,26 +970,26 @@
           "goldSourceKey": "wiki:T_eval:docs:graphify-local-mcp",
           "rank": 3,
           "order": [
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:graphify-local-mcp",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:README",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "wiki:T_eval:docs:README#current-guides",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:291-294",
             "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
@@ -997,16 +997,16 @@
             "wiki:T_eval:docs:VISION-SPEC",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:295-301",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "wiki:T_eval:docs:VISION-SPEC#current-implementation-reconciliation-2026-08-02-20-16-pdt",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
             "code:T_eval:opentag:src/tools/search-slack.ts:90-162",
             "wiki:T_eval:docs:HANDOFF#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:current-state#mcp-authorization-reconciliation-2026-08-02-23-32-pdt"
           ],
-          "latencyMs": 0.005570999999974902
+          "latencyMs": 0.0085510000000113
         },
         {
           "queryId": "q23",
@@ -1043,14 +1043,14 @@
             "wiki:T_eval:docs:operations#deploy-and-connect-the-harness",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1000-1007",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:987-999",
             "wiki:T_eval:docs:current-state",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1090-1102",
             "wiki:T_eval:docs:current-state#local-source-and-regression-recheck-2026-08-02-22-15-pdt"
           ],
-          "latencyMs": 0.004120999999997821
+          "latencyMs": 0.010678000000012844
         },
         {
           "queryId": "q24",
@@ -1094,7 +1094,7 @@
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
             "wiki:T_eval:docs:ARCHITECTURE#research-task-plane"
           ],
-          "latencyMs": 0.003214000000014039
+          "latencyMs": 0.009831000000019685
         },
         {
           "queryId": "q25",
@@ -1114,18 +1114,18 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:multi-repo-architecture",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:current-state",
-            "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:HANDOFF#what-is-implemented-now",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#7-identity-authorization-and-auditing",
@@ -1133,12 +1133,12 @@
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model"
           ],
-          "latencyMs": 0.004282999999986714
+          "latencyMs": 0.00924099999997452
         },
         {
           "queryId": "q26",
@@ -1175,14 +1175,14 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
             "wiki:T_eval:docs:current-state",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:469-504",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:extending"
           ],
-          "latencyMs": 0.003682999999995218
+          "latencyMs": 0.006333999999981188
         }
       ]
     },
@@ -1192,10 +1192,10 @@
       "queryCount": 26,
       "mrrAt5": 0.5333333333333333,
       "top3Recall": 0.6923076923076923,
-      "recallAt20": 0.9230769230769231,
+      "recallAt20": 0.9615384615384616,
       "recallAt35": 1,
       "poolSize": 35,
-      "p95LatencyMs": 3264.654935999999,
+      "p95LatencyMs": 2767.726306999997,
       "perQuery": [
         {
           "queryId": "q01",
@@ -1221,7 +1221,7 @@
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
             "wiki:T_eval:docs:current-state#feature-by-feature-evidence",
             "custom_db:T_eval:sales_kpi:deploy_gate",
@@ -1239,7 +1239,7 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 2525.319301,
+          "latencyMs": 2226.648564,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -1303,7 +1303,7 @@
               "score": -8.95873737335205
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -9.04641342163086
             },
             {
@@ -1397,12 +1397,12 @@
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "wiki:T_eval:docs:research-actors#environment-variables",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:operations",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "wiki:T_eval:docs:DECISIONS#product-shape-current",
@@ -1411,8 +1411,8 @@
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
             "wiki:T_eval:docs:DECISIONS",
             "wiki:T_eval:docs:research-actors",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:operations#configuration-ownership",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
@@ -1423,151 +1423,151 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "custom_db:T_eval:sales_kpi:nps_kpi",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "custom_db:T_eval:sales_kpi:arr_kpi"
+            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 2847.6608879999994,
+          "latencyMs": 1951.9505899999995,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4",
-              "score": 7.289370059967041
+              "score": 7.288916110992432
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -10.160481452941895
+              "score": -10.157990455627441
             },
             {
               "id": "wiki:T_eval:docs:research-actors#environment-variables",
-              "score": -3.8379569053649902
+              "score": -3.8342485427856445
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
-              "score": 4.008999824523926
+              "score": 4.021244049072266
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.18165111541748
+              "score": -10.181405067443848
             },
             {
               "id": "wiki:T_eval:docs:research-actors",
-              "score": -8.275007247924805
+              "score": -8.265406608581543
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-              "score": 0.30934077501296997
+              "score": 0.30186545848846436
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.17750072479248
+              "score": -10.175841331481934
             },
             {
               "id": "wiki:T_eval:docs:operations#configuration-ownership",
-              "score": -8.444093704223633
+              "score": -8.435157775878906
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": 1.7739288806915283
+              "score": 1.7800971269607544
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -10.181342124938965
+              "score": -10.18166732788086
             },
             {
               "id": "wiki:T_eval:docs:operations",
-              "score": -5.373885631561279
+              "score": -5.370763301849365
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
-              "score": 1.0230228900909424
+              "score": 1.0207926034927368
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -9.505350112915039
+              "score": -9.479196548461914
             },
             {
               "id": "wiki:T_eval:docs:DECISIONS#product-shape-current",
-              "score": -6.119089126586914
+              "score": -6.127025127410889
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-              "score": 1.005029559135437
+              "score": 0.9911223649978638
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -9.988236427307129
+              "score": -9.982305526733398
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-              "score": -3.414083242416382
+              "score": -3.4108874797821045
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-              "score": -9.029394149780273
+              "score": -9.03679370880127
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-              "score": -8.353554725646973
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
+              "score": -8.358073234558105
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-              "score": -5.928994178771973
+              "score": -5.9120707511901855
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-              "score": -4.409775257110596
+              "score": -4.407285690307617
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
-              "score": -9.0416898727417
+              "score": -9.047103881835938
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-              "score": -4.5296196937561035
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+              "score": -4.524022579193115
             },
             {
               "id": "wiki:T_eval:docs:DECISIONS",
-              "score": -7.706716537475586
+              "score": -7.700620651245117
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-              "score": -3.424910545349121
+              "score": -3.432145118713379
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
-              "score": -8.741474151611328
-            },
-            {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-              "score": -2.8652725219726562
-            },
-            {
-              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
-              "score": -8.774357795715332
+              "score": -8.742779731750488
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-              "score": -2.5970356464385986
+              "score": -2.602358818054199
+            },
+            {
+              "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
+              "score": -8.777709007263184
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+              "score": -3.673001766204834
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-              "score": -7.2817535400390625
+              "score": -7.284254550933838
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-              "score": -7.124334335327148
+              "score": -7.1119771003723145
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#1-dependency-boundary",
-              "score": -7.490649700164795
+              "score": -7.474797248840332
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-              "score": -8.377578735351562
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -8.37817668914795
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -9.515231132507324
+              "score": -9.503870964050293
             }
           ]
         },
@@ -1594,10 +1594,10 @@
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
             "wiki:T_eval:docs:research-actors",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
@@ -1613,7 +1613,7 @@
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 2591.9753660000006,
+          "latencyMs": 1540.9282350000003,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -1701,7 +1701,7 @@
               "score": -8.024739265441895
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
               "score": -7.457733154296875
             },
             {
@@ -1717,7 +1717,7 @@
               "score": -7.413856029510498
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -8.03072738647461
             },
             {
@@ -1787,7 +1787,7 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
             "wiki:T_eval:docs:operations#configuration-ownership",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:DECISIONS#22-router-rollout",
@@ -1800,7 +1800,7 @@
             "custom_db:T_eval:sales_kpi:slack_acl",
             "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 3264.654935999999,
+          "latencyMs": 1966.55451,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -1928,7 +1928,7 @@
               "score": -8.203532218933105
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -8.387314796447754
             },
             {
@@ -1958,7 +1958,7 @@
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1193-1206",
@@ -1987,7 +1987,7 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 3460.1990940000014,
+          "latencyMs": 2036.3375750000014,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -2123,7 +2123,7 @@
               "score": -9.161354064941406
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
               "score": -3.8887922763824463
             },
             {
@@ -2147,14 +2147,14 @@
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#4-locked-architecture",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:28-54",
             "wiki:T_eval:docs:VISION-SPEC",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
@@ -2166,7 +2166,7 @@
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "custom_db:T_eval:sales_kpi:deploy_gate",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#5-repository-change-map",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
             "wiki:T_eval:docs:ROUTER-SPEC",
@@ -2174,7 +2174,7 @@
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 2738.100208,
+          "latencyMs": 1939.055746,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -2190,7 +2190,7 @@
               "score": -8.835137367248535
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -9.207181930541992
             },
             {
@@ -2246,7 +2246,7 @@
               "score": -7.9537177085876465
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": -6.163503646850586
             },
             {
@@ -2262,7 +2262,7 @@
               "score": -2.652803421020508
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
               "score": -7.389938831329346
             },
             {
@@ -2270,7 +2270,7 @@
               "score": -7.185110569000244
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
               "score": -7.233138561248779
             },
             {
@@ -2286,7 +2286,7 @@
               "score": -9.484930038452148
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -6.190532684326172
             },
             {
@@ -2294,7 +2294,7 @@
               "score": -5.641611576080322
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
               "score": -6.752654075622559
             },
             {
@@ -2332,20 +2332,20 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#7-identity-authorization-and-auditing",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "code:T_eval:opentag:src/tools/search-slack.ts:90-162",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
             "wiki:T_eval:docs:extending",
             "wiki:T_eval:docs:VISION-SPEC",
@@ -2361,7 +2361,7 @@
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 2475.3355359999987,
+          "latencyMs": 2093.6906750000016,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -2377,7 +2377,7 @@
               "score": -7.315594673156738
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
               "score": -6.448469161987305
             },
             {
@@ -2389,7 +2389,7 @@
               "score": -7.3701653480529785
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
               "score": -2.6679365634918213
             },
             {
@@ -2401,7 +2401,7 @@
               "score": -9.761037826538086
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
               "score": -0.1214217096567154
             },
             {
@@ -2413,7 +2413,7 @@
               "score": -6.666752338409424
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -7.105825424194336
             },
             {
@@ -2441,7 +2441,7 @@
               "score": -4.554555416107178
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": -7.073080539703369
             },
             {
@@ -2465,7 +2465,7 @@
               "score": -5.521347522735596
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
               "score": -5.684122562408447
             },
             {
@@ -2509,23 +2509,23 @@
         {
           "queryId": "q08",
           "query": "MCP retrieval primitives knowledge base",
-          "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+          "goldSourceKey": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
           "rank": 1,
           "order": [
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
             "wiki:T_eval:docs:README#proposed-specifications",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "wiki:T_eval:docs:semantic-algos-integration#current-implementation-status-2026-08-01",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:semantic-algos-integration",
             "wiki:T_eval:docs:README",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:188-239",
@@ -2548,11 +2548,11 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1807.964516,
+          "latencyMs": 2611.0609509999995,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": 3.3543760776519775
             },
             {
@@ -2564,8 +2564,8 @@
               "score": -3.377833127975464
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -4.1597065925598145
+              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
+              "score": -2.529000759124756
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
@@ -2576,8 +2576,8 @@
               "score": -5.645307540893555
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -2.529000759124756
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -4.1597065925598145
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
@@ -2588,7 +2588,7 @@
               "score": -0.3801516890525818
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
               "score": -3.000990390777588
             },
             {
@@ -2612,7 +2612,7 @@
               "score": -8.204215049743652
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -2.4429821968078613
             },
             {
@@ -2628,7 +2628,7 @@
               "score": -7.130779266357422
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
               "score": -3.0807387828826904
             },
             {
@@ -2636,7 +2636,7 @@
               "score": -8.289541244506836
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
               "score": -2.791188955307007
             },
             {
@@ -2644,7 +2644,7 @@
               "score": -4.524475574493408
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
               "score": -2.4427099227905273
             },
             {
@@ -2684,7 +2684,7 @@
               "score": -8.514653205871582
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
               "score": -2.5051345825195312
             },
             {
@@ -2697,186 +2697,186 @@
           "queryId": "q09",
           "query": "KnowledgeCitationBase excerpt contentRevision",
           "goldSourceKey": "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
-          "rank": 21,
+          "rank": 19,
           "order": [
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:188-239",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#5-citation-and-api-contract",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "code:T_eval:opentag:src/tools/search-slack.ts:333-369",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
             "wiki:T_eval:docs:connector-authorization-architecture#citation-contract",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
-            "wiki:T_eval:docs:notion-feature-inventory#consolidated-implementation-status",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1024-1045",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-            "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
+            "wiki:T_eval:docs:notion-feature-inventory#consolidated-implementation-status",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
             "wiki:T_eval:docs:operations",
-            "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
+            "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
             "wiki:T_eval:docs:notion-feature-inventory",
+            "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "wiki:T_eval:docs:current-state",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:connector-authorization-architecture",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "wiki:T_eval:docs:ROUTER-SPEC",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1445.3269419999997,
+          "latencyMs": 2563.0936980000006,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
-              "score": -7.308804988861084
+              "score": -7.027045249938965
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -10.136170387268066
+              "score": -10.181157112121582
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -9.012937545776367
+              "score": -8.746641159057617
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-              "score": -2.6283769607543945
+              "score": -2.6108551025390625
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -9.891874313354492
+              "score": -10.158846855163574
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -8.32873249053955
+              "score": -8.581511497497559
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:188-239",
-              "score": 2.3017311096191406
+              "score": 2.0754787921905518
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.144759178161621
+              "score": -10.176401138305664
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#5-citation-and-api-contract",
-              "score": 1.9557682275772095
+              "score": 1.7076996564865112
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
-              "score": -2.821265459060669
+              "score": -2.7935996055603027
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.182204246520996
+              "score": -10.182500839233398
             },
             {
               "id": "wiki:T_eval:docs:connector-authorization-architecture#citation-contract",
-              "score": -3.19252610206604
+              "score": -3.2287023067474365
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-              "score": -4.330889701843262
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+              "score": -4.388282299041748
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -10.051846504211426
+              "score": -10.155439376831055
             },
             {
               "id": "wiki:T_eval:docs:notion-feature-inventory",
-              "score": -8.331271171569824
+              "score": -7.904827117919922
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
-              "score": 0.6728490591049194
+              "score": 1.180511236190796
             },
             {
               "id": "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
-              "score": -7.14359188079834
+              "score": -7.434125900268555
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1-915",
-              "score": -5.694878101348877
+              "score": -5.448190212249756
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
-              "score": -7.170792102813721
+              "score": -7.222228527069092
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-              "score": -6.149908542633057
+              "score": -5.840357303619385
             },
             {
               "id": "wiki:T_eval:docs:connector-authorization-architecture",
-              "score": -9.914447784423828
+              "score": -10.176249504089355
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-              "score": -1.617743730545044
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+              "score": -1.7818810939788818
             },
             {
               "id": "wiki:T_eval:docs:current-state",
-              "score": -9.57347583770752
+              "score": -9.417789459228516
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:959-986",
-              "score": -0.4086306393146515
+              "score": -0.030772097408771515
             },
             {
               "id": "wiki:T_eval:docs:current-state#durable-convergence-and-provider-effect-contract-follow-up-2026-",
-              "score": -2.5347723960876465
+              "score": -2.3358402252197266
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:333-369",
-              "score": -2.096996307373047
+              "score": -2.2050344944000244
             },
             {
               "id": "wiki:T_eval:docs:notion-feature-inventory#consolidated-implementation-status",
-              "score": -5.697482109069824
+              "score": -5.9901628494262695
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
-              "score": -3.800654172897339
+              "score": -3.9660892486572266
             },
             {
               "id": "wiki:T_eval:docs:operations",
-              "score": -7.330025672912598
+              "score": -7.325723171234131
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-              "score": -0.02886980026960373
+              "score": -1.1146389245986938
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#6-canonical-data-contract",
-              "score": -8.820501327514648
+              "score": -8.35953426361084
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1024-1045",
-              "score": -5.775683879852295
+              "score": -5.764007568359375
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC",
-              "score": -10.166686058044434
+              "score": -10.178276062011719
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -2.209125280380249
+              "score": -2.361964225769043
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-              "score": -7.880009174346924
+              "score": -8.075566291809082
             }
           ]
         },
@@ -2888,182 +2888,182 @@
           "order": [
             "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "code:T_eval:opentag:src/tools/search-slack.ts:163-182",
             "custom_db:T_eval:sales_kpi:slack_acl",
-            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "wiki:T_eval:docs:current-state#feature-by-feature-evidence",
             "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
             "wiki:T_eval:docs:supermemory-cloudflare-migration",
             "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
-            "wiki:T_eval:docs:knowledge-base-implementation-spec",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "wiki:T_eval:docs:knowledge-base-implementation-spec",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
             "wiki:T_eval:docs:current-state",
             "wiki:T_eval:docs:ROUTER-SPEC",
             "wiki:T_eval:docs:VISION-SPEC",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "custom_db:T_eval:sales_kpi:arr_kpi"
+            "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1832.6901719999987,
+          "latencyMs": 2767.726306999997,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-              "score": -2.99164080619812
+              "score": -3.027193307876587
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -2.5320301055908203
+              "score": -2.1427807807922363
             },
             {
               "id": "wiki:T_eval:docs:current-state",
-              "score": -8.75710391998291
+              "score": -8.709675788879395
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-              "score": -0.9921766519546509
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -8.371682167053223
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -7.416682243347168
+              "score": -7.234597682952881
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration",
-              "score": -5.263330936431885
+              "score": -5.641392707824707
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-              "score": -1.0332837104797363
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
+              "score": -0.6124712228775024
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.182214736938477
+              "score": -10.180542945861816
             },
             {
               "id": "wiki:T_eval:docs:current-state#feature-by-feature-evidence",
-              "score": -4.902897834777832
+              "score": -5.338125228881836
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -7.995500087738037
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+              "score": -1.2588251829147339
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.180150985717773
+              "score": -10.181397438049316
             },
             {
               "id": "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
-              "score": -6.446301460266113
+              "score": -6.1442484855651855
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-              "score": -6.358999252319336
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+              "score": -6.765350818634033
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -10.181550025939941
+              "score": -10.181697845458984
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-              "score": 2.912163257598877
+              "score": 3.5070583820343018
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-              "score": -3.1790812015533447
+              "score": -3.4504668712615967
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC",
-              "score": -9.263607025146484
+              "score": -8.844082832336426
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -3.620269298553467
+              "score": -3.563962459564209
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC",
-              "score": -9.27795696258545
+              "score": -9.22017765045166
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-              "score": -6.314863681793213
+              "score": -6.718301296234131
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
-              "score": -5.0988383293151855
+              "score": -5.53227424621582
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
-              "score": -3.9872684478759766
+              "score": -3.8267323970794678
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
-              "score": -5.6797943115234375
+              "score": -5.976154327392578
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-              "score": -4.386790752410889
+              "score": -3.795053720474243
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -7.018627643585205
+              "score": -7.125340938568115
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-              "score": 0.5956493616104126
+              "score": 0.4944077730178833
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
-              "score": -1.1565862894058228
+              "score": -1.2149893045425415
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
-              "score": -2.2946083545684814
+              "score": -1.7551058530807495
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF#local-only-contract-follow-up-2026-08-02-21-38-pdt",
-              "score": -7.423654079437256
+              "score": -7.706619739532471
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:163-182",
-              "score": -2.4041008949279785
+              "score": -1.922202706336975
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-              "score": -3.723625659942627
+              "score": -3.762220859527588
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
-              "score": -7.415809631347656
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
+              "score": -6.746217250823975
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-              "score": -8.095895767211914
+              "score": -8.379005432128906
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
-              "score": -2.787961959838867
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -1.722429871559143
             },
             {
               "id": "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
-              "score": -7.1904802322387695
+              "score": -6.916915416717529
             }
           ]
         },
@@ -3089,7 +3089,7 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
             "wiki:T_eval:docs:centaur-port",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
             "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
@@ -3098,7 +3098,7 @@
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
             "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
@@ -3109,7 +3109,7 @@
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1651.5413479999988,
+          "latencyMs": 2654.936705,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -3149,7 +3149,7 @@
               "score": -10.180034637451172
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -9.220292091369629
             },
             {
@@ -3205,16 +3205,16 @@
               "score": -4.260264873504639
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
-              "score": -8.894695281982422
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -9.836984634399414
             },
             {
               "id": "wiki:T_eval:docs:operations",
               "score": -9.616891860961914
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-              "score": -9.836984634399414
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
+              "score": -8.894695281982422
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF#latest-continuation-checkpoint-2026-08-04-control-path",
@@ -3280,7 +3280,7 @@
             "wiki:T_eval:docs:knowledge-base-implementation-spec#8-ingestion-pipelines",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
             "wiki:T_eval:docs:ARCHITECTURE",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
@@ -3296,7 +3296,7 @@
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "custom_db:T_eval:sales_kpi:arr_kpi"
           ],
-          "latencyMs": 1816.8857309999985,
+          "latencyMs": 2550.915975,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -3432,7 +3432,7 @@
               "score": -1.2491220235824585
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": -8.106542587280273
             },
             {
@@ -3483,7 +3483,7 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1726.385549999999,
+          "latencyMs": 2855.936443999999,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -3639,179 +3639,179 @@
             "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
             "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
             "wiki:T_eval:docs:multi-repo-architecture#review-and-validation-record",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:HANDOFF#audit-reconciliation-2026-08-02-21-16-pdt-historical-snapshot",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-            "wiki:T_eval:docs:current-state#audit-reconciliation-2026-08-02-21-16-pdt",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
-            "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:operations",
-            "custom_db:T_eval:sales_kpi:slack_acl",
-            "wiki:T_eval:docs:HANDOFF",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
+            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "wiki:T_eval:docs:current-state#audit-reconciliation-2026-08-02-21-16-pdt",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:HANDOFF#local-source-reconciliation-2026-08-02-20-16-pdt",
-            "wiki:T_eval:docs:multi-repo-architecture",
+            "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+            "wiki:T_eval:docs:HANDOFF",
             "wiki:T_eval:docs:current-state",
+            "custom_db:T_eval:sales_kpi:slack_acl",
+            "wiki:T_eval:docs:multi-repo-architecture",
+            "custom_db:T_eval:sales_kpi:supermemory_mode",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1543.3240650000007,
+          "latencyMs": 1777.2763720000003,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-              "score": -7.0890326499938965
+              "score": -7.456108570098877
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -7.621323108673096
+              "score": -7.91063117980957
             },
             {
               "id": "wiki:T_eval:docs:current-state",
-              "score": -10.007061004638672
-            },
-            {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-              "score": -6.53908634185791
-            },
-            {
-              "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -8.886820793151855
-            },
-            {
-              "id": "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-              "score": -7.580202102661133
+              "score": -9.583810806274414
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-              "score": -7.0937700271606445
+              "score": -7.710567474365234
+            },
+            {
+              "id": "custom_db:T_eval:sales_kpi:slack_acl",
+              "score": -9.665885925292969
+            },
+            {
+              "id": "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+              "score": -9.430218696594238
+            },
+            {
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
+              "score": -7.556371212005615
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.178914070129395
+              "score": -10.180331230163574
             },
             {
               "id": "wiki:T_eval:docs:operations",
-              "score": -7.778995990753174
+              "score": -7.361751079559326
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
-              "score": -7.209084987640381
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
+              "score": -5.423649787902832
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.179255485534668
+              "score": -10.18069076538086
             },
             {
               "id": "wiki:T_eval:docs:operations#2026-08-05-recovery-and-rollout-checkpoint",
-              "score": 4.189230918884277
+              "score": 4.932331085205078
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
-              "score": -4.752730369567871
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
+              "score": -7.678501129150391
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -9.278682708740234
+              "score": -10.140743255615234
             },
             {
               "id": "wiki:T_eval:docs:current-state#2026-08-02-13-11-pdt-guarded-bot-deployment-and-live-slack-contr",
-              "score": -0.2321561872959137
+              "score": -0.7106423377990723
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
-              "score": -7.4998674392700195
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+              "score": -6.031491756439209
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF",
-              "score": -9.0866117477417
-            },
-            {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-              "score": -5.906432151794434
-            },
-            {
-              "id": "wiki:T_eval:docs:HANDOFF#audit-reconciliation-2026-08-02-21-16-pdt-historical-snapshot",
-              "score": -5.856926441192627
+              "score": -9.534415245056152
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -5.823594570159912
+              "score": -5.796022891998291
+            },
+            {
+              "id": "wiki:T_eval:docs:HANDOFF#audit-reconciliation-2026-08-02-21-16-pdt-historical-snapshot",
+              "score": -5.894484996795654
+            },
+            {
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -7.102563858032227
             },
             {
               "id": "wiki:T_eval:docs:current-state#audit-reconciliation-2026-08-02-21-16-pdt",
-              "score": -6.964478969573975
+              "score": -7.921555519104004
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
-              "score": -7.6107683181762695
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
+              "score": -7.268561840057373
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -9.196446418762207
+              "score": -8.628888130187988
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-              "score": -6.923510551452637
+              "score": -6.640949249267578
             },
             {
               "id": "wiki:T_eval:docs:operations#health-checks",
-              "score": 1.052854299545288
+              "score": 1.368505597114563
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-              "score": -6.094781875610352
+              "score": -5.773403167724609
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -7.7738847732543945
+              "score": -8.309067726135254
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -4.848777770996094
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -4.930845737457275
             },
             {
               "id": "wiki:T_eval:docs:operations#audit-reconciliation-2026-08-02-21-16-pdt",
-              "score": -0.17486126720905304
+              "score": -0.4704735577106476
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
-              "score": -7.410658359527588
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
+              "score": -8.304488182067871
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF#local-source-reconciliation-2026-08-02-20-16-pdt",
-              "score": -9.770442962646484
+              "score": -9.38857650756836
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
-              "score": -7.460999488830566
+              "score": -7.4378981590271
             },
             {
               "id": "wiki:T_eval:docs:multi-repo-architecture#review-and-validation-record",
-              "score": -4.286586284637451
+              "score": -3.979506492614746
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-              "score": -5.819434642791748
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+              "score": -5.447109699249268
             },
             {
               "id": "wiki:T_eval:docs:multi-repo-architecture",
-              "score": -9.946534156799316
+              "score": -10.09922981262207
             }
           ]
         },
@@ -3836,7 +3836,7 @@
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
@@ -3848,16 +3848,16 @@
             "code:T_eval:opentag:src/tools/search-knowledge.ts:43-217",
             "wiki:T_eval:docs:current-state",
             "wiki:T_eval:docs:HANDOFF",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1962.7849630000055,
+          "latencyMs": 1853.3582749999987,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -3909,8 +3909,8 @@
               "score": -7.168887615203857
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-              "score": -10.004561424255371
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -9.4723539352417
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
@@ -3921,32 +3921,32 @@
               "score": -0.6453644037246704
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
-              "score": -9.105927467346191
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+              "score": -10.004561424255371
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF",
               "score": -9.077171325683594
             },
             {
-              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-              "score": -8.41567325592041
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
+              "score": -9.105927467346191
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#staging-resource-gate",
               "score": -0.3924059271812439
             },
             {
-              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
-              "score": -3.5694210529327393
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
+              "score": -8.41567325592041
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
               "score": -8.22097396850586
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -9.4723539352417
+              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
+              "score": -3.5694210529327393
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
@@ -3969,7 +3969,7 @@
               "score": -0.2531369924545288
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": -5.882352828979492
             },
             {
@@ -4023,7 +4023,7 @@
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1046-1065",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "wiki:T_eval:docs:VISION-SPEC",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "wiki:T_eval:docs:current-state#historical-live-reconciliation-2026-08-02-19-45-pdt",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1066-1089",
             "wiki:T_eval:docs:HANDOFF#deployed-supermemory-source-mismatch-recheck-2026-08-02-23-12-pd",
@@ -4036,7 +4036,7 @@
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
             "wiki:T_eval:docs:HANDOFF",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:291-294",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:ARCHITECTURE",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
@@ -4044,11 +4044,11 @@
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:295-301",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1758.4663580000051,
+          "latencyMs": 1754.2498869999981,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
               "score": -7.903326511383057
             },
             {
@@ -4172,7 +4172,7 @@
               "score": -6.887688159942627
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -6.076292514801025
             },
             {
@@ -4216,7 +4216,7 @@
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "wiki:T_eval:docs:connector-authorization-architecture",
             "wiki:T_eval:docs:supermemory-cloudflare-migration",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
             "code:T_eval:opentag:src/memory/retrieval/rrf.ts:23-54",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:28-54",
@@ -4231,7 +4231,7 @@
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:1-4"
           ],
-          "latencyMs": 1609.278846000001,
+          "latencyMs": 1738.7101750000002,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -4283,7 +4283,7 @@
               "score": -8.098066329956055
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
               "score": -8.22773551940918
             },
             {
@@ -4388,13 +4388,13 @@
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
             "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
             "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
             "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
+            "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
             "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
             "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
@@ -4404,8 +4404,8 @@
             "wiki:T_eval:docs:operations",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
             "custom_db:T_eval:sales_kpi:slack_acl",
@@ -4413,153 +4413,153 @@
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
-            "wiki:T_eval:docs:ROUTER-SPEC",
             "custom_db:T_eval:sales_kpi:arr_kpi",
+            "wiki:T_eval:docs:ROUTER-SPEC",
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01"
           ],
-          "latencyMs": 1659.8426899999977,
+          "latencyMs": 1788.165264000003,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:55-110",
-              "score": -2.8054611682891846
+              "score": -2.8021090030670166
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -10.129005432128906
+              "score": -10.120261192321777
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -7.3236775398254395
+              "score": -7.331369876861572
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:316-332",
-              "score": -2.939711093902588
+              "score": -3.5972986221313477
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -8.370218276977539
+              "score": -8.409635543823242
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#9-retrieval-and-ranking",
-              "score": -5.543313980102539
+              "score": -5.563333988189697
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-              "score": -3.010756015777588
+              "score": -3.018711566925049
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.179739952087402
+              "score": -10.179601669311523
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#15-implementation-work-packages",
-              "score": -10.178266525268555
+              "score": -10.177343368530273
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:1-44",
-              "score": -1.6270060539245605
+              "score": -1.6318448781967163
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.142086029052734
+              "score": -10.135857582092285
             },
             {
               "id": "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
-              "score": -2.847339153289795
+              "score": -2.8330304622650146
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:5-27",
-              "score": -0.831257700920105
+              "score": -0.8588639497756958
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -10.180307388305664
+              "score": -10.180594444274902
             },
             {
               "id": "wiki:T_eval:docs:operations",
-              "score": -7.3362226486206055
+              "score": -7.3317484855651855
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
-              "score": -8.072038650512695
+              "score": -8.054471015930176
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -7.588668346405029
+              "score": -7.598733901977539
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-              "score": -3.816648483276367
+              "score": -3.786839723587036
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#12-model-and-prompt-contracts",
-              "score": -4.047282695770264
+              "score": -3.9844794273376465
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/unified-search.ts:1-27",
-              "score": -3.1401257514953613
+              "score": -3.194793462753296
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01",
-              "score": -10.18122673034668
+              "score": -10.180949211120605
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/rerank.ts:28-76",
-              "score": -3.6191887855529785
+              "score": -3.609792947769165
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#2-tier-definitions-and-contracts",
-              "score": -1.81063711643219
+              "score": -1.8155913352966309
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-              "score": -4.0108160972595215
+              "score": -4.003594875335693
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC",
-              "score": -10.178885459899902
+              "score": -10.179850578308105
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-              "score": -6.401260852813721
+              "score": -6.400157451629639
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC",
-              "score": -7.070326805114746
+              "score": -7.042766571044922
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
-              "score": -5.757704734802246
+              "score": -5.738534450531006
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC#4-the-four-layer-architecture",
-              "score": -10.090585708618164
+              "score": -10.080294609069824
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -7.918941974639893
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -7.921989440917969
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC#appendix-b-vocabulary",
-              "score": -7.630648136138916
+              "score": -7.612733364105225
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-              "score": -7.709486961364746
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+              "score": -7.722567558288574
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#2-goals-and-success-criteria",
-              "score": -8.302410125732422
+              "score": -8.297553062438965
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -2.8835196495056152
+              "score": -2.870055913925171
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF#slack-indexing-audit-2026-08-02-23-26-pdt",
-              "score": -4.781843662261963
+              "score": -4.761445045471191
             }
           ]
         },
@@ -4589,7 +4589,7 @@
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#10-tool-and-api-surfaces",
             "wiki:T_eval:docs:operations#current-rollout-blockers-2026-08-04",
-            "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "wiki:T_eval:docs:current-state#2026-08-04-current-rollout-checkpoint",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "wiki:T_eval:docs:operations#configuration-ownership",
@@ -4605,7 +4605,7 @@
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 2080.1532510000034,
+          "latencyMs": 1835.081487000003,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -4701,16 +4701,16 @@
               "score": -6.758549690246582
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:626-663",
-              "score": -7.707972526550293
+              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+              "score": -2.0218284130096436
             },
             {
               "id": "wiki:T_eval:docs:current-state#2026-08-04-current-rollout-checkpoint",
               "score": -7.793612480163574
             },
             {
-              "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-              "score": -2.0218284130096436
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -7.707972526550293
             },
             {
               "id": "wiki:T_eval:docs:current-state#final-read-only-gate-sweep-2026-08-02-20-59-pdt",
@@ -4754,186 +4754,186 @@
           "queryId": "q20",
           "query": "router tier 1 retrieval relevance floor",
           "goldSourceKey": "wiki:T_eval:docs:ROUTER-SPEC",
-          "rank": 17,
+          "rank": 16,
           "order": [
             "wiki:T_eval:docs:platform-foundation-architecture#router-shadow-mode",
             "wiki:T_eval:docs:DECISIONS#22-router-rollout",
-            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
-            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
+            "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
             "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
+            "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-            "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01",
             "wiki:T_eval:docs:HANDOFF#what-is-implemented-now",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-            "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
+            "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:ROUTER-SPEC",
+            "wiki:T_eval:docs:platform-foundation-architecture",
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
             "wiki:T_eval:docs:current-state",
-            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-            "code:T_eval:opentag:src/tools/search-slack.ts:183-200",
-            "wiki:T_eval:docs:platform-foundation-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+            "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/tools/search-slack.ts:183-200",
             "wiki:T_eval:docs:DECISIONS",
+            "custom_db:T_eval:sales_kpi:deploy_gate",
+            "wiki:T_eval:docs:current-state#decisions-now-locked",
+            "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
+            "wiki:T_eval:docs:VISION-SPEC#10-open-questions",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
+            "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+            "custom_db:T_eval:sales_kpi:slack_acl",
             "wiki:T_eval:docs:multi-repo-architecture",
             "custom_db:T_eval:sales_kpi:arr_kpi",
-            "custom_db:T_eval:sales_kpi:deploy_gate",
-            "wiki:T_eval:docs:VISION-SPEC#10-open-questions",
-            "wiki:T_eval:docs:current-state#decisions-now-locked",
-            "custom_db:T_eval:sales_kpi:slack_acl",
             "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:supermemory_mode"
           ],
-          "latencyMs": 1538.3060839999962,
+          "latencyMs": 1527.2722530000028,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:68-79",
-              "score": -5.308169364929199
+              "score": -5.086611747741699
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -9.697792053222656
+              "score": -9.937705993652344
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC",
-              "score": -7.935947895050049
+              "score": -8.005624771118164
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42",
-              "score": -3.9637255668640137
+              "score": -6.021471977233887
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.180562973022461
+              "score": -10.179605484008789
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#3-the-classifier-how-a-tier-is-chosen",
-              "score": -6.814058303833008
+              "score": -6.138038158416748
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-contract.ts:1-28",
-              "score": -5.661441326141357
+              "score": -5.706287860870361
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -9.767867088317871
+              "score": -8.947738647460938
             },
             {
               "id": "wiki:T_eval:docs:DECISIONS#22-router-rollout",
-              "score": -3.5254921913146973
+              "score": -4.164984703063965
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-              "score": -6.926907539367676
+              "score": -6.521419048309326
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -10.151880264282227
+              "score": -9.636700630187988
             },
             {
               "id": "wiki:T_eval:docs:multi-repo-architecture",
-              "score": -9.586392402648926
+              "score": -9.85605525970459
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:1-59",
-              "score": -4.237391948699951
+              "score": -5.399921894073486
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": -10.181855201721191
+              "score": -10.181818008422852
             },
             {
               "id": "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
-              "score": -8.078522682189941
+              "score": -8.455036163330078
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:80-131",
-              "score": -9.103215217590332
+              "score": -8.667816162109375
             },
             {
               "id": "wiki:T_eval:docs:current-state#decisions-now-locked",
-              "score": -10.009407043457031
+              "score": -8.979976654052734
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
-              "score": -7.3850226402282715
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -7.9727559089660645
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -8.431452751159668
+              "score": -8.990891456604004
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
-              "score": -5.626101016998291
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
+              "score": -6.884594917297363
             },
             {
               "id": "wiki:T_eval:docs:DECISIONS",
-              "score": -9.372380256652832
+              "score": -8.934492111206055
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:96-103",
-              "score": -6.722766876220703
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:97-104",
+              "score": -7.519687175750732
             },
             {
               "id": "wiki:T_eval:docs:current-state",
-              "score": -8.311197280883789
+              "score": -8.558738708496094
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
-              "score": -6.6320295333862305
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
+              "score": -7.322795867919922
             },
             {
               "id": "wiki:T_eval:docs:platform-foundation-architecture#router-shadow-mode",
-              "score": -3.453629970550537
+              "score": -4.12751579284668
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
-              "score": -9.260260581970215
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
+              "score": -9.097359657287598
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#current-implementation-status-2026-08-01",
-              "score": -7.057528495788574
+              "score": -6.819150447845459
             },
             {
               "id": "code:T_eval:opentag:src/tools/search-slack.ts:183-200",
-              "score": -8.4426908493042
+              "score": -8.740107536315918
             },
             {
               "id": "wiki:T_eval:docs:ROUTER-SPEC#1-what-the-router-is-and-why-it-exists",
-              "score": -6.145666599273682
+              "score": -6.514405250549316
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:45-67",
-              "score": -10.166946411132812
+              "score": -10.172679901123047
             },
             {
               "id": "wiki:T_eval:docs:HANDOFF#what-is-implemented-now",
-              "score": -7.086954116821289
+              "score": -6.730837345123291
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
-              "score": -8.702293395996094
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:624-672",
+              "score": -8.608964920043945
             },
             {
               "id": "wiki:T_eval:docs:platform-foundation-architecture",
-              "score": -8.466529846191406
+              "score": -8.023719787597656
             },
             {
-              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
-              "score": -7.703845500946045
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:60-83",
+              "score": -9.51444149017334
             },
             {
               "id": "wiki:T_eval:docs:VISION-SPEC#10-open-questions",
-              "score": -9.939026832580566
+              "score": -9.027192115783691
             }
           ]
         },
@@ -4949,13 +4949,13 @@
             "wiki:T_eval:docs:evaluation",
             "wiki:T_eval:docs:ARCHITECTURE",
             "wiki:T_eval:docs:research-actors#cloudflare-research-task-worker",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
             "code:T_eval:opentag:src/tools/search-slack.ts:90-162",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:431-442",
             "wiki:T_eval:docs:PRODUCT#product-surfaces",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:ARCHITECTURE#request-ownership",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
             "wiki:T_eval:docs:ARCHITECTURE#architectural-invariants",
@@ -4963,15 +4963,15 @@
             "wiki:T_eval:docs:DECISIONS#1-durable-object-naming",
             "wiki:T_eval:docs:ARCHITECTURE#deployment-units",
             "wiki:T_eval:docs:PRODUCT",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
             "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187",
             "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
             "code:T_eval:opentag:src/tools/search-slack.ts:239-265",
             "code:T_eval:opentag:src/tools/search-slack.ts:266-283",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1207-4494",
             "custom_db:T_eval:sales_kpi:slack_acl",
             "custom_db:T_eval:sales_kpi:deploy_gate",
@@ -4979,7 +4979,7 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1767.9477100000004,
+          "latencyMs": 1386.4971970000042,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -5031,7 +5031,7 @@
               "score": 3.319912910461426
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:332-353",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:333-354",
               "score": -6.870922088623047
             },
             {
@@ -5059,7 +5059,7 @@
               "score": -1.1652755737304688
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
               "score": -9.633452415466309
             },
             {
@@ -5067,7 +5067,7 @@
               "score": -5.394874095916748
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -9.007543563842773
             },
             {
@@ -5075,7 +5075,7 @@
               "score": -7.37083625793457
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -8.787325859069824
             },
             {
@@ -5091,7 +5091,7 @@
               "score": -8.602300643920898
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:379-399",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:380-400",
               "score": -8.750651359558105
             },
             {
@@ -5099,7 +5099,7 @@
               "score": -8.616055488586426
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
               "score": -7.718447685241699
             },
             {
@@ -5132,21 +5132,21 @@
           "order": [
             "wiki:T_eval:docs:graphify-local-mcp",
             "wiki:T_eval:docs:operations",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
             "wiki:T_eval:docs:DECISIONS#4-triage-ag-ui-on-cloudflare-containers",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
             "wiki:T_eval:docs:HANDOFF#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
             "wiki:T_eval:docs:current-state#mcp-authorization-reconciliation-2026-08-02-23-32-pdt",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#4-graphify-contract",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "wiki:T_eval:docs:operations#knowledge-base-k2-file-only-until-gates",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/tools/search-slack.ts:90-162",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:114-117",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
@@ -5166,11 +5166,11 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1632.9162069999948,
+          "latencyMs": 1544.1526040000026,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -5.688612461090088
             },
             {
@@ -5182,7 +5182,7 @@
               "score": 7.98974609375
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:170-211",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:171-212",
               "score": -4.438917636871338
             },
             {
@@ -5194,7 +5194,7 @@
               "score": -9.603583335876465
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96",
               "score": -6.005126953125
             },
             {
@@ -5206,7 +5206,7 @@
               "score": -8.795270919799805
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:400-490",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:401-491",
               "score": -5.5836029052734375
             },
             {
@@ -5230,7 +5230,7 @@
               "score": -10.081830024719238
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
               "score": -5.07506799697876
             },
             {
@@ -5238,7 +5238,7 @@
               "score": -4.789063930511475
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:104-119",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:105-120",
               "score": -4.736990928649902
             },
             {
@@ -5246,7 +5246,7 @@
               "score": -7.884830951690674
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:894-1020",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:895-1021",
               "score": -5.060163497924805
             },
             {
@@ -5278,7 +5278,7 @@
               "score": -9.830745697021484
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
               "score": -4.586686611175537
             },
             {
@@ -5302,7 +5302,7 @@
               "score": -4.66377592086792
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
               "score": -5.996866703033447
             },
             {
@@ -5344,7 +5344,7 @@
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1000-1007",
             "wiki:T_eval:docs:operations#install-and-validate",
             "code:T_eval:opentag:src/tools/search-slack.ts:284-295",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1185-1192",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1090-1102",
@@ -5353,7 +5353,7 @@
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1889.4793940000018,
+          "latencyMs": 1474.6146350000054,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -5473,7 +5473,7 @@
               "score": -2.1473610401153564
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:120-129",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:121-130",
               "score": -7.257139205932617
             },
             {
@@ -5540,7 +5540,7 @@
             "wiki:T_eval:docs:ARCHITECTURE#slack-ingress-and-pre-admission",
             "custom_db:T_eval:sales_kpi:deploy_gate"
           ],
-          "latencyMs": 1815.3980210000009,
+          "latencyMs": 1586.4725499999986,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -5699,20 +5699,20 @@
             "code:T_eval:opentag:src/tools/search-slack.ts:296-315",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#7-identity-authorization-and-auditing",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
-            "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
+            "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
             "wiki:T_eval:docs:ARCHITECTURE#durable-state-model",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
             "wiki:T_eval:docs:HANDOFF#what-is-implemented-now",
             "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
             "wiki:T_eval:docs:notion-feature-inventory#every-finding-in-the-available-window",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
             "wiki:T_eval:docs:multi-repo-architecture#opentag-decisions-and-implementation-ledger",
             "wiki:T_eval:docs:current-state#remaining-gaps-and-their-owners",
-            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
             "wiki:T_eval:docs:operations",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:505-949",
@@ -5727,7 +5727,7 @@
             "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi"
           ],
-          "latencyMs": 1605.547623999999,
+          "latencyMs": 1575.069841000004,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
@@ -5779,7 +5779,7 @@
               "score": -9.754378318786621
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:354-378",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:355-379",
               "score": -4.657363414764404
             },
             {
@@ -5791,23 +5791,23 @@
               "score": -9.605852127075195
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
-              "score": -8.130334854125977
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+              "score": -3.0522830486297607
             },
             {
               "id": "wiki:T_eval:docs:current-state#latest-local-validation-addendum",
               "score": -6.9853925704956055
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-              "score": -3.0522830486297607
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:213-238",
+              "score": -8.130334854125977
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#2-target-architecture",
               "score": -1.921103596687317
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:494-625",
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:493-623",
               "score": -5.0049004554748535
             },
             {
@@ -5823,7 +5823,7 @@
               "score": -9.922998428344727
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:130-169",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:131-170",
               "score": -6.689595699310303
             },
             {
@@ -5855,7 +5855,7 @@
               "score": -7.090351104736328
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:491-893",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
               "score": -8.104137420654297
             },
             {
@@ -5863,7 +5863,7 @@
               "score": -9.565220832824707
             },
             {
-              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:212-331",
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:213-332",
               "score": -7.746100902557373
             },
             {
@@ -5880,182 +5880,182 @@
           "order": [
             "custom_db:T_eval:sales_kpi:supermemory_mode",
             "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
             "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
             "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1066-1089",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
             "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-            "wiki:T_eval:docs:supermemory-cloudflare-migration",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
             "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
+            "wiki:T_eval:docs:supermemory-cloudflare-migration",
             "code:T_eval:opentag:src/memory/supermemory-adapter.ts:431-442",
-            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
             "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
+            "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
+            "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
             "wiki:T_eval:docs:knowledge-base-implementation-spec",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:469-504",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "wiki:T_eval:docs:operations",
-            "wiki:T_eval:docs:operations#configuration-ownership",
+            "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
             "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
-            "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
+            "wiki:T_eval:docs:operations#configuration-ownership",
             "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+            "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
             "wiki:T_eval:docs:extending",
-            "custom_db:T_eval:sales_kpi:arr_kpi",
+            "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
             "wiki:T_eval:docs:current-state",
+            "custom_db:T_eval:sales_kpi:arr_kpi",
             "custom_db:T_eval:sales_kpi:nps_kpi",
             "custom_db:T_eval:sales_kpi:deploy_gate",
             "custom_db:T_eval:sales_kpi:slack_acl"
           ],
-          "latencyMs": 1868.1973910000015,
+          "latencyMs": 1963.8176160000003,
           "model": "Xenova/bge-reranker-base",
           "scores": [
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:443-468",
-              "score": -2.28869366645813
+              "score": -2.2740933895111084
             },
             {
               "id": "custom_db:T_eval:sales_kpi:supermemory_mode",
-              "score": 7.211625099182129
+              "score": 7.36435079574585
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration",
-              "score": -4.8029069900512695
+              "score": -5.526509761810303
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430",
-              "score": -8.164548873901367
+              "score": -8.185544967651367
             },
             {
               "id": "custom_db:T_eval:sales_kpi:arr_kpi",
-              "score": -10.008813858032227
+              "score": -10.079920768737793
             },
             {
               "id": "wiki:T_eval:docs:operations",
-              "score": -8.560441970825195
+              "score": -7.927628517150879
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:1-85",
-              "score": -3.220229387283325
+              "score": -3.2564687728881836
             },
             {
               "id": "custom_db:T_eval:sales_kpi:nps_kpi",
-              "score": -10.18002986907959
+              "score": -10.150887489318848
             },
             {
               "id": "wiki:T_eval:docs:operations#configuration-ownership",
-              "score": -8.827159881591797
+              "score": -9.281499862670898
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:19-23",
-              "score": -8.95522689819336
+              "score": -9.106203079223633
             },
             {
               "id": "custom_db:T_eval:sales_kpi:deploy_gate",
-              "score": -10.181206703186035
+              "score": -10.180012702941895
             },
             {
               "id": "wiki:T_eval:docs:operations#slack-knowledge-and-code-index-operations-disabled-until-named-g",
-              "score": -0.4054124355316162
+              "score": -0.23177295923233032
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:34-50",
-              "score": -7.773295879364014
+              "score": -7.799353122711182
             },
             {
               "id": "custom_db:T_eval:sales_kpi:slack_acl",
-              "score": -10.182527542114258
+              "score": -10.182127952575684
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#freeze-and-inventory",
-              "score": -1.8355467319488525
+              "score": -2.365934133529663
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:24-33",
-              "score": -7.068012714385986
+              "score": -6.653782367706299
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC#3-supermemory-contract",
-              "score": -2.172044515609741
+              "score": -1.7812708616256714
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:107-113",
-              "score": -3.4252564907073975
+              "score": -3.550224781036377
             },
             {
               "id": "wiki:T_eval:docs:KNOWLEDGE-BASE-SPEC",
-              "score": -7.045670032501221
+              "score": -6.23679780960083
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1066-1089",
-              "score": -3.2854058742523193
+              "score": -2.600954532623291
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#burn-in-and-cutover",
-              "score": 5.6951212882995605
+              "score": 5.883898735046387
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205",
-              "score": -6.723162651062012
+              "score": -6.42849063873291
             },
             {
               "id": "wiki:T_eval:docs:supermemory-cloudflare-migration#seed-and-verify",
-              "score": -0.31936612725257874
+              "score": -0.3305073380470276
             },
             {
               "id": "code:T_eval:opentag:src/memory/retrieval/knowledge-rerank.ts:1-18",
-              "score": -6.226877212524414
+              "score": -6.869715690612793
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec#13-observability-and-operations",
-              "score": -4.201192378997803
+              "score": -4.4067769050598145
             },
             {
               "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:431-442",
-              "score": -5.9597673416137695
+              "score": -5.745665550231934
             },
             {
               "id": "wiki:T_eval:docs:knowledge-base-implementation-spec",
-              "score": -7.493931770324707
+              "score": -7.536430835723877
             },
             {
               "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:1127-1147",
-              "score": -5.187737464904785
+              "score": -5.114774703979492
             },
             {
               "id": "wiki:T_eval:docs:current-state",
-              "score": -10.019701957702637
+              "score": -9.741655349731445
             },
             {
-              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
-              "score": -9.624343872070312
+              "id": "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:492-894",
+              "score": -9.58474349975586
             },
             {
               "id": "wiki:T_eval:docs:current-state#authoritative-rollout-checkpoint-2026-08-05-14-52-pdt",
-              "score": -5.637481212615967
+              "score": -5.170966148376465
             },
             {
-              "id": "code:T_eval:opentag:src/memory/supermemory-adapter.ts:469-504",
-              "score": -7.638741493225098
+              "id": "code:T_eval:opentag:src/memory/knowledge-ledger.ts:922-958",
+              "score": -9.417818069458008
             },
             {
               "id": "wiki:T_eval:docs:extending#knowledge-base-connectors-k2",
-              "score": -1.579370141029358
+              "score": -0.9156692028045654
             },
             {
-              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-493",
-              "score": -9.491345405578613
+              "id": "code:T_eval:opentag:src/tools/search-slack.ts:370-492",
+              "score": -9.486932754516602
             },
             {
               "id": "wiki:T_eval:docs:extending",
-              "score": -9.862749099731445
+              "score": -9.575468063354492
             }
           ]
         }

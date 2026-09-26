@@ -227,7 +227,7 @@ const QUERY_SPECS = [
   { query: "TypeSafe Jev reranker fetch systemone", gold: "code:T_eval:opentag:src/memory/retrieval/jev-rerank.ts:132-205", family: "code" },
   { query: "unified knowledge search tool RRF k=60", gold: "code:T_eval:opentag:src/tools/search-knowledge.ts:1-42", family: "code" },
   { query: "search_slack ACL lease authorize", gold: "code:T_eval:opentag:src/tools/search-slack.ts:239-265", family: "code" },
-  { query: "MCP retrieval primitives knowledge base", gold: "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-95", family: "code" },
+  { query: "MCP retrieval primitives knowledge base", gold: "code:T_eval:opentag:src/mcp/knowledge-mcp.ts:1-96", family: "code" },
   { query: "KnowledgeCitationBase excerpt contentRevision", gold: "code:T_eval:opentag:src/memory/knowledge-contract.ts:29-187", family: "code" },
   { query: "SupermemoryAdapter searchSlack hybrid", gold: "code:T_eval:opentag:src/memory/supermemory-adapter.ts:123-430", family: "code" },
   { query: "Durable Object naming ConversationStateDO", gold: "wiki:T_eval:docs:DECISIONS#1-durable-object-naming", family: "wiki" },

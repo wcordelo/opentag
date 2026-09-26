@@ -660,9 +660,11 @@ export function createSearchSlackTool(dependencies: {
         SEARCH_SLACK_LIMITS.maxLimit,
         Math.max(1, limit ?? SEARCH_SLACK_LIMITS.defaultLimit),
       );
+      const citations = await rerankSlackCitations(env, query, result.citations, effectiveLimit);
+      await dependencies.assertActive(thread);
       return {
         status: "ok",
-        citations: await rerankSlackCitations(env, query, result.citations, effectiveLimit),
+        citations,
       };
     },
   });

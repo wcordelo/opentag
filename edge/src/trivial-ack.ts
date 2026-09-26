@@ -24,11 +24,3 @@ export function trivialAck(raw: string): TrivialAck | null {
   }
   return null;
 }
-
-/** @deprecated use trivialAck — kept for tests that expect a string reply */
-export function trivialAckReply(raw: string): string | null {
-  const ack = trivialAck(raw);
-  if (!ack) return null;
-  if (ack.mode === "text") return ack.text;
-  return ack.emoji === "heart" ? "You're welcome." : "👍";
-}

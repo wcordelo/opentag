@@ -137,13 +137,12 @@ export class RouterMeasurementDO extends DurableObject {
   private prune(nowIso: string): void {
     const cutoff = new Date(Date.parse(nowIso) - RETENTION_DAYS * 86_400_000).toISOString();
     this.sql.exec("DELETE FROM router_feedback WHERE created_at < ?", cutoff);
-    this.sql.exec("DELETE FROM router_dispatch_measurements WHERE recorded_at < ?", cutoff);
+    // Retention follows DO write activity, not caller-supplied event timestamps.
+    this.sql.exec("DELETE FROM router_dispatch_measurements WHERE updated_at < ?", cutoff);
   }
 
   private record(value: unknown): { ok: true; duplicate: boolean; record: RouterDispatchMeasurement } {
     const record = validateRouterDispatchMeasurement(value);
-    const timestamp = now();
-    this.prune(timestamp);
     const existing = this.sql
       .exec<DispatchRow>(
         "SELECT * FROM router_dispatch_measurements WHERE execution_id = ?",
@@ -157,6 +156,8 @@ export class RouterMeasurementDO extends DurableObject {
       }
       return { ok: true, duplicate: true, record: current };
     }
+    const timestamp = now();
+    this.prune(timestamp);
     this.sql.exec(
       `INSERT INTO router_dispatch_measurements (
          execution_id, workspace_id, thread_key, record_json, tier_decided,

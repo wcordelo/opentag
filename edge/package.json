@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:e2e": "vitest run --config vitest.workers.bot-store.config.ts",
+    "test:e2e": "mkdir -p test/artifacts && vitest run --config vitest.workers.bot-store.config.ts --reporter=default --reporter=json --outputFile.json=./test/artifacts/e2e-workerd-summary.json",
     "test:e2e:graphify": "vitest run --config vitest.workers.graphify.config.ts",
     "test:e2e:full": "bash scripts/e2e-full.sh",
     "validate:deploy-config": "node scripts/validate-deploy-config.mjs",

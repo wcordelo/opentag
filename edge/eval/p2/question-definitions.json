@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "modelDefault": "jev-latest",
+  "timeoutMsDefault": 1500,
+  "memoryOptOutPattern": "\\b(?:without\\s+using\\s+memory|without\\s+memory|don'?t\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|do\\s+not\\s+(?:use|look\\s+up|lookup|search|retrieve)\\s+(?:memory|anything|wiki|slack|code)|no\\s+memory|from\\s+general\\s+knowledge\\s+only)\\b",
+  "questions": {
+    "route": {
+      "type": "choice",
+      "instructions": "Should the OpenTag Slack bot send a reply to this message, or only observe the thread without responding?",
+      "criteria": {
+        "respond": "The message is directed at the bot or clearly expects a bot reply: explicit mention or DM, a question, an action request, a problem report, a file continuation in an active bot thread, or similar task-oriented language.",
+        "observe": "The bot should listen only: side chatter between humans, phatic noise, messages clearly aimed at someone else, or an explicit instruction not to reply."
+      }
+    },
+    "needsHuman": {
+      "type": "noul",
+      "instructions": "Should a human teammate handle this message instead of the OpenTag bot?",
+      "criteria": {
+        "true": "The sender asks for a real person, escalates to billing/legal/HR/security, reports harassment or a safety issue, or needs human judgment the bot must not take.",
+        "false": "A normal bot-handlable question, task, status check, or conversational turn the triage agent can address."
+      }
+    },
+    "memoryNeeded": {
+      "type": "noul",
+      "instructions": "Would answering this message benefit from retrieving long-term workspace memory or knowledge (past Slack threads, wiki pages, or code)?",
+      "criteria": {
+        "true": "The message references prior team decisions, internal docs or code, a specific past thread, or other workspace-specific facts not contained in the message itself.",
+        "false": "General knowledge, greetings, acknowledgments, or a self-contained question answerable without workspace retrieval."
+      }
+    }
+  }
+}

@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-26T05:38:42.851Z",
+  "items": [
+    {
+      "id": "heuristic-question-latency",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "heuristic-action-deploy",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "heuristic-channel-question",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "heuristic-search-slack",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "heuristic-canary-reply",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "heuristic-problem-delay",
+      "route": "respond",
+      "reason": "problem_report"
+    },
+    {
+      "id": "heuristic-phatic-yo-thread",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-phatic-yo-channel",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-standup-excuse",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-check-with-her",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-dont-touch",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-dont-reply",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-code-block-only",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "heuristic-access-dashboard",
+      "route": "respond",
+      "reason": "problem_report"
+    },
+    {
+      "id": "heuristic-dm-thanks",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "heuristic-mention-thanks",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "heuristic-file-share",
+      "route": "respond",
+      "reason": "file_share"
+    },
+    {
+      "id": "synthetic-side-chat-lunch",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-question-to-other",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-dm-question",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-mention-summarize-thread",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-memory-opt-out",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-dont-lookup",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-wiki-question",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-code-question",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-past-decision",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-general-trivia",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-human-escalation",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-hr-sensitive",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-legal-request",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-status-check",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-ack-only",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-lol-react",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-meeting-schedule",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-trusted-trigger",
+      "route": "respond",
+      "reason": "trusted_trigger"
+    },
+    {
+      "id": "synthetic-create-ticket",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-fix-bug",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-compare-options",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-thread-context-needed",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-explicit-mention-question",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-mpim-side-note",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-dm-without-memory-phrase",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-observe-explicit-bot",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-oncall-page",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-search-code",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-remind-decision",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-polite-question-other",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-thread-deploy-status",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-security-human",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-no-memory-short",
+      "route": "respond",
+      "reason": "explicit_mention"
+    },
+    {
+      "id": "synthetic-channel-problem",
+      "route": "respond",
+      "reason": "problem_report"
+    },
+    {
+      "id": "synthetic-thread-action-review",
+      "route": "respond",
+      "reason": "action_request"
+    },
+    {
+      "id": "synthetic-greeting-dm",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-who-knows",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-offtopic-meme",
+      "route": "observe",
+      "reason": "observe_conversation"
+    },
+    {
+      "id": "synthetic-ask-bot-in-thread",
+      "route": "respond",
+      "reason": "question"
+    },
+    {
+      "id": "synthetic-human-manager",
+      "route": "respond",
+      "reason": "direct_message"
+    },
+    {
+      "id": "synthetic-recap-channel",
+      "route": "respond",
+      "reason": "action_request"
+    }
+  ]
+}

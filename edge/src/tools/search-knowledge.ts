@@ -32,7 +32,7 @@ const LIMITS = Object.freeze({
   maxQueryLength: 1_000,
   defaultLimit: 8,
   maxLimit: Math.min(10, KNOWLEDGE_LIMITS.maxSearchLimit),
-  perListLimit: 8,
+  perListLimit: 15,
 });
 
 export type UnifiedSearchResult =

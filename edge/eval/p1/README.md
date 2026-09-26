@@ -35,7 +35,15 @@ text-classification pipeline.
 Self-contained bundle (no npm deps):
 
 ```bash
+# Dry-run config (no API key)
+node edge/eval/p1/run-jev-eval.mjs --dry-run
+
+# Default: both jev-score and jev-noul, top-20 rerank window, 8k excerpt cap
 TYPESAFE_API_KEY=... node edge/eval/p1/run-jev-eval.mjs
+
+# RRF-blend mode with custom rerank window
+TYPESAFE_API_KEY=... node edge/eval/p1/run-jev-eval.mjs \
+  --mode jev-score --top-n 20 --blend rrf-blend --blend-weight 0.7
 ```
 
 Or from the artifact copy:
@@ -48,4 +56,5 @@ TYPESAFE_API_KEY=... node /opt/cursor/artifacts/p1-eval/run-jev-eval.mjs
 
 - MRR@5
 - Top-3 recall (gold `sourceKey` in top 3)
-- p95 latency per arm
+- Per-query and per-call p50/p95 latency
+- Call count and per-call error count

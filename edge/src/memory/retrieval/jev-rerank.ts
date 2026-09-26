@@ -4,12 +4,17 @@
  */
 
 import {
+  blendJevWithRrfRank,
   buildJevNoulQuestion,
   buildJevRerankState,
   buildJevScoreQuestion,
   JEV_RERANK_MAX_CANDIDATES,
+  JEV_RERANK_MAX_EXCERPT_CHARS_DEFAULT,
   JEV_RERANK_MODEL_DEFAULT,
+  JEV_RERANK_TOP_N_DEFAULT,
+  type JevRerankBlendMode,
   type JevRerankMode,
+  truncateJevExcerpt,
 } from "./jev-questions.js";
 import type { CandidateRerankFn } from "./knowledge-rerank.js";
 
@@ -22,7 +27,13 @@ export type JevRerankOptions = {
   mode: JevRerankMode;
   model?: string;
   timeoutMs?: number;
+  /** RRF pool size sent to retrieval (defaults to JEV_RERANK_MAX_CANDIDATES). */
   maxCandidates?: number;
+  /** Top-N RRF candidates Jev reorders; tail keeps RRF order (defaults to 20). */
+  rerankTopN?: number;
+  maxExcerptChars?: number;
+  blendMode?: JevRerankBlendMode;
+  blendWeight?: number;
   concurrency?: number;
   fetchImpl?: typeof fetch;
 };
@@ -40,6 +51,14 @@ export type JevCallMetrics = {
   model: string;
   latencyMs: number;
   candidateCount: number;
+};
+
+type ScoredEntry = {
+  id: string;
+  score: number;
+  model: string;
+  rrfRank: number;
+  failed: boolean;
 };
 
 async function mapWithConcurrency<T, R>(
@@ -83,10 +102,12 @@ export async function scoreJevCandidate(input: {
   model: string;
   query: string;
   excerpt: string;
+  maxExcerptChars: number;
   timeoutMs: number;
   fetchImpl: typeof fetch;
 }): Promise<{ score: number; model: string; latencyMs: number }> {
-  const state = buildJevRerankState(input.query, input.excerpt);
+  const truncatedExcerpt = truncateJevExcerpt(input.excerpt, input.maxExcerptChars);
+  const state = buildJevRerankState(input.query, truncatedExcerpt);
   const question = input.mode === "jev-score"
     ? buildJevScoreQuestion()
     : buildJevNoulQuestion();
@@ -126,14 +147,50 @@ export async function scoreJevCandidate(input: {
 }
 
 /**
+ * Order rerank-window candidates:
+ * - Scored: by blended or Jev-only score (desc).
+ * - Per-call failures: after scored block, preserving relative RRF order.
+ */
+export function orderJevScoredCandidates(
+  entries: ScoredEntry[],
+  mode: JevRerankMode,
+  blendMode: JevRerankBlendMode,
+  blendWeight: number,
+): ScoredEntry[] {
+  const scored = entries.filter((entry) => !entry.failed);
+  const failed = entries.filter((entry) => entry.failed);
+
+  const sortKey = (entry: ScoredEntry): number => {
+    if (blendMode === "rrf-blend") {
+      return blendJevWithRrfRank({
+        jevScore: entry.score,
+        rrfRank: entry.rrfRank,
+        mode,
+        blendWeight,
+      });
+    }
+    return entry.score;
+  };
+
+  scored.sort((left, right) => sortKey(right) - sortKey(left));
+  failed.sort((left, right) => left.rrfRank - right.rrfRank);
+  return [...scored, ...failed];
+}
+
+/**
  * Reorder candidates with Jev; never drops — only sorts, then slices to topN.
- * On any error, returns the original RRF order sliced to topN.
+ * Per-candidate Jev errors degrade that candidate (RRF tail after scored block).
+ * On total failure (no scores or outer error), returns original RRF order sliced to topN.
  */
 export function createJevCandidateRerank(options: JevRerankOptions): CandidateRerankFn {
   const fetchImpl = options.fetchImpl ?? fetch;
   const model = options.model ?? JEV_RERANK_MODEL_DEFAULT;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxCandidates = options.maxCandidates ?? JEV_RERANK_MAX_CANDIDATES;
+  const rerankTopN = options.rerankTopN ?? JEV_RERANK_TOP_N_DEFAULT;
+  const maxExcerptChars = options.maxExcerptChars ?? JEV_RERANK_MAX_EXCERPT_CHARS_DEFAULT;
+  const blendMode = options.blendMode ?? "jev-only";
+  const blendWeight = options.blendWeight ?? 0.7;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
   return async ({ query, candidates, topN }) => {
@@ -142,29 +199,68 @@ export function createJevCandidateRerank(options: JevRerankOptions): CandidateRe
     if (limit === 0 || !options.apiKey) return fallback;
 
     const pool = candidates.slice(0, Math.min(maxCandidates, candidates.length));
+    const rerankWindow = pool.slice(0, Math.min(rerankTopN, pool.length));
+    const poolTail = pool.slice(rerankWindow.length);
+    const beyondPool = candidates.slice(pool.length);
+
     const started = Date.now();
     try {
-      const scored = await mapWithConcurrency(pool, concurrency, async (candidate) => {
-        const result = await scoreJevCandidate({
-          apiKey: options.apiKey,
-          mode: options.mode,
-          model,
-          query,
-          excerpt: candidate.excerpt,
-          timeoutMs,
-          fetchImpl,
-        });
-        return { id: candidate.id, score: result.score, model: result.model };
+      const scored = await mapWithConcurrency(rerankWindow, concurrency, async (candidate, index) => {
+        const rrfRank = index + 1;
+        try {
+          const result = await scoreJevCandidate({
+            apiKey: options.apiKey,
+            mode: options.mode,
+            model,
+            query,
+            excerpt: candidate.excerpt,
+            maxExcerptChars,
+            timeoutMs,
+            fetchImpl,
+          });
+          return {
+            id: candidate.id,
+            score: result.score,
+            model: result.model,
+            rrfRank,
+            failed: false,
+          } satisfies ScoredEntry;
+        } catch (error) {
+          console.log(
+            JSON.stringify({
+              event: "jev_rerank_candidate_fallback",
+              mode: options.mode,
+              candidateId: candidate.id,
+              rrfRank,
+              error: error instanceof Error ? error.message : "unknown",
+            }),
+          );
+          return {
+            id: candidate.id,
+            score: 0,
+            model,
+            rrfRank,
+            failed: true,
+          } satisfies ScoredEntry;
+        }
       });
 
-      const resolvedModel = scored.find((entry) => entry.model)?.model ?? model;
+      const successfulScores = scored.filter((entry) => !entry.failed);
+      if (successfulScores.length === 0) {
+        throw new Error("jev_all_candidates_failed");
+      }
+
+      const resolvedModel = successfulScores.find((entry) => entry.model)?.model ?? model;
       const latencyMs = Date.now() - started;
       console.log(
         JSON.stringify({
           event: "jev_rerank",
           mode: options.mode,
+          blendMode,
           model: resolvedModel,
-          candidateCount: pool.length,
+          candidateCount: rerankWindow.length,
+          scoredCount: successfulScores.length,
+          failedCount: scored.length - successfulScores.length,
           latencyMs,
         }),
       );
@@ -173,12 +269,17 @@ export function createJevCandidateRerank(options: JevRerankOptions): CandidateRe
       const seen = new Set<string>();
       const ordered: typeof candidates = [];
 
-      const ranked = [...scored].sort((left, right) => right.score - left.score);
+      const ranked = orderJevScoredCandidates(scored, options.mode, blendMode, blendWeight);
       for (const entry of ranked) {
         if (seen.has(entry.id)) continue;
         const candidate = byId.get(entry.id);
         if (!candidate) continue;
         seen.add(entry.id);
+        ordered.push(candidate);
+      }
+      for (const candidate of [...poolTail, ...beyondPool]) {
+        if (seen.has(candidate.id)) continue;
+        seen.add(candidate.id);
         ordered.push(candidate);
       }
       for (const candidate of candidates) {
@@ -193,7 +294,7 @@ export function createJevCandidateRerank(options: JevRerankOptions): CandidateRe
           event: "jev_rerank_fallback",
           mode: options.mode,
           model,
-          candidateCount: pool.length,
+          candidateCount: rerankWindow.length,
           latencyMs,
           error: error instanceof Error ? error.message : "unknown",
         }),

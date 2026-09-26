@@ -91,7 +91,10 @@ import {
 import {
   classifySlackResponseRoute,
   classifySlackThreadReplyRoute,
+  type SlackResponseRoute,
 } from "./response-routing.js";
+import { slackObligationThreadKey } from "./obligation-thread-key.js";
+import type { ScheduleRouterJevShadowInput } from "../router/response-route-jev-measurement.js";
 import {
   createHarnessProgressLiveRenderer,
   type HarnessProgressLiveRenderer,
@@ -207,6 +210,8 @@ type CloudflareSlackAdapterBaseOptions = {
     eventId?: string;
     threadTs?: string;
   }) => void;
+  /** Fire-and-forget P2 Jev shadow on respond/observe routing (never blocks ingress). */
+  routerJevShadow?: (input: ScheduleRouterJevShadowInput) => void;
   /** Bounded eventual-consistency reconciliation for ambiguous live posts. */
   liveReconcileAttempts?: number;
   liveReconcileDelayMs?: number;
@@ -470,6 +475,44 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
     });
   }
 
+  private scheduleRouterJevShadow(
+    body: unknown,
+    normalized: Extract<import("./ingress-normalize.js").SlackNeutralEvent, { kind: "turn" }>,
+    route: SlackResponseRoute,
+    waitUntil?: (promise: Promise<unknown>) => void,
+  ): void {
+    if (!this.opts.routerJevShadow) return;
+    const teamId = this.teamId ??
+      (typeof body === "object" && body !== null && typeof (body as { team_id?: unknown }).team_id === "string"
+        ? (body as { team_id: string }).team_id
+        : undefined);
+    const eventId = normalized.eventId?.trim() || `${normalized.channel}:${normalized.ts ?? "unknown"}`;
+    const threadTs = normalized.threadTs ?? normalized.ts;
+    const threadKey = teamId
+      ? slackObligationThreadKey(teamId, normalized.channel, threadTs)
+      : `slack:${normalized.channel}:${threadTs ?? normalized.channel}`;
+    const rawEvent = typeof body === "object" && body !== null
+      ? (body as { event?: { channel_type?: string } }).event
+      : undefined;
+    this.opts.routerJevShadow({
+      workspaceId: teamId,
+      eventId,
+      threadKey,
+      executionId: `route-jev:${eventId}`,
+      message: normalized.userText,
+      source: normalized.source,
+      channelType: slackChannelTypeForRouterJev(normalized.channel, rawEvent?.channel_type),
+      botMentioned:
+        normalized.source === "app_mention" ||
+        normalized.source === "direct_message" ||
+        normalized.source === "trusted_rich_mention",
+      hasFiles: normalized.hasFiles,
+      threadContext: [],
+      waitUntil,
+      currentRoute: route,
+    });
+  }
+
   private async preAdmittedStillPending(
     turn: PreAdmittedTurn | undefined,
   ): Promise<boolean> {
@@ -689,6 +732,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       verifiedIngress?: VerifiedIngressEvidence;
       preAdmittedTurn?: PreAdmittedTurn;
       onTurnHandoff?: () => void;
+      waitUntil?: (promise: Promise<unknown>) => void;
     },
   ): Promise<{ handled: boolean }> {
     if (!this.sink) return { handled: false };
@@ -736,6 +780,7 @@ export class CloudflareSlackAdapter implements PlatformAdapter {
       channelId: normalized.channel,
       threadTs: normalized.threadTs ?? normalized.ts,
     }));
+    this.scheduleRouterJevShadow(body, normalized, route, meta?.waitUntil);
     if (route.decision !== "respond") return { handled: true };
 
     const isDm = normalized.source === "direct_message";
@@ -1922,4 +1967,16 @@ function fallbackTextFromIr(ir: BotNode[]): string {
   walk(ir);
   const s = parts.join(" ").trim();
   return s.length > 0 ? s.slice(0, 200) : "(message)";
+}
+
+/** app_mention payloads omit channel_type; infer from Slack channel id when absent. */
+function slackChannelTypeForRouterJev(
+  channelId: string,
+  rawChannelType?: string,
+): string | undefined {
+  if (rawChannelType) return rawChannelType;
+  if (channelId.startsWith("D")) return "im";
+  if (channelId.startsWith("C")) return "channel";
+  if (channelId.startsWith("G")) return "group";
+  return undefined;
 }

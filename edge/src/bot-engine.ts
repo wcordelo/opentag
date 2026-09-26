@@ -54,6 +54,7 @@ import {
   withTraceHeaders,
 } from "./observability/trace-correlation.js";
 import type { RouterHeuristicDecision } from "./router/heuristics.js";
+import { scheduleRouterJevShadow } from "./router/response-route-jev-measurement.js";
 
 export type BotEngineKind = "createBot";
 
@@ -242,6 +243,9 @@ export async function getOrCreateBot(env: Env): Promise<BotHandle> {
       : {}),
     knowledgeMessageObserverRequired: env.ENVIRONMENT === "production",
     deliveryMetrics: env.DELIVERY_METRICS,
+    routerJevShadow: (input) => {
+      scheduleRouterJevShadow(env, input);
+    },
     routerShadow: (decision: RouterHeuristicDecision, context) => {
       if (!env.DELIVERY_METRICS) return;
       env.DELIVERY_METRICS.writeDataPoint({

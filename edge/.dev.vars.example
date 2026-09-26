@@ -30,4 +30,8 @@ INTERNAL_SECRET=dev-internal-secret
 # JEV_RERANK_MAX_EXCERPT_CHARS=8000
 # JEV_RERANK_BLEND_MODE=rrf-blend|jev-only
 # JEV_RERANK_BLEND_WEIGHT=0.7
+# Optional P2 router Jev shadow (default off; requires TYPESAFE_API_KEY secret):
+# ROUTER_JEV_SHADOW=on
+# ROUTER_JEV_MODEL=jev-latest
+# ROUTER_JEV_TIMEOUT_MS=1500
 # wrangler secret put TYPESAFE_API_KEY

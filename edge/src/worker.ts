@@ -230,6 +230,7 @@ async function processFileTurn(
   value: FileTurnJobPayload,
   teamId: string,
   verifiedIngress?: VerifiedIngressEvidence,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<void> {
   const identity = preAdmissionIdentityForEvent(
     value.callback,
@@ -256,6 +257,7 @@ async function processFileTurn(
       ...(verifiedIngress ? { verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
+      waitUntil,
     });
     if (!handedOff) throw new Error("file_turn_not_handed_off");
   } finally {
@@ -266,6 +268,7 @@ async function processFileTurn(
 async function processLateFileRepair(
   env: AppEnv["Bindings"],
   value: LateFileRepairJobPayload,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<void> {
   const { callback, pending, candidate } = value;
   const store = createDurableObjectStore(env.BOT_STATE);
@@ -334,6 +337,7 @@ async function processLateFileRepair(
       ...(pending.verifiedIngress ? { verifiedIngress: pending.verifiedIngress } : {}),
       preAdmittedTurn,
       onTurnHandoff: () => { handedOff = true; },
+      waitUntil,
     });
     if (!handedOff) throw new Error("late_file_repair_not_handed_off");
     await markConsumed();
@@ -379,6 +383,7 @@ async function processReactionCleanup(
 
 app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
   const job = await c.req.json<DeferredIngressJob>();
+  const waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
   try {
     if (job.kind === "quick_action") {
       if (quickActionEventId(job.payload) !== job.id) {
@@ -393,13 +398,13 @@ app.post("/internal/deferred-ingress", requireAdminAuth(), async (c) => {
       if (lateFileRepairDedupeKey(payload.pending, payload.candidate) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      await processLateFileRepair(c.env, payload);
+      await processLateFileRepair(c.env, payload, waitUntil);
     } else if (job.kind === "file_turn") {
       const payload = job.payload as FileTurnJobPayload;
       if (fileTurnJobId(c.env, payload.callback) !== job.id) {
         return c.json({ error: "deferred_ingress_identity_mismatch" }, 400);
       }
-      await processFileTurn(c.env, payload, job.teamId, job.verifiedIngress);
+      await processFileTurn(c.env, payload, job.teamId, job.verifiedIngress, waitUntil);
     } else if (job.kind === "knowledge_event") {
       const payload = job.payload as SlackEventCallbackPayload;
       if (
@@ -2431,6 +2436,7 @@ app.post("/slack/events", slackVerify(), async (c) => {
         verifiedIngress: c.get("verifiedIngress"),
         preAdmittedTurn,
         onTurnHandoff: () => { handedOff = true; },
+        waitUntil: exec?.waitUntil?.bind(exec),
       });
     } finally {
       if (!handedOff) await abandonPreAdmittedTurn(c.env, preAdmittedTurn);

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createRouterDispatchMeasurement } from "../src/router/measurement.js";
+import { createResponseRouteJevMeasurement } from "../src/router/response-route-jev-measurement.js";
 import type { RouterShadowRecord } from "../src/router/shadow.js";
 
 const shadow: RouterShadowRecord = {
@@ -62,6 +63,66 @@ describe("RouterMeasurementDO in workerd", () => {
       body: JSON.stringify({ workspaceId }),
     });
     await expect(summary.json()).resolves.toMatchObject({ workspaceId, total: 1 });
+  });
+
+  it("persists additive response-route Jev shadow rows", async () => {
+    const workspaceId = `router-jev-${crypto.randomUUID()}`;
+    const stub = env.ROUTER_MEASUREMENTS!.get(
+      env.ROUTER_MEASUREMENTS!.idFromName(workspaceId),
+    ) as unknown as { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
+    const record = createResponseRouteJevMeasurement({
+      workspaceId,
+      eventId: `Ev-${crypto.randomUUID()}`,
+      threadKey: "slack:T1:C1:1.0",
+      executionId: "route-jev:test",
+      currentRoute: {
+        decision: "respond",
+        reason: "question",
+        classification: {
+          tier: 1,
+          confidence: 1,
+          classifierPath: "heuristic",
+          matchedRule: "t1.11",
+          primarySignal: "question_form",
+          surfaceFeatures: {
+            hasCodeBlock: false,
+            hasAttachment: false,
+            wordCount: 3,
+            matchedTier1Pattern: true,
+            matchedTier2Pattern: false,
+            tier3Flag: false,
+          },
+          normalizedMessage: "what is up",
+        },
+      },
+      jev: {
+        schema: 1,
+        shadow: true,
+        model: "jev-test",
+        latencyMs: 12,
+        state: {
+          message: "what is up",
+          source: "thread_reply",
+          channelType: "channel",
+          botMentioned: false,
+          hasFiles: false,
+          threadContext: [],
+          memoryOptOut: false,
+        },
+        route: {
+          choice: "respond",
+          probabilities: { respond: 0.91, observe: 0.09 },
+          confidence: 0.82,
+        },
+      },
+    });
+    const response = await stub.fetch("https://router-measurement/response-route-jev/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, duplicate: false });
   });
 
   it("uses the deployed SQLite binding and migration for workspace measurements", async () => {

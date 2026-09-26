@@ -16,7 +16,7 @@ Extension rules: [docs/extending.md](../docs/extending.md)
 
 | Config or package | Role | Status |
 | --- | --- | --- |
-| `wrangler.bot.toml` | `opentag-bot` Worker config (synced to cosmos for production deploy) | Source config; **do not deploy from opentag** |
+| `wrangler.bot.toml` | `opentag-bot` Worker config (synced downstream for deploy) | Source config; **deploy blocked in opentag** |
 | `wrangler.toml` | `opentag-edge`, local/development bot | Active target |
 | `workers/agent-runtime/` | `opentag-agent`, AG-UI triage Container | Production runtime |
 | `workers/sandbox/` | `opentag-harness`, Claude Code Container | Production coding runtime |
@@ -153,20 +153,11 @@ not fall back to AG-UI.
 
 ## Deploy
 
-Production **`opentag-bot`** deploys come from **[berendo-labs/cosmos](https://github.com/berendo-labs/cosmos)** only. This repo is the bot source; cosmos syncs it one-way and runs production deploy there. Retrieval changes (reranker, recall fixes, and related Worker vars) reach production only through that sync.
+**wcordelo/opentag** is the open upstream for bot code and features. A private downstream deployment repo mirrors selected paths one-way and owns **all** Cloudflare deploys (production, staging, and test). Enterprise-only features also live downstream.
 
-From opentag, `npm run deploy:bot` is blocked intentionally (exit non-zero, no wrangler call). Local bot work uses `npm run dev` or `wrangler dev --config wrangler.bot.toml`.
+Cloudflare deploy scripts in opentag exit non-zero before wrangler runs. Local bot work uses `npm run dev` or `wrangler dev --config wrangler.bot.toml`. Retrieval and reranker changes reach deployed Workers only through the downstream sync and deploy path.
 
-Other edge units still deploy from opentag when explicitly approved:
-
-```bash
-npm run deploy:agent
-npm --prefix workers/claudex-proxy run deploy  # target before harness
-npm --prefix workers/sandbox run deploy        # target before bot (in cosmos)
-npm run deploy:research   # optional
-```
-
-See [docs/operations.md](../docs/operations.md) for cosmos bot deploy steps and secrets.
+See [docs/operations.md](../docs/operations.md) for the deployment runbook.
 
 ## Workers-safe CopilotKit Channels
 

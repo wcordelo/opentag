@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import { buildHarnessProvenance } from "./harness-provenance.mjs";
-import { blockOpentagBotProductionDeploy } from "./block-opentag-bot-production-deploy.mjs";
+import { blockOpentagCloudflareDeploy } from "./block-opentag-cloudflare-deploy.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
@@ -184,7 +184,10 @@ process.on("exit", cleanupGeneratedHarnessConfig);
 
 if (deployKnowledge && !noDeploy) assertKnowledgeConfigReady();
 const harnessProvenance = buildHarnessProvenance(repositoryRoot);
-if (!dryRun && !noDeploy) assertHarnessProvenanceDeployable(harnessProvenance);
+if (!dryRun && !noDeploy) {
+  blockOpentagCloudflareDeploy();
+  assertHarnessProvenanceDeployable(harnessProvenance);
+}
 
 const requiredSecretSpecs = [...secretSpecs, ...(deployKnowledge ? knowledgeSecretSpecs : [])];
 const optionalSecretSpecs = [
@@ -216,4 +219,11 @@ if (deployKnowledge) {
   runWrangler(["deploy", "--config", graphifyConfig]);
 }
 runWrangler(["deploy", "--config", generatedHarnessConfig]);
-blockOpentagBotProductionDeploy();
+runWrangler([
+  "deploy",
+  "--config",
+  botConfig,
+  ...(supermemoryIndexGeneration
+    ? ["--var", `SUPERMEMORY_INDEX_GENERATION:${supermemoryIndexGeneration}`]
+    : []),
+]);

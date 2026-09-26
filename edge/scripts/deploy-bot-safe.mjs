@@ -1,3 +1,3 @@
-import { blockOpentagBotProductionDeploy } from "./block-opentag-bot-production-deploy.mjs";
+import { blockOpentagCloudflareDeploy } from "./block-opentag-cloudflare-deploy.mjs";
 
-blockOpentagBotProductionDeploy();
+blockOpentagCloudflareDeploy();

@@ -1,8 +1,8 @@
 # Production Claude Tag bot spine (clean DO migration history).
 # Local `wrangler.toml` keeps name "opentag-edge" for dev; this config deploys
 # as opentag-bot to avoid the legacy ThreadDurableObject migration conflict.
-# Production deploys of opentag-bot come from berendo-labs/cosmos (one-way sync
-# from wcordelo/opentag); npm run deploy:bot in opentag is blocked.
+# Cloudflare deploys from wcordelo/opentag are blocked; production deploys run
+# from the private downstream deployment repo after one-way sync.
 name = "opentag-bot"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"

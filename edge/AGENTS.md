@@ -1,6 +1,6 @@
 # Bot design principles
 
-These rules apply to the Slack bot in `edge/` (judgment, memory, and retrieval).
+These rules apply to the Slack bot in `edge/` (judgment, memory, and retrieval). Feature work for this surface lands in the open upstream **opentag** repo; Cloudflare deploys (production, staging, and test) run only from the private downstream deployment repo after one-way sync.
 
 1. **Make bot judgments typed decisions** (Jev Choice / Noul / Score → probabilities), not text generation you parse back out. Why: decision models return structured choices fast and beat general-purpose LLM reranking. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))
 2. **Rerankers sort; they never drop.** Order by Score-10 or Noul probability; never delete candidates with a Noul threshold. Why: Noul-as-a-delete-gate "kept nothing"; sort and Score-10 both worked. ([Dhravya Shah, Jev & memory](https://x.com/DhravyaShah/status/2103314339239428201))

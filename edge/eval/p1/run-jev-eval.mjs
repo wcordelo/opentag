@@ -17,7 +17,8 @@ const frozen = JSON.parse(readFileSync(frozenPath, "utf8"));
 
 const TYPESAFE_API_URL = "https://api.typesafe.ai/v1/systemone";
 const JEV_MODEL_DEFAULT = "jev-latest";
-const MAX_CANDIDATES = 20;
+// Keep in sync with edge/src/memory/retrieval/jev-questions.ts JEV_RERANK_MAX_CANDIDATES
+const MAX_CANDIDATES = 40;
 const CONCURRENCY = 10;
 const TIMEOUT_MS = 8000;
 

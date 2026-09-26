@@ -313,7 +313,7 @@ export async function isSlackKnowledgeMember(
   }
 }
 
-async function rerankSlackCitations(
+export async function rerankSlackCitations(
   env: Env,
   query: string,
   citations: KnowledgeCitation[],
@@ -471,8 +471,7 @@ export async function searchSlackKnowledge(input: {
       !aclFinal) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
-    const ranked = await rerankSlackCitations(input.env, query, current, limit);
-    return { status: "ok", citations: ranked };
+    return { status: "ok", citations: current.slice(0, limit) };
   } catch (error) {
     return {
       status: "knowledge_unavailable",
@@ -603,8 +602,7 @@ export async function searchSlackKnowledgeForActor(input: {
     ) {
       return { status: "unauthorized", citations: [], reason: "policy_denied" };
     }
-    const ranked = await rerankSlackCitations(input.env, query, current, limit);
-    return { status: "ok", citations: ranked };
+    return { status: "ok", citations: current.slice(0, limit) };
   } catch (error) {
     return {
       status: "knowledge_unavailable",
@@ -642,8 +640,9 @@ export function createSearchSlackTool(dependencies: {
       if (!exact) throw new Error("active_turn_context_required");
       const channelId = dependencies.channel(thread);
       await dependencies.assertActive(thread);
+      const env = dependencies.env();
       const result = await (dependencies.search ?? searchSlackKnowledge)({
-        env: dependencies.env(),
+        env,
         teamId: context.teamId,
         channelId,
         authorization: {
@@ -656,7 +655,15 @@ export function createSearchSlackTool(dependencies: {
         limit,
       });
       await dependencies.assertActive(thread);
-      return result;
+      if (result.status !== "ok") return result;
+      const effectiveLimit = Math.min(
+        SEARCH_SLACK_LIMITS.maxLimit,
+        Math.max(1, limit ?? SEARCH_SLACK_LIMITS.defaultLimit),
+      );
+      return {
+        status: "ok",
+        citations: await rerankSlackCitations(env, query, result.citations, effectiveLimit),
+      };
     },
   });
 }

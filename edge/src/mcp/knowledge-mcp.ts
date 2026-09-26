@@ -31,6 +31,7 @@ import { CustomDbSearchAdapter } from "../memory/connectors/custom-db-connector.
 import { SupermemoryAdapter } from "../memory/supermemory-adapter.js";
 import {
   isSlackKnowledgeMember,
+  rerankSlackCitations,
   searchSlackKnowledgeForActor,
 } from "../tools/search-slack.js";
 import { resolveKnowledgeCandidateRerank } from "../memory/retrieval/knowledge-rerank.js";
@@ -727,7 +728,7 @@ export async function handleKnowledgeMcp(
               message: code === "knowledge_acl_denied" ? "current Slack knowledge access denied" : "Slack knowledge is unavailable",
             }, { status: result.status === "unauthorized" ? 403 : 503 }), "error", code);
           }
-          citations = result.citations;
+          citations = await rerankSlackCitations(env, queryText, result.citations, limit);
         } else {
           const search = await new SupermemoryAdapter(client).searchSlackForConvergence({
             teamId: input.teamId,

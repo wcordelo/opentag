@@ -159,6 +159,15 @@ export interface Env {
   /** TypeSafe API key for Jev reranking. Worker secret only; never log. */
   TYPESAFE_API_KEY?: string;
   /**
+   * Shadow-only Jev judgments on Slack respond/observe routing. Exact `on` enables
+   * one SystemOne request per routed message; requires `TYPESAFE_API_KEY`.
+   */
+  ROUTER_JEV_SHADOW?: string;
+  /** TypeSafe model id for router Jev shadow (default `jev-latest`). */
+  ROUTER_JEV_MODEL?: string;
+  /** Router Jev shadow timeout in milliseconds (default 1500, capped at 1500). */
+  ROUTER_JEV_TIMEOUT_MS?: string;
+  /**
    * Exact gate for Local document update/delete. Only the string `verified`
    * enables mutations; unset/any other value keeps fail-closed unsupported_* paths.
    * SDK shapes are known; Local server-v0.0.5 live behavior remains unproven until R1 smoke.

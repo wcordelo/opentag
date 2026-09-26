@@ -10,6 +10,11 @@ import {
   validateRouterFeedback,
   routerMeasurementOutcome,
 } from "./measurement.js";
+import {
+  ResponseRouteJevMeasurementError,
+  type ResponseRouteJevMeasurement,
+  validateResponseRouteJevMeasurement,
+} from "./response-route-jev-measurement.js";
 
 const RETENTION_DAYS = 30;
 const MAX_LIST_LIMIT = 100;
@@ -39,6 +44,17 @@ const DDL = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_router_feedback_workspace
    ON router_feedback(workspace_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS response_route_jev_shadow (
+     event_id TEXT PRIMARY KEY,
+     workspace_id TEXT NOT NULL,
+     thread_key TEXT NOT NULL,
+     execution_id TEXT NOT NULL,
+     record_json TEXT NOT NULL,
+     current_decision TEXT NOT NULL CHECK (current_decision IN ('respond', 'observe')),
+     recorded_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_response_route_jev_workspace
+   ON response_route_jev_shadow(workspace_id, recorded_at)`,
 ];
 
 type DispatchRow = {
@@ -61,6 +77,16 @@ type FeedbackRow = {
   feedback_json: string;
   kind: string;
   created_at: string;
+};
+
+type ResponseRouteJevRow = {
+  event_id: string;
+  workspace_id: string;
+  thread_key: string;
+  execution_id: string;
+  record_json: string;
+  current_decision: string;
+  recorded_at: string;
 };
 
 function migrate(sql: SqlExecutor): void {
@@ -114,8 +140,15 @@ function readJson(request: Request): Promise<unknown> {
   });
 }
 
+function responseRouteJevFromRow(row: ResponseRouteJevRow): ResponseRouteJevMeasurement {
+  return validateResponseRouteJevMeasurement(parseJson<unknown>(row.record_json));
+}
+
 function responseForError(error: unknown): Response {
   if (error instanceof RouterMeasurementError) {
+    return Response.json({ error: error.code }, { status: error.status });
+  }
+  if (error instanceof ResponseRouteJevMeasurementError) {
     return Response.json({ error: error.code }, { status: error.status });
   }
   console.error(
@@ -139,6 +172,7 @@ export class RouterMeasurementDO extends DurableObject {
     this.sql.exec("DELETE FROM router_feedback WHERE created_at < ?", cutoff);
     // Retention follows DO write activity, not caller-supplied event timestamps.
     this.sql.exec("DELETE FROM router_dispatch_measurements WHERE updated_at < ?", cutoff);
+    this.sql.exec("DELETE FROM response_route_jev_shadow WHERE recorded_at < ?", cutoff);
   }
 
   private record(value: unknown): { ok: true; duplicate: boolean; record: RouterDispatchMeasurement } {
@@ -341,6 +375,43 @@ export class RouterMeasurementDO extends DurableObject {
     return { ok: true, duplicate: false, feedback };
   }
 
+  private recordResponseRouteJev(value: unknown): {
+    ok: true;
+    duplicate: boolean;
+    record: ResponseRouteJevMeasurement;
+  } {
+    const record = validateResponseRouteJevMeasurement(value);
+    const timestamp = now();
+    this.prune(timestamp);
+    const existing = this.sql
+      .exec<ResponseRouteJevRow>(
+        "SELECT * FROM response_route_jev_shadow WHERE event_id = ?",
+        record.eventId,
+      )
+      .toArray()[0];
+    if (existing) {
+      const current = responseRouteJevFromRow(existing);
+      if (JSON.stringify(current) !== JSON.stringify(record)) {
+        throw new ResponseRouteJevMeasurementError("response_route_jev_conflict", 409);
+      }
+      return { ok: true, duplicate: true, record: current };
+    }
+    this.sql.exec(
+      `INSERT INTO response_route_jev_shadow (
+         event_id, workspace_id, thread_key, execution_id, record_json,
+         current_decision, recorded_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      record.eventId,
+      record.workspaceId,
+      record.threadKey,
+      record.executionId,
+      JSON.stringify(record),
+      record.currentRoute.decision,
+      record.recordedAt,
+    );
+    return { ok: true, duplicate: false, record };
+  }
+
   private listFeedback(value: unknown): { workspaceId: string; feedback: RouterFeedbackRecord[] } {
     const input = value && typeof value === "object" && !Array.isArray(value)
       ? value as Record<string, unknown>
@@ -381,6 +452,9 @@ export class RouterMeasurementDO extends DurableObject {
       }
       if (url.pathname === "/feedback/list" && request.method === "POST") {
         return Response.json(this.listFeedback(await readJson(request)));
+      }
+      if (url.pathname === "/response-route-jev/record" && request.method === "POST") {
+        return Response.json(this.recordResponseRouteJev(await readJson(request)));
       }
       return Response.json({ error: "not_found" }, { status: 404 });
     } catch (error) {

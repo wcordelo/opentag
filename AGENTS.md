@@ -110,6 +110,8 @@ Expect `RUN_STARTED` (funded `OPENAI_API_KEY` streams a reply; bad/over-quota â†
 
 Do not deploy Workers/Containers from Cloud without explicit user approval. `pnpm run check-types` may fail on a pre-existing `lib/research/adapters/storage-postgres.ts` issue; prefer `edge` typecheck/tests for the product surface.
 
+Bot design principles (judgment, memory, retrieval rules for the Slack bot) are in [edge/AGENTS.md](./edge/AGENTS.md).
+
 ## Testing
 
 - Never write unit tests after you write the code.

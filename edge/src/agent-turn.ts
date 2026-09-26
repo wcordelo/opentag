@@ -149,9 +149,7 @@ async function ensureRequesterProfile(
 }
 
 function timezoneOf(requester?: Requester): string | undefined {
-  if (!requester) return undefined;
-  const ext = requester as Requester & { timezone?: string };
-  return ext.timezone?.trim() || undefined;
+  return requester?.timezone?.trim() || undefined;
 }
 
 function attachmentDedupeKeys(attachment: {
@@ -488,10 +486,6 @@ function harnessAttachments(prompt: string | AgentContentPart[]): PreparedAttach
     .flatMap((part) => part.attachment ? [part.attachment] : []);
 }
 
-function agentRuntimePrompt(prompt: string | AgentContentPart[]): string | AgentContentPart[] {
-  return prompt;
-}
-
 /** SPEC §3.6: transcript re-feed, truncated to 24k chars from the most recent end. */
 const HARNESS_TRANSCRIPT_MAX_CHARS = 24_000;
 
@@ -507,11 +501,6 @@ function buildHarnessTranscript(history: ThreadMessageLite[]): string | undefine
   return full.length > HARNESS_TRANSCRIPT_MAX_CHARS
     ? full.slice(full.length - HARNESS_TRANSCRIPT_MAX_CHARS)
     : full;
-}
-
-/** Structured metric line (SPEC.md §4.3's minimum counters), matching bot-engine.ts's convention. */
-function logMetric(metric: string, fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ metric, ...fields }));
 }
 
 /** True if `cleaned` has no user-visible content left after flag stripping. */
@@ -537,7 +526,7 @@ function formatOverrideConfirmation(resolved: {
   return `✓ Active: ${summary} (applies to this thread)`;
 }
 
-function promptOverrideText(prompt: string | AgentContentPart[]): string {
+function promptTextOf(prompt: string | AgentContentPart[]): string {
   return typeof prompt === "string"
     ? prompt
     : prompt
@@ -599,14 +588,10 @@ async function stripOverridesFromPrompt(
     return { cleanedPrompt: resolved.cleanedText, resolved };
   }
 
-  const detectionText = prompt
-    .filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join(" ");
   const resolved = await resolveThreadOverrides(
     store,
     conversationKey,
-    detectionText,
+    promptTextOf(prompt),
     channelDefaults,
   );
   const cleanedPrompt = prompt.map((p) =>
@@ -660,7 +645,7 @@ export async function runBundledAgentTurn(
   // Capability validation precedes sticky persistence. Unsupported provider
   // flags and disconnected Claude selections must never be saved/confirmed as
   // if a runtime switch took effect.
-  const requestedOverrides = extractMessageOverrides(promptOverrideText(promptIn));
+  const requestedOverrides = extractMessageOverrides(promptTextOf(promptIn));
   if (requestedOverrides.errors.length > 0) {
     return postVisibleRuntimeRejection(
       thread,
@@ -790,13 +775,7 @@ export async function runBundledAgentTurn(
     env.DEFAULT_USER_TIMEZONE?.trim() ||
     "America/Los_Angeles";
 
-  const promptText =
-    typeof prompt === "string"
-      ? prompt
-      : prompt
-          .filter((p): p is { type: "text"; text: string } => p.type === "text")
-          .map((p) => p.text)
-          .join(" ");
+  const promptText = promptTextOf(prompt);
 
   const humanActor = requestContext.actor.kind === "slack_user";
   const repositoryCodingIntent =
@@ -1359,7 +1338,7 @@ export async function runBundledAgentTurn(
 
   if (!(await exactTurnPending())) return { status: "interrupted" };
   await thread.runAgent({
-    prompt: agentRuntimePrompt(enrichedPrompt),
+    prompt: enrichedPrompt,
     context: toolContext,
     tools: guardToolsByBundle(
       ALL_EDGE_TOOLS.filter((t) => allowed.has(t.name)),

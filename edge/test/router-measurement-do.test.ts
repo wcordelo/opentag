@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
@@ -102,6 +102,13 @@ const measurement = createRouterDispatchMeasurement({
 });
 
 describe("RouterMeasurementDO", () => {
+  beforeEach(() => {
+    // Keep the fixture inside the 30-day retention window on every run.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-01T20:02:00.000Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
   it("keeps dispatch telemetry category-only and records bounded labeled feedback", async () => {
     const { state, close } = makeState();
     try {

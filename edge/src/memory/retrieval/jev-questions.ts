@@ -6,8 +6,8 @@
 /** Default model alias; pin to jev-1.13.0 after threshold tuning. */
 export const JEV_RERANK_MODEL_DEFAULT = "jev-latest";
 
-/** Maximum candidates sent to Jev after RRF (spec §9.5). */
-export const JEV_RERANK_MAX_CANDIDATES = 20;
+/** Maximum candidates sent to Jev after RRF (spec §9.5; raised for recall). */
+export const JEV_RERANK_MAX_CANDIDATES = 40;
 
 /** 10-level relevance rubric for Score reranking. */
 export const JEV_SCORE_RELEVANCE_CRITERIA = [

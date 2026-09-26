@@ -20,7 +20,10 @@ export const KNOWLEDGE_LIMITS = Object.freeze({
   maxMetadataKeyLength: 64,
   maxMetadataStringLength: 2_048,
   maxCitationExcerptLength: 1_000,
+  /** Max citations returned to callers (tool/MCP/UI). */
   maxSearchLimit: 10,
+  /** Max hits fetched per source list before RRF fusion. */
+  maxRetrievalListLimit: 15,
 });
 
 export async function knowledgeQueryDigest(query: string): Promise<string> {

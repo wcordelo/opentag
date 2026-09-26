@@ -388,7 +388,7 @@ export class SupermemoryAdapter {
     input: SlackSearchScope & { query: string; limit: number },
   ): Promise<{ citations: KnowledgeCitation[]; providerResultCount: number; queryDigest: string }> {
     const query = input.query.trim();
-    if (!query || query.length > 1_000 || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > KNOWLEDGE_LIMITS.maxSearchLimit) {
+    if (!query || query.length > 1_000 || !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > KNOWLEDGE_LIMITS.maxRetrievalListLimit) {
       throw new SupermemoryAdapterError("local_rejected", false);
     }
     let queryDigest: string;

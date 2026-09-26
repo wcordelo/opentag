@@ -22,6 +22,11 @@ function topRecall(ranks, k = 3) {
   return hits / ranks.length;
 }
 
+function recallAtK(ranks, k) {
+  const hits = ranks.filter((rank) => rank > 0 && rank <= k).length;
+  return hits / ranks.length;
+}
+
 function p95(values) {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -127,12 +132,16 @@ async function runArm(name, runner) {
       scores: result.scores,
     });
   }
+  const poolSize = frozen.queries[0]?.rrfCandidates?.length ?? 20;
   return {
     arm: name,
     model: perQuery.find((row) => row.model)?.model ?? name,
     queryCount: frozen.queries.length,
     mrrAt5: mrrAtK(ranks, 5),
     top3Recall: topRecall(ranks, 3),
+    recallAt20: recallAtK(ranks, 20),
+    [`recallAt${poolSize}`]: recallAtK(ranks, poolSize),
+    poolSize,
     p95LatencyMs: p95(latencies),
     perQuery,
   };
@@ -176,11 +185,21 @@ const results = {
 const outPath = join(__dirname, "baseline-results.json");
 writeFileSync(outPath, JSON.stringify(results, null, 2));
 console.log(JSON.stringify({
-  rrf: { mrrAt5: rrf.mrrAt5, top3Recall: rrf.top3Recall, p95LatencyMs: rrf.p95LatencyMs },
+  rrf: {
+    mrrAt5: rrf.mrrAt5,
+    top3Recall: rrf.top3Recall,
+    recallAt20: rrf.recallAt20,
+    [`recallAt${rrf.poolSize}`]: rrf[`recallAt${rrf.poolSize}`],
+    poolSize: rrf.poolSize,
+    p95LatencyMs: rrf.p95LatencyMs,
+  },
   dedicated: {
     model: dedicated.model,
     mrrAt5: dedicated.mrrAt5,
     top3Recall: dedicated.top3Recall,
+    recallAt20: dedicated.recallAt20,
+    [`recallAt${dedicated.poolSize}`]: dedicated[`recallAt${dedicated.poolSize}`],
+    poolSize: dedicated.poolSize,
     p95LatencyMs: dedicated.p95LatencyMs,
     reorderedQueryCount: reorderedQueries.length,
   },
